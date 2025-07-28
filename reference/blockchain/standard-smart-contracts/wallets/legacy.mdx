@@ -1,0 +1,97 @@
+---
+title: Legacy contracts
+tag: legacy
+noindex: "true"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+This page is a placeholder, a stub. It's here to help visualize the new structure, but it is not edited yet.
+
+## Wallet v1
+
+This is the simplest one. It only allows you to send four transactions at a time and doesn't check anything besides your signature and seqno.
+
+Wallet source code:
+
+- [ton/crypto/smartcont/wallet-code.fif](https://github.com/ton-blockchain/ton/blob/master/crypto/smartcont/new-wallet.fif)
+
+This version isn’t even used in regular apps because it has some major issues:
+
+- No easy way to retrieve the seqno and public key from the contract.
+- No `valid_until` check, so you can't be sure that the transaction won't be confirmed too late.
+
+The first issue was fixed in `V1R2` and `V1R3`. The `R` stands for **revision**. Usually, revisions are just small updates that only add get methods; you can find all of those in the changes history of `new-wallet.fif`. Hereinafter, we will consider only the latest revisions.
+
+Nevertheless, because each subsequent version inherits the functionality of the previous one, we should still stick to it, as this will help us with later versions.
+
+#### Official code hashes
+
+| Contract version | Hash                                     |
+|------------------|------------------------------------------|
+| walletv1r1       | `oM/CxIruFqJx8s/AtzgtgXVs7LEBfQd/qqs7tgL2how=` |
+| walletv1r2       | `1JAvzJ+tdGmPqONTIgpo2g3PcuMryy657gQhfBfTBiw=` |
+| walletv1r3       | `WHzHie/xyE9G7DeX5F/ICaFP9a4k8eDHpqmcydyQYf8=` |
+
+
+#### Persistent memory layout
+
+- <b>seqno</b>: 32-bit long sequence number.
+- <b>public-key</b>: 256-bit long public key.
+
+#### External message body layout
+
+1. Data:
+   - <b>signature</b>: 512-bit long ed25519 signature.
+   - <b>msg-seqno</b>: 32-bit long sequence number.
+   - <b>(0-4)mode</b>: up to four 8-bit long integer's defining sending mode for each message.
+2. Up to 4 references to cells containing messages.
+
+As you can see, the main functionality of the wallet is to provide a safe way to communicate with the TON blockchain from the outside world. The `seqno` mechanism protects against replay attacks, and the `Ed25519 signature` provides authorized access to wallet functionality. We will not dwell in detail on each of these mechanisms, as they are described in detail in the [external message](/documentation/smart-contracts/message-management/external-messages) documentation page and are quite common among smart contracts receiving external messages. The payload data consists of up to 4 references to cells and the corresponding number of modes, which will be directly transferred to the [send_raw_message(cell msg, int mode)](/documentation/smart-contracts/func/docs/stdlib#send_raw_message) method.
+
+<Aside type="caution">
+Note that the wallet doesn't provide any validation for internal messages you send through it. It is the programmer's (i.e., the external client’s) responsibility to serialize the data according to the [internal message layout](/documentation/smart-contracts/message-management/sending-messages#message-layout).
+</Aside>
+
+#### Exit codes
+
+| Exit code | Description                                    |
+| --------- | ---------------------------------------------- |
+| 0x21      | `seqno` check failed, reply protection accured |
+| 0x22      | `Ed25519 signature` check failed               |
+| 0x0       | Standard successful execution exit code.       |
+
+<Aside>
+Note that [TVM](/documentation/tvm/tvm-overview) has [standart exit codes](/documentation/tvm/tvm-exit-codes) (`0x0` - is one of them), so you can get one of them too, if you run out of [gas](/documentation/smart-contracts/transaction-fees/fees), for example, you will get `0xD` code.
+</Aside>
+
+#### Get methods
+
+1. int seqno() returns current stored seqno.
+2. int get_public_key returns current stored public key.
+
+## Wallet V2
+
+Wallet source code:
+
+- [ton/crypto/smartcont/wallet-code.fc](https://github.com/ton-blockchain/ton/blob/master/crypto/smartcont/wallet-code.fc)
+
+This version introduces the `valid_until` parameter, which is used to set a time limit for a transaction in case you don't want it to be confirmed too late. This version also does not have the get-method for the public key, which was added in `V2R2`.
+
+All differences compared to the previous version are a consequence of adding the `valid_until` functionality. A new exit code was added: `0x23`, marking the failure of the valid_until check. Additionally, a new UNIX-time field has been added to the external message body layout, setting the time limit for the transaction. All get methods remain the same.
+
+#### Official code hashes
+
+| Contract version      | Hash                                     |
+|-----------------------|------------------------------------------|
+| walletv2r1 | `XJpeaMEI4YchoHxC+ZVr+zmtd+xtYktgxXbsiO7mUyk=` |
+| walletv2r2 | `/pUw0yQ4Uwg+8u8LTCkIwKv2+hwx6iQ6rKpb+MfXU/E=` |
+
+#### External message body layout
+
+1. Data:
+   - <b>signature</b>: 512-bit long ed25519 signature.
+   - <b>msg-seqno</b>: 32-bit long sequence number.
+   - <b>valid-until</b>: 32-bit long Unix-time integer.
+   - <b>(0-4)mode</b>: up to four 8-bit long integer's defining sending mode for each message.
+2. Up to 4 references to cells containing messages.
