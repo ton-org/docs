@@ -2,4 +2,287 @@
 title: "Self-host HTTP API v2"
 ---
 
-This page is a placeholder, a stub. It's here to help visualize the new structure, but it is temporarily devoid of content.
+##  Overview
+
+This guide explains how to self-host the TON HTTP API (v2) locally using either:
+
+- **Docker (recommended for production setups):** Works on any x86_64 and arm64 OS with Docker available.
+- **Python (lightweight, for testing only):** Works on Ubuntu Linux (x86_64, arm64), MacOSX (Intel x86_64, Apple M1 arm64) and Windows (x86_64).
+
+---
+
+## Recommended Hardware
+
+- **CPU architecture:** x86_64 or arm64.
+- **HTTP API only:** 1 vCPU, 2 GB RAM.
+- **HTTP API with cache enabled:** 2 vCPUs, 4 GB RAM.
+
+---
+
+##  Option 1: Run via Docker (recommended)
+
+### Prerequisites
+
+Before you begin, make sure the following tools are installed on your system:
+
+- **Docker**
+- **Docker Compose** (preferably version 2 or higher)
+- **curl**
+<Accordion title="How to install prerequisites">
+
+- **macOS and Windows**:  
+  Download and install [Docker Desktop](https://www.docker.com/products/docker-desktop), which includes both Docker and Docker Compose.
+
+- **Ubuntu/Linux**:  
+  Navigate to the root of the repository and run the setup script:
+
+  ```bash
+  scripts/setup.sh
+  ```
+</Accordion>
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/toncenter/ton-http-api.git
+cd ton-http-api
+```
+
+### 2. Download TON config files
+
+```bash
+mkdir private
+curl -sL https://ton-blockchain.github.io/global.config.json > private/mainnet.json
+curl -sL https://ton-blockchain.github.io/testnet-global.config.json > private/testnet.json
+```
+
+### 3. Generate the `.env` file
+
+Choose the network you want to use:
+
+- **Testnet**:
+
+```bash
+export TON_API_TONLIB_LITESERVER_CONFIG=private/testnet.json
+./configure.py
+```
+
+- **Mainnet**:
+
+```bash
+export TON_API_TONLIB_LITESERVER_CONFIG=private/mainnet.json
+./configure.py
+```
+
+<Note>
+The generated `.env` file includes default configuration options.  
+To customize settings or see all available environment variables, check the [Configuration](#configuration) section.
+</Note>
+
+### 4. Build and run the container
+
+```bash
+docker-compose build
+docker-compose up -d
+```
+
+<Tip>Run `docker-compose down` to stop the container.</Tip>
+
+### Test your API
+
+Check masterchain info:
+
+```bash
+curl http://localhost/getMasterchainInfo
+```
+
+Query a specific address:
+
+```bash
+curl -X GET \
+  'http://localhost/getAddressInformation?address=Uf_mlXHnufWO3-vvopflR_NpIFMiidvp_xt20Qf8usMBBPEE' \
+  -H 'accept: application/json'
+```
+
+<Tip>You can also make API calls via the Swagger interface on `http://localhost:80`</Tip>
+
+### Switch between Mainnet and Testnet
+
+To switch networks:
+
+```bash
+export TON_API_TONLIB_LITESERVER_CONFIG=private/mainnet.json  # or private/testnet.json
+./configure.py
+docker-compose down
+docker-compose up -d
+```
+
+This updates the `.env` file and restarts the container with the selected network config.
+
+### Video Walkthrough
+
+[▶️ Watch Guide](https://www.canva.com/design/DAGuzMRoHjI/7FaLbvC29bSmS_JFykiu2g/watch?utm_content=DAGuzMRoHjI&utm_campaign=designshare&utm_medium=link2&utm_source=uniquelinks&utlId=h72f6e944b5)
+
+---
+
+## Option 2: Run with Python (testing only)
+
+### Prerequisites
+
+Before you begin, make sure the following tools are installed on your system:
+
+- **Python 3.8+**
+- **pip**
+- **curl**
+
+<Accordion title="How to install prerequisites">
+
+- **macOS and Windows**:  
+  Python is usually pre-installed. If not, download it from [python.org](https://www.python.org/downloads/).  
+  Then, install the package:
+
+  ```bash
+  pip install ton-http-api
+  ```
+
+- **Ubuntu/Linux**:  
+  Install Python and pip if needed:
+
+  ```bash
+  sudo apt update
+  sudo apt install python3 python3-pip
+  pip3 install ton-http-api
+  ```
+</Accordion>
+
+### 1. Install the package
+
+```bash
+pip install ton-http-api
+```
+
+### 2. Run the service
+
+- Default (Mainnet):
+
+```bash
+ton-http-api
+```
+
+- Testnet:
+```bash
+ton-http-api --liteserver-config https://ton.org/testnet-global.config.json
+```
+or
+
+```bash
+TON_API_TONLIB_LITESERVER_CONFIG=https://ton.org/testnet-global.config.json ton-http-api
+```
+
+<Note> Run `ton-http-api --help` to show the list of available options and commands or check the [configuration](#configuration) section. </Note>
+
+### Test your API
+
+Check masterchain info:
+
+```bash
+curl http://localhost/getMasterchainInfo
+```
+
+Query a specific address:
+
+```bash
+curl -X GET \
+  'http://localhost/getAddressInformation?address=Uf_mlXHnufWO3-vvopflR_NpIFMiidvp_xt20Qf8usMBBPEE' \
+  -H 'accept: application/json'
+```
+
+<Tip>You can also make API calls via the Swagger interface on `http://localhost:80`</Tip>
+
+### Video Walkthrough
+
+[▶️ Watch Guide](https://www.canva.com/design/DAGuygDmwKk/TxCNWeDg4QjdTUSKkhAa2A/watch?utm_content=DAGuygDmwKk&utm_campaign=designshare&utm_medium=link2&utm_source=uniquelinks&utlId=hed091a20b9)
+
+## Configuration
+
+TON HTTP API can be customized through environment variables (used by Docker and also respected by Python) or command-line flags (Python only).
+
+<Accordion title="Docker Environment Variables">
+
+### Webserver
+
+| Variable                     | Default | Description |
+|-----------------------------|---------|-------------|
+| `TON_API_HTTP_PORT`         | `80`    | HTTP port for the API service |
+| `TON_API_ROOT_PATH`         | `/`     | Prefix path for reverse proxies (e.g., `/api/v2`) |
+| `TON_API_WEBSERVERS_WORKERS`| `1`     | Number of Gunicorn workers (set to ~CPU cores / 2) |
+| `TON_API_GET_METHODS_ENABLED`| `1`    | Enables the `runGetMethod` endpoint |
+| `TON_API_JSON_RPC_ENABLED`  | `1`     | Enables the JSON-RPC endpoint |
+| `TON_API_LOGS_JSONIFY`      | `0`     | Print logs in JSON format |
+| `TON_API_LOGS_LEVEL`        | `ERROR` | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL` |
+| `TON_API_GUNICORN_FLAGS`    | *(empty)* | Extra Gunicorn CLI flags |
+
+### Tonlib
+
+| Variable                             | Default                          | Description |
+|--------------------------------------|----------------------------------|-------------|
+| `TON_API_TONLIB_LITESERVER_CONFIG`  | `private/mainnet.json` (Docker)  | Path to LiteServer config file |
+| `TON_API_TONLIB_KEYSTORE`           | `/tmp/ton_keystore`              | Directory for tonlib keystore |
+| `TON_API_TONLIB_PARALLEL_REQUESTS_PER_LITESERVER` | `50`        | Max parallel requests per LiteServer |
+| `TON_API_TONLIB_CDLL_PATH`          | *(empty)*                        | Custom path to `tonlibjson` binary |
+| `TON_API_TONLIB_REQUEST_TIMEOUT`    | `10`                             | Timeout in seconds for LiteServer calls |
+
+### Cache
+
+| Variable                     | Default            | Description |
+|-----------------------------|--------------------|-------------|
+| `TON_API_CACHE_ENABLED`     | `0`                | Enables Redis caching |
+| `TON_API_CACHE_REDIS_ENDPOINT` | `cache_redis`    | Redis host (e.g., in Docker Compose) |
+| `TON_API_CACHE_REDIS_PORT` | `6379`              | Redis port |
+| `TON_API_CACHE_REDIS_TIMEOUT` | `1`               | Redis timeout in seconds |
+
+</Accordion>
+
+<Accordion title="Python Command-Line Flags">
+
+### Webserver
+
+| Flag               | Description |
+|--------------------|-------------|
+| `--host`           | Host address to bind the HTTP API |
+| `--port`           | HTTP port (equivalent to `TON_API_HTTP_PORT`) |
+| `--root`           | Root path prefix for endpoints |
+| `--no-get-methods` | Disables `runGetMethod` endpoint |
+| `--no-json-rpc`    | Disables JSON-RPC endpoint |
+
+### Tonlib
+
+| Flag                                  | Description |
+|---------------------------------------|-------------|
+| `--liteserver-config`                 | Path or URL to LiteServer config file |
+| `--tonlib-keystore`                   | Path to keystore directory |
+| `--parallel-requests-per-liteserver` | Max concurrent requests per LiteServer |
+| `--cdll-path`                         | Path to `tonlibjson` binary |
+
+### Cache
+
+| Flag                     | Description |
+|--------------------------|-------------|
+| `--cache`                | Enables Redis caching |
+| `--cache-redis-endpoint`| Redis host |
+| `--cache-redis-port`    | Redis port |
+
+### Logs
+
+| Flag              | Description |
+|-------------------|-------------|
+| `--logs-level`    | Logging level: `DEBUG`, `INFO`, `WARNING`, etc. |
+| `--logs-jsonify`  | Print logs in JSON format |
+
+### Other
+
+| Flag        | Description |
+|-------------|-------------|
+| `--version` | Show the current version of the CLI tool |
+
+</Accordion>
