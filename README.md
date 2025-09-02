@@ -1,5 +1,7 @@
 # Mintlify Starter Kit
 
+> Preservation...
+
 **[Follow the full quickstart guide](https://starter.mintlify.com/quickstart)**
 
 ## Development
