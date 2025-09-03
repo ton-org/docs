@@ -1,0 +1,234 @@
+---
+title: "TON blockchain"
+---
+
+# Overview
+
+This chapter provides an overview of the main features and design principles of the TON Blockchain. More detail on each topic is provided in subsequent chapters.
+
+## 1. Everything is a bag of cells
+
+All data in the blocks and state of the TON Blockchain is represented as a collection of *cells*. Therefore, this chapter begins with a general discussion of cells.
+
+**TVM cells:** The TON Blockchain, as well as the TON Virtual Machine (TVM), represents all permanently stored data as a collection or bag of cells. Each cell consists of up to 1023 data bits and up to four references to other cells. Cyclic references are not allowed, so the cells are usually organized into trees of cells, or more precisely directed acyclic graphs (DAGs) of cells. Any value of an abstract algebraic (dependent) data type may be represented (serialized) as a tree of cells. The precise way of representing values of an abstract data type as a tree of cells is defined by a TL-B scheme.
+
+**Application to TON Blockchain blocks and state:** Blocks and state of the TON Blockchain are also values of certain (quite convoluted) dependent algebraic data types. They are serialized according to TL-B schemes (presented throughout this document), and represented as a collection or bag of cells.
+
+**The layout of a single cell:** Each single cell consists of up to 1023 data bits and up to four references to other cells. When a cell is kept in memory, its exact representation is implementation-dependent. However, there is a standard representation of cells, useful, for instance, for serializing cells for file storage or network transmission. This standard representation or standard layout `CellRepr(c)` of a cell `c` consists of the following:
+
+* **Two descriptor bytes** come first, sometimes denoted by *d₁* and *d₂*.
+  The first of these bytes *d₁* equals (in the simplest case) the number of references 0 ≤ r ≤ 4 in the cell.
+  The second descriptor byte *d₂* encodes the bit length *l* of the data part of the cell as follows: the first seven bits of *d₂* equal ⌊l/8⌋, the number of complete data bytes present in the cell, while the last bit of *d₂* is the completion tag, equal to one if *l* is not divisible by eight.
+
+  Therefore:
+
+  ```
+  d2 = 2⌊l/8⌋ + [l mod 8 ≠ 0] = ⌊l/8⌋ + ⌈l/8⌉
+  ```
+
+  where \[A] equals one when condition A is true, and zero otherwise.
+
+* **Next,** ⌈l/8⌉ data bytes follow. This means that the *l* data bits of the cell are split into groups of eight, and each group is interpreted as a big-endian 8-bit integer and stored into a byte. If *l* is not divisible by eight, a single binary one and a suitable number of binary zeroes (up to six) are appended to the data bits, and the completion tag (the least significant bit of the descriptor byte *d₂*) is set.
+
+* **Finally,** *r* references to other cells follow. Each reference is normally represented by 32 bytes containing the `sha256` hash of the referenced cell, computed as explained below.
+
+In this way, the standard representation `CellRepr(c)` of a cell `c` with *l* data bits and *r* references is:
+
+```
+2 + ⌊l/8⌋ + ⌈l/8⌉ + 32r bytes long
+```
+
+**The sha256 hash of a cell:** The sha256 hash of a cell `c` is recursively defined as the sha256 of the standard representation `CellRepr(c)` of the cell in question:
+
+```
+Hash(c) := sha256(c) := sha256(CellRepr(c))
+```
+
+Because cyclic cell references are not allowed (the relationships among all cells must constitute a directed acyclic graph, or DAG), the sha256 hash of a cell is always well-defined. Furthermore, because sha256 is tacitly assumed to be collision-resistant, we assume that all the cells we encounter are completely determined by their hashes. In particular, the cell references of a cell `c` are completely determined by the hashes of the referenced cells, contained in the standard representation `CellRepr(c)`.
+
+**Exotic cells:** Apart from ordinary (simple or data) cells, there are exotic cells. These are distinguished by having the first descriptor byte *d₁* ≥ 5.
+
+**External reference cells:** An external reference cell contains the 32-byte `sha256(c)` of a “true” data cell `c`, instead of the data cell itself. These allow a block serialization to refer to data cells that are not included directly, but assumed to exist elsewhere.
+
+**Transparency of reference cells:** Most operations treat reference cells as if they were the actual cells they point to. For example, the transparent hash `Hash^flat(c)` is computed by setting the hash of a reference cell equal to the hash of the target cell.
+
+**Transparent hash vs representation hash:**
+
+* `Hash^flat(c)` = transparent hash of `c`.
+* `Hash^sharp(c)` = representation hash of `c`.
+
+By convention, the representation hash is usually referred to as “the” hash of a cell.
+
+**Use of representation hashes for signatures:** Representation hashes are critical for signatures:
+
+* Validators sign the representation hash of a block, not its transparent hash.
+* External messages signed by off-chain parties must also use the representation hash if they contain external references.
+
+**Higher hashes of a cell:** In addition to transparent and representation hashes, a sequence of higher hashes `Hash_i(c)` (i = 1, 2, …) may be defined, eventually stabilizing at `Hash_∞(c)`.
+
+# 2. Principal components of a block and the blockchain state
+
+This section briefly describes the principal components of a block and of the blockchain state, without delving too much into the details.
+
+**The Infinite Sharding Paradigm (ISP) applied to blockchain block and state:** Recall that according to the Infinite Sharding Paradigm, each account can be considered as lying in its separate “accountchain”, and the (virtual) blocks of these accountchains are then grouped into shardchain blocks for efficiency purposes. Specifically, the state of a shardchain consists, roughly speaking, of the states of all its “accountchains” (i.e., of all accounts assigned to it); similarly, a block of a shardchain essentially consists of a collection of virtual “blocks” for some accounts assigned to the shardchain.
+
+We can summarize this as follows:
+
+```
+ShardState ≈ Hashmap(n, AccountState)
+ShardBlock ≈ Hashmap(n, AccountBlock)
+```
+
+where *n* is the bit length of the account\_id, and `Hashmap(n, X)` describes a partial map 2^n → X from bitstrings of length *n* into values of type *X*.
+
+Recall that each shardchain—or, more precisely, each shardchain block—corresponds to all accountchains that belong to the same “workchain” (i.e., have the same workchain\_id = w) and have an account\_id beginning with the same binary prefix *s*, so that (w, s) completely determines a shard. Therefore, the above hashmaps must contain only keys beginning with prefix *s*.
+
+The above description is only an approximation: the state and block of the shardchain need to contain some extra data that are not split according to the account\_id as suggested above.
+
+**Split and non-split part of the shardchain block and state:** A shardchain block and its state may each be classified into two distinct parts. The parts with the ISP-dictated form shown above will be called the split parts of the block and its state, while the remainder will be called the non-split parts.
+
+**Interaction with other blocks and the outside world. Global and local consistency conditions:** The non-split parts of the shardchain block and its state are mostly related to the interaction of this block with some other “neighboring” blocks. The global consistency conditions of the blockchain as a whole are reduced to internal consistency conditions of separate blocks by themselves as well as external local consistency conditions between certain blocks.
+
+Most of these local consistency conditions are related to message forwarding between different shardchains, transactions involving more than one shardchain, and message delivery guarantees. Another group of local consistency conditions relates a block with its immediate antecessors and successors inside a shardchain; for instance, the initial state of a block usually must coincide with the final state of its immediate antecessor.
+
+**Inbound and outbound messages of a block:** The most important components of the non-split part of a shardchain block are the following:
+
+* `InMsgDescr` — the description of all messages “imported” into this block (either processed by a transaction included in the block, or forwarded to an output queue, in the case of a transit message travelling along the path dictated by Hypercube Routing).
+* `OutMsgDescr` — the description of all messages “exported” or “generated” by the block (either messages generated by a transaction included in the block, or transit messages with destination not belonging to the current shardchain, forwarded from `InMsgDescr`).
+
+**Block header:** Another non-split component of a shardchain block is the block header, which contains general information such as (w, s) (i.e., the workchain\_id and the common binary prefix of all account\_ids assigned to the current shardchain), the block’s sequence number (defined to be the smallest non-negative integer larger than the sequence numbers of its predecessors), logical time, and generation unixtime. It also contains the hash of the immediate antecessor of the block (or of its two immediate antecessors in the case of a preceding shardchain merge event), the hashes of its initial and final states (i.e., of the states of the shardchain immediately before and immediately after processing the current block), and the hash of the most recent masterchain block known when the shardchain block was generated.
+
+**Validator signatures, signed and unsigned blocks:** The block described so far is an unsigned block; it is generated in its entirety and considered as a whole by the validators. When the validators ultimately sign it, the signed block is created, consisting of the unsigned block along with a list of validator signatures (of a certain representation hash of the unsigned block). This list of signatures is also a non-split component of the signed block; however, since it lies outside the unsigned block, it is somewhat different from the other data kept in a block.
+
+**Outbound message queue of a shardchain:** The most important non-split part of the shardchain state is `OutMsgQueue`, the outbound message queue. It contains undelivered messages included into `OutMsgDescr`, either by the last shardchain block leading to this state or by one of its antecessors.
+
+Originally, each outbound message is included into `OutMsgQueue`; it is removed from the queue only after it has either been included into the `InMsgDescr` of a block of a neighboring shardchain (the next one with respect to Hypercube Routing), or has been delivered to its ultimate destination shardchain via Instant Hypercube Routing. In both cases, the reason for the removal of a message from the `OutMsgQueue` is made explicit in the `OutMsgDescr` of the block in which such a state transformation has occurred.
+
+**Layout of InMsgDescr, OutMsgDescr and OutMsgQueue:** All of the most important non-split shardchain data structures related to messages are organized as hashmaps or dictionaries (implemented by means of Patricia trees serialized into a tree of cells), with the following keys:
+
+* The inbound message description `InMsgDescr` uses the 256-bit message hash as a key.
+* The outbound message description `OutMsgDescr` uses the 256-bit message hash as a key.
+* The outbound message queue `OutMsgQueue` uses the 352-bit concatenation of the 32-bit destination workchain\_id, the first 64 bits of destination address account\_id, and the 256-bit message hash as a key.
+
+**The split part of the block: transaction chains:** The split part of a shardchain block consists of a hashmap mapping some of the accounts assigned to the shardchain to “virtual accountchain blocks” `AccountBlock`. Such a virtual accountchain block consists of a sequential list of transactions related to that account.
+
+**Transaction description:** Each transaction is described in the block by an instance of the `Transaction` type, which contains in particular the following information:
+
+* A reference to exactly one inbound message (which must be present in `InMsgDescr` as well) that has been processed by the transaction.
+* References to several (maybe zero) outbound messages (also present in `OutMsgDescr` and most likely included in `OutMsgQueue`) that have been generated by the transaction.
+
+The transaction consists of an invocation of TVM with the code of the smart contract corresponding to the account in question loaded into the virtual machine, and with the data root cell of the smart contract loaded into the virtual machine’s register c4. The inbound message itself is passed in the stack as an argument to the smart contract’s `main()` function, along with some other important data, such as the amount of TON Grams and other defined currencies attached to the message, the sender account address, the current balance of the smart contract, and so on.
+
+In addition to the information listed above, a `Transaction` instance also contains the original and final states of the account (i.e., of the smart contract), as well as some of the TVM running statistics (gas consumed, gas price, instructions performed, cells created/destroyed, virtual machine termination code, etc.).
+
+**The split part of the shardchain state: account states:** According to the form given above, the split part of the shardchain state consists of a hashmap mapping each defined account identifier (belonging to the shardchain in question) to the state of the corresponding account, given by an instance of the `AccountState` type.
+
+**Account state:** The account state itself approximately consists of the following data:
+
+* Its balance in Grams and (optionally) in some other defined cryptocurrencies/tokens.
+* The smart-contract code, or the hash of the smart-contract code if it will be provided later by a separate message.
+* The persistent smart-contract data, which can be empty for simple smart contracts. It is a tree of cells, the root of which is loaded into register c4 during smart-contract execution.
+* Its storage usage statistics, including the number of cells and bytes kept in the persistent storage of the smart contract (inside the blockchain state) and the last time a storage usage payment was exacted from this account.
+* An optional formal interface description (intended for smart contracts) and/or user public information (intended mostly for human users and organizations).
+
+Notice that there is no distinction between “smart contract” and “account” in the TON Blockchain. Instead, “simple” or “wallet” accounts, typically employed by human users and their cryptocurrency wallet applications for simple cryptocurrency transfers, are just simple smart contracts with standard (shared) code and with persistent data consisting of the public key of the wallet (or several public keys in the case of a multi-signature wallet).
+
+**Masterchain blocks:** In addition to shardchain blocks and their states, the TON Blockchain contains masterchain blocks and the masterchain state (also called the global state). The masterchain blocks and state are quite similar to the shardchain blocks and state considered so far, with some notable differences:
+
+* The masterchain cannot be split or merged, so a masterchain block usually has exactly one immediate antecessor. The sole exception is the “masterchain block zero”, distinguished by having a sequence number equal to zero; it has no antecessors at all, and contains the initial configuration of the whole TON Blockchain (e.g., the original set of validators).
+* The masterchain blocks contain another important non-split structure: `ShardHashes`, a binary tree with a list of all defined shardchains along with the hashes of the latest block inside each of the listed shardchains. It is the inclusion of a shardchain block into this structure that makes a shardchain block “canonical”, and enables other shardchains’ blocks to refer to data (e.g., outbound messages) contained in the shardchain block.
+* The state of the masterchain contains global configuration parameters of the whole TON Blockchain, such as the minimum and maximum gas prices, the supported versions of TVM, the minimum stake for validator candidates, the list of alternative cryptocurrencies supported in addition to Grams, the total amount of Grams issued so far, and the current set of validators responsible for creating and signing new blocks, along with their public keys.
+* The state of the masterchain also contains the code of the smart contracts used to elect the subsequent sets of validators and to modify the global configuration parameters. The code of these smart contracts itself is a part of the global configuration parameters and can be modified accordingly. In this respect, this code (along with the current values of these parameters) functions like a “constitution” for the TON Blockchain. It is initially established in masterchain block zero.
+* There are no transit messages through the masterchain: each inbound message must have a destination inside the masterchain, and each outbound message must have a source inside the masterchain.
+
+# 3. Consistency conditions
+
+In addition to the data structures contained in the block and in the blockchain state, which are serialized into bags of cells according to certain TL-B schemes explained in detail later (cf. Chapters 3–5), an important component of the blockchain layout is the consistency conditions between data kept inside one or in different blocks (as mentioned in 1.2.3). This section describes in detail the function of consistency conditions in the blockchain.
+
+**Expressing consistency conditions.** In principle, dependent data types (such as those used in TL-B) could be used not only to describe the serialization of block data, but also to express conditions imposed on the components of such data types. (For instance, one could define data type OrderedIntPair, with pairs of integers (x, y), such that x < y, as values.) However, TL-B currently is not expressive enough to encode all the consistency conditions we need, so we opt for a semi-formalized approach in this text. In the future, we may present a subsequent complete formalization in a suitable proof assistant such as Coq.
+
+**Importance of consistency conditions.** The consistency conditions ultimately are at least as important as the “unrestricted” data structures on which they are imposed, especially in the blockchain context. For instance, the consistency conditions ensure that the state of an account does not change between blocks, and that it can change within a block only as a result of a transaction. In this way, the consistency conditions ensure the safe storage of cryptocurrency balances and other information inside the blockchain.
+
+**Kinds of consistency conditions.** There are several kinds of consistency conditions imposed on the TON Blockchain:
+
+* **Global conditions** — Express the invariants throughout the entire TON Blockchain. For instance, the message delivery guarantees, which assert that each message generated must be delivered to its destination account and delivered exactly once, are part of the global conditions.
+* **Internal (local) conditions** — Express the conditions imposed on the data kept inside one block. For example, each transaction included in the block (i.e., present in the transaction list of some account) processes exactly one inbound message; this inbound message must be listed in the InMsgDescr structure of the block as well.
+* **External (local) conditions** — Express the conditions imposed on the data of different blocks, usually belonging to the same or to neighboring shardchains (with respect to Hypercube Routing). Therefore, the external conditions come in several flavors:
+
+  * **Antecessor/successor conditions** — Express the conditions imposed on the data of some block and of its immediate antecessor or (in the case of a preceding shardchain merge event) two immediate antecessors. The most important of these conditions is the one stating that the initial state for a shardchain block must coincide with final shardchain state of the immediate antecessor block, provided no shardchain split/merge event happened in between.
+  * **Masterchain/shardchain conditions** — Express the conditions imposed on a shardchain block and on the masterchain block that refers to it in its ShardHashes list or is referred to in the header of the shardchain block.
+  * **Neighbor (block) conditions** — Express the relations between the blocks of neighboring shardchains with respect to Hypercube Routing. The most important of these conditions express the relation between the InMsgDescr of a block and the OutMsgQueue of the state of a neighboring block.
+
+**Decomposition of global and local conditions into simpler local conditions.** The global consistency conditions, such as the message delivery guarantees, are truly necessary for the blockchain to work properly; however, they are hard to enforce and verify directly. Therefore, we instead introduce a lot of simpler local consistency conditions, which are easier to enforce and verify since they involve only one block, or perhaps two adjacent blocks. These local conditions are chosen in such a fashion that the desired global conditions are logical consequences of (the conjunction of) all the local conditions. In this respect, we say that the global conditions have been “decomposed” into simpler local conditions.
+Sometimes a local condition still turns out to be too cumbersome to enforce or verify. In that case it is decomposed further, into even simpler local conditions.
+
+**Decomposition may require additional data structures and additional internal consistency conditions.** The decomposition of a condition into simpler local consistency conditions sometimes requires the introduction of additional data structures. For example, the InMsgDescr explicitly lists all inbound messages processed in a block, even if this list might have been obtained by scanning the list of all the transactions present in the block. However, InMsgDescr greatly simplifies the neighbor conditions related to message forwarding and routing, which ultimately add up to the global message delivery guarantees.
+Notice that the introduction of such additional data structures is a sort of “database denormalization” (i.e., it leads to some redundancy, or to some data being present more than once), and therefore more internal consistency conditions need to be imposed (e.g., if some data are now present in two copies, we must require that these two copies coincide). For instance, once we introduce InMsgDescr to facilitate message forwarding between shardchains, we need to introduce internal consistency conditions relating InMsgDescr to the transaction list of the same block.
+
+**Correct serialization conditions.** Apart from the high-level internal consistency conditions, which treat the contents of a block as a value of an abstract data type, there are some lower-level internal consistency conditions, called “(correct) serialization conditions”, which ensure that the tree of cells present in the block is indeed a valid serialization of a value of the expected abstract data type. Such serialization conditions can be automatically generated from the TL-B scheme describing the abstract data type and its serialization into a tree of cells.
+Notice that the serialization conditions are a set of mutually recursive predicates on cells or cell slices. For example, if a value of type A consists of a 32-bit magic number mA, a 64-bit integer l, and two references to cells containing values of types B and C, respectively, then the correct serialization condition for values of type A will require a cell or a cell slice to contain exactly 96 data bits and two cell references r1 and r2, with the additional requirements that the first 32 data bits contain mA, and the two cells referred to by r1 and r2 satisfy the serialization conditions for values of types B and C, respectively.
+
+**Constructive elimination of existence quantifiers.** The local conditions one might want to impose sometimes are non-constructible, meaning that they do not necessarily contain an explanation of why they are true. A typical example of such a condition C is given by
+
+```
+C :≡ ∀(x:X)∃(y:Y )A(x, y) , (5)
+```
+
+“for any x from X, there is a y from Y such that condition A(x, y) holds”. Even if we know C to be true, we do not have a way of quickly finding a y : Y , such that A(x, y), for a given x : X. As a consequence, the verification of C may be quite time-consuming.
+In order to simplify the verification of local conditions, they are made constructible (i.e., verifiable in bounded time) by adding some witness data structures. For instance, condition C of (5) may be transformed by adding a new data structure f : X → Y (a map f from X to Y ) and imposing the following condition C′ instead:
+
+```
+C′ :≡ ∀(x:X)A(x, f(x)) . (6)
+```
+
+Of course, the “witness” value f(x) : Y may be included inside the (modified) data type X instead of being kept in a separate table f.
+
+**Example: consistency condition for InMsgDescr.** For instance, the consistency condition between X := InMsgDescr, the list of all inbound messages processed in a block, and Y := Transactions, the list of all transactions present in a block, is of the above sort: “For any input message x present in InMsgDescr, a transaction y must be present in the block such that y processes x”.8 The procedure of ∃-elimination described above leads us to introduce an additional field in the inbound message descriptors of InMsgDescr, containing a reference to the transaction in which the message is actually processed.
+
+**Constructive elimination of logical disjunctions.** Similarly to the transformation just described, condition
+
+```
+D :≡ ∀(x:X) ( A1(x) ∨ A2(x) ) , (7)
+```
+
+“for all x from X, at least one of A1(x) and A2(x) holds”, may be transformed into a function i : X → 2 = {1, 2} and a new condition
+
+```
+D′ :≡ ∀(x:X)Ai(x)(x)  (8)
+```
+
+This is a special case of the existential quantifier elimination considered before for Y = 2 = {1, 2}. It may be useful when A1(x) and A2(x) are complicated conditions that cannot be verified quickly, so that it is useful to know in advance which of them is in fact true.
+8This example is a bit simplified since it does not take into account the presence of transit messages in InMsgDescr, which are not processed by any explicit transaction. For instance, InMsgDescr, as considered above, can contain both messages processed in the block and transit messages. We might introduce a field in the inbound message description to indicate whether the message is transit or not, and, in the latter case, include a witness field for the transaction processing the message.
+
+**Constructivization of conditions.** This process of eliminating the non-constructible logical binders ∃ (existence quantifier) and (sometimes) ∨ (logical disjunction) by introducing additional data structures and fields—that is, the process of making a condition constructible—will be called constructivization. If taken to its theoretical limit, this process leads to logical formulas containing only universal quantifiers and logical conjunctions, at the expense of adding some witness fields into certain data structures.
+
+**Validity conditions for a block.** Ultimately, all of the internal conditions for a block, along with the local antecessor and neighbor conditions involving this block and another previously generated block, constitute the validity conditions for a shardchain or masterchain block. A block is valid if it satisfies the validity conditions. It is the responsibility of validators to generate valid blocks, as well as check the validity of blocks generated by other validators.
+
+**Witnesses of the invalidity of a block.** If a block does not satisfy all of the validity conditions C1, . . . , Cn (i.e., the conjunction V :≡ ∧i Ci of the validity conditions), it is invalid. This means that it satisfies the “invalidity condition” ¬V = ∨i ¬Ci. If all of the Ci—and hence, also V—have been “constructivized” so that they contain only logical conjunctions and universal quantifiers (and simple atomic propositions), then ¬V contains only logical disjunctions and existential quantifiers. Then a constructivization of ¬V may be defined, which would involve an invalidity witness, starting with an index i of the specific validity condition Ci which fails.
+Such invalidity witnesses may also be serialized and presented to other validators or committed into the masterchain to prove that a specific block or block candidate is in fact invalid. Therefore, the construction and serialization of invalidity witnesses is an important part of a Proof-of-Stake (PoS) blockchain design.9
+9It is interesting to note that this part of the work can be done almost automatically.
+
+**Minimizing the size of witnesses.** An important consideration for the design of the local conditions, their decomposition into simpler conditions, and their constructivization is to make the verification of each condition as simple as possible. However, another requirement is that we should minimize the size of witnesses both for a condition (so that block size does not grow too much during the constructivization process) and for its negation (so that the invalidity proofs have bounded size, which simplifies their verification, transmission, and inclusion into the masterchain). These two design principles are sometimes at odds, and a compromise must be then sought.
+
+**Minimizing the size of Merkle proofs.** The consistency conditions are originally intended to be processed by a party who already has all the relevant data (e.g., all the blocks mentioned in the condition). On some occasions, however, they must be verified by a party who does not have all the blocks in question, but knows only their hashes. For example, suppose that a block invalidity proof were augmented by the signature of a validator that had signed an invalid block (and therefore would have to be punished). In this case, the signature would contain only the hash of the wrongly signed block; the block itself would have to be recovered from a different place before verifying the block invalidity proof.
+A compromise between providing only the hash of the supposedly invalid block and providing the entire invalid block along with the invalidity witness is to augment the invalidity witness by a Merkle proof starting from the hash of the block (i.e., of the root cell of the block). Such a proof would include all the cells referred to in the invalidity witness, along with all the cells on the paths from these cells to the root cells and the hashes of their siblings. Then an invalidity proof becomes self-contained enough to provide sufficient justification on its own for punishing a validator. For example, the invalidity proof suggested above might be presented to a smart contract residing in the masterchain that punishes the validators for incorrect behavior.
+Since such an invalidity proof must be augmented by a Merkle proof, it makes sense to write the consistency conditions so that the Merkle proofs for their negations would be as small as possible. In particular, each individual condition must be as “local” as possible (i.e., involve a minimal number of cells). This also optimizes the verification time of the invalidity proof.
+
+**Collated data for the external conditions.** When a validator suggests an unsigned block to the other validators of a shardchain, these other validators must check the validity of this block candidate—i.e., verify that it satisfies all of the internal and external local consistency conditions. While the internal conditions do not require any extra data in addition to the block candidate itself, the external conditions need some other blocks, or at least some information out of those blocks. Such additional information may be extracted from those blocks, along with all cells on the paths from the cells containing the required additional information to the root cell of the corresponding blocks and the hashes of the siblings of the cells on these paths, to present a Merkle proof that can be processed without knowledge of the referred blocks themselves.
+This additional information, called collated data, is serialized as a bag of cells and presented by the validator along with the unsigned block candidate itself. The block candidate along with the collated data is called a collated block.
+
+**Conditions for a collated block.** The external consistency conditions for a block candidate are thus (automatically) transformed into internal consistency conditions for a collated block, which greatly simplifies and speeds up their verification by the other validators. However, some data—such as the final state of the immediate antecessor of the block being validated—is not collated. Instead, all validators are supposed to keep a local copy of this data.
+
+**Representation conditions and representation hashes.** Notice that once Merkle proofs are included into a collated block, the consistency conditions must take into account which data (i.e., which cells) are actually present in the collated block, and not just referred to by their hashes. This leads to a new group of conditions, called representation conditions, which must be able to distinguish an external cell reference (usually represented by its 256-bit hash) from the cell itself. A validator can be punished for suggesting a collated block that does not contain all of the expected collated data inside, even if the block candidate itself is valid.
+This also leads to the utilization of representation hashes instead of transparent hashes for collated blocks.
+
+**Verification in the absence of the collated data.** Notice that a block must still be verifiable in the absence of the collated data; otherwise, no party except the validators would be able to check a previously committed block by its own means. In particular, witnesses cannot be included into the collated data: they must reside in the block itself. The collated data must contain only some portions of neighboring blocks referred to in the principal block along with suitable Merkle proofs, which can be reconstructed by anybody who has the referenced blocks themselves.
+
+**Inclusion of Merkle proofs in the block itself.** Notice that on some occasions Merkle proofs must be embedded into the block itself, and not just into collated data. For instance:
+
+* During Instant Hypercube Routing (IHR), a message may be included directly into the InMsgDescr of a block of the destination shardchain, without travelling all the way along the edges of the hypercube. In this case, a Merkle proof of the existence of the message in the OutMsgDescr of a block of the originating shardchain must be included into InMsgDescr along with the message itself.
+* An invalidity proof, or another proof of validator misbehavior, may be committed into the masterchain by including it in the body of a message sent to a special smart contract. In this case, the invalidity proof must include some cells along with a Merkle proof, which must therefore be contained in a message body.
+* Similarly, a smart contract defining a payment channel, or another kind of side-chain, may accept finalization messages or misbehavior proof messages that contain suitable Merkle proofs.
+* The final state of a shardchain is not included into a shardchain block. Instead, only the cells that have been modified are included; those cells that are inherited from the old state are referred to by their hashes, along with suitable Merkle proofs consisting of the cells on the path from the root of the old state to the cells of the old state referred to.
+
+**Provisions for handling incomplete data.** As we have seen, it is necessary to include incomplete data and Merkle proofs into the body of a block, into the body of some messages contained in a block, and into the state. This necessity is reflected by some extra representation conditions, as well as provisions for the messages (and by extension, the cell trees processed by TVM) to contain incomplete data (external cell references and Merkle proofs). In most cases, such external cell references contain only the 256-bit sha256 hash of a cell along with a flag; if a smart contract attempts to inspect the contents of such a cell by a CTOS primitive (e.g., for deserialization), an exception is triggered. However, an external reference to such a cell can be stored into the smart contract’s persistent storage, and both the transparent and the representation hashes of such a cell can be computed.
