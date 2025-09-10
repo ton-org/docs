@@ -1,20 +1,42 @@
 ---
-title: "Telegram Open Network Blockchain"
+title: "Telegram Open Network (TON) Blockchain Specification"
+sidebarTitle: "Tblkch"
 ---
 
-## 1. Overview
-This chapter provides an overview of the main features and design principles
-of the TON Blockchain. More detail on each topic is provided in subsequent
-chapters.
+**Nikolai Durov**
+*February 8, 2020*
 
+## Abstract
+
+The aim of this text is to provide a detailed description of the Telegram Open Network (TON) Blockchain.
+
+## Introduction
+
+This document provides a detailed description of the TON Blockchain, including its precise block format, validity conditions, TON Virtual Machine (TVM) invocation details, smart-contract creation process, and cryptographic signatures. In this respect it is a continuation of the TON whitepaper (cf. [3](#3-messages%2C-message-descriptors%2C-and-queues)), so we freely use the terminology introduced in that document.
+
+Chapter 1 provides a general overview of the TON Blockchain and its design principles, with particular attention to the introduction of compatibility and validity conditions and the implementation of message delivery guarantees. More detailed information, such as the TL-B schemes that describe the serialization of all required data structures into trees or collections (“bags”) of cells, is provided in subsequent chapters, culminating in a complete description of the TON Blockchain (shardchain and masterchain) block layout in Chapter 5.
+
+A detailed description of the elliptic curve cryptography used for signing blocks and messages, also accessible through TVM primitives, is provided in Appendix A. TVM itself is described in a separate document (cf. [4](#4-accounts-and-transactions)).
+
+Some subjects have intentionally been left out of this document. One is the Byzantine Fault Tolerant (BFT) protocol used by the validators to determine the next block of the masterchain or a shardchain; that subject is left for a forthcoming document dedicated to the TON Network.
+
+And although this document describes the precise format of TON Blockchain blocks, and discusses the blockchain’s validity conditions and serialized invalidity proofs,[¹](#footnote-1) it provides no details about the network protocols used to propagate these blocks, block candidates, collated blocks, and invalidity proofs.
+
+Similarly, this document does not provide the complete source code of the masterchain smart contracts used to elect the validators, change the configurable parameters or get their current values, or punish the validators for their misbehavior, even though these smart contracts form an important part of the total blockchain state and of the masterchain block zero. Instead, this document describes the location of these smart contracts and their formal interfaces.[²](#footnote-2) The source code of these smart contracts will be provided separately as downloadable files with comments.
+
+Please note that the current version of this document describes a preliminary test version of the TON Blockchain; some minor details are likely to change prior to launch during the development, testing, and deployment phases.
+
+## 1. Overview
+This chapter provides an overview of the main features and design principles of the TON Blockchain. More detail on each topic is provided in subsequent chapters.
 
 ## 1.1 Everything is a bag of cells
 All data in the blocks and state of the TON Blockchain is represented as a collection of cells (cf. [3.2.5](#3-2-5-augmented-hashmaps%2C-or-dictionaries). Therefore, this chapter begins with a general discussion of cells.
 
 ### 1.1.1. TVM cells
-Recall that the TON Blockchain, as well as the TON Virtual Machine (TVM; cf. [4.3.1](#ref-4)), represents all permanently stored data as a collection or bag of so-called cells. Each cell consists of up to `1023` data bits and up to `4` references to other cells. 
 
-Cyclic cell references are not allowed, so the cells are usually organized into trees of cells, or rather directed acyclic graphs (DAGs) of cells.[³](#footnote-3) Any value of an abstract algebraic (dependent) data type may be represented (serialized) as a tree of cells. 
+Recall that the TON Blockchain, as well as the TON Virtual Machine (TVM; cf. [4.3.1](#ref-4)), represents all permanently stored data as a collection or bag of so-called cells. Each cell consists of up to `1023` data bits and up to `4` references to other cells.
+
+Cyclic cell references are not allowed, so the cells are usually organized into trees of cells, or rather directed acyclic graphs (DAGs) of cells.[³](#footnote-3) Any value of an abstract algebraic (dependent) data type may be represented (serialized) as a tree of cells.
 
 The precise way of representing values of an abstract data type as a tree of cells is expressed by means of a TL-B scheme.[⁴](#footnote-4) A more thorough discussion of different kinds of cells may be found in [4.3.1](#4-3-1-reasons-for-omitting-data-from-a-transaction-description).
 
@@ -24,25 +46,23 @@ The above is particularly applicable to the blocks and state of the TON Blockcha
 Therefore, they are serialized according to various TL-B schemes (which are gradually presented throughout this document), and are represented as a collection or bag of cells.
 
 ### 1.1.3. The layout of a single cell
-Each single cell consists of up to `1023` data bits and up to `4` references to other cells. 
 
-When a cell is kept in memory, its exact representation is implementation-dependent. However, there is a standard representation of cells, useful, for instance, for serializing cells for file storage or network transmission. This “standard representation” or “standard layout” `CellRepr(c)` of a cell `c` consists of the following:
+Each single cell consists of up to `1023` data bits and up to `4` references to other cells. When a cell is kept in memory, its exact representation is implementation-dependent. However, there is a standard representation of cells, useful, for instance, for serializing cells for file storage or network transmission. This “standard representation” or “standard layout” `CellRepr(c)` of a cell `c` consists of the following:
 
-- Two descriptor bytes come first, sometimes denoted by `d1` and `d2`.  
-  - The first of these bytes `d1` equals (in the simplest case) the number of references `0 ≤ r ≤ 4` in the cell.  
-  - The second descriptor byte `d2` encodes the bit length `l` of the data part of the cell as follows: the first seven bits of `d2` equal `⌊l/8⌋`, the number of complete data bytes present in the cell, while the last bit of `d2` is the completion tag, equal to one if `l` is not divisible by `8`. Therefore,
+• Two descriptor bytes come first, sometimes denoted by `d₁` and `d₂`. The first of these bytes `d₁` equals (in the simplest case) the number of references `0 ≤ r ≤ 4` in the cell. The second descriptor byte `d₂` encodes the bit length `l` of the data part of the cell as follows: the first seven bits of `d₂` equal `⌊l/8⌋`, the number of complete data bytes present in the cell, while the last bit of `d₂` is the completion tag, equal to one if `l` is not divisible by eight. Therefore,
 
 ```math
-d2 = 2⌊l/8⌋ + [l mod 8 ≠ 0] = ⌊l/8⌋ + ⌈l/8⌉   (1)
-````
+d₂ = 2⌊l/8⌋ + [l mod 8 ≠ 0] = ⌊l/8⌋ + ⌈l/8⌉   (1)
+```
 
 where `[A]` equals one when condition `A` is true, and zero otherwise.
 
-* Next, `⌈l/8⌉` data bytes follow. This means that the `l` data bits of the cell are split into groups of eight, and each group is interpreted as a big-endian 8-bit integer and stored into a byte. If `l` is not divisible by `8`, a single binary one and a suitable number of binary zeroes (up to six) are appended to the data bits, and the completion tag (the least significant bit of the descriptor byte `d2`) is set.
+• Next, `⌈l/8⌉` data bytes follow. This means that the `l` data bits of the cell are split into groups of eight, and each group is interpreted as a big-endian 8-bit integer and stored into a byte. If `l` is not divisible by eight, a single binary one and a suitable number of binary zeroes (up to six) are appended to the data bits, and the completion tag (the least significant bit of the descriptor byte `d₂`) is set.
 
-* Finally, `r` references to other cells follow. Each reference is normally represented by `32` bytes containing the `sha256` hash of the referenced cell, computed as explained below in 1.1.4.
+• Finally, `r` references to other cells follow. Each reference is normally represented by `32` bytes containing the SHA-256 hash of the referenced cell, computed as explained below in [1.1.4](#1-1-4-the-sha256-hash-of-a-cell).
 
 In this way, the standard representation `CellRepr(c)` of a cell `c` with `l` data bits and `r` references is `2 + ⌊l/8⌋ + ⌈l/8⌉ + 32r` bytes long.
+
 
 ### 1.1.4. The sha256 hash of a cell
 
@@ -62,7 +82,7 @@ In particular, the cell references of a cell `c` are completely determined by th
 
 Apart from the ordinary cells (also called simple or data cells) considered so far, cells of other types, called exotic cells, sometimes appear in the actual representations of TON Blockchain blocks and other data structures.
 
-Their representation is somewhat different; they are distinguished by having the first descriptor byte `d1 ≥ 5` (cf. [4.3.1](#4-3-1-reasons-for-omitting-data-from-a-transaction-description)).
+Their representation is somewhat different; they are distinguished by having the first descriptor byte `d₁ ≥ 5` (cf. [4.3.1](#4-3-1-reasons-for-omitting-data-from-a-transaction-description)).
 
 ### 1.1.6. External reference cells
 
@@ -72,17 +92,13 @@ These cells can be used in the serialization of a bag of cells corresponding to 
 
 ### 1.1.7. Transparency of reference cells with respect to most operations
 
-Most cell operations do not observe any reference cells or other “exotic” kinds of cells; they see only data cells, with any reference cell transparently replaced by the cell referred to.
-
-For example, when the transparent cell hash `Hash′(c)` is recursively computed, the hash of a reference cell is set to be equal to the hash of the cell referred to, not the hash of the standard representation of the reference cell.
+Most cell operations do not observe any `reference cells` or other `exotic` kinds of cells; they see only `data cells`, with any reference cell transparently replaced by the cell referred to. For example, when the transparent cell hash `Hashᵇ(c)` is recursively computed, the hash of a reference cell is set to be equal to the hash of the cell referred to, not the hash of the standard representation of the reference cell.
 
 ### 1.1.8. Transparent hash and representation hash of a cell
 
-In this way, `sha256′(c) = Hash′(c)` is the transparent hash of a cell `c` (or the tree of cells rooted in `c`).
+In this way, `sha256ᵇ(c) = Hashᵇ(c)` is the **transparent hash** of a cell `c` (or the tree of cells rooted in `c`).
 
-However, sometimes we need to reason about the exact representation of a tree of cells present in a block. To this end, a representation hash `Hash*(c)` is defined, which is not transparent with respect to reference cells and other exotic types of cells.
-
-We often say that the representation hash of `c` is “the” hash of `c`, because it is the most frequently used hash of a cell.
+However, sometimes we need to reason about the exact representation of a tree of cells present in a block. To this end, a **representation hash** `Hash♯(c)` is defined, which is not transparent with respect to reference cells and other exotic types of cells. We often say that the representation hash of `c` is *the* hash of `c`, because it is the most frequently used hash of a cell.
 
 ### 1.1.9. Use of representation hashes for signatures
 
@@ -117,7 +133,8 @@ ShardState ≈ Hashmap(n, AccountState)   (3)
 ShardBlock ≈ Hashmap(n, AccountBlock)   (4)
 ```
 
-where `n` is the bit length of the `account_id`, and `Hashmap(n, X)` describes a partial map `2^n → X` from bitstrings of length `n` into values of type `X`.
+
+where n is the bit length of the `account_id`, and `Hashmapⁿ(X)` describes a partial map `2ⁿ → X` from bitstrings of length n into values of type X.
 
 Recall that each shardchain — or, more precisely, each shardchain block[⁶](#footnote-6) — corresponds to all accountchains that belong to the same “workchain” (i.e., have the same `workchain_id = w`) and have an `account_id` beginning with the same binary prefix `s`, so that `(w, s)` completely determines a shard.
 
@@ -170,7 +187,7 @@ In both cases, the reason for the removal of a message from the `OutMsgQueue` is
 
 ### 1.2.8. Layout of InMsgDescr, OutMsgDescr and OutMsgQueue
 
-All of the most important non-split shardchain data structures related to messages are organized as hashmaps or dictionaries (implemented by means of Patricia trees serialized into a tree of cells as described in [3.3](#33-messages-message-descriptors-and-queues) and [4.3.3](#433)), with the following keys:
+All of the most important non-split shardchain data structures related to messages are organized as hashmaps or dictionaries (implemented by means of Patricia trees serialized into a tree of cells as described in [3.3](#3-3-messages-message-descriptors-and-queues) and [4.3.3](#4-3-3-description-of-a-storage-phase)), with the following keys:
 
 * The inbound message description `InMsgDescr` uses the 256-bit message hash as a key.
 * The outbound message description `OutMsgDescr` uses the 256-bit message hash as a key.
@@ -262,48 +279,49 @@ Apart from the high-level internal consistency conditions, which treat the conte
 
 Notice that the serialization conditions are a set of mutually recursive predicates on cells or cell slices. For example, if a value of type `A` consists of a 32-bit magic number `mA`, a 64-bit integer `l`, and two references to cells containing values of types `B` and `C`, respectively, then the correct serialization condition for values of type `A` will require a cell or a cell slice to contain exactly 96 data bits and two cell references `r1` and `r2`, with the additional requirements that the first 32 data bits contain `mA`, and the two cells referred to by `r1` and `r2` satisfy the serialization conditions for values of types `B` and `C`, respectively.
 
+Got it 👍 You want the `(x : X)` and `(y : Y)` in the quantifiers written with **proper math symbols**, and the first quantifier indices to appear as **subscripts** inside the brackets.
+
 ### 1.3.7. Constructive elimination of existence quantifiers
-The local conditions one might want to impose sometimes are non-constructible, meaning that they do not necessarily contain an explanation of why they are true. 
 
-A typical example of such a condition `C` is given by:
+The local conditions one might want to impose sometimes are non-constructible, meaning that they do not necessarily contain an explanation of why they are true.
 
-```math
-C :≡ ∀(x:X) ∃(y:Y) A(x, y)   (5)
-````
-
-“for any `x` from `X`, there is a `y` from `Y` such that condition `A(x, y)` holds”.
-
-Even if we know `C` to be true, we do not have a way of quickly finding a `y : Y` such that `A(x, y)` for a given `x : X`. As a consequence, the verification of `C` may be quite time-consuming.
-
-In order to simplify the verification of local conditions, they are made constructible (i.e., verifiable in bounded time) by adding some witness data structures. For instance, condition `C` of [(5)](#1-3-7-constructive-elimination-of-existence-quantifiers) may be transformed by adding a new data structure `f : X → Y` (a map `f` from `X` to `Y`) and imposing the following condition `C′` instead:
+A typical example of such a condition `C` is given by
 
 ```math
-C′ :≡ ∀(x:X) A(x, f(x))   (6)
+C ≔ ∀₍ₓ:𝑋₎ ∃₍ᵧ:𝑌₎ A(x, y)  (5)
+```
+
+“for any `x` from `X`, there is a `y` from `Y` such that condition `A(x, y)` holds”. Even if we know `C` to be true, we do not have a way of quickly finding a `y ∈ Y` such that `A(x, y)`, for a given `x ∈ X`. As a consequence, the verification of `C` may be quite time-consuming.
+
+In order to simplify the verification of local conditions, they are made constructible (i.e., verifiable in bounded time) by adding some witness data structures. For instance, condition `C` of ([5](#1-3-7-constructive-elimination-of-existence-quantifiers)) may be transformed by adding a new data structure `f : X → Y` (a map `f` from `X` to `Y`) and imposing the following condition `C′` instead:
+
+```math
+C′ ≔ ∀₍ₓ:𝑋₎ A(x, f(x))  (6)
 ```
 
 Of course, the “witness” value `f(x) : Y` may be included inside the (modified) data type `X` instead of being kept in a separate table `f`.
 
+
 ### 1.3.8. Example: consistency condition for InMsgDescr
 
-For instance, the consistency condition between `X := InMsgDescr`, the list of all inbound messages processed in a block, and `Y := Transactions`, the list of all transactions present in a block, is of the above sort: “For any input message `x` present in `InMsgDescr`, a transaction `y` must be present in the block such that `y` processes `x`”.[⁸](#footnote-8)
+For instance, the consistency condition between `X := InMsgDescr`, the list of all inbound messages processed in a block, and `Y := Transactions`, the list of all transactions present in a block, is of the above sort: “For any input message `x` present in `InMsgDescr`, a transaction `y` must be present in the block such that `y` processes `x`".[⁸](#footnote-8)
 
 The procedure of `∃`-elimination described in [1.3.7](#1-3-7-constructive-elimination-of-existence-quantifiers) leads us to introduce an additional field in the inbound message descriptors of `InMsgDescr`, containing a reference to the transaction in which the message is actually processed.
 
+
 ### 1.3.9. Constructive elimination of logical disjunctions
 
-Similarly to the transformation described in [1.3.7](#1-3-7-constructive-elimination-of-existence-quantifiers), condition:
+Similarly to the transformation described in [1.3.7](#1-3-7-constructive-elimination-of-existence-quantifiers), condition
 
 ```math
-D :≡ ∀(x:X) ( A1(x) ∨ A2(x) )   (7)
+D :≡ ∀(x : X) A₁(x) ∨ A₂(x)   (7)
 ```
+“for all `x` from `X`, at least one of `A₁(x)` and `A₂(x)` holds”, may be transformed into a function `i : X → 2 = {1, 2}` and a new condition
 
-“for all `x` from `X`, at least one of `A1(x)` and `A2(x)` holds”, may be transformed into a function `i : X → 2 = {1, 2}` and a new condition `D′`:
-
-```math
-D′ :≡ ∀(x:X) Ai(x)(x)   (8)
+```math 
+`D′ :≡ ∀(x : X) Aᵢ(x)(x)   (8)
 ```
-
-This is a special case of the existential quantifier elimination considered before for `Y = 2 = {1, 2}`. It may be useful when `A1(x)` and `A2(x)` are complicated conditions that cannot be verified quickly, so that it is useful to know in advance which of them is in fact true.
+This is a special case of the existential quantifier elimination considered before for `Y = 2 = {1, 2}`. It may be useful when `A₁(x)` and `A₂(x)` are complicated conditions that cannot be verified quickly, so that it is useful to know in advance which of them is in fact true.
 
 ### 1.3.10. Constructivization of conditions
 This process of eliminating the non-constructible logical binders `∃` (existence quantifier) and (sometimes) `∨` (logical disjunction) by introducing additional data structures and fields — that is, the process of making a condition constructible — will be called constructivization. 
@@ -314,11 +332,10 @@ If taken to its theoretical limit, this process leads to logical formulas contai
 Ultimately, all of the internal conditions for a block, along with the local antecessor and neighbor conditions involving this block and another previously generated block, constitute the validity conditions for a shardchain or masterchain block. A block is valid if it satisfies the validity conditions. It is the responsibility of validators to generate valid blocks, as well as check the validity of blocks generated by other validators.
 
 ### 1.3.12. Witnesses of the invalidity of a block
-If a block does not satisfy all of the validity conditions `C1, . . . , Cn` (i.e., the conjunction `V :≡ ⋀i Ci` of the validity conditions), it is invalid. This means that it satisfies the “invalidity condition” `¬V = ⋁i ¬Ci`. 
 
-If all of the `Ci` — and hence, also `V` — have been “constructivized” in the sense described in [1.3.10](#1-3-10-constructivization-of-conditions), so that they contain only logical conjunctions and universal quantifiers (and simple atomic propositions), then `¬V` contains only logical disjunctions and existential quantifiers.
+If a block does not satisfy all of the validity conditions C₁, ..., Cₙ (i.e., the conjunction V ≡ ∧ᵢ Cᵢ of the validity conditions), it is invalid. This means that it satisfies the “invalidity condition” ¬V = ∨ᵢ ¬Cᵢ. If all of the Cᵢ — and hence, also V — have been “constructivized” in the sense described in [1.3.10](#1-3-10-constructive-representation-of-validity-conditions), so that they contain only logical conjunctions and universal quantifiers (and simple atomic propositions), then ¬V contains only logical disjunctions and existential quantifiers.
 
-Then a constructivization of `¬V` may be defined, which would involve an invalidity witness, starting with an index `i` of the specific validity condition `Ci` which fails.
+Then a constructivization of ¬V may be defined, which would involve an invalidity witness, starting with an index i of the specific validity condition Cᵢ which fails.
 
 Such invalidity witnesses may also be serialized and presented to other validators or committed into the masterchain to prove that a specific block or block candidate is in fact invalid. Therefore, the construction and serialization of invalidity witnesses is an important part of a Proof-of-Stake (PoS) blockchain design.[⁹](#footnote-9)
 
@@ -383,9 +400,10 @@ In most cases, such external cell references contain only the 256-bit `sha256` h
 This section takes a closer look at so-called logical time, extensively used in the TON Blockchain for message forwarding and message delivery guarantees, among other purposes.
 
 ### 1.4.1. Logical time
+
 A component of the TON Blockchain that also plays an important role in message delivery is the logical time, usually denoted by `Lt`. It is a non-negative 64-bit integer, assigned to certain events roughly as follows:
 
-If an event `e` logically depends on events `e1, . . . , en`, then `Lt(e)` is the smallest non-negative integer greater than all `Lt(ei)`.
+If an event `e` logically depends on events `e₁, ..., eₙ`, then `Lt(e)` is the smallest non-negative integer greater than all `Lt(eᵢ)`.
 
 In particular, if `n = 0` (i.e., if `e` does not depend on any prior events), then `Lt(e) = 0`.
 
@@ -394,11 +412,11 @@ On some occasions we relax the definition of logical time, requesting only that:
 
 ```math
 Lt(e) > Lt(e′) \quad \text{whenever } e \succ e′   \quad (9)
-````
+```
 
 without insisting that `Lt(e)` be the smallest non-negative integer with this property. In such cases we can speak about relaxed logical time, as opposed to the strict logical time defined above (cf. [1.4.1](#1-4-1-logical-time)).
 
-Notice, however, that the condition (9) is a fundamental property of logical time and cannot be relaxed further.
+Notice, however, that the condition ([9](#1-4-2-a-relaxed-variant-of-logical-time)) is a fundamental property of logical time and cannot be relaxed further.
 
 ### 1.4.3. Logical time intervals
 
@@ -446,7 +464,20 @@ One can assign to any finite collection of atomic events `E = {e}` related by a 
 
 That is, among all assignments of logical time intervals satisfying the conditions listed in [1.4.4](#1-4-4-requirements-for-logical-time-intervals), we choose the one having all `Lt⁺(C) − Lt⁻(C)` as small as possible, and if several assignments with this property exist, we choose the one that has the minimum `Lt⁻(C)` as well.
 
-Such an assignment can be achieved by first assigning logical time `Lt(e)` to all atomic events `e ∈ E` as described in [1.4.1](#1-4-1-logical-time), then setting `Lt⁻(C) := inf_{e ∈ C} Lt(e)` and `Lt⁺(C) := 1 + sup_{e ∈ C} Lt(e)` for any `C ⊂ E`.
+Such an assignment can be achieved by first assigning logical time `Lt(e)`
+to all atomic events `e ∈ E` as described in **1.4.1**, then setting
+
+```math
+Lt⁻(C) := inf₍ₑ ∈ C₎ Lt(e)
+```
+
+and
+
+```math
+Lt⁺(C) := 1 + sup₍ₑ ∈ C₎ Lt(e)
+```
+
+for any `C ⊂ E`.
 
 In most cases when we need to assign logical time intervals, we use the minimal logical time intervals just described.
 
@@ -578,7 +609,7 @@ An example of the above situation is provided by cryptocurrency wallet applicati
 - The wallet application can inspect the shardchain containing account `ξ` (in the case of a basic workchain account) or the masterchain (in the case of a masterchain account), either by itself or using a blockchain explorer, and check the balance of `ξ`.  
 - If the balance is sufficient, the wallet application may create and sign (with the user’s private key) the constructor message (“from nowhere”), and submit it for inclusion to the validators or the collators for the corresponding blockchain.  
 - Once the constructor message is included into a block of the blockchain and processed by a transaction, the wallet smart contract is finally created.  
-- When the user wants to transfer some funds to some other user or smart contract `η`, or wants to send a value-bearing message to `η`, she uses her wallet application to create the message `m` that she wants her wallet smart contract `ξ` to send to `η`, envelope `m` into a special “message from nowhere” `m0` with destination `ξ`, and sign `m0` with her private key. Some provisions against replay attacks must be made, as explained in [2.2.1](#2-2-1).  
+- When the user wants to transfer some funds to some other user or smart contract `η`, or wants to send a value-bearing message to `η`, she uses her wallet application to create the message `m` that she wants her wallet smart contract `ξ` to send to `η`, envelope `m` into a special “message from nowhere” `m0` with destination `ξ`, and sign `m0` with her private key. Some provisions against replay attacks must be made, as explained in [2.2.1](#2-2-1-message-uniqueness).  
 - The wallet smart contract receives message `m0` and checks the validity of the signature with the aid of the public key stored in its persistent data. If the signature is correct, it extracts embedded message `m` from `m0` and sends it to its intended destination `η`, with the indicated amount of funds attached to it.  
 - If the user does not need to immediately start transferring funds, but only wants to passively receive some funds, she may keep her account uninitialized as long as she wants (provided the persistent storage payments do not lead to the exhaustion of its balance), thus minimizing the storage profile and persistent storage payments of the account.  
 - Notice that the wallet application may create for the human user the illusion that the funds are kept in the application itself, and provide an interface to transfer funds or send arbitrary messages “directly” from the user’s account `ξ`. In reality, all these operations will be performed by the user’s wallet smart contract, which effectively acts as a proxy for such requests.  
@@ -627,7 +658,7 @@ In this case, the code for all the wallet smart contracts is best committed by t
 
 Notice that even if the library code becomes unavailable — for example, because its developer stops paying for its storage in the masterchain — it is still possible to use the smart contracts referring to this library, either by committing the library again into the masterchain, or by including its relevant parts inside a message sent to the smart contract. 
 
-This external cell reference resolution mechanism is discussed in more detail later in [4.4.3](#4-4-3).
+This external cell reference resolution mechanism is discussed in more detail later in [4.4.3](#4-3-3-description-of-a-storage-phase).
 
 ### 1.8.5. Destroying smart contracts
 Notice that a smart contract cannot really be destroyed until its balance becomes zero or negative. It may become negative as a result of collecting persistent storage payments, or after sending a value-bearing outbound message transferring almost all of its previous balance.
@@ -695,7 +726,7 @@ We denote by
 
 ```math
 \mathrm{NextHop}(\xi, \eta) \qquad (13)
-````
+```
 
 the next-hop address computed for current (source or transit) address `ξ` and destination address `η`.
 
@@ -725,19 +756,36 @@ Here `‖ξ − η‖₁` is the Hamming distance between `ξ` and `η`, equal t
 \|\xi - \eta\|_1 \;=\; \sum_i |\xi_i - \eta_i| \qquad (15)
 ```
 
-Notice that in general one should expect only an inequality in (14), following from the triangle inequality for the `L1`-metric. Hamming optimality essentially means that `NextHop(ξ, η)` lies on one of the (Hamming) shortest paths from `ξ` to `η`. It can also be expressed by saying that `ν = NextHop(ξ, η)` is always obtained from `ξ` by changing the values of bits at some positions to their values in `η`: for any bit position `i`, we have `ν_i = ξ_i` or `ν_i = η_i`.[¹⁶](#footnote-16)
+Noticing that in general one should expect only an inequality in ([14](#2-1-8-hamming-optimality-of-the-next-hop-address-algorithm)), following from the triangle inequality for the L1-metric. Hamming optimality essentially means that `NextHop(ξ, η)` lies on one of the (Hamming) shortest paths from `ξ` to `η`. It can also be expressed by saying that `ν = NextHop(ξ, η)` is always obtained from `ξ` by changing the values of bits at some positions to their values in `η`: for any bit position `i`, we have `νᵢ = ξᵢ` or `νᵢ = ηᵢ`.
 
 ### 2.1.9. Non-stopping of NextHop
 
-Another important property of the `NextHop` is its **non-stopping**, meaning that `NextHop(ξ, η) = ξ` is possible only when `ξ = η`. In other words, if we have not yet arrived at `η`, the next hop cannot coincide with our current position.
+Here’s your section with math terms and variables made consistent using **plain Unicode mathematical symbols and subscripts/superscripts where needed**:
 
-This property implies that the path from `ξ` to `η`—i.e., the sequence of intermediate addresses `ξ(0) := ξ`, `ξ(n) := NextHop(ξ(n−1), η)`—will gradually stabilize at `η`: for some `N ≥ 0`, we have `ξ(n) = η` for all `n ≥ N`. Indeed, one can always take `N := ‖ξ − η‖₁`.
+---
+
+### 2.1.9. Non-stopping of `NextHop`
+
+Another important property of the `NextHop` is its non-stopping, meaning that `NextHop(ξ, η) = ξ` is possible only when `ξ = η`. In other words, if we have not yet arrived at `η`, the next hop cannot coincide with our current position.
+
+This property implies that the path from `ξ` to `η`—i.e., the sequence of intermediate addresses
+
+```math
+ξ⁽⁰⁾ := ξ,   ξ⁽ⁿ⁾ := NextHop(ξ⁽ⁿ⁻¹⁾, η)`
+```
+—will gradually stabilize at `η`: for some `N ≥ 0`, we have `ξ⁽ⁿ⁾ = η` for all `n ≥ N`. Indeed, one can always take `N := ‖ξ − η‖₁`.
 
 ### 2.1.10. Convexity of the HR path with respect to sharding
 
-A consequence of Hamming optimality property (14) is what we call the **convexity** of the path from `ξ` to `η` with respect to sharding. Namely, if `ξ(0) := ξ`, `ξ(n) := NextHop(ξ(n−1), η)` is the computed path from `ξ` to `η`, and `N` is the first index such that `ξ(N) = η`, and `S` is a shard of some workchain in any shard configuration, then the indices `i` with `ξ(i)` residing in shard `S` constitute a subinterval in `[0, N]`. 
+A consequence of Hamming optimality property ([14](#2-1-8-hamming-optimality-of-the-next-hop-address-algorithm)) is what we call the **convexity** of the path from `ξ` to `η` with respect to sharding. Namely, if
 
-In other words, if integers `0 ≤ i ≤ j ≤ k ≤ N` are such that `ξ(i), ξ(k) ∈ S`, then `ξ(j) ∈ S` as well. This convexity property is important for some proofs related to message forwarding in the presence of dynamic sharding.
+`ξ⁽⁰⁾ := ξ,   ξ⁽ⁿ⁾ := NextHop(ξ⁽ⁿ⁻¹⁾, η)`
+
+is the computed path from `ξ` to `η`, and `N` is the first index such that `ξ⁽ᴺ⁾ = η`, and `S` is a shard of some workchain in any shard configuration, then the indices `i` with `ξ⁽ⁱ⁾` residing in shard `S` constitute a subinterval in `[0, N]`.
+
+In other words, if integers `0 ≤ i ≤ j ≤ k ≤ N` are such that `ξ⁽ⁱ⁾, ξ⁽ᵏ⁾ ∈ S`, then `ξ⁽ʲ⁾ ∈ S` as well.
+
+This **convexity property** is important for some proofs related to message forwarding in the presence of dynamic sharding.
 
 ### 2.1.11. Internal routing
 
@@ -770,9 +818,11 @@ The forwarding of a message runs through several intermediate accountchains, som
 
 Notice that the transit and next-hop addresses differ from the source address only in the `workchain_id` and in the first (most significant) 64 bits of the account address. Therefore, they may be represented by 96-bit strings. Furthermore, their `workchain_id` usually coincides with the `workchain_id` of either the source address or the destination address; a couple of bits may be used to indicate this situation, thus further reducing the space required to represent the transit and next-hop addresses.
 
-In fact, the required storage may be reduced even further by observing that the specific hypercube routing algorithm described in [2.1.5](#2-1-5-computation-of-the-next-hop-address-for-hypercube-routing) always generates intermediate (i.e., transit and next-hop) addresses that coincide with the destination address in their first `k` bits, and with the source address in their remaining bits. Therefore, one might use just the values `0 ≤ k_tr, k_nh ≤ 96` to fully specify the transit and next-hop addresses. One might also notice that `k′ := k_nh` turns out to be a fixed function of `k := k_tr` (for instance, `k′ = k + n2 = k + 4` for `k ≥ 32`), and therefore include only one 7-bit value of `k` in the serialization.
+In fact, the required storage may be reduced even further by observing that the specific **hypercube routing algorithm** described in [2.1.5](#2-1-5-computation-of-the-next-hop-address-for-hypercube-routing) always generates intermediate (i.e., transit and next-hop) addresses that coincide with the destination address in their first `k` bits, and with the source address in their remaining bits.
 
-Such optimizations have the obvious disadvantage that they rely too much on the specific routing algorithm used, which can be changed in the future, so they are used in [3.1.15](#3-1-15) with a provision to specify more general intermediate addresses if necessary.
+Therefore, one might use just the values `0 ≤ k_tr, k_nh ≤ 96` to fully specify the transit and next-hop addresses. One might also notice that `k′ := k_nh` turns out to be a fixed function of `k := k_tr` (for instance, `k′ = k + n/2 = k + 4` for `k ≥ 32`), and therefore include only one 7-bit value of `k` in the serialization.
+
+Such optimizations have the obvious disadvantage that they rely too much on the specific routing algorithm used, which can be changed in the future, so they are used in [3.1.15](#3-1-15-enveloped-messages) with a provision to specify more general intermediate addresses if necessary.
 
 ### 2.1.16. Message envelopes
 
@@ -847,19 +897,39 @@ This is not necessarily true anymore. Therefore, a simple way of ensuring FIFO m
 Notice that the message import monotonicity conditions also imply the uniqueness of the delivery of any message via Hypercube Routing — i.e., that it cannot be imported and processed by the destination smart contract more than once. We will see later in §2.3 that enforcing delivery uniqueness when both Hypercube Routing and Instant Hypercube Routing are active is more complicated.
 
 ### 2.2.12. An overview of Hypercube Routing
-Let us summarize all routing steps performed to deliver an internal message `m` created by source account `ξ₀` to destination account `η`. We denote by `ξ_{k+1} := NextHop(ξ_k, η)`, `k = 0, 1, 2, . . .` the intermediate addresses dictated by HR for forwarding the message `m` to its final destination `η`. Let `S_k` be the shard containing `ξ_k`.
 
-- **[Birth]** — Message `m` with destination `η` is created by a transaction `t` belonging to an account `ξ₀` residing in some shardchain `S₀`. The logical creation time `Lt(m)` is fixed at this point and included into the message `m`.  
-- **[ImmediateProcessing?]** — If the destination `η` resides in the same shardchain `S₀`, the message may be processed in the same block it was generated in. In this case, `m` is included into `OutMsgDescr` with a flag indicating it has been processed in this very block and need not be forwarded further. Another copy of `m` is included into `InMsgDescr`, along with the usual data describing the processing of inbound messages. (Notice that `m` is not included into the `OutMsgQueue` of `S₀`.)  
-- **[InitialInternalRouting]** — If `m` either has a destination outside `S₀`, or is not processed in the same block where it was generated, the internal routing procedure described in [2.1.11](#2-1-11-internal-routing) is applied, until an index `k` is found such that `ξ_k` lies in `S₀`, but `ξ_{k+1} = NextHop(ξ_k, η)` does not (i.e., `S_k = S₀`, but `S_{k+1} ≠ S₀`). Alternatively, this process stops if `ξ_k = η` or `ξ_k` coincides with `η` in its first 96 bits.  
-- **[OutboundQueuing]** — The message `m` is included into `OutMsgDescr` (with the key equal to its hash), with an envelope containing its transit address `ξ_k` and next-hop address `ξ_{k+1}` as explained in [2.1.16](#2-1-16-message-envelopes) and [2.1.15](#2-1-15-representation-of-transit-and-next-hop-addresses). The same enveloped message is also included in the `OutMsgQueue` of the state of `S_k`, with the key equal to the concatenation of the first 96 bits of its next-hop address `ξ_{k+1}` (which may be equal to `η` if `η` belongs to `S_k`) and the message hash `Hash(m)`.  
-- **[QueueWait]** — Message `m` waits in the `OutMsgQueue` of shardchain `S_k` to be forwarded further. In the meantime, shardchain `S_k` may split or merge with other shardchains; in that case, the new shard `S′_k` containing the transit address `ξ_k` inherits `m` in its `OutMsgQueue`.  
-- **[ImportInbound]** — At some point in the future, the validators for the shardchain `S_{k+1}` containing the next-hop address `ξ_{k+1}` scan the `OutMsgQueue` in the state of shardchain `S_k` and decide to import message `m` in keeping with the monotonicity condition (cf. [2.2.5](#2-2-5-logical-time-monotonicity-importing-the-oldest-message-from-the-neighbors)) and other conditions. A new block for shardchain `S_{k+1}` is generated, with an enveloped copy of `m` included in its `InMsgDescr`. The entry in `InMsgDescr` contains also the reason for importing `m` into this block, with a hash of the most recent block of shardchain `S′_k`, and the previous next-hop and transit addresses `ξ_k` and `ξ_{k+1}`, so that the corresponding entry in the `OutMsgQueue` of `S′_k` can be easily located.  
-- **[Confirmation]** — This entry in the `InMsgDescr` of `S_{k+1}` also serves as a confirmation for `S′_k`. In a later block of `S′_k`, message `m` must be removed from the `OutMsgQueue` of `S′_k`; this modification is reflected in a special entry in the `OutMsgDescr` of the block of `S′_k` that performs this state modification.  
-- **[Forwarding?]** — If the final destination `η` of `m` does not reside in `S_{k+1}`, the message is forwarded. Hypercube Routing is applied until some `ξ_ℓ`, `ℓ > k`, and `ξ_{ℓ+1} = NextHop(ξ_ℓ, η)` are obtained, such that `ξ_ℓ` lies in `S_{k+1}`, but `ξ_{ℓ+1}` does not (cf. [2.1.11](#2-1-11-internal-routing)). After that, a newly-enveloped copy of `m` with transit address set to `ξ_ℓ` and next-hop address `ξ_{ℓ+1}` is included into both the `OutMsgDescr` of the current block of `S_{k+1}` and the `OutMsgQueue` of the new state of `S_{k+1}`. The entry of `m` in `InMsgDescr` contains a flag indicating that the message has been forwarded; the entry in `OutMsgDescr` contains the newly-enveloped message and a flag indicating that this is a forwarded message. Then all the steps starting from **[OutboundQueuing]** are repeated, for `ℓ` instead of `k`.  
-- **[Processing?]** — If the final destination `η` of `m` resides in `S_{k+1}`, then the block of `S_{k+1}` that imported the message must process it by a transaction `t` included in the same block. In this case, `InMsgDescr` contains a reference to `t` by its logical time `Lt(t)`, and a flag indicating that the message has been processed.
+Let us summarize all routing steps performed to deliver an internal message `m` created by source account `ξ₀` to destination account `η`.
+We denote by `ξₖ₊₁ := NextHop(ξₖ, η)`, `k = 0, 1, 2, …` the intermediate addresses dictated by HR for forwarding the message `m` to its final destination `η`.
+Let `Sₖ` be the shard containing `ξₖ`.
 
-The above message routing algorithm does not take into account some further modifications required to implement Instant Hypercube Routing (IHR). For instance, a message may be discarded after being imported (listed in `InMsgDescr`) into its final or intermediate shardchain block, because a proof of delivery via IHR to the final destination is presented. In this case, such a proof must be included into `InMsgDescr` to explain why the message was not forwarded further or processed.
+* **[Birth]** — Message `m` with destination `η` is created by a transaction `t` belonging to an account `ξ₀` residing in some shardchain `S₀`. The logical creation time `Lt(m)` is fixed at this point and included into the message `m`.
+
+* **[ImmediateProcessing?]** — If the destination `η` resides in the same shardchain `S₀`, the message may be processed in the same block it was generated in. In this case, `m` is included into `OutMsgDescr` with a flag indicating it has been processed in this very block and need not be forwarded further. Another copy of `m` is included into `InMsgDescr`, along with the usual data describing the processing of inbound messages. (Notice that `m` is not included into the `OutMsgQueue` of `S₀`.)
+
+* **[InitialInternalRouting]** — If `m` either has a destination outside `S₀`, or is not processed in the same block where it was generated, the internal routing procedure described in [2.1.11](#2-1-11-internal-routing) is applied, until an index `k` is found such that `ξₖ` lies in `S₀`, but `ξₖ₊₁ = NextHop(ξₖ, η)` does not (i.e., `Sₖ = S₀`, but `Sₖ₊₁ ≠ S₀`). Alternatively, this process stops if `ξₖ = η` or `ξₖ` coincides with `η` in its first 96 bits.
+
+* **[OutboundQueuing]** — The message `m` is included into `OutMsgDescr` (with the key equal to its hash), with an envelope containing its transit address `ξₖ` and next-hop address `ξₖ₊₁` as explained in [2.1.16](#2-1-6-notation-for-the-next-hop-address) and [2.1.15](#2-1-15-representation-of-transit-and-next-hop-addresses).
+  The same enveloped message is also included in the `OutMsgQueue` of the state of `Sₖ`, with the key equal to the concatenation of the first 96 bits of its next-hop address `ξₖ₊₁` (which may be equal to `η` if `η` belongs to `Sₖ`) and the message hash `Hash(m)`.
+
+* **[QueueWait]** — Message `m` waits in the `OutMsgQueue` of shardchain `Sₖ` to be forwarded further. In the meantime, shardchain `Sₖ` may split or merge with other shardchains; in that case, the new shard `S′ₖ` containing the transit address `ξₖ` inherits `m` in its `OutMsgQueue`.
+
+* **[ImportInbound]** — At some point in the future, the validators for the shardchain `Sₖ₊₁` containing the next-hop address `ξₖ₊₁` scan the `OutMsgQueue` in the state of shardchain `Sₖ` and decide to import message `m` in keeping with the monotonicity condition (cf. [2.2.5](#2-2-5-logical-time-monotonicity-importing-the-oldest-message-from-the-neighbors)) and other conditions.
+  A new block for shardchain `Sₖ₊₁` is generated, with an enveloped copy of `m` included in its `InMsgDescr`. The entry in `InMsgDescr` contains also the reason for importing `m` into this block, with a hash of the most recent block of shardchain `S′ₖ`, and the previous next-hop and transit addresses `ξₖ` and `ξₖ₊₁`, so that the corresponding entry in the `OutMsgQueue` of `S′ₖ` can be easily located.
+
+* **[Confirmation]** — This entry in the `InMsgDescr` of `Sₖ₊₁` also serves as a confirmation for `S′ₖ`.
+  In a later block of `S′ₖ`, message `m` must be removed from the `OutMsgQueue` of `S′ₖ`; this modification is reflected in a special entry in the `OutMsgDescr` of the block of `S′ₖ` that performs this state modification.
+
+* **[Forwarding?]** — If the final destination `η` of `m` does not reside in `Sₖ₊₁`, the message is forwarded.
+  Hypercube Routing is applied until some `ξₗ`, `l > k`, and `ξₗ₊₁ = NextHop(ξₗ, η)` are obtained, such that `ξₗ` lies in `Sₖ₊₁`, but `ξₗ₊₁` does not (cf. [2.1.11](#2-1-11-internal-routing)).
+  After that, a newly-enveloped copy of `m` with transit address set to `ξₗ` and next-hop address `ξₗ₊₁` is included into both the `OutMsgDescr` of the current block of `Sₖ₊₁` and the `OutMsgQueue` of the new state of `Sₖ₊₁`.
+  The entry of `m` in `InMsgDescr` contains a flag indicating that the message has been forwarded; the entry in `OutMsgDescr` contains the newly-enveloped message and a flag indicating that this is a forwarded message.
+  Then all the steps starting from [OutboundQueuing]** are repeated, for `l` instead of `k`.
+
+* **[Processing?]** — If the final destination `η` of `m` resides in `Sₖ₊₁`, then the block of `Sₖ₊₁` that imported the message must process it by a transaction `t` included in the same block.
+  In this case, `InMsgDescr` contains a reference to `t` by its logical time `Lt(t)`, and a flag indicating that the message has been processed.
+
+The above message routing algorithm does not take into account some further modifications required to implement **Instant Hypercube Routing (IHR)**. For instance, a message may be discarded after being imported (listed in `InMsgDescr`) into its final or intermediate shardchain block, because a proof of delivery via IHR to the final destination is presented.
+In this case, such a proof must be included into `InMsgDescr` to explain why the message was not forwarded further or processed.
 
 ---
 
@@ -902,14 +972,29 @@ The obvious disadvantage of this algorithm is that, if message `m` is very old (
 To check whether an IHR message `m` has already been delivered to its destination shardchain, we can apply the general algorithm described above (cf. [2.3.4](#2-3-4-checking-whether-a-message-has-already-been-delivered-to-its-final-destination)), modified to inspect only the last `c` blocks for some small constant `c` (say, `c = 8`). If no conclusion can be reached after inspecting these blocks, then the validators for the destination shardchain may simply discard the IHR message instead of spending more resources on this check.
 
 ### 2.3.6. Checking whether an HR message has already been delivered via HR to its final destination or an intermediate shardchain
-To check whether an HR-received message `m` (or rather, a message `m` being considered for import via HR) has already been imported via HR, we can use the following algorithm: Let `ξ_k` be the transit address of `m` (belonging to a neighboring shardchain `S_k`) and `ξ_{k+1}` be its next-hop address (belonging to the shardchain under consideration). Since we are considering the inclusion of `m`, `m` must be present in the `OutMsgQueue` of the most recent state of shardchain `S_k`, with `ξ_k` and `ξ_{k+1}` indicated in its envelope. In particular, (a) the message has been included into `OutMsgQueue`, and we may even know when, because the entry in `OutMsgQueue` sometimes contains the logical time of the block where it has been added, and (b) it has not yet been removed from `OutMsgQueue`.
 
-Now, the validators of the neighboring shardchain are required to remove a message from `OutMsgQueue` as soon as they observe that message (with transit and next-hop addresses `ξ_k` and `ξ_{k+1}` in its envelope) has been imported into the `InMsgDescr` of the message’s next-hop shardchain. Therefore, (b) implies that the message could have been imported into the `InMsgDescr` of a preceding block only if this preceding block is very new (i.e., not yet known to the most recent neighboring shardchain block). Therefore, only a very limited number of preceding blocks (typically one or two, at most) need to be scanned by the algorithm described in [2.3.4](#2-3-4-checking-whether-a-message-has-already-been-delivered-to-its-final-destination) to conclude that the message has not yet been imported.[²¹](#footnote-21) In fact, if this check is performed by the validators or collators for the current shardchain themselves, it can be optimized by keeping in memory the `InMsgDescr`s of the several latest blocks.
+To check whether an HR-received message `m` (or rather, a message `m` being considered for import via HR) has already been imported via HR, we can use the following algorithm:
+
+Let `ξₖ` be the transit address of `m` (belonging to a neighboring shardchain `Sₖ`) and `ξₖ₊₁` be its next-hop address (belonging to the shardchain under consideration). Since we are considering the inclusion of `m`, `m` must be present in the `OutMsgQueue` of the most recent state of shardchain `Sₖ`, with `ξₖ` and `ξₖ₊₁` indicated in its envelope.
+
+In particular:
+
+* (a) the message has been included into `OutMsgQueue`, and we may even know when, because the entry in `OutMsgQueue` sometimes contains the logical time of the block where it has been added, and
+* (b) it has not yet been removed from `OutMsgQueue`.
+
+Now, the validators of the neighboring shardchain are required to remove a message from `OutMsgQueue` as soon as they observe that the message (with transit and next-hop addresses `ξₖ` and `ξₖ₊₁` in its envelope) has been imported into the `InMsgDescr` of the message’s next-hop shardchain. Therefore, (b) implies that the message could have been imported into the `InMsgDescr` of a preceding block only if this preceding block is very new (i.e., not yet known to the most recent neighboring shardchain block).
+
+Therefore, only a very limited number of preceding blocks (typically one or two, at most) need to be scanned by the algorithm described in [2.3.4](#2-3-4-checking-whether-a-message-has-already-been-delivered-to-its-final-destination) to conclude that the message has not yet been imported.[²¹](#footnote-21)
+
+In fact, if this check is performed by the validators or collators for the current shardchain themselves, it can be optimized by keeping in memory the `InMsgDescr`s of the several latest blocks.
 
 ### 2.3.7. Checking whether an HR message has already been delivered via IHR to its final destination
-Finally, to check whether an HR message has already been delivered to its final destination via IHR, one can use the general algorithm described in [2.3.4](#2-3-4-checking-whether-a-message-has-already-been-delivered-to-its-final-destination). In contrast with [2.3.5](#2-3-5-checking-whether-an-ihr-message-has-already-been-delivered-to-its-final-destination), we cannot abort the verification process after scanning a fixed number of the latest blocks in the destination shardchain, because HR messages cannot be dropped without a reason.
 
-Instead, we indirectly bound the number of blocks to be inspected by forbidding the inclusion of IHR message `m` into a block `B` of its destination shardchain if there are already more than, say, `c = 8` blocks `B′` in the destination shardchain with `Lt⁺(B′) ≥ Lt(m)`.
+Finally, to check whether an HR message has already been delivered to its final destination via IHR, one can use the general algorithm described in [2.3.4](#2-3-4-checking-whether-a-message-has-already-been-delivered-to-its-final-destination).
+
+In contrast with [2.3.5](#2-3-5-checking-whether-an-ihr-message-has-already-been-delivered-to-its-final-destination), we cannot abort the verification process after scanning a fixed number of the latest blocks in the destination shardchain, because HR messages cannot be dropped without a reason.
+
+Instead, we indirectly bound the number of blocks to be inspected by forbidding the inclusion of an IHR message `m` into a block `B` of its destination shardchain if there are already more than, say, `c = 8` blocks `B′` in the destination shardchain with `Lt⁺(B′) ≥ Lt(m)`.
 
 Such a condition effectively restricts the time interval after the creation of message `m` in which it could have been delivered via IHR, so that only a small number of blocks of the destination shardchain (at most `c`) will need to be inspected.
 
@@ -928,9 +1013,9 @@ Notice that most general conventions related to messages must be obeyed by all s
 This chapter begins with some general definitions, followed by the precise layout of addresses used for serializing source and destination addresses in a message.
 
 ### 3.1.1. Some standard definitions
-For the reader’s convenience, we reproduce here several general TL-B definitions.²² These definitions are used below in the discussion of address and message layout, but otherwise are not related to the TON Blockchain.
+For the reader’s convenience, we reproduce here several general TL-B definitions.[²²](#footnote-22) These definitions are used below in the discussion of address and message layout, but otherwise are not related to the TON Blockchain.
 
-```tlb
+```c
 unit$_ = Unit;
 true$_ = True;
 // EMPTY False;
@@ -942,26 +1027,28 @@ left$0 {X:Type} {Y:Type} value:X = Either X Y;
 right$1 {X:Type} {Y:Type} value:Y = Either X Y;
 pair$_ {X:Type} {Y:Type} first:X second:Y = Both X Y;
 bit$_ _:(## 1) = Bit;
-````
+```
 
 ### 3.1.2. TL-B scheme for addresses
 
 The serialization of source and destination addresses is defined by the following TL-B scheme:
 
-```tlb
+```c
 addr_none$00 = MsgAddressExt;
 addr_extern$01 len:(## 8) external_address:(len * Bit)
-= MsgAddressExt;
+  = MsgAddressExt;
 anycast_info$_ depth:(## 5) rewrite_pfx:(depth * Bit) = Anycast;
 addr_std$10 anycast:(Maybe Anycast)
-workchain_id:int8 address:uint256 = MsgAddressInt;
+  workchain_id:int8 address:uint256 = MsgAddressInt;
 addr_var$11 anycast:(Maybe Anycast) addr_len:(## 9)
-workchain_id:int32 address:(addr_len * Bit) = MsgAddressInt;
+  workchain_id:int32 address:(addr_len * Bit) = MsgAddressInt;
 _ MsgAddressInt = MsgAddress;
 _ MsgAddressExt = MsgAddress;
 ```
 
-The two last lines define type `MsgAddress` to be the internal union of types `MsgAddressInt` and `MsgAddressExt` (not to be confused with their external union `Either MsgAddressInt MsgAddressExt` as defined in 3.1.1), as if the preceding four lines had been repeated with the right-hand side replaced by `MsgAddress`. In this way, type `MsgAddress` has four constructors, and types `MsgAddressInt` and `MsgAddressExt` are both subtypes of `MsgAddress`.
+The two last lines define type `MsgAddress` to be the internal union of types `MsgAddressInt` and `MsgAddressExt` (not to be confused with their external union `Either MsgAddressInt MsgAddressExt` as defined in [3.1.1](#3-1-1-some-standard-definitions)), as if the preceding four lines had been repeated with the right-hand side replaced by `MsgAddress`.
+
+In this way, type `MsgAddress` has four constructors, and types `MsgAddressInt` and `MsgAddressExt` are both subtypes of `MsgAddress`.
 
 ### 3.1.3. External addresses
 
@@ -973,7 +1060,7 @@ For example, a special external service may inspect the destination address of a
 
 The two remaining constructors, `addr_std` and `addr_var`, represent internal addresses. The first of them, `addr_std`, represents a signed 8-bit `workchain_id` (sufficient for the masterchain and for the basic workchain) and a 256-bit internal address in the selected workchain. 
 
-The second of them, `addr_var`, represents addresses in workchains with a “large” `workchain_id`, or internal addresses of length not equal to 256. Both of these constructors have an optional `anycast` value, absent by default, which enables “address rewriting” when present.²³
+The second of them, `addr_var`, represents addresses in workchains with a “large” `workchain_id`, or internal addresses of length not equal to 256. Both of these constructors have an optional `anycast` value, absent by default, which enables “address rewriting” when present.[²³](#footnote-23)
 
 The validators must use `addr_std` instead of `addr_var` whenever possible, but must be ready to accept `addr_var` in inbound messages. The `addr_var` constructor is intended for future extensions.
 
@@ -983,7 +1070,7 @@ Notice that `workchain_id` must be a valid workchain identifier enabled in the c
 
 Amounts of Grams are expressed with the aid of two types representing variable-length unsigned or signed integers, plus a type `Grams` explicitly dedicated to representing non-negative amounts of nanograms, as follows:
 
-```tlb
+```c
 var_uint$_ {n:#} len:(#< n) value:(uint (len * 8))
 = VarUInteger n;
 var_int$_ {n:#} len:(#< n) value:(int (len * 8))
@@ -991,9 +1078,9 @@ var_int$_ {n:#} len:(#< n) value:(int (len * 8))
 nanograms$_ amount:(VarUInteger 16) = Grams;
 ```
 
-If one wants to represent `x` nanograms, one selects an integer `ℓ < 16` such that `x < 2^(8ℓ)`, and serializes first `ℓ` as an unsigned 4-bit integer, then `x` itself as an unsigned `8ℓ`-bit integer. Notice that four zero bits represent a zero amount of Grams.
+If one wants to represent `x` nanograms, one selects an integer `ℓ < 16` such that `x < 2⁸ˡ`, and serializes first `ℓ` as an unsigned 4-bit integer, then `x` itself as an unsigned `8ℓ`-bit integer. Notice that four zero bits represent a zero amount of Grams.
 
-Recall (cf. \[3, A]) that the original total supply of Grams is fixed at five billion (i.e., `5 · 10^18 < 2^63` nanograms), and is expected to grow very slowly. Therefore, all the amounts of Grams encountered in practice will fit in unsigned or even signed 64-bit integers. The validators may use the 64-bit integer representation of Grams in their internal computations; however, the serialization of these values the blockchain is another matter.
+Recall (cf. [3, A](#ref-3)) that the original total supply of Grams is fixed at five billion (i.e., `5·10¹⁸ < 2⁶³` nanograms), and is expected to grow very slowly. Therefore, all the amounts of Grams encountered in practice will fit in unsigned or even signed 64-bit integers. The validators may use the 64-bit integer representation of Grams in their internal computations; however, the serialization of these values in the blockchain is another matter.
 
 ### 3.1.6. Representing collections of arbitrary currencies
 
@@ -1001,7 +1088,7 @@ Recall that the TON Blockchain allows its users to define arbitrary cryptocurren
 
 When some amounts of one or several such cryptocurrencies need to be represented, a dictionary (cf. [4, 3.3](#ref-4)) with 32-bit `currency_id`s as keys and `VarUInteger 32` values is used:
 
-```tlb
+```c
 extra_currencies$_ dict:(HashmapE 32 (VarUInteger 32))
 = ExtraCurrencyCollection;
 currencies$_ grams:Grams other:ExtraCurrencyCollection
@@ -1014,7 +1101,7 @@ The value attached to an internal message is represented by a value of the `Curr
 
 A message consists of its header followed by its body, or payload. The body is essentially arbitrary, to be interpreted by the destination smart contract. The message header is standard and is organized as follows:
 
-```tlb
+```c
 int_msg_info$0 ihr_disabled:Bool bounce:Bool
 src:MsgAddressInt dest:MsgAddressInt
 value:CurrencyCollection ihr_fee:Grams fwd_fee:Grams
@@ -1081,7 +1168,7 @@ Notice that the source address and the logical creation time of an internal or a
 
 Message envelopes are used for attaching routing information, such as the current (transit) address and the next-hop address, to inbound, transit, and outbound messages (cf. [2.1.16](#2-1-16-message-envelopes)). The message itself is kept in a separate cell and referred to from the message envelope by a cell reference.
 
-```tlb
+```c
 interm_addr_regular$0 use_src_bits:(#<= 96)
 = IntermediateAddress;
 interm_addr_simple$10 workchain_id:int8 addr_pfx:(64 * Bit)
@@ -1118,7 +1205,7 @@ Inbound messages may be classified as follows:
 ### 3.2.2. Descriptor of an inbound message
 Each inbound message is described by an instance of the InMsg type, which has six constructors corresponding to the cases listed above in [3.2.1](#3-2-1-types-and-sources-of-inbound-messages):
 
-```tlb
+```c
 msg_import_ext$000 msg:^(Message Any) transaction:^Transaction
 = InMsg;
 
@@ -1210,7 +1297,7 @@ value_imported:CurrencyCollection = ImportFees;
 
 Now the  itself is defined as an augmented hashmap, with 256-bit keys (equal to the representation hashes of imported messages), values of type InMsg (cf. [3.2.2](#3-2-2-descriptor-of-an-inbound-message)), and augmentation values of type ImportFees (cf. [3.2.7](#3-2-7-augmentation-of-inmsgdescr)):
 
-```tlb
+```math
 _ (HashmapAugE 256 InMsg ImportFees) = InMsgDescr;
 ```
 
@@ -1218,7 +1305,7 @@ This TL-B notation uses an anonymous constructor `_` to define `InMsgDescr` as a
 
 ### 3.2.9. Aggregation rules for InMsgDescr
 
-The fork evaluation and leaf evaluation functions (cf. [3.2.5](#3-2-5-augmented-hashmaps%2C-or-dictionaries) are not included explicitly in the above notation, because the dependent types of TL-B are not expressive enough for this purpose. In words, the fork evaluation function is just the componentwise addition of two ImportFees instances, and the leaf evaluation function is defined by the rules listed in [3.2.3](#3-2-3-collecting-forwarding-and-transit-fees-from-imported-messages) and [3.2.4](#3-2-4-imported-value-of-an-inbound-message). In this way, the root of the Patricia tree representing an instance of InMsgDescr contains an ImportFees instance with the total value imported by all inbound messages, and with the total forwarding fees collected from them.
+The fork evaluation and leaf evaluation functions (cf. [3.2.5](#3-2-5-augmented-hashmaps%2C-or-dictionaries)) are not included explicitly in the above notation, because the dependent types of TL-B are not expressive enough for this purpose. In words, the fork evaluation function is just the componentwise addition of two ImportFees instances, and the leaf evaluation function is defined by the rules listed in [3.2.3](#3-2-3-collecting-forwarding-and-transit-fees-from-imported-messages) and [3.2.4](#3-2-4-imported-value-of-an-inbound-message). In this way, the root of the Patricia tree representing an instance of InMsgDescr contains an ImportFees instance with the total value imported by all inbound messages, and with the total forwarding fees collected from them.
 
 ## 3.3 Outbound message queue and descriptors
 
@@ -1243,7 +1330,7 @@ Notice that on some occasions a message may be imported from the `OutMsgQueue` o
 
 Each outbound message is described by an instance of OutMsg:
 
-```tlb
+```c
 msg_export_ext$000 msg:^(Message Any)
 transaction:^Transaction = OutMsg;
 
@@ -1279,13 +1366,13 @@ Each outbound message described by an `OutMsg` exports some value—a certain am
 
 The `OutMsgDescr` itself is simply an augmented hashmap (cf. [3.2.5](#3-2-5-augmented-hashmaps%2C-or-dictionaries), with 256-bit keys (equal to the representation hash of the message), values of type `OutMsg`, and augmentation values of type `CurrencyCollection`:
 
-```tlb
+```math
 _ (HashmapAugE 256 OutMsg CurrencyCollection) = OutMsgDescr;
 ```
 
 The augmentation is the exported value of the corresponding message, aggregated by means of the sum, and computed at the leaves as explained in [3.3.4](#3-3-4-exported-value-of-an-outbound-message). In this way, the total exported value appears near the root of the Patricia tree representing `OutMsgDescr`.
 
-The most important consistency condition for `OutMsgDescr` is that its entry with key `k` must be an `OutMsg` describing a message `m` with representation hash `Hash[ (m) = k`.
+The most important consistency condition for `OutMsgDescr` is that its entry with key `k` must be an `OutMsg` describing a message `m` with representation hash ``Hash♭(m) = k``.
 
 ### 3.3.6. Structure of OutMsgQueue
 
@@ -1293,11 +1380,11 @@ Recall (cf. [1.2.7](#1-2-7-outbound-message-queue-of-a-shardchain)) that `OutMsg
 
 The structure of `OutMsgQueue` is simple: it is just an augmented hashmap with 352-bit keys and values of type OutMsg:
 
-```tlb
+```math
 _ (HashmapAugE 352 OutMsg uint64) = OutMsgQueue;
 ```
 
-The key used for an outbound message `m` is the concatenation of its 32-bit next-hop `workchain_id`, the first 64 bits of the next-hop address inside that workchain, and the representation hash `Hash[ (m)` of the message `m` itself.
+The key used for an outbound message `m` is the concatenation of its 32-bit next-hop `workchain_id`, the first 64 bits of the next-hop address inside that workchain, and the representation hash `Hash♭(m)` of the message `m` itself.
 
 The augmentation is by the logical creation time `Lt(m)` of message `m` at the leaves, and by the minimum of the augmentation values of the children at the forks.
 
@@ -1334,9 +1421,10 @@ By convention, the zero account or account with zero address accumulates the pro
 
 ### 4.1.3. Small and large smart contracts
 
-By default, smart contracts are “small”, meaning that they have one account address belonging to exactly one shardchain at any given moment of time. However, one can create a “large smart contract of splitting depth d ”, meaning that up to `2^d` instances of the smart contract may be created, with the first d bits of the original address of the smart contract replaced by arbitrary bit sequences.[²⁹](#footnote-29) One can send messages to such smart contracts using internal anycast addresses with anycast set to d (cf. [3.1.2](#3-1-2-tl-b-scheme-for-addresses)). Furthermore, the instances of the large smart contract are allowed to use this anycast address as the source address of their generated messages.
+By default, smart contracts are “small”, meaning that they have one account address belonging to exactly one shardchain at any given moment of time. However, one can create a “large smart contract of splitting depth d”, meaning that up to 2ᵈ instances of the smart contract may be created, with the first d bits of the original address of the smart contract replaced by arbitrary bit sequences.[²⁹](#footnote-29) One can send messages to such smart contracts using internal anycast addresses with `anycast` set to d (cf. [3.1.2](#3-1-2-tl-b-scheme-for-addresses)). Furthermore, the instances of the large smart contract are allowed to use this anycast address as the source address of their generated messages.
 
 An instance of a large smart contract is an account with non-zero maximal splitting depth d.
+
 
 ### 4.1.4. The three kinds of accounts
 
@@ -1350,7 +1438,7 @@ There are three kinds of accounts:
 
 The storage profile of an account is a data structure describing the amount of persistent blockchain state storage used by that account. It describes the total amount of cells, data bits, and internal and external cell references used.
 
-```tlb
+```c
 storage_used$_ cells:(VarUInteger 7) bits:(VarUInteger 7)
 ext_refs:(VarUInteger 7) int_refs:(VarUInteger 7)
 public_cells:(VarUInteger 7) = StorageUsed;
@@ -1358,7 +1446,7 @@ public_cells:(VarUInteger 7) = StorageUsed;
 
 The same type `StorageUsed` may represent the storage profile of a message, as required, for instance, to compute fwd\_fee, the total forwarding fee for Hypercube Routing. The storage profile of an account has some additional fields indicating the last time when the storage fees were exacted:
 
-```tlb
+```c
 storage_info$_ used:StorageUsed last_paid:uint32
 due_payment:(Maybe Grams) = StorageInfo;
 ```
@@ -1369,7 +1457,7 @@ The `last_paid` field contains either the unixtime of the most recent storage pa
 
 The state of an account is represented by an instance of type `Account`, described by the following TL-B scheme:[³⁰](#footnote-30)
 
-```tlb
+```c
 account_none$0 = Account;
 account$1 addr:MsgAddressInt storage_stat:StorageInfo
 storage:AccountStorage = Account;
@@ -1422,7 +1510,7 @@ Of course, there are important differences, too. For example:
 
 The split part of the shardchain state (cf. [1.2.1](#1-2-1-the-infinite-sharding-paradigm-isp-applied-to-blockchain-block-and-state) and [1.2.2](#1-2-2-split-and-non-split-part-of-the-shardchain-block-and-state)) is given by
 
-```tlb
+```math
 _ (HashmapAugE 256 Account CurrencyCollection) = ShardAccounts;
 ```
 
@@ -1458,43 +1546,46 @@ In contrast with messages, which have essentially the same headers throughout al
 some common parts (the address and the balance), our discussion of transactions is necessarily limited to the masterchain and the basic workchain.
 Other workchains may define completely different kinds of transactions.
 
-### 4.2.1. Logical time of a transaction.
-Each transaction t has a logical
-time interval Lt•(t) = [Lt−(t), Lt+(t)) assigned to it (cf. [1.4.6](#1-4-6-logical-time-in-the-ton-blockchain) and [1.4.3](#1-4-3-logical-time-intervals)).
-By convention, a transaction t generating n outbound messages m1, . . . , mn
-is assigned a logical time interval of length n + 1, so that
+
+### 4.2.1. Logical time of a transaction  
+
+Each transaction `t` has a logical time interval `Lt•(t) = [Lt⁻(t), Lt⁺(t))` assigned to it (cf. [1.4.6](#1-4-6-logical-time-in-the-ton-blockchain) and [1.4.3](#1-4-3-logical-time-intervals)).  
+
+By convention, a transaction `t` generating `n` outbound messages `m₁, ..., mₙ` is assigned a logical time interval of length `n + 1`, so that:  
 
 ```math
-Lt+(t) = Lt−(t) + n + 1 . (16)
-````
-
-We also set Lt(t) := Lt−(t), and assign the logical creation time of message
-mi, where 1 ≤ i ≤ n, by
-
-```math
-Lt(mi) = Lt−(mi) := Lt−(t) + i,  Lt+(mi) := Lt−(mi) + 1 . (17)
+Lt⁺(t) = Lt⁻(t) + n + 1   (16)
 ```
 
-In this way, each generated outbound message is assigned its own unit interval
-inside the logical time interval Lt•(t) of transaction t.
+We also set `Lt(t) := Lt⁻(t)`, and assign the logical creation time of message `mᵢ`, where `1 ≤ i ≤ n`, by:
 
-### 4.2.2. Logical time uniquely identifies transactions and outbound messages of an account.
+```math
+Lt(mᵢ) = Lt⁻(mᵢ) := Lt⁻(t) + i  
+Lt⁺(mᵢ) := Lt⁻(mᵢ) + 1   (17)
+```
 
-Recall that the conditions imposed on logical
-time imply that `Lt−(t)` ≥ `Lt+(t′)` for any preceding transaction t′ of the same
-account ξ, and that `Lt−(t)` > `Lt(m)` if m is the inbound message processed
-by transaction t. In this way, the logical time intervals of transactions of
-the same account do not intersect each other, and as a consequence, the
-logical time intervals of all outbound messages generated by an account do
-not intersect each other either. In other words, all `Lt(m)` are different, when
-m runs through all outbound messages of the same account ξ.
+In this way, each generated outbound message is assigned its own unit interval inside the logical time interval `Lt•(t)` of transaction `t`.
 
-In this way, `Lt(t)` and `Lt(m)`, when combined with an account identifier
-ξ, uniquely determine a transaction t or an outbound message m of that
-account. Furthermore, if one has an ordered list of all transactions of an
-account along with their logical times, it is easy to find the transaction that
-generated a given outbound message m, simply by looking up the transaction
-t with logical time `Lt(t)` nearest to `Lt(m)` from below.
+### 4.2.2. Logical time uniquely identifies transactions and outbound messages of an account
+
+Recall that the conditions imposed on logical time imply that:
+
+```math
+Lt⁻(t) ≥ Lt⁺(t′)
+```
+
+for any preceding transaction `t′` of the same account `ξ`, and that:
+
+```math
+Lt⁻(t) > Lt(m)
+```
+
+if `m` is the inbound message processed by transaction `t`.
+
+In this way, the logical time intervals of transactions of the same account do not intersect each other, and as a consequence, the logical time intervals of all outbound messages generated by an account do not intersect each other either. In other words, all `Lt(m)` are different when `m` runs through all outbound messages of the same account `ξ`.
+
+In this way, `Lt(t)` and `Lt(m)`, when combined with an account identifier `ξ`, uniquely determine a transaction `t` or an outbound message `m` of that account. Furthermore, if one has an ordered list of all transactions of an account along with their logical times, it is easy to find the transaction that generated a given outbound message `m`, simply by looking up the transaction `t` with logical time `Lt(t)` nearest to `Lt(m)` from below.
+
 
 ### 4.2.3. Generic components of a transaction.
 
@@ -1503,8 +1594,8 @@ Each transaction t contains or indirectly refers to the following data:
 * The account ξ to which the transaction belongs.
 * The logical time `Lt(t)` of the transaction.
 * One or zero inbound messages m processed by the transaction.
-* The number of generated outbound messages n ≥ 0.
-* The outbound messages m1, . . . , mn.
+* The number of generated outbound messages `n ≥ 0`.
+* The outbound messages `m₁, ..., mₙ`.
 * The initial state of account ξ (including its balance).
 * The final state of account ξ (including its balance).
 * The total fees collected by the validators.
@@ -1512,8 +1603,7 @@ Each transaction t contains or indirectly refers to the following data:
   needed to validate it, including the kind of the transaction (cf. [4.2.4](#4-2-4-kinds-of-transactions))
   and some of the intermediate steps performed.
 
-Of these components, all but the very last one are quite general and might
-appear in other workchains as well.
+Of these components, all but the very last one are quite general and might appear in other workchains as well.
 
 ### 4.2.4. Kinds of transactions.
 
@@ -1634,7 +1724,7 @@ Merge transactions also consist of two transactions each. If an account ξ′ ne
 Any transaction contains the fields listed in [4.2.3](#4-2-3-generic-components-of-a-transaction). As a consequence, there are some common
 components in all transactions:
 
-```tlb
+```c
 transaction$_ account_addr:uint256 lt:uint64 outmsg_cnt:uint15
 orig_status:AccountStatus end_status:AccountStatus
 in_msg:(Maybe ^(Message Any))
@@ -1701,7 +1791,7 @@ a block belonging to the same account ξ are collected into an “accountchain
 block” AccountBlock, which essentially is a dictionary transactions with
 64-bit keys, each equal to the logical time of the corresponding transaction:
 
-```tlb
+```c
 acc_trans$_ account_addr:uint256
 transactions:(HashmapAug 64 ^Transaction Grams)
 state_update:^(MERKLE_UPDATE Account)
@@ -1743,7 +1833,7 @@ change only as the result of performing a transaction.
 All transactions in a
 block are represented by (cf. [1.2.1](#1-2-1-the-infinite-sharding-paradigm-isp-applied-to-blockchain-block-and-state)):
 
-```tlb
+```math
 _ (HashmapAugE 256 AccountBlock Grams) = ShardAccountBlocks;
 ```
 
@@ -1819,7 +1909,7 @@ The storage phase is present in
 several kinds of transactions, so a common representation for this phase is
 used:
 
-```tlb
+```c
 tr_phase_storage$_ storage_fees_collected:Grams
 storage_fees_due:(Maybe Grams)
 status_change:AccStatusChange
@@ -1835,7 +1925,7 @@ acst_deleted$11 = AccStatusChange;   // frozen -> deleted
 The credit phase can result in the
 collection of some due payments:
 
-```tlb
+```c
 tr_phase_credit$_ due_fees_collected:(Maybe Grams)
 credit:CurrencyCollection = TrCreditPhase;
 ```
@@ -1850,7 +1940,7 @@ invoked at all (e.g., if the account is absent, not initialized, or frozen, and 
 inbound message being processed has no code or data fields or these fields
 have an incorrect hash); this is reflected by corresponding constructors.
 
-```tlb
+```c
 tr_phase_compute_skipped$0 reason:ComputeSkipReason
 = TrComputePhase;
 
@@ -1895,14 +1985,9 @@ Possible parameters are as follows:
 
 ### 4.3.8. Description of the action phase.
 
-The action phase occurs after a
-valid computation phase. It attempts to perform the actions stored by TVM
-during the computing phase into the action list. It may fail, because the
-action list may turn out to be too long, contain invalid actions, or contain
-actions that cannot be completed (for instance, because of insufficient funds
-to create an outbound message with the required value).
+The action phase occurs after a valid computation phase. It attempts to perform the actions stored by TVM during the computing phase into the action list. It may fail, because the action list may turn out to be too long, contain invalid actions, or contain actions that cannot be completed (for instance, because of insufficient funds to create an outbound message with the required value).
 
-```tlb
+```c
 tr_phase_action$_ success:Bool valid:Bool no_funds:Bool
 status_change:AccStatusChange
 total_fwd_fees:(Maybe Grams) total_action_fees:(Maybe Grams)
@@ -1914,7 +1999,7 @@ action_list_hash:uint256 tot_msg_size:StorageUsed
 
 ### 4.3.9. Description of the bounce phase.
 
-```tlb
+```c
 tr_phase_bounce_negfunds$00 = TrBouncePhase;
 tr_phase_bounce_nofunds$01 msg_size:StorageUsed
 req_fwd_fees:Grams = TrBouncePhase;
@@ -1924,7 +2009,7 @@ msg_fees:Grams fwd_fees:Grams = TrBouncePhase;
 
 ### 4.3.10. Description of an ordinary transaction.
 
-```tlb
+```c
 trans_ord$0000 storage_ph:(Maybe TrStoragePhase)
 credit_ph:(Maybe TrCreditPhase)
 compute_ph:TrComputePhase action:(Maybe ^TrActionPhase)
@@ -1936,27 +2021,23 @@ destroyed:Bool
 Several consistency conditions are imposed on this structure:
 
 * action is absent if and only if the computing phase was unsuccessful.
-* The aborted flag is set either if there is no action phase or if the action
-  phase was unsuccessful.
-* The bounce phase occurs only if the aborted flag is set and the inbound
-  message was bounceable.
+* The aborted flag is set either if there is no action phase or if the action phase was unsuccessful.
+* The bounce phase occurs only if the aborted flag is set and the inbound message was bounceable.
 
 ### 4.3.11. Description of a storage transaction.
 
-A storage transaction
-consists just of one stand-alone storage phase:
+A storage transaction consists just of one stand-alone storage phase:
 
-```tlb
+```c
 trans_storage$0001 storage_ph:TrStoragePhase
 = TransactionDescr;
 ```
 
 ### 4.3.12. Description of tick and tock transactions.
 
-Tick and tock transactions are similar to ordinary transactions without an inbound message, so
-there are no credit or bounce phases:
+Tick and tock transactions are similar to ordinary transactions without an inbound message, so there are no credit or bounce phases:
 
-```tlb
+```c
 trans_tick_tock$001 is_tock:Bool storage:TrStoragePhase
 compute_ph:TrComputePhase action:(Maybe ^TrActionPhase)
 aborted:Bool destroyed:Bool = TransactionDescr;
@@ -1967,7 +2048,7 @@ aborted:Bool destroyed:Bool = TransactionDescr;
 A split prepare transaction is similar to a tock transaction in a masterchain, but it must generate exactly one special constructor message; otherwise, the action phase is
 aborted.
 
-```tlb
+```c
 split_merge_info$_ cur_shard_pfx_len:(## 6)
 acc_split_depth:(## 6) this_addr:uint256 sibling_addr:uint256
 = SplitMergeInfo;
@@ -1991,7 +2072,7 @@ its corresponding split prepare transaction of the previously existing account
 A merge prepare transaction converts the state and balance of an account into a message, and a
 subsequent merge install transaction processes this state:
 
-```tlb
+```c
 trans_merge_prepare$0110 split_info:SplitMergeInfo
 storage_ph:TrStoragePhase aborted:Bool
 = TransactionDescr;
@@ -2039,19 +2120,23 @@ A new instance of `TVM` is initialized prior to the execution of a smart contrac
 * Control register `c4` (root of persistent data) is initialized by the persistent data of the smart contract.[³⁵](#footnote-35)
 * Control register `c5` (root of actions) is initialized by an empty cell. The “output action” primitives of `TVM`, such as `SENDMSG`, use `c5` to accumulate the list of actions (e.g., outbound messages) to be performed upon successful termination of the smart contract (cf. [4.2.7](#4-2-7-processing-of-an-inbound-message-is-split-between-computing-and-action-phases) and [4.2.8](#4-2-8-reasons-for-splitting-the-processing-into-computation-and-action-phases)).
 * Control register `c7` (root of temporary data) is initialized by a singleton `Tuple`, the only component of which is a `Tuple` containing an instance of `SmartContractInfo` with smart contract balance and other useful information (cf. [4.4.10](#4-4-10-smart-contract-information)). The smart contract may replace the temporary data, especially all components of the `Tuple` at `c7` but the first one, with whatever other temporary data it may require. However, the original content of the `SmartContractInfo` at the first component of the `Tuple` held in `c7` is inspected and sometimes modified by `SENDMSG` `TVM` primitives and other “output action” primitives of `TVM`.
-* The gas limits `gas = (gm, gl, gc, gr)` are initialized as follows:
-  – The maximal gas limit `gm` is set to the lesser of either the total Gram balance of the smart contract (after the the credit phase—i.e., combined with the value of the inbound message) divided by the current gas price, or the per-execution global gas limit.[³⁶](#footnote-36)
-  – The current gas limit `gl` is set to the lesser of either the Gram value of the inbound message divided by the gas price, or the global per-execution gas limit. In this way, always `gl ≤ gm`. For inbound external messages `gl = 0`, since they cannot carry any value.
-  – The gas credit `gc` is set to zero for inbound internal messages, and to the lesser of either `gm` or a fixed small value (the default external message gas credit, a configurable parameter) for inbound external messages.
-  – Finally, the remaining gas limit `gr` is automatically initialized by `gl + gc`.
+* The gas limits `gas = (gₘ, gₗ, g𝚌, gᵣ)` are initialized as follows:
+    - The maximal gas limit `gₘ` is set to the lesser of either the total Gram balance of the smart contract (after the credit phase — i.e., combined with the value of the inbound message) divided by the current gas price, or the per-execution global gas limit.[³⁶](#footnote-36)  
+
+    - The current gas limit `gₗ` is set to the lesser of either the Gram value of the inbound message divided by the gas price, or the global per-execution gas limit. In this way, always `gₗ ≤ gₘ`. For inbound external messages `gₗ = 0`, since they cannot carry any value.  
+
+    - The gas credit `g𝚌` is set to zero for inbound internal messages, and to the lesser of either `gₘ` or a fixed small value (the default `external_message_gas_credit`, a configurable parameter) for inbound external messages.  
+
+    - Finally, the remaining gas limit `gᵣ` is automatically initialized by `gₗ + g𝚌`.  
+
 
 ### 4.4.5. The initial stack of TVM for processing an internal message
 
 After `TVM` is initialized as described in [4.4.4](#4-4-4-the-initial-state-of-tvm), its stack is initialized by pushing the arguments to the `main()` function of the smart contract as follows:
 
 * The Gram balance `b` of the smart contract (after crediting the value of the inbound message) is passed as an `Integer` amount of nanograms.
-* The Gram balance `bm` of inbound message `m` is passed as an `Integer` amount of nanograms.
-* The inbound message `m` is passed as a cell, which contains a serialized value of type `Message X`, where `X` is the type of the message body. The body `mb : X` of the inbound message, equal to the value of field `body` of `m`, is passed as a cell slice.
+* The Gram balance `bₘ` of inbound message `m` is passed as an `Integer`amount of nanograms.
+* The inbound message `m` is passed as a cell, which contains a serialized value of type `Message X`, where `X` is the type of the message body. The body `m₍b₎ : X` of the inbound message, equal to the value of field `body` of `m`, is passed as a cell slice.
 * Finally, the function selector `s`, an `Integer` normally equal to zero, is pushed into the stack.
 
 After that, the code of the smart contract, equal to its initial value of `c3`, is executed. It selects the correct function according to `s`, which is expected to process the remaining arguments to the function and terminate afterwards.
@@ -2061,10 +2146,10 @@ After that, the code of the smart contract, equal to its initial value of `c3`, 
 An inbound external message is processed similarly to [4.4.4](#4-4-4-the-initial-state-of-tvm) and [4.4.5](#4-4-5-the-initial-stack-of-tvm-for-processing-an-internal-message), with the following modifications:
 
 * The function selector `s` is set to `−1`, not to `0`.
-* The Gram balance `bm` of inbound message is always `0`.
-* The initial current gas limit `gl` is always `0`. However, the initial gas credit `gc > 0`.
+* The Gram balance `bₘ` of the inbound message is always 0.
+* The initial current gas limit `gₗ` is always 0. However, the initial gas credit `g𝚌 > 0`.
 
-The smart contract must terminate with `gc = 0` or `gr ≥ gc`; otherwise, the transaction and the block containing it are invalid. Validators or collators suggesting a block candidate must never include transactions processing inbound external messages that are invalid.
+The smart contract must terminate with `g𝚌 = 0` or `gᵣ ≥ g𝚌`; otherwise, the transaction and the block containing it are invalid. Validators or collators suggesting a block candidate must never include transactions processing inbound external messages that are invalid.
 
 ### 4.4.7. Processing tick and tock transactions
 
@@ -2104,7 +2189,7 @@ For processing merge install transactions (cf. [4.3.14](#4-3-14-merge-prepare-an
 
 The smart-contract information structure `SmartContractInfo`, passed in the first component of the `Tuple` contained in control register `c7`, is also a `Tuple` containing the following data:
 
-```tlb
+```c
 [ magic:0x076ef1ea actions:Integer msgs_sent:Integer
   unixtime:Integer block_lt:Integer trans_lt:Integer
   rand_seed:Integer balance_remaining:[Integer (Maybe Cell)]
@@ -2118,11 +2203,10 @@ In other words, the first component of this tuple is an `Integer` `magic` always
 
 The output actions of a smart contract are accumulated in a linked list stored in control register `c5`. The list of output actions is serialized as a value of type `OutList n`, where `n` is the length of the list:
 
-```tlb
+```c
 out_list_empty$_ = OutList 0;
 out_list$_ {n:#} prev:^(OutList n) action:OutAction
   = OutList (n + 1);
-
 action_send_msg#0ec3c86d out_msg:^(Message Any) = OutAction;
 action_set_code#ad4de08e new_code:^Cell = OutAction;
 ```
@@ -2141,8 +2225,8 @@ This section lists the data structures that must be contained in a shardchain bl
 
 The shardchain state consists of:
 
-* `ShardAccounts`, the split part of the shardchain state (cf. 1.2.2) containing the state of all accounts assigned to this shard (cf. 4.1.9).
-* `OutMsgQueue`, the output message queue of the shardchain (cf. 3.3.6).
+* `ShardAccounts`, the split part of the shardchain state (cf. [1.2.2](#1-2-2-split-and-non-split-part-of-the-shardchain-block-and-state)) containing the state of all accounts assigned to this shard (cf. [4.1.9](#4-3-9-description-of-the-bounce-phase)).
+* `OutMsgQueue`, the output message queue of the shardchain (cf. [3.3.6](#3-3-6-structure-of-outmsgqueue)).
 * `SharedLibraries`, the description of all shared libraries of the shardchain (for now, non-empty only in the masterchain).
 * The logical time and the unixtime of the last modification of the state.
 * The total balance of the shard.
@@ -2171,9 +2255,9 @@ Recall that different workchains may define their own rules for processing messa
 
 ### 5.1.4. TL-B scheme for the shardchain state.
 
-The shardchain state (cf. 1.2.1 and 5.1.1) is serialized according to the following TL-B scheme:
+The shardchain state (cf. [1.2.1](#1-2-1-the-infinite-sharding-paradigm-isp-applied-to-blockchain-block-and-state) and [5.1.1](#5-1-1-components-of-the-shardchain-state)) is serialized according to the following TL-B scheme:
 
-```tlb
+```c
 ext_blk_ref$_ start_lt:uint64 end_lt:uint64
 seq_no:uint32 hash:uint256 = ExtBlkRef;
 master_info$_ master:ExtBlkRef = BlkMasterInfo;
@@ -2196,7 +2280,7 @@ The field `custom` is usually present only in the masterchain and contains all t
 
 Shared libraries currently can be present only in masterchain blocks. They are described by an instance of `HashmapE(256, LibDescr)`, where the 256-bit key is the representation hash of the library, and `LibDescr` describes one library:
 
-```tlb
+```c
 shared_lib_descr$00 lib:^Cell publishers:(Hashmap 256 True)
 = LibDescr;
 ```
@@ -2205,9 +2289,9 @@ Here `publishers` is a hashmap with keys equal to the addresses of all accounts 
 
 ### 5.1.6. TL-B scheme for an unsigned shardchain block.
 
-The precise format of an unsigned (cf. 1.2.6) shardchain block is given by the following TL-B scheme:
+The precise format of an unsigned (cf. [1.2.6](#1-2-6-validator-signatures%2C-signed-and-unsigned-blocks)) shardchain block is given by the following TL-B scheme:
 
-```tlb
+```c
 block_info version:uint32
 not_master:(## 1)
 after_merge:(## 1) before_split:(## 1) flags:(## 13)
@@ -2255,7 +2339,7 @@ Recall that `_:^[ . . . ]` is a TL-B construction indicating that a group of fie
 
 A signed shardchain block is just an unsigned block augmented by a collection of validator signatures:
 
-```tlb
+```c
 ed25519_signature#5 R:uint256 s:uint256 = CryptoSignature;
 signed_block block:^Block blk_serialize_hash:uint256
 signatures:(HashmapE 64 CryptoSignature)
@@ -2270,10 +2354,14 @@ The 64-bit keys in dictionary `signatures` represent the first 64 bits of the pu
 
 The overall procedure of serializing and signing a block may be described as follows:
 
-1. An unsigned block **B** is generated, transformed into a complete bag of cells (cf. [5.3.2](#5-3-4-assigning-indices-to-the-cells-from-a-bag-of-cells)), and serialized into an octet string **SB**.
+1. An unsigned block **B** is generated, transformed into a complete bag of cells (cf. [5.3.2](#5-3-4-assigning-indices-to-the-cells-from-a-bag-of-cells)), and serialized into an octet string `Sᵦ`.
 2. Validators sign the 256-bit combined hash
-   **HB** := sha256( Hash∞(**B**) . HashM(**SB**) ) (18)
-   of the representation hash of **B** and of the Merkle hash of its serialization **SB**.
+
+``` math
+Hᴮ := sha256( Hash∞(B) . Hashᴹ(Sᵦ) )   (18)
+```
+
+   of the representation hash of **B** and of the Merkle hash of its serialization **Sᵦ**.
 3. A signed shardchain block **B̃** is generated from **B** and these validator signatures as described above (cf. [5.1.8](#5-1-8-signed-shardchain-block)).
 4. This signed block **B̃** is transformed into an incomplete bag of cells, which contains only the validator signatures, but the unsigned block itself is absent from this bag of cells, being its only absent cell.
 5. This incomplete bag of cells is serialized, and its serialization is prepended to the previously constructed serialization of the unsigned block. The result is the serialization of the signed block into an octet string. It may be propagated by network or stored into a disk file.
@@ -2301,7 +2389,7 @@ In addition to the components listed in 5.1.2, each masterchain block must conta
 
 `ShardHashes` is represented by a dictionary with 32-bit `workchain_id`s as keys, and “shard binary trees”, represented by TL-B type `BinTree ShardDescr`, as values. Each leaf of this shard binary tree contains a value of type `ShardDescr`, which describes a single shard by indicating the sequence number `seq_no`, the logical time `lt`, and the hash `hash` of the latest (signed) block of the corresponding shardchain.
 
-```tlb
+```c
 bt_leaf$0 {X:Type} leaf:X = BinTree X;
 bt_fork$1 {X:Type} left:^(BinTree X) right:^(BinTree X)
 = BinTree X;
@@ -2321,7 +2409,7 @@ Notice that the masterchain itself is omitted from `ShardHashes` (i.e., 32-bit i
 
 `ShardFees` is a masterchain structure used to reflect the total fees collected so far by the validators of a shardchain. The total fees reflected in this structure are accumulated in the masterchain by crediting them to a special account, whose address is a configurable parameter. Typically this account is the smart contract that computes and distributes the rewards to all validators.
 
-```tlb
+```c
 bta_leaf$0 {X:Type} {Y:Type} leaf:X extra:Y = BinTreeAug X Y;
 bta_fork$1 {X:Type} {Y:Type} left:^(BinTreeAug X Y)
 right:^(BinTreeAug X Y) extra:Y = BinTreeAug X Y;
@@ -2333,18 +2421,18 @@ The structure of `ShardFees` is similar to that of `ShardHashes` (cf. [5.2.3](#5
 
 ### 5.2.5. Description of `ConfigParams`.
 
-Recall that the configurable parameters or the configuration dictionary is a dictionary `config` with 32-bit keys kept inside the first cell reference of the persistent data of the configuration smart contract γ (cf. 1.6). The address γ of the configuration smart contract and a copy of the configuration dictionary are duplicated in fields `config_addr` and `config` of a `ConfigParams` structure, explicitly included into masterchain state to facilitate access to the current values of the configurable parameters (cf. 1.6.3):
+Recall that the configurable parameters or the configuration dictionary is a dictionary `config` with 32-bit keys kept inside the first cell reference of the persistent data of the configuration smart contract γ (cf. [1.6](#1-6-configurable-parameters-and-smart-contracts)). The address γ of the configuration smart contract and a copy of the configuration dictionary are duplicated in fields `config_addr` and `config` of a `ConfigParams` structure, explicitly included into masterchain state to facilitate access to the current values of the configurable parameters (cf. [1.6.3](#1-6-3-quick-access-through-the-header-of-masterchain-blocks)):
 
-```tlb
+```c
 _ config_addr:uint256 config:^(Hashmap 32 ^Cell)
 = ConfigParams;
 ```
 
 ### 5.2.6. Masterchain state data.
 
-The data specific to the masterchain state is collected into `McStateExtra`, already mentioned in 5.1.4:
+The data specific to the masterchain state is collected into `McStateExtra`, already mentioned in [5.1.4](#5-1-4-tl-b-scheme-for-the-shardchain-state):
 
-```tlb
+```c
 masterchain_state_extra#cc1f
 shard_hashes:ShardHashes
 shard_fees:ShardFees
@@ -2356,7 +2444,7 @@ config:ConfigParams
 
 Similarly, the data specific to the masterchain blocks is collected into `McBlockExtra`:
 
-```tlb
+```c
 masterchain_block_extra#cc9f
 shard_hashes:ShardHashes
 = McBlockExtra;
@@ -2399,7 +2487,7 @@ If cells are listed in a topological order, then the verification that there are
 The serialization process of a bag of cells **B** consisting of **n** cells can be outlined as follows:
 
 1. List the cells from **B** in a topological order: **c₀**, **c₁**, …, **cₙ₋₁**. Then **c₀** is the root cell of **B**.
-2. Choose an integer **s**, such that `n ≤ 2ˢ`. Represent each cell **cᵢ** by an integral number of octets in the standard way (cf. [1.1.3](#1-1-3-the-layout-of-a-single-cell) or [4, 3.1.4](#ref-4)), but using unsigned big-endian **s**-bit integer **j** instead of hash `Hash(cⱼ)` to represent internal references to cell **cⱼ** (cf. 5.3.6 below).
+2. Choose an integer **s**, such that `n ≤ 2ˢ`. Represent each cell **cᵢ** by an integral number of octets in the standard way (cf. [1.1.3](#1-1-3-the-layout-of-a-single-cell) or [4, 3.1.4](#ref-4)), but using unsigned big-endian **s**-bit integer **j** instead of hash `Hash(cⱼ)` to represent internal references to cell **cⱼ** (cf. [5.3.6](#5-3-6-serialization-of-one-cell-from-a-bag-of-cells)below).
 3. Concatenate the representations of cells **cᵢ** thus obtained in the increasing order of **i**.
 4. Optionally, an index can be constructed that consists of **n + 1** **t**-bit integer entries **L₀**, …, **Lₙ**, where **Lᵢ** is the total length (in octets) of the representations of cells **cⱼ** with `j ≤ i`, and integer `t ≥ 0` is chosen so that `Lₙ ≤ 2ᵗ`.
 5. The serialization of the bag of cells now consists of a magic number indicating the precise format of the serialization, followed by integers `s ≥ 0`, `t ≥ 0`, `n ≤ 2ˢ`, an optional index consisting of `⌈(n+1)t/8⌉` octets, and **Lₙ** octets with the cell representations.
@@ -2435,7 +2523,7 @@ A serialization scheme for a bag of cells must specify the following parameters:
 
 * The 4-byte magic number prepended to the serialization.
 * The number of bits **s** used to represent cell indices. Usually **s** is a multiple of eight (e.g., 8, 16, 24, or 32).
-* The number of bits **t** used to represent offsets of cell serializations (cf. 5.3.5). Usually **t** is also a multiple of eight.
+* The number of bits **t** used to represent offsets of cell serializations (cf. [5.3.5](#5-3-5-outline-of-serialization-process)). Usually **t** is also a multiple of eight.
 * A flag indicating whether an index with offsets **L₀**, …, **Lₙ** of cell serializations is present. This flag may be combined with **t** by setting `t = 0` when the index is absent.
 * A flag indicating whether the CRC32-C of the whole serialization is appended to it for integrity verification purposes.
 
@@ -2452,7 +2540,7 @@ In addition to the values listed in [5.3.7](#5-3-7-a-classification-of-serializa
 
 Several TL-B constructors can be used to serialize bags of cells into octet (i.e., 8-bit byte) sequences. The only one that is currently used to serialize new bags of cell is
 
-```tlb
+```c
 serialized_boc#b5ee9c72 has_idx:(## 1) has_crc32c:(## 1)
 has_cache_bits:(## 1) flags:(## 2) { flags = 0 }
 size:(## 3) { size <= 4 }
@@ -2472,7 +2560,7 @@ Field `cells` is **n**, `roots` is **k**, `absent` is **l**, and `tot_cells_size
 
 Two older constructors are still supported in the bag-of-cells deserialization functions:
 
-```tlb
+```c
 serialized_boc_idx#68ff65f3 size:(## 8) { size <= 4 }
 off_bytes:(## 8) { off_bytes <= 8 }
 cells:(##(size * 8))
@@ -2498,7 +2586,7 @@ crc32c:uint32 = BagOfCells;
 
 Notice that the above procedure for serializing bags of cells may be used to serialize compiled smart contracts and other TVM code. One must define a TL-B constructor similar to the following:
 
-```tlb
+```c
 compiled_smart_contract
 compiled_at:uint32 code:^Cell data:^Cell
 description:(Maybe ^TinyString)
@@ -2512,29 +2600,37 @@ Then a compiled smart contract may be represented by a value of type `CompiledSm
 
 ### 5.3.11. Merkle hashes for an octet string
 
-On some occasions, we must define a Merkle hash `HashM(s)` of an arbitrary octet string `s` of length `|s|`. We do this as follows:
+On some occasions, we must define a Merkle hash `Hashₘ(s)` of an arbitrary octet string `s` of length `|s|`.
+We do this as follows:
 
 * If `|s| ≤ 256` octets, then the Merkle hash of `s` is just its `sha256`:
 
 ```math
-\mathrm{HashM}(s) := \mathrm{sha256}(s)\quad\text{if } |s| \le 256. \tag{19}
+Hashₘ(s) := sha256(s)   if |s| ≤ 256   (19)
 ```
 
-* If `|s| > 256`, let `n = 2^k` be the largest power of two less than `|s|` (i.e., `k := \lfloor \log_2(|s|-1)\rfloor`, `n := 2^k`). 
-
-* If `s_0` is the prefix of `s` of length `n`, and `s_{00}` is the suffix of `s` of length `|s| - n`, so that `s` is the concatenation `s_0.s_{00}` of `s_0` and `s_{00}`, we define
+* If `|s| > 256`, let `n = 2ᵏ` be the largest power of two less than `|s|`
+  (i.e., `k := ⌊log₂(|s| − 1)⌋`, `n := 2ᵏ`).
+  If `s′` is the prefix of `s` of length `n`, and `s′′` is the suffix of `s` of length `|s| − n`, so that `s = s′.s′′`, we define:
 
 ```math
-\mathrm{HashM}(s) := \mathrm{sha256}\!\big(\mathrm{int64}(|s|)\;.\;\mathrm{HashM}(s_{0})\;.\;\mathrm{HashM}(s_{00})\big). \tag{20}
+Hashₘ(s) := sha256( int64(|s|) . Hashₘ(s′) . Hashₘ(s′′) )   (20)
 ```
 
-Here “`.`” denotes concatenation.
+In other words, we concatenate the 64-bit big-endian representation of `|s|` and the recursively computed Merkle hashes of `s′` and `s′′`, and compute `sha256` of the resulting string.
 
-One can check that `HashM(s) = HashM(t)` for octet strings `s` and `t` of length less than `2^{64} - 2^{56}` implies `s = t` unless a hash collision for `sha256` has been found.
+One can check that
+
+```math
+Hashₘ(s) = Hashₘ(t)
+```
+
+for octet strings `s` and `t` of length less than `2⁶⁴ − 2⁵⁶` implies `s = t`, unless a hash collision for `sha256` has been found.
+
 
 ### 5.3.12. The serialization hash of a block.
 
-The construction of 5.3.11 is applied in particular to the serialization of the bag of cells representing an unsigned shardchain or masterchain block. The validators sign not only the representation hash of the unsigned block, but also the “serialization hash” of the unsigned block, defined as `HashM` of the serialization of the unsigned block. In this way, the validators certify that this octet string is indeed a serialization of the corresponding block.
+The construction of [5.3.11](#5-3-11-merkle-hashes-for-an-octet-string) is applied in particular to the serialization of the bag of cells representing an unsigned shardchain or masterchain block. The validators sign not only the representation hash of the unsigned block, but also the “serialization hash” of the unsigned block, defined as `HashM` of the serialization of the unsigned block. In this way, the validators certify that this octet string is indeed a serialization of the corresponding block.
 
 ---
 
@@ -2542,7 +2638,7 @@ The construction of 5.3.11 is applied in particular to the serialization of the 
 
 This appendix contains a formal description of the elliptic curve cryptography currently used in TON, particularly in the TON Blockchain and the TON Network.
 
-TON uses two forms of elliptic curve cryptography: Ed25519 is used for cryptographic Schnorr signatures, while Curve25519 is used for asymmetric cryptography. These curves are used in the standard way (as defined in the original articles \[1] and \[2] by D. Bernstein and RFCs 7748 and 8032); however, some serialization details specific to TON must be explained. One unique adaptation of these curves for TON is that TON supports automatic conversion of Ed25519 keys into Curve25519 keys, so that the same keys can be used for signatures and for asymmetric cryptography.
+TON uses two forms of elliptic curve cryptography: Ed25519 is used for cryptographic Schnorr signatures, while Curve25519 is used for asymmetric cryptography. These curves are used in the standard way (as defined in the original articles [1](#ref-1) and [2](#ref-2) by D. Bernstein and RFCs 7748 and 8032); however, some serialization details specific to TON must be explained. One unique adaptation of these curves for TON is that TON supports automatic conversion of Ed25519 keys into Curve25519 keys, so that the same keys can be used for signatures and for asymmetric cryptography.
 
 ## A.1 Elliptic curves
 
@@ -2552,75 +2648,110 @@ Some general facts on elliptic curves over finite fields, relevant for elliptic 
 
 We consider elliptic curves over finite fields. For the purposes of the Curve25519 and Ed25519 algorithms, we will be mostly concerned with elliptic curves over the finite prime field `k := F_p` of residues modulo `p`, where `p = 2^255 − 19` is a prime number, and over finite extensions `F_q` of `F_p`, especially the quadratic extension `F_p^2`.[⁴¹](#footnote-41)
 
-### A.1.2. Elliptic curves.
+### A.1.1. Finite fields
 
-An elliptic curve `E = (E, O)` over a field `k` is a geometrically integral smooth projective curve `E/k` of genus `g = 1`, along with a marked `k`-rational point `O ∈ E(k)`. It is well-known that an elliptic curve `E` over a field `k` can be represented in (generalized) Weierstrass form:
+We consider elliptic curves over finite fields. For the purposes of the Curve25519 and Ed25519 algorithms, we will be mostly concerned with elliptic curves over the finite prime field `k := Fₚ` of residues modulo `p`, where `p = 2²⁵⁵ − 19` is a prime number, and over finite extensions `F_q` of `Fₚ`, especially the quadratic extension `Fₚ₂`.[⁴¹](#footnote-41)
+
+### A.1.2. Elliptic curves
+
+An *elliptic curve* `E = (E, O)` over a field `k` is a geometrically integral smooth projective curve `E/k` of genus `g = 1`, along with a marked `k`-rational point `O ∈ E(k)`.
+
+It is well-known that an elliptic curve `E` over a field `k` can be represented in (generalized) Weierstrass form:
 
 ```math
-y^2 + a_1 x y + a_3 y = x^3 + a_2 x^2 + a_4 x + a_6 \quad (21)
+y² + a₁xy + a₃y = x³ + a₂x² + a₄x + a₆    (21)
 ```
 
-More precisely, this is only the affine part of the elliptic curve, written in coordinates `(x, y)`. For any field extension `K` of `k`, `E(K)` consists of all solutions `(x, y) ∈ K^2` of equation (21), called finite points of `E(K)`, along with a point at infinity, which is the marked point `O`.
+for some `a₁, …, a₆ ∈ k`.
 
-### A.1.3. Weierstrass form in homogeneous coordinates.
+### A.1.3. Weierstrass form in homogeneous coordinates
 
 In homogeneous coordinates `[X : Y : Z]`, (21) corresponds to
 
 ```math
-Y^2 Z + a_1 X Y Z + a_3 Y Z^2 = X^3 + a_2 X^2 Z + a_4 X Z^2 + a_6 Z^3 \quad (22)
+Y²Z + a₁XYZ + a₃YZ² = X³ + a₂X²Z + a₄XZ² + a₆Z³   (22)
 ```
 
-When `Z ≠ 0`, we can set `x := X/Z`, `y := Y/Z`, and obtain a solution `(x, y)` of (21) (i.e., a finite point of `E`). On the other hand, the only solution (up to proportionality) of (22) with `Z = 0` is `[0 : 1 : 0]`; this is the point at infinity `O`.
+When `Z ≠ 0`, we can set `x := X/Z`, `y := Y/Z`, and obtain a solution `(x, y)` of ([21](#a-1-2-elliptic-curves)) (i.e., a finite point of `E`). 
 
-### A.1.4. Standard Weierstrass form.
+On the other hand, the only solution (up to proportionality) of (22) with `Z = 0` is `[0 : 1 : 0]`; this is the point at infinity `O`.
 
-When the characteristic `char k` of field `k` is `≠ 2, 3`, the Weierstrass form of (21) or (22) can be simplified with the aid of linear transformations `y′ := y + a₁x/2 + a₃/2`, `x′ := x + a₂/3`, thus making `a₁ = a₃ = a₂ = 0` and obtaining
+
+### A.1.4. Standard Weierstrass form
+
+When the characteristic `char k` of field `k` is `≠ 2, 3`, the Weierstrass form of ([21](#a-1-2-elliptic-curves)) or ([22](#a-1-3-weierstrass-form-in-homogeneous-coordinates)) can be simplified with the aid of linear transformations
+`y′ := y + a₁x/2 + a₃/2`, `x′ := x + a₂/3`, thus making `a₁ = a₃ = a₂ = 0` and obtaining
 
 ```math
-y^2 = x^3 + a_4 x + a_6 \quad (23)
+y² = x³ + a₄x + a₆   (23)
 ```
 
 and
 
 ```math
-Y^2 Z = X^3 + a_4 X Z^2 + a_6 Z^3 \quad (24)
+Y²Z = X³ + a₄XZ² + a₆Z³   (24)
 ```
 
-Such an equation defines an elliptic curve if and only if the cubic polynomial `P(x) := x^3 + a_4 x + a_6` has no multiple roots, i.e., if the discriminant `D := −4 a_4^3 − 27 a_6^2` is non-zero.
-
-### A.1.5. Addition of points on elliptic curve E.
-
-Let `K` be a field extension of field `k`, and let `E = (E, O)` be any elliptic curve in Weierstrass form defined over `k`. 
-
-Then any line `l ⊂ ℙ^2_K` intersects the elliptic curve `E(K)` (which is the base change of curve `E` to field `K`, i.e., the curve defined by the same equations over a larger field `K`) at exactly three points `P, Q, R`, considered with multiplicities. 
-
-We define the addition of points on elliptic curve `E` (or rather the addition of its `K`-valued points `E(K)`) by requiring that
+Such an equation defines an elliptic curve if and only if the cubic polynomial `P(x) := x³ + a₄x + a₆` has no multiple roots, i.e., if the discriminant
 
 ```math
-P + Q + R = O \quad \text{whenever } \{P, Q, R\} = l \cap E \text{ for some line } l \subset \mathbb{P}^2_K. \quad (25)
+D := −4a₄³ − 27a₆²
 ```
 
-It is well-known that this requirement defines a unique commutative law `[+] : E ×_k E → E` on the points of the elliptic curve `E`, having `O` as its neutral element. When elliptic curve `E` is represented by its Weierstrass form (21), one can write explicit formulas expressing the coordinates `x_{P+Q}, y_{P+Q}` of the sum `P + Q` of two `K`-valued points `P, Q ∈ E(K)` of elliptic curve `E` as rational functions of the coordinates `x_P, y_P, x_Q, y_Q ∈ K` of points `P` and `Q` and of the coefficients `a_i ∈ k` of (21).
+is non-zero.
 
-### A.1.6. Power maps.
 
-Since `E(K)` is an abelian group, one can define multiples or powers `[n]X` for any point `X ∈ E(K)` and any integer `n ∈ ℤ`. If `n = 0`, then `[0]X = O`; if `n > 0`, then `[n]X = [n − 1]X + X`; if `n < 0`, then `[n]X = −[−n]X`. The map `[n] = [n]_E : E → E` for `n ≠ 0` is an isogeny, meaning that it is a non-constant homomorphism for the group law of `E`:
+### A.1.5. Addition of points on elliptic curve *E*
+
+Let `K` be a field extension of field `k`, and let `E = (E, O)` be any elliptic curve in Weierstrass form defined over `k`. Then any line `l ⊂ ℙ²_K` intersects the elliptic curve `E_(K)` (which is the base change of curve `E` to field `K`, i.e., the curve defined by the same equations over a larger field `K`) at exactly three points `P, Q, R`, considered with multiplicities.
+
+We define the **addition of points** on elliptic curve `E` (or rather the addition of its `K`-valued points `E(K)`) by requiring that:
 
 ```math
-[n](P + Q) = [n]P + [n]Q \quad \text{for any } P, Q \in E(K) \text{ and } n \in \mathbb{Z}. \quad (26)
+P + Q + R = O  \quad \text{whenever } \{P, Q, R\} = l ∩ E \text{ for some line } l ⊂ ℙ²_K.
+
+\quad(25)
 ```
 
-In particular, `[−1]_E : E → E`, `P ↦ −P`, is an involutive automorphism of elliptic curve `E`. If `E` is in Weierstrass form, `[−1]_E` maps `(x, y) ↦ (x, −y)`, and two points `P, Q ∈ E(𝔽_q)` have equal x-coordinates if and only if `Q = ±P`.
-
-### A.1.7. The order of the group of rational points of E.
-
-Let `E` be an elliptic curve defined over a finite base field `k`, and let `K = 𝔽_q` be a finite extension of `k`. Then `E(𝔽_q)` is a finite abelian group. By a well-known result of Hasse, the order `n` of this group is not too distant from `q`:
+It is well-known that this requirement defines a unique commutative law
 
 ```math
-n = |E(\mathbb{F}_q)| = q - t + 1 \quad \text{where } t^2 \le 4q,\ \text{i.e., } |t| \le 2\sqrt{q}. \quad (27)
+[+] : E ×_k E → E
 ```
 
-We will be mostly interested in the case `K = k = 𝔽_p`, with `q = p` a prime number.
+on the points of the elliptic curve `E`, having `O` as its neutral element.
+
+When elliptic curve `E` is represented by its Weierstrass form ([21](#a-1-2-elliptic-curves)), one can write explicit formulas expressing the coordinates `x_(P+Q), y_(P+Q)` of the sum `P + Q` of two `K`-valued points `P, Q ∈ E(K)` of elliptic curve `E` as rational functions of the coordinates `x_P, y_P, x_Q, y_Q ∈ K` of points `P` and `Q` and of the coefficients `aᵢ ∈ k` of [(21)](#21).
+
+
+### A.1.6. Power maps
+
+Since `E(K)` is an abelian group, one can define **multiples** or **powers** `[n]X` for any point `X ∈ E(K)` and any integer `n ∈ ℤ`.
+
+* If `n = 0`, then `[0]X = O`.
+* If `n > 0`, then `[n]X = [n−1]X + X`.
+* If `n < 0`, then `[n]X = −[−n]X`.
+
+The map `[n] = [n]_E : E → E` for `n ≠ 0` is an **isogeny**, meaning that it is a non-constant homomorphism for the group law of `E`:
+
+```math
+[n](P + Q) = [n]P + [n]Q  \quad \text{for any } P, Q ∈ E(K) \text{ and } n ∈ ℤ. \tag{26}
+```
+
+In particular, `[−1]_E : E → E, P ↦ −P`, is an involutive automorphism of elliptic curve `E`. If `E` is in Weierstrass form, `[−1]_E` maps `(x, y) ↦ (x, −y)`, and two points `P, Q ∈ E(ℱ_q)` have equal `x`-coordinates if and only if `Q = ±P`.
+
+### A.1.7. The order of the group of rational points of *E*
+
+Let `E` be an elliptic curve defined over a finite base field `k`, and let `K = ℱ_q` be a finite extension of `k`. Then `E(ℱ_q)` is a finite abelian group.
+
+By a well-known result of Hasse, the order `n` of this group is not too distant from `q`:
+
+```math
+n = |E(ℱ_q)| = q − t + 1, \quad \text{where } t² ≤ 4q, \; \text{i.e., } |t| ≤ 2√q. \tag{27}
+```
+
+We will be mostly interested in the case `K = k = ℱ_p`, with `q = p` a prime number.
+
 
 ### A.1.8. Cyclic subgroups of large prime order.
 
@@ -2632,7 +2763,8 @@ By the Legendre theorem, `ℓ` is necessarily a divisor of the order `n = |E(�
 n = |E(\mathbb{F}_q)| = c \ell \quad \text{for some integer } c \ge 1 \quad (28)
 ```
 
-The integer `c` is called the cofactor; one usually wants the cofactor to be as small as possible, so as to make `ℓ = n/c` as large as possible. Recall that `n` always has the same order of magnitude as `q` by (27), so it cannot be changed much by varying `E` once `q` is fixed.
+The integer `c` is called the cofactor; one usually wants the cofactor to be as small as possible, so as to make `ℓ = n/c` as large as possible. Recall that `n` always has the same order of magnitude as `q` by ([27](#a-1-7-the-order-of-the-group-of-rational-points-of-e)), so it cannot be changed much by varying `E` once `q` is fixed.
+
 
 ### A.1.9. Data for elliptic curve cryptography.
 
@@ -2646,7 +2778,7 @@ The most important operations used in elliptic curve cryptography are the additi
 
 ### A.1.11. Private and public keys for elliptic curve cryptography.
 
-Usually a private key for elliptic curve cryptography described by the data listed in A.1.9 is a “random” integer `0 < a < ℓ`, called the secret exponent, and the corresponding public key is the point `A := [a]G` (or just its x-coordinate `x_A`), suitably serialized.
+Usually a private key for elliptic curve cryptography described by the data listed in [A.1.9](#a-1-9-data-for-elliptic-curve-cryptography) is a “random” integer `0 < a < ℓ`, called the secret exponent, and the corresponding public key is the point `A := [a]G` (or just its x-coordinate `x_A`), suitably serialized.
 
 ### A.1.12. Montgomery curves.
 
@@ -2663,204 +2795,383 @@ x_{P+Q}\, x_{P-Q} \ \text{can be expressed as a simple rational function of}\ x_
 x_{P+Q}\, x_{P-Q} \ = \ \left(\frac{x_P x_Q - A}{x_P - x_Q}\right)^2 \quad (30)
 ```
 
-This means that `x_{P+Q}` can be computed provided `x_{P−Q}`, `x_P`, and `x_Q` are known. 
+This means that `x_(P+Q)` can be computed provided `x_(P−Q)`, `x_P`, and `x_Q` are known.
 
-In particular, if `x_P`, `x_{[n]P}`, and `x_{[n+1]P}` are known, then `x_{[2n]P}`, `x_{[2n+1]P}`, and `x_{[2n+2]P}` can be computed. 
+In particular, if `x_P`, `x_[n]P`, and `x_[(n+1)P]` are known, then `x_[(2n)P]`, `x_[(2n+1)P]`, and `x_[(2n+2)P]` can be computed.
 
-Using the binary representation of `0 < n < 2^s`, one can compute `x_{⌊n/2^{s−i}⌋P}`, `x_{⌊n/2^{s−i}⌋+1 P}` for `i = 0, 1, …, s`, thus obtaining `x_{[n]P}` (this algorithm for quickly computing `x_{[n]P}` starting from `x_P` on Montgomery curves is called a Montgomery ladder). Hence we see the importance of Montgomery curves for elliptic curve cryptography.
+Using the binary representation of `0 < n < 2ˢ`, one can compute
+
+```math
+x_[⌊n / 2^(s−i)⌋ P], \quad x_[(⌊n / 2^(s−i)⌋ + 1)P]  \quad \text{for } i = 0, 1, ..., s,
+```
+
+thus obtaining `x_[nP]`.
+
+This algorithm for quickly computing `x_[nP]` starting from `x_P` on Montgomery curves is called the **Montgomery ladder**. Hence, we see the importance of Montgomery curves for elliptic curve cryptography.
 
 ---
 
-# A.2 Curve25519 cryptography
+## A.2 Curve25519 cryptography
 
-This section describes the well-known Curve25519 cryptography proposed by Daniel Bernstein \[1] and its usage in TON.
+This section describes the well-known Curve25519 cryptography proposed by Daniel Bernstein [1](#ref-1) and its usage in TON.
 
-### A.2.1. Curve25519.
+### A.2.1. Curve25519
 
-Curve25519 is defined as the Montgomery curve
-
-```math
-y^2 = x^3 + A x^2 + x \quad (31)
-```
-
-over `F_p`, where `p = 2^255 − 19` and `A = 486662`.
-The order of this curve is `8ℓ`, where `ℓ` is a prime number, and `c = 8` is the cofactor. The cyclic subgroup of order `ℓ` is generated by a point `G` with `x_G = 9` (this determines `G` up to the sign of `y_G`, which is unimportant). The order of the quadratic twist `2y^2 = x^3 + A x^2 + x` of Curve25519 is `4ℓ′` for another prime number `ℓ′`.[⁴²](#footnote-42)
-
-### A.2.2. Parameters of Curve25519.
-
-The parameters of Curve25519 are as follows:
-
-* **Base field:** Prime finite field `F_p` for `p = 2^255 − 19`.
-
-* **Equation:** `y^2 = x^3 + A x^2 + x` for `A = 486662`.
-
-* **Base point G:** Characterized by `x_G = 9` (nine is the smallest positive integer x-coordinate of a generator of the subgroup of large prime order of `E(F_p)`).
-
-* **Order of `E(F_p)`:**
-
-  ```math
-  |E(\mathbb{F}_p)| = p - t + 1 = 8\ell \quad (32)
-  ```
-
-  ```math
-  \ell = 2^{252} + 27742317777372353535851937790883648493 \ \text{ is prime.} \quad (33)
-  ```
-
-* **Order of `\tilde{E}(F_p)`, where `\tilde{E}` is the quadratic twist of `E`:**
-
-  ```math
-  |\tilde{E}(\mathbb{F}_p)| = p + t + 1 = 2p + 2 - 8\ell = 4\ell' , \quad (34)
-  ```
-
-  ```math
-  \ell' = 2^{253} - 55484635554744707071703875581767296995 \ \text{ is prime.} \quad (35)
-  ```
-
-### A.2.3. Private and public keys for standard Curve25519 cryptography.
-
-A private key for Curve25519 cryptography is usually defined as a secret exponent `a`, while the corresponding public key is `x_A`, the x-coordinate of point `A := [a]G`. This is usually sufficient for performing ECDH (elliptic curve Diffie–Hellman key exchange) and asymmetric elliptic curve cryptography, as follows:
-
-If a party wants to send a message `M` to another party, which has public key `x_A` (and private key `a`), the following computations are performed. A one-time random secret exponent `b` is generated, and `x_B := x^{[b]}G` and `x^{[b]}A` are computed using a Montgomery ladder. After that, the message `M` is encrypted by a symmetric cypher such as `AES` using the 256-bit “shared secret” `S := x^{[b]}A` as a key, and 256-bit integer (“one-time public key”) `x_B` is prepended to the encrypted message. 
-
-Once the party with public key `x_A` receives this message, it can compute `x^{[a]}B` starting from `x_B` (transmitted with the encrypted message) and the private key `a`. Since `x^{[a]}B = x^{[ab]}G = x^{[b]}A = S`, the receiving party recovers the shared secret `S` and is able to decrypt the remainder of the message.
-
-### A.2.4. Public and private keys for TON Curve25519 cryptography.
-
-TON uses another form for public and private keys of Curve25519 cryptography, borrowed from Ed25519 cryptography.
-
-A private key for TON Curve25519 cryptography is just a random 256-bit string `k`. It is used by computing `sha512(k)`, taking the first 256 bits of the result, interpreting them as a little-endian 256-bit integer `a`, clearing bits `0`, `1`, `2`, and `255` of `a`, and setting bit `254` so as to obtain a value `2^254 ≤ a < 2^255`, divisible by eight. The value `a` thus obtained is the secret exponent corresponding to `k`; meanwhile, the remaining 256 bits of `sha512(k)` constitute the secret salt `k″`.
-
-The public key corresponding to `k`—or to the secret exponent `a`—is just the x-coordinate `x_A` of the point `A := [a]G`. Once `a` and `x_A` are computed, they are used in exactly the same way as in A.2.3. In particular, if `x_A` needs to be serialized, it is serialized into 32 octets as an unsigned little-endian 256-bit integer.
-
-### A.2.5. Curve25519 is used in the TON Network.
-
-Notice that the asymmetric Curve25519 cryptography described in A.2.4 is extensively used by the TON Network, especially the ADNL (Abstract Datagram Network Layer) protocol. However, TON Blockchain needs elliptic curve cryptography mostly for signatures. For this purpose, Ed25519 signatures described in the next section are used.
-
----
-
-# A.3 Ed25519 cryptography
-
-Ed25519 cryptography is extensively used for fast cryptographic signatures by both the TON Blockchain and the TON Network. This section describes the variant of Ed25519 cryptography used by TON. An important difference from the standard approaches (as defined by D. Bernstein et al. in \[2]) is that TON provides automatic conversion of private and public Ed25519 keys into Curve25519 keys, so that the same keys could be used both for encrypting/decrypting and for signing messages.
-
-### A.3.1. Twisted Edwards curves.
-
-A twisted Edwards curve `E_{a,d}` with parameters `a ≠ 0` and `d ≠ 0`, `a` over a field `k` is given by equation
+Curve25519 is defined as the Montgomery curve:
 
 ```math
-E_{a,d} : \ a x^2 + y^2 = 1 + d x^2 y^2 \quad \text{ over } k \quad (36)
-```
-
-If `a = 1`, this equation defines an (untwisted) Edwards curve. Point `O(0, 1)` is usually chosen as the marked point of `E_{a,d}`.
-
-### A.3.2. Twisted Edwards curves are birationally equivalent to Montgomery curves.
-
-A twisted Edwards curve `E_{a,d}` is birationally equivalent to a Montgomery elliptic curve
-
-```math
-M_A : \ v^2 = u^3 + A u^2 + u \quad (37)
-```
-
-where `A = 2(a + d)/(a − d)` and `d/a = (A − 2)/(A + 2)`. The birational equivalence `φ : E_{a,d} ⇢ M_A` and its inverse `φ^{-1}` are given by
-
-```math
-\varphi : (x, y) \mapsto \left( \frac{1 + y}{1 - y}, \ \frac{c(1 + y)}{x(1 - y)} \right) \quad (38)
-```
-
-and
-
-```math
-\varphi^{-1} : (u, v) \mapsto \left( \frac{c u}{v}, \ \frac{u - 1}{u + 1} \right) \quad (39)
+y^2 = x^3 + A x^2 + x \quad \text{over } \mathbb{F}_p,
 ```
 
 where
 
 ```math
-c = \sqrt{\frac{A + 2}{a}} \quad (40)
+p = 2^{255} - 19, \quad A = 486662. \tag{31}
 ```
 
-Notice that `φ` transforms the marked point `O(0, 1)` of `E_{a,d}` into the marked point of `M_A` (i.e., its point at infinity).
+The order of this curve is `8ℓ`, where `ℓ` is a prime number, and `c = 8` is the **cofactor**.
 
-### A.3.3. Addition of points on a twisted Edwards curve.
-
-Since `E_{a,d}` is birationally equivalent to an elliptic curve `M_A`, the addition of points on `M_A` can be transferred to `E_{a,d}` by setting
+The cyclic subgroup of order `ℓ` is generated by a point `G` with
 
 ```math
-P + Q := \varphi^{-1}\big(\varphi(P) + \varphi(Q)\big) \quad \text{ for any } P, Q \in E_{a,d}(k). \quad (41)
+x_G = 9
 ```
 
-Notice that the marked point `O(0, 1)` is the neutral element with respect to this addition, and that `−(x_P, y_P) = (−x_P, y_P)`.
+(this determines `G` up to the sign of `y_G`, which is unimportant).
 
-### A.3.4. Formulas for adding points on a twisted Edwards curve.
+The order of the quadratic twist
+
+```math
+2y^2 = x^3 + A x^2 + x
+```
+
+of Curve25519 is `4ℓ′` for another prime number `ℓ′`.[⁴²](#footnote-42)
+
+
+### A.2.2. Parameters of Curve25519
+
+The parameters of Curve25519 are as follows:
+
+* **Base field**: Prime finite field `𝔽_p` for
+
+  ```math
+  p = 2^{255} - 19
+  ```
+
+* **Equation**:
+
+  ```math
+  y^2 = x^3 + A x^2 + x, \quad A = 486662
+  ```
+
+* **Base point G**: Characterized by
+
+  ```math
+  x_G = 9
+  ```
+
+  (nine is the smallest positive integer x-coordinate of a generator of the subgroup of large prime order of `E(𝔽_p)`).
+
+* **Order of `E(𝔽_p)`**:
+
+  ```math
+  |E(\mathbb{F}_p)| = p - t + 1 = 8ℓ
+  ```
+
+  where
+
+  ```math
+  ℓ = 2^{252} + 27742317777372353535851937790883648493  \tag{32}
+  ```
+
+  is prime.
+
+* **Order of the quadratic twist `Ē(𝔽_p)`**, where `Ē` is the quadratic twist of `E`:
+
+  ```math
+  |\tilde{E}(\mathbb{F}_p)| = p + t + 1 = 2p + 2 - 8ℓ = 4ℓ′  \tag{33}
+  ```
+
+  where
+
+  ```math
+  ℓ′ = 2^{253} - 55484635554744707071703875581767296995 \tag{34}
+  ```
+
+  is prime.
+
+
+
+### A.2.3. Private and public keys for standard Curve25519 cryptography
+A private key for Curve25519 cryptography is usually defined as a secret exponent *a*, while the corresponding public key is `xₐ`, the *x*-coordinate of point
+
+```math
+A := [a]G
+```
+
+This is usually sufficient for performing ECDH (elliptic curve Diffie–Hellman key exchange) and asymmetric elliptic curve cryptography, as follows:
+
+If a party wants to send a message *M* to another party, which has public key `xₐ` (and private key *a*), the following computations are performed. A one-time random secret exponent *b* is generated, and
+
+```math
+x_b := x[b]G
+```
+
+and
+
+```math
+x[b]A
+```
+
+are computed using a Montgomery ladder. After that, the message *M* is encrypted by a symmetric cypher such as AES using the 256-bit “shared secret”
+
+```math
+S := x[b]A
+```
+
+as a key, and 256-bit integer (“one-time public key”) `x_b` is prepended to the encrypted message. Once the party with public key `xₐ` receives this message, it can compute
+
+```math
+x[a]B
+```
+
+starting from `x_b` (transmitted with the encrypted message) and the private key *a*. Since
+
+```math
+x[a]B = x[ab]G = x[b]A = S
+```
+
+the receiving party recovers the shared secret *S* and is able to decrypt the remainder of the message.
+
+## A.2.4. Public and private keys for TON Curve25519 cryptography
+
+TON uses another form for public and private keys of Curve25519 cryptography, borrowed from Ed25519 cryptography.
+
+A private key for TON Curve25519 cryptography is just a random 256-bit string *k*. It is used by computing `SHA512(k)`, taking the first 256 bits of the result, interpreting them as a little-endian 256-bit integer *a*, clearing bits 0, 1, 2, and 255 of *a*, and setting bit 254 so as to obtain a value
+
+```math
+2^{254} \leq a < 2^{255}
+```
+
+divisible by eight. The value *a* thus obtained is the *secret exponent* corresponding to *k*; meanwhile, the remaining 256 bits of `SHA512(k)` constitute the *secret salt* `k''`.
+
+The public key corresponding to *k*—or to the secret exponent *a*—is just the *x*-coordinate `xₐ` of the point
+
+```math
+A := [a]G
+```
+
+Once *a* and `xₐ` are computed, they are used in exactly the same way as in [A.2.3](#a-2-3-private-and-public-keys-for-standard-curve25519-cryptography). In particular, if `xₐ` needs to be serialized, it is serialized into 32 octets as an unsigned little-endian 256-bit integer.
+
+
+### A.2.5. Curve25519 is used in the TON Network.
+
+Notice that the asymmetric Curve25519 cryptography described in [A.2.4](#a-2-4-public-and-private-keys-for-ton-curve25519-cryptography) is extensively used by the TON Network, especially the ADNL (Abstract Datagram Network Layer) protocol. However, TON Blockchain needs elliptic curve cryptography mostly for signatures. For this purpose, Ed25519 signatures described in the next section are used.
+
+---
+
+# A.3 Ed25519 cryptography
+
+Ed25519 cryptography is extensively used for fast cryptographic signatures by both the TON Blockchain and the TON Network. This section describes the variant of Ed25519 cryptography used by TON. An important difference from the standard approaches (as defined by D. Bernstein et al. in [2](#ref-2)) is that TON provides automatic conversion of private and public Ed25519 keys into Curve25519 keys, so that the same keys could be used both for encrypting/decrypting and for signing messages.
+
+## A.3.1. Twisted Edwards curves
+
+A *twisted Edwards curve* `Eₐ,𝑑` with parameters `a ≠ 0` and `d ≠ 0`, `a` over a field `k` is given by equation
+
+```math
+E_{a,d} : ax^2 + y^2 = 1 + dx^2 y^2 \quad \text{over } k
+\tag{36}
+```
+
+If `a = 1`, this equation defines an (untwisted) Edwards curve. Point `O(0,1)` is usually chosen as the marked point of `Eₐ,𝑑`.
+
+
+## A.3.2. Twisted Edwards curves are birationally equivalent to Montgomery curves
+
+A twisted Edwards curve `Eₐ,𝑑` is birationally equivalent to a Montgomery elliptic curve
+
+```math
+M_A : v^2 = u^3 + Au^2 + u
+\tag{37}
+```
+
+where
+
+```math
+A = \frac{2(a+d)}{(a-d)} \quad \text{and} \quad d/a = \frac{A-2}{A+2}.
+```
+
+The birational equivalence
+
+```math
+\varphi : E_{a,d} \longrightarrow M_A
+```
+
+and its inverse `φ⁻¹` are given by
+
+```math
+\varphi : (x,y) \mapsto \left( \frac{1+y}{1-y}, \; \frac{c(1+y)}{x(1-y)} \right) 
+\tag{38}
+```
+
+and
+
+```math
+\varphi^{-1} : (u,v) \mapsto \left( \frac{cu}{v}, \; \frac{u-1}{u+1} \right)
+\tag{39}
+```
+
+where
+
+```math
+c = \sqrt{\frac{A+2}{a}}
+\tag{40}
+```
+
+Notice that `φ` transforms the marked point `O(0,1)` of `Eₐ,𝑑` into the marked point of `M_A` (i.e., its point at infinity).
+
+
+## A.3.3. Addition of points on a twisted Edwards curve
+
+Since `Eₐ,𝑑` is birationally equivalent to an elliptic curve `M_A`, the addition of points on `M_A` can be transferred to `Eₐ,𝑑` by setting
+
+```math
+P + Q := \varphi^{-1}(\varphi(P) + \varphi(Q)) \quad \text{for any } P, Q \in E_{a,d}(k).
+\tag{41}
+```
+
+Notice that the marked point `O(0,1)` is the neutral element with respect to this addition, and that
+
+```math
+-(x_P, y_P) = (-x_P, y_P).
+```
+
+## A.3.4. Formulas for adding points on a twisted Edwards curve
 
 The coordinates `x_{P+Q}` and `y_{P+Q}` admit simple expressions as rational functions of `x_P, y_P, x_Q, y_Q`:
 
 ```math
-x_{P+Q} = \frac{x_P y_Q + x_Q y_P}{1 + d x_P x_Q y_P y_Q} \quad (42)
+x_{P+Q} = \frac{x_P y_Q + x_Q y_P}{1 + d x_P x_Q y_P y_Q}
+\tag{42}
 ```
 
 ```math
-y_{P+Q} = \frac{y_P y_Q - a x_P x_Q}{1 - d x_P x_Q y_P y_Q} \quad (43)
+y_{P+Q} = \frac{y_P y_Q - a x_P x_Q}{1 - d x_P x_Q y_P y_Q}
+\tag{43}
 ```
 
-These expressions can be efficiently computed, especially if `a = −1`. This is the reason twisted Edwards curves are important for fast elliptic curve cryptography.
+These expressions can be efficiently computed, especially if `a = -1`. This is the reason twisted Edwards curves are important for fast elliptic curve cryptography.
 
-### A.3.5. Ed25519 twisted Edwards curve.
 
-Ed25519 is the twisted Edwards curve `E_{−1,d}` over `F_p`, where `p = 2^255 − 19` is the same prime number as that used for Curve25519, and `d = −(A − 2)/(A + 2) = −121665/121666`, where `A = 486662` is the same as in the equation (31):
+## A.3.5. Ed25519 twisted Edwards curve
+
+Ed25519 is the twisted Edwards curve `E_{-1,d}` over `Fₚ`, where
 
 ```math
-- x^2 + y^2 = 1 - \frac{121665}{121666} x^2 y^2, \quad \text{for } x, y \in \mathbb{F}_p,\ p = 2^{255} - 19. \quad (44)
+p = 2^{255} - 19
 ```
 
-In this way, Ed25519-curve `E_{−1,d}` is birationally equivalent to Curve25519 (31), and one can use `E_{−1,d}` and formulas (42)–(43) for point addition on either Ed25519 or Curve25519, using (38) and (39) to convert points on Ed25519 into corresponding points on Curve25519, and vice versa.
-
-### A.3.6. Generator of Ed25519.
-
-The generator of Ed25519 is the point `G₀` with `y(G₀) = 4/5` and `0 ≤ x(G₀) < p` even. According to (38), it corresponds to the point `(u, v)` of Curve25519 with `u = (1 + 4/5)/(1 − 4/5) = 9` (i.e., to the generator `G` of Curve25519 chosen in A.2.2). In particular, `G = φ(G₀)`, `G₀` generates a cyclic subgroup of the same large prime order `ℓ` given in (32), and for any integer `a`,
+is the same prime number as that used for Curve25519, and
 
 ```math
-\varphi([a] G_0) = [a] G . \quad (45)
+d = -\frac{(A-2)}{(A+2)} = -121665/121666,
 ```
 
-In this way, we can perform computations with Curve25519 and its generator `G`, or with Ed25519 and generator `G₀`, and obtain essentially the same results.
+where `A = 486662` is the same as in equation (31):
 
-### A.3.7. Standard representation of points on Ed25519.
+```math
+-x^2 + y^2 = 1 - \frac{121665}{121666} x^2 y^2
+\quad \text{for } x,y \in F_p, \; p = 2^{255} - 19.
+\tag{44}
+```
 
-A point `P(x, y)` on Ed25519 may be represented by its two coordinates `x_P` and `y_P`, residues modulo `p = 2^255 − 19`. In their turn, both these coordinates may be represented by unsigned 255- or 256-bit integers `0 ≤ x_P, y_P < p < 2^255`.
+In this way, Ed25519-curve `E_{-1,d}` is birationally equivalent to Curve25519 (31), and one can use `E_{-1,d}` and formulas (42)–(43) for point addition on either Ed25519 or Curve25519, using (38) and (39) to convert points on Ed25519 into corresponding points on Curve25519, and vice versa.
 
-However, a more compact representation of `P` by one little-endian unsigned 256-bit integer `Ṕ` is commonly used (and is used by TON as well). Namely, the 255 lower-order bits of `Ṕ` contain `y_P`, `0 ≤ y_P < p < 2^255`, and bit `255` is used to store `x_P mod 2`, the lower-order bit of `x_P`. Since `y_P` always determines `x_P` up to sign (i.e., up to replacing `x_P` with `p − x_P`), `x_P` and `p − x_P` can always be distinguished by their lower-order bit, `p` being odd.
 
-If it is sufficient to know `±P` up to sign, one can ignore `x_P mod 2` and consider only the little-endian 255-bit integer `y_P`, setting the bit `255` arbitrarily, ignoring its previously defined value, or clearing it.
+### A.3.6. Generator of Ed25519
 
-### A.3.8. Private key for Ed25519.
+The generator of Ed25519 is the point `G′` with `y(G′) = 4/5` and `0 ≤ x(G′) < p` even. According to (38), it corresponds to the point `(u,v)` of Curve25519 with
 
-A private key for Ed25519 is just an arbitrary 256-bit string `k`. A secret exponent `a` and secret salt `k″` are derived from `k` by first computing `sha512(k)`, and then taking the first 256 bits of this `sha512` as the little-endian representation of `a` (but with bits `255, 2, 1, 0` cleared, and bit `254` set); the last 256 bits of `sha512(k)` then constitute `k″`.
+```math
+u = \frac{1+4/5}{1-4/5} = 9
+```
 
-This is essentially the same procedure as described in A.2.4, but with Curve25519 replaced by the birationally equivalent curve Ed25519. (In fact, it is the other way around: this procedure is standard for Ed25519-based elliptic curve cryptography, and TON extends the procedure to Curve25519.)
+(i.e., to the generator `G` of Curve25519 chosen in [A.2.2](#a-2-2-public-and-private-keys-for-ton-curve25519-cryptography)). In particular,
 
-### A.3.9. Public key for Ed25519.
+```math
+G = \varphi(G′),
+```
 
-A public key corresponding to a private key `k` for Ed25519 is the standard representation (cf. A.3.7) of the point `A = [a]G₀`, where `a` is the secret exponent (cf. A.3.8) defined by the private key `k`.
+`G′` generates a cyclic subgroup of the same large prime order `ℓ` given in (32), and for any integer `a`,
 
-Notice that `φ(A)` is the public key for Curve25519 defined by the same private key `k` according to A.2.4 and (45). In this way, we can convert public keys for Ed25519 into corresponding public keys for Curve25519, and vice versa. Private keys do not need to be transformed at all.
+```math
+\varphi([a]G′) = [a]G .
+\tag{45}
+```
 
-### A.3.10. Cryptographic Ed25519-signatures.
+In this way, we can perform computations with Curve25519 and its generator `G`, or with Ed25519 and generator `G′`, and obtain essentially the same results.
 
-If a message (octet string) `M` needs to be signed by a private key `k` defining secret exponent `a` and secret salt `k″`, the following computations are performed:
 
-* `r := sha512(k″ | M)`, interpreted as a little-endian 512-bit integer. Here `s | t` denotes the concatenation of octet strings `s` and `t`.
-* `R := [r] G₀` is a point on Ed25519.
-* `Ṙ` is the standard representation (cf. A.3.7) of point `R` as a 32-octet string.
-* `s := r + a · sha512(Ṙ | Ã | M) mod ℓ`, encoded as a little-endian 256-bit integer. Here `Ã` is the standard representation of point `A = [a]G₀`, the public key corresponding to `k`.
+### A.3.7. Standard representation of points on Ed25519
 
-The (Schnorr) signature is a 64-octet string `(R, ŝ)`, consisting of the standard representation of the point `R` and of the 256-bit integer `s`.
+A point `P(x,y)` on Ed25519 may be represented by its two coordinates `xₚ` and `yₚ`, residues modulo
 
-### A.3.11. Checking Ed25519-signatures.
+```math
+p = 2^{255} - 19.
+```
 
-In order to verify signature `(R, ŝ)` of a message `M`, supposedly made by the owner of the private key `k` corresponding to a known public key `A`, the following steps are performed:
+In their turn, both these coordinates may be represented by unsigned 255- or 256-bit integers
 
-* Points `[s] G₀` and `R + [sha512(Ṙ | Ã | M)] A` of Ed25519 are computed.
-* If these two points coincide, the signature is correct
+```math
+0 ≤ xₚ, yₚ < p < 2^{255}.
+```
+
+However, a more compact representation of `P` by one little-endian unsigned 256-bit integer `Ṕ` is commonly used (and is used by TON as well). Namely, the 255 lower-order bits of `Ṕ` contain `yₚ`,
+
+```math
+0 ≤ yₚ < p < 2^{255},
+```
+
+and bit 255 is used to store `xₚ mod 2`, the lower-order bit of `xₚ`. Since `yₚ` always determines `xₚ` up to sign (i.e., up to replacing `xₚ` with `p − xₚ`), `xₚ` and `p − xₚ` can always be distinguished by their lower-order bit, `p` being odd.
+
+If it is sufficient to know `±P` up to sign, one can ignore `xₚ mod 2` and consider only the little-endian 255-bit integer `yₚ`, setting the bit 255 arbitrarily, ignoring its previously defined value, or clearing it.
+
+## A.3.8. Private key for Ed25519
+
+A *private key* for Ed25519 is just an arbitrary 256-bit string `k`. A *secret exponent* `a` and *secret salt* `k″` are derived from `k` by first computing `SHA512(k)`, and then taking the first 256 bits of this `SHA512` as the little-endian representation of `a` (but with bits 255, 2, 1, and 0 cleared, and bit 254 set); the last 256 bits of `SHA512(k)` then constitute `k″`.
+
+This is essentially the same procedure as described in [A.2.4](#a-2-4-public-and-private-keys-for-ton-curve25519-cryptography), but with Curve25519 replaced by the birationally equivalent curve Ed25519. (In fact, it is the other way around: this procedure is standard for Ed25519-based elliptic curve cryptography, and TON extends the procedure to Curve25519.)
+
+
+## A.3.9. Public key for Ed25519
+
+A *public key* corresponding to a private key `k` for Ed25519 is the standard representation (cf. [A.3.7](#a-3-7-standard-representation-of-points-on-ed25519)) of the point
+
+```math
+A = [a]G′,
+```
+
+where `a` is the secret exponent (cf. [A.3.8](#a-3-8-private-key-for-ed25519)) defined by the private key `k`.
+
+
+### A.3.10. Cryptographic Ed25519-signatures
+
+If a message (octet string) *M* needs to be signed by a private key `k` defining secret exponent `a` and secret salt `k″`, the following computations are performed:
+
+* `r := SHA512(k″‖M)`, interpreted as a little-endian 512-bit integer. Here `s‖t` denotes the concatenation of octet strings `s` and `t`.
+* `R := [r]G′` is a point on Ed25519.
+* `Ṙ` is the standard representation (cf. [A.3.7](#a-3-7-standard-representation-of-points-on-ed25519)) of point `R` as a 32-octet string.
+* `s := r + a · SHA512(Ṙ‖Ã‖M) mod ℓ`, encoded as a little-endian 256-bit integer. Here `Ã` is the standard representation of point `A = [a]G′`, the public key corresponding to `k`.
+
+The (Schnorr) signature is a 64-octet string `(Ṙ,s)`, consisting of the standard representation of the point `R` and of the 256-bit integer `s`.
+
+
+### A.3.11. Checking Ed25519-signatures
+
+In order to verify signature `(Ṙ,s)` of a message *M*, supposedly made by the owner of the private key `k` corresponding to a known public key `A`, the following steps are performed:
+
+* Points `[s]G′` and `R + [SHA512(Ṙ‖Ã‖M)]A` of Ed25519 are computed.
+* If these two points coincide, the signature is correct.
 
 ---
 
@@ -2879,90 +3190,89 @@ In order to verify signature `(R, ŝ)` of a message `M`, supposedly made by the 
 <a id="ref-4"></a>
 [4] N. Durov, *Telegram Open Network Virtual Machine*, 2018.
 
---- 
 
 ## Footnotes
 
-<a name="footnote-3"></a>³ Completely identical cells are often identified in memory and in disk storage; this is the reason why trees of cells are transparently transformed into DAGs of cells. From this perspective, a DAG is just a storage optimization of the underlying tree of cells, irrelevant for most considerations.  
+<a id="footnote-1"></a> **1.** As of August 2018, this document does not include a detailed description of serialized invalidity proofs, because they are likely to change significantly during the development of the validator software. Only the general design principles for consistency conditions and serialized invalidity proofs are discussed. [Back ↑](#introduction)
 
-<a name="footnote-4"></a>⁴ Cf. [4.3.3–4](#), where an example is given and explained, pending a more complete reference.  
+<a id="footnote-2"></a> **2.** This is not included in the present version of this document, but will be provided in a separate appendix to a future revision. [Back ↑](#introduction)
 
-<a name="footnote-5"></a>⁵ If there are no transactions related to an account, the corresponding virtual block is empty and is omitted in the shardchain block.  
+<a id="footnote-3"></a> **3** Completely identical cells are often identified in memory and in disk storage; this is the reason why trees of cells are transparently transformed into DAGs of cells. From this perspective, a DAG is just a storage optimization of the underlying tree of cells, irrelevant for most considerations. [Back ↑](#1-1-1-tvm-cells)
 
-<a name="footnote-6"></a>⁶ Recall that TON Blockchain supports dynamic sharding, so the shard configuration may change from block to block because of shard merge and split events. Therefore, we cannot simply say that each shardchain corresponds to a fixed set of accountchains.  
+<a id="footnote-4"></a> **4** Cf. [4.3.3–4](#ref-4), where an example is given and explained, pending a more complete reference. [Back ↑](#1-1-1-tvm-cells)
 
-<a name="footnote-7"></a>⁷ This condition applies if there is exactly one immediate antecessor (i.e., if a shardchain merge event did not occur immediately before the block in question); otherwise, this condition becomes more convoluted.
+<a id="footnote-5"></a> **5.** If there are no transactions related to an account, the corresponding virtual block is empty and is omitted in the shardchain block. [Back ↑](#1-2-1-the-infinite-sharding-paradigm-isp-applied-to-blockchain-block-and-state)
 
-<a name="footnote-8"></a>⁸ This example is a bit simplified since it does not take into account the presence of transit messages in `InMsgDescr`, which are not processed by any explicit transaction.  
+<a id="footnote-6"></a> **6.** Recall that TON Blockchain supports dynamic sharding, so the shard configuration may change from block to block because of shard merge and split events. Therefore, we cannot simply say that each shardchain corresponds to a fixed set of accountchains. [Back ↑](#1-2-1-the-infinite-sharding-paradigm-isp-applied-to-blockchain-block-and-state)
 
-<a name="footnote-9"></a>⁹ It is interesting to note that this part of the work can be done almost automatically.
+<a id="footnote-7"></a> **7.** This condition applies if there is exactly one immediate antecessor (i.e., if a shardchain merge event did not occur immediately before the block in question); otherwise, this condition becomes more convoluted. [Back ↑](#1-2-3-interaction-with-other-blocks-and-the-outside-world-global-and-local-consistency-conditions)
 
-<a name="footnote-10"></a>¹⁰ In order to express this condition correctly in the presence of dynamic sharding, one should fix some account ξ, and consider the latest blocks `S` and `S′` of the shardchains containing ξ in the shard configurations of both `B` and `B′`, since the shards containing ξ might be different in `B` and `B′`.
+<a id="footnote-8"></a> **8.** This example is a bit simplified since it does not take into account the presence of transit messages in `InMsgDescr`, which are not processed by any explicit transaction. [Back ↑](#1-3-8-example-consistency-condition-for-inmsgdescr)
 
-<a name="footnote-11"></a>¹¹ Value-bearing messages with the bounce flag set will not be accepted by an uninitialized account, but will be “bounced” back.
+<a id="footnote-9"></a> **9.** It is interesting to note that this part of the work can be done almost automatically. [Back ↑](#1-3-12-witnesses-of-the-invalidity-of-a-block)
 
-<a name="footnote-12"></a>¹² “Messages to nowhere” may have some special fields in their body indicating their destination outside the TON Blockchain—for instance, an account in some other blockchain, or an IP address and port—which may be interpreted by the third-party software appropriately. Such fields are ignored by the TON Blockchain.
+<a id="footnote-10"></a> **10** In order to express this condition correctly in the presence of dynamic sharding, one should fix some account ξ, and consider the latest blocks `S` and `S′` of the shardchains containing ξ in the shard configurations of both `B` and `B′`, since the shards containing ξ might be different in `B` and `B′`. [Back ↑](#1-5-1-total-state-defined-by-a-masterchain-block)
 
-<a name="footnote-13"></a>¹³ The problem of bypassing possible validator censorship—which could happen, for instance, if all validators conspire not to include external messages sent to accounts belonging to some set of blacklisted accounts—is dealt with separately elsewhere. The main idea is that the validators may be forced to promise to include a message with a known hash in a future block, without knowing anything about the identity of the sender or the receiver; they will have to keep this promise afterwards when the message itself with pre-agreed hash is presented.
+<a id="footnote-11"></a>**11** Value-bearing messages with the bounce flag set will not be accepted by an uninitialized account, but will be “bounced” back. [Back ↑](#1-7-2-transferring-cryptocurrency-to-uninitialized-accounts)
 
-<a name="footnote-14"></a>¹⁴ However, the internal routing process described in [2.1.11](#2-1-11-internal-routing) is applied immediately after that, which may further modify the transit address.
+<a id="footnote-12"></a>**12** “Messages to nowhere” may have some special fields in their body indicating their destination outside the TON Blockchain—for instance, an account in some other blockchain, or an IP address and port—which may be interpreted by the third-party software appropriately. Such fields are ignored by the TON Blockchain. [Back ↑](#2-1-3-external-messages-with-no-source-or-destination-address)
 
-<a name="footnote-15"></a>¹⁵ When the addresses involved are of different lengths (e.g., because they belong to different workchains), one should consider only the first 96 bits of the addresses in the above formula.
+<a id="footnote-13"></a>**13** The problem of bypassing possible validator censorship—which could happen, for instance, if all validators conspire not to include external messages sent to accounts belonging to some set of blacklisted accounts—is dealt with separately elsewhere. The main idea is that the validators may be forced to promise to include a message with a known hash in a future block, without knowing anything about the identity of the sender or the receiver; they will have to keep this promise afterwards when the message itself with pre-agreed hash is presented. [Back ↑](#2-1-3-external-messages-with-no-source-or-destination-address)
 
-<a name="footnote-16"></a>¹⁶ Instead of Hamming optimality, we might have considered the equivalent property of Kademlia optimality, written for the Kademlia (or weighted `L1`) distance as given by `‖ξ − η‖_K := ∑_i 2^{-i} |ξ_i − η_i|` instead of the Hamming distance.
+<a id="footnote-14"></a>**14** However, the internal routing process described in [2.1.11](#2-1-11-internal-routing) is applied immediately after that, which may further modify the transit address. [Back ↑](#2-1-4-transit-and-next-hop-addresses)
 
-<a name="footnote-17"></a>¹⁷ Notice that the next-hop and internal-routing computations are still applied to such messages, since the current shardchain may be split before the message is processed. In this case, the new sub-shardchain containing the destination address will inherit the message.
+<a id="footnote-15"></a>**15** When the addresses involved are of different lengths (e.g., because they belong to different workchains), one should consider only the first 96 bits of the addresses in the above formula. [Back ↑](l#2-1-8-hamming-optimality-of-the-next-hop-address-algorithm)
 
-<a name="footnote-18"></a>¹⁸ We may define the (virtual) output queue of an account(chain) as the subset of the `OutMsgQueue` of the shard currently containing that account that consists of messages with transit addresses equal to the address of the account.
+<a id="footnote-16"></a>**16** Instead of Hamming optimality, we might have considered the equivalent property of Kademlia optimality, written for the Kademlia (or weighted `L1`) distance as given by `‖ξ − η‖ₖ := ∑ᵢ 2⁻ᶦ |ξᵢ − ηᵢ|` instead of the Hamming distance. [Back ↑](l#2-1-8-hamming-optimality-of-the-next-hop-address-algorithm)
 
-<a name="footnote-19"></a>¹⁹ In particular, if the hash of a recent block of a neighboring shardchain is not yet reflected in the latest masterchain block, its modifications to `OutMsgQueue` must not be taken into account.
+<a name="footnote-17"></a> **17** Notice that the next-hop and internal-routing computations are still applied to such messages, since the current shardchain may be split before the message is processed. In this case, the new sub-shardchain containing the destination address will inherit the message. [Back ↑](#2-1-13-any-shard-is-a-neighbor-of-itself)
 
-<a name="footnote-20"></a>²⁰ This statement is not as trivial as it seems at first, because some of the shardchains involved may split or merge during the routing. A correct proof may be obtained by adopting the ISP perspective to HR as explained in 2.1.14 and observing that m′ will always be behind m, either in terms of the intermediate accountchain reached or, if they happen to be in the same accountchain, in terms of logical creation time.  
+<a name="footnote-18"></a> **18** We may define the (virtual) output queue of an account(chain) as the subset of the `OutMsgQueue` of the shard currently containing that account that consists of messages with transit addresses equal to the address of the account. [Back ↑](#2-1-14-hypercube-routing-and-the-isp)
 
-<a name="footnote-21"></a>²¹ One must not only look up the key `Hash(m)` in the `InMsgDescr` of these blocks, but also check the intermediate addresses in the envelope of the corresponding entry, if found.
+<a name="footnote-19"></a> **19** In particular, if the hash of a recent block of a neighboring shardchain is not yet reflected in the latest masterchain block, its modifications to `OutMsgQueue` must not be taken into account. [Back ↑](#2-2-5-logical-time-monotonicity%3A%3A-importing-the-oldest-message-from-the-neighbors)
 
-<a name="footnote-22"></a>²² A description of an older version of TL may be found at https://core.telegram.org/mtproto/TL. Alternatively, an informal introduction to TL-B schemes may be found in [4, 3.3.4](#ref-4).
+<a name="footnote-20"></a> **20** This statement is not as trivial as it seems at first, because some of the shardchains involved may split or merge during the routing. A correct proof may be obtained by adopting the ISP perspective to HR as explained in [2.1.14](#2-1-14-hypercube-routing-and-the-isp) and observing that m′ will always be behind m, either in terms of the intermediate accountchain reached or, if they happen to be in the same accountchain, in terms of logical creation time. A crucial observation is that “at any given moment of time” (logically; a more precise description would be “in the total state obtained after processing any causally closed subset F of blocks”), the intermediate accountchains belonging to the same shard are contiguous on the path from ξ to η (i.e., cannot have accountchains belonging to some other shard in between). This is a “convexity property” (cf. [2.1.10](#2-1-10-fifo-guarantees-of-hypercube-routing)) of the Hypercube Routing algorithm described in [2.1.5](#2-1-5-computation-of-the-next-hop-address-for-hypercube-routing). [Back ↑](#2-2-10-fifo-guarantees-of-hypercube-routing)
 
-<a name="footnote-23"></a>²³ Address rewriting is a feature used to implement “anycast addresses” employed by the so-called large or global smart contracts (cf. [3, 2.3.18]), which can have instances in several shardchains. When address rewriting is enabled, a message may be routed to and processed by a smart contract with an address coinciding with the destination address up to the first `d` bits, where `d ≤ 32` is the “splitting depth” indicated in `anycast.depth` (cf. 2.1.7). Otherwise, the addresses must match exactly.
+<a name="footnote-21"></a> **21** One must not only look up the key `Hash(m)` in the `InMsgDescr` of these blocks, but also check the intermediate addresses in the envelope of the corresponding entry, if found. [Back ↑](#2-3-6-checking-whether-an-hr-message-has-already-been-delivered-via-hr-to-its-final-destination-or-an-intermediate-shardchain)
 
-<a name="footnote-24"></a>²⁴ The information from the `init` field of an inbound message is used either when the receiving account is uninitialized or frozen with the hash of `StateInit` equal to the one expected by the account, or when the receiving account is active and its code or data is an external hash reference matching the hash received in the `StateInit` of the message.
+<a name="footnote-22"></a>**22** A description of an older version of TL may be found at [https://core.telegram.org/mtproto/TL](https://core.telegram.org/mtproto/TL). Alternatively, an informal introduction to TL-B schemes may be found in [4, 3.3.4](#ref-4). [Back ↑](#3-1-1-some-standard-definitions)
 
-<a name="footnote-25"></a>²⁵ Strictly speaking, InMsgDescr is the type of this structure; we deliberately use the same notation to describe the only instance of this type in a block.
+<a name="footnote-23"></a> **23** Address rewriting is a feature used to implement “anycast addresses” employed by the so-called large or global smart contracts (cf. [[3](#ref-3), 2.3.18]), which can have instances in several shardchains. When address rewriting is enabled, a message may be routed to and processed by a smart contract with an address coinciding with the destination address up to the first `d` bits, where `d ≤ 32` is the “splitting depth” indicated in `anycast.depth` (cf. [2.1.7](#2-1-7-internal-routing)). Otherwise, the addresses must match exactly. [Back ↑](#3-1-4-internal-addresses)
 
-<a name="footnote-26"></a>²⁶ Recall that a shardchain is considered a neighbor of itself.
+<a name="footnote-24"></a> **24** The information from the `init` field of an inbound message is used either when the receiving account is uninitialized or frozen with the hash of `StateInit` equal to the one expected by the account, or when the receiving account is active and its code or data is an external hash reference matching the hash received in the `StateInit` of the message. [Back ↑](#3-1-12-deserialization-of-a-message-payload)
 
-<a name="footnote-27"></a>²⁷ This situation is rare and occurs only after shardchain merge events. Normally the messages imported from the OutMsgQueue of the same shardchain have destinations inside this shardchain, and are processed accordingly instead of being re-queued.
+<a name="footnote-25"></a> **25** Strictly speaking, `InMsgDescr` is the type of this structure; we deliberately use the same notation to describe the only instance of this type in a block. [Back ↑](#3-2-inbound-message-descriptors)
 
-<a name="footnote-28"></a>²⁸ For simplicity, we sometimes treat the masterchain as just another workchain with workchain_id = −1.
+<a name="footnote-26"></a> **26** Recall that a shardchain is considered a neighbor of itself. [Back ↑](#3-2-1-types-and-sources-of-inbound-messages)
 
-<a name="footnote-29"></a>²⁹ In fact, up to the first d bits are replaced in such a way that each shard contains at most one instanc
+<a name="footnote-27"></a> **27** This situation is rare and occurs only after shardchain merge events. Normally the messages imported from the `OutMsgQueue` of the same shardchain have destinations inside this shardchain, and are processed accordingly instead of being re-queued. [Back ↑](#3-3-2-message-dequeueing-records)
 
-<a name="footnote-30"></a>³⁰ This scheme uses anonymous constructors and anonymous fields, both represented by an underscore _.
+<a id="footnote-28"></a> **28** For simplicity, we sometimes treat the masterchain as just another workchain with `workchain_id = −1`. [Back ↑](#4-1-1-account-addresses)
 
-<a name="footnote-31"></a>³¹ MERKLE_UPDATE and exotic cells. A MERKLE_UPDATE is a special TL-B constructor whose cell is marked exotic. It carries old_hash and new_hash (representation hashes of the subtree before/after the update) and may include old/new by reference. Verifiers can validate updates using these hashes with Merkle proofs even if full bodies aren’t inlined.
+<a id="footnote-29"></a> **29** In fact, up to the first d bits are replaced in such a way that each shard contains at most one instance. [Back ↑](#4-1-3-small-and-large-smart-contracts)
 
-<a name="footnote-32"></a>³² TL-B _ and ^ syntax. _ denotes an anonymous field/constructor; ^ means “store under a reference”. Thus the pattern _:^[ ... ] means: put the bracketed fields into a separate subcell and store a reference to it instead of inlining.
+<a id="footnote-30"></a> **30** This scheme uses anonymous constructors and anonymous fields, both represented by an underscore `_`. [Back ↑](#4-1-6-account-description)
 
-<a name="footnote-33"></a>³³ Notice that this record does not represent a change in the state of the account, because the transaction may still be aborted during the action phase. In that case, the new persistent data indirectly referenced by vm_final_state_hash will be discarded.
+<a name="footnote-31"></a>**31** `MERKLE_UPDATE` and exotic cells. A `MERKLE_UPDATE` is a special TL-B constructor whose cell is marked exotic. It carries `old_hash` and `new_hash` (representation hashes of the subtree before/after the update) and may include old/new by reference. Verifiers can validate updates using these hashes with Merkle proofs even if full bodies aren’t inlined. [Back ↑](#4-2-6-bouncing-inbound-messages-to-non-existent-accounts)
 
-<a name="footnote-34"></a>³⁴ The most common way of creating shared libraries for TVM is to publish a reference to the root cell of the library in the masterchain.
+<a name="footnote-32"></a>**32** TL-B `_` and `^` syntax. `_` denotes an anonymous field/constructor; `^` means “store under a reference”. Thus the pattern `_:^[ ... ]` means: put the bracketed fields into a separate subcell and store a reference to it instead of inlining. [Back ↑](#4-2-8-reasons-for-splitting-the-processing-into-computation-and-action-phases)
 
-<a name="footnote-35"></a>³⁵ The persistent data of the smart contract need not be loaded in its entirety for this to occur. Instead the root is loaded, and TVM may load other cells by their references from the root only when they are accessed, thus providing a form of virtual memory.
+<a name="footnote-33"></a>**33** Notice that this record does not represent a change in the state of the account, because the transaction may still be aborted during the action phase. In that case, the new persistent data indirectly referenced by `vm_final_state_hash` will be discarded. [Back ↑](#4-3-7-valid-computing-phase)
 
-<a name="footnote-36"></a>³⁶ Both the global gas limit and the gas price are configurable parameters determined by the current state of the masterchain
+<a name="footnote-34"></a>**34** The most common way of creating shared libraries for TVM is to publish a reference to the root cell of the library in the masterchain. [Back ↑](#4-4-3-smart-contract-library-environment)
 
-<a name="footnote-37"></a>³⁷ Arithmetic modulo p for a modulus p near a power of two can be implemented very efficiently. On the other hand, residues modulo 2^255 − 19 can be represented by 255-bit integers. This is the reason this particular value of p has been chosen by D. Bernstein.
+<a name="footnote-35"></a>**35** The persistent data of the smart contract need not be loaded in its entirety for this to occur. Instead the root is loaded, and TVM may load other cells by their references from the root only when they are accessed, thus providing a form of virtual memory. [Back ↑](#4-4-4-the-initial-state-of-tvm)
 
-<a name="footnote-38"></a>³⁸ Actually, D. Bernstein chose A = 486662 because it is the smallest positive integer A ≡ 2 (mod 4) such that both the corresponding Montgomery curve (31) over F_p for p = 2^255 − 19 and the quadratic twist of this curve have small cofactors. Such an arrangement avoids the necessity to check whether an x-coordinate x_P ∈ F_p of a point P defines a point (x_P, y_P) ∈ F^2_p lying on the Montgomery curve itself or on its quadratic twist.
+<a name="footnote-36"></a>**36** Both the global gas limit and the gas price are configurable parameters determined by the current state of the masterchain. [Back ↑](#4-4-4-the-initial-state-of-tvm)
 
-<a name="footnote-37"></a>³⁷ In principle, an experimental version of TON Blockchain might choose to keep only the hashes of the initial and final states of the shardchain. The Merkle update increases the block size, but it is handy for full nodes that want to keep and update their copy of the shardchain state. Otherwise, the full nodes would have to repeat all the computations contained in a block to compute the updated state of the shardchain by themselves.
+<a name="footnote-37"></a> **37** Arithmetic modulo *p* for a modulus *p* near a power of two can be implemented very efficiently. On the other hand, residues modulo 2²⁵⁵ − 19 can be represented by 255-bit integers. This is the reason this particular value of *p* has been chosen by D. Bernstein. [Back ↑](#5-1-2-components-of-a-shardchain-block)
 
-<a name="footnote-38"></a>³⁸ Notice that these “absent cells” are different from the library reference and external reference cells, which are kinds of exotic cells (cf. [4, 3.1.7](#ref-4)). Absent cells, by contrast, are introduced only for the purpose of serializing incomplete bags of cells, and can never be processed by TVM.
+<a name="footnote-38"></a>**38** Notice that these “absent cells” are different from the library reference and external reference cells, which are kinds of exotic cells (cf. [4, 3.1.7](#ref-4)). Absent cells, by contrast, are introduced only for the purpose of serializing incomplete bags of cells, and can never be processed by TVM. [Back ↑](#5-3-6-serialization-of-one-cell-from-a-bag-of-cells)
 
-<a name="footnote-39"></a>³⁹ Notice that exotic cells (with s = 1) always have b ≥ 8, with the cell type encoded in the first eight data bits (cf. [4, 3.1.7](#ref-4)).
+<a name="footnote-39"></a>**39** Notice that exotic cells (with `s = 1`) always have `b ≥ 8`, with the cell type encoded in the first eight data bits (cf. [4, 3.1.7](#ref-4)). [Back ↑](#5-3-6-serialization-of-one-cell-from-a-bag-of-cells)
 
-<a name="footnote-40"></a>⁴⁰ If the bag of cells is not complete, some of these cell references may refer to cells c′ absent from the bag of cells. In that case, special “absent cells” with r = 7 are included into the bag of cells and are assigned some indices j. These indices are then used to represent references to absent cells.
+<a name="footnote-40"></a>**40** If the bag of cells is not complete, some of these cell references may refer to cells `c′` absent from the bag of cells. In that case, special “absent cells” with `r = 7` are included into the bag of cells and are assigned some indices `j`. These indices are then used to represent references to absent cells. [Back ↑](#5-3-6-serialization-of-one-cell-from-a-bag-of-cells)
+ 
+<a name="footnote-41"></a>**41** Arithmetic modulo **p** for a modulus **p** near a power of two can be implemented very efficiently. On the other hand, residues modulo **2²⁵⁵ − 19** can be represented by 255-bit integers. This is the reason this particular value of **p** has been chosen by D. Bernstein. [Back ↑](#a-1-1-finite-fields)
 
-<a name="footnote-41"></a>⁴¹ Arithmetic modulo **p** for a modulus **p** near a power of two can be implemented very efficiently. On the other hand, residues modulo **2²⁵⁵ − 19** can be represented by 255-bit integers. This is the reason this particular value of **p** has been chosen by D. Bernstein.
-
-<a name="footnote-42"></a>⁴² Actually, D. Bernstein chose `A = 486662` because it is the smallest positive integer `A ≡ 2 (mod 4)` such that both the corresponding Montgomery curve (31) over `F_p` for `p = 2^255 − 19` and the quadratic twist of this curve have small cofactors. Such an arrangement avoids the necessity to check whether an x-coordinate `x_P ∈ F_p` of a point `P` defines a point `(x_P, y_P) ∈ F_{p^2}` lying on the Montgomery curve itself or on its quadratic twist.
+<a name="footnote-42"></a> **42** Actually, D. Bernstein chose `A = 486662` because it is the smallest positive integer `A ≡ 2 (mod 4)` such that both the corresponding Montgomery curve (31) over `F_p` for `p = 2^255 − 19` and the quadratic twist of this curve have small cofactors. Such an arrangement avoids the necessity to check whether an x-coordinate `x_P ∈ F_p` of a point `P` defines a point `(x_P, y_P) ∈ F_{p^2}` lying on the Montgomery curve itself or on its quadratic twist. [Back ↑](#a2-curve25519-cryptography)
