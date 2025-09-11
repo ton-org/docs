@@ -108,3 +108,286 @@ Paste your wallet address into the search bar. You should see:
 ---
 
 ## 3. Core Infrastructure: Nodes and Indexers
+
+To support deposits and withdrawals on TON, your exchange backend needs reliable access to both **read blockchain state** (balances, account status, confirmations) and **write transactions** (relaying signed deposits, withdrawals, or contract calls). This requires running a **node with liteserver enabled**.  
+
+### Node Modes
+
+A node can operate in two modes:  
+
+| Mode | Description | Suitable for | Limitations | Example Use Case |
+|------|-------------|--------------|-------------|------------------|
+| **Non-archival** | Keeps only recent blockchain state; older history is pruned automatically. | Everyday deposit and withdrawal processing where only the latest account state matters. | Cannot retrieve or verify old transactions. History beyond the retention window is unavailable. | Verifying a user deposit made in the last few blocks before crediting their balance. |
+| **Archival** | Stores the full blockchain history. Can optionally use TTL/expiry settings to limit how long old data is retained. | Compliance, audits, dispute resolution, or reconstructing account history months later. | Higher storage and infrastructure requirements. If TTL is configured, very old history may still be dropped. | A regulator requests proof of deposits from one year ago, or a customer disputes a withdrawal made six months earlier. |
+
+<Tip>
+For production exchanges, an **archival node** is strongly preferred. It ensures access to the full transaction history, which is critical for compliance and customer support. Non-archival nodes can serve lightweight setups but impose strict limits on historical queries.
+</Tip>
+
+### Deployment Options
+
+You can provision a node in two ways:  
+
+- **Run your own node** : Install MyTonCtrl in archival or non-archival mode on dedicated infrastructure. Provides full control over synchronization, networking, and security policies.
+- **Rent a dedicated node** : Providers such as TON Center offer fully configured archival and non-archival nodes. This removes operational overhead while still giving you API access to the blockchain.  
+
+### API Layers
+
+Nodes expose a liteserver endpoint, but it uses a low-level binary protocol that is not practical for exchange integration. Instead, TON Center APIs provide higher-level, developer-friendly access:  
+
+- **v2 API** : Real-time account state and transaction submission over HTTP/JSON. Optimized for deposit and withdrawal flows where balances and finality must be verified quickly.  
+- **v3 API** : Indexed blockchain history (transactions, traces, receipts) powered by the TON Indexer and PostgreSQL. Essential for large-scale queries, compliance reporting, and customer dispute resolution.  
+
+<Info>
+**Best Practice**  
+- Use **v2** for operational flows (deposits, withdrawals, balance checks).  
+- Use **v3** for historical data, compliance, and large-scale reporting.  
+- Cross-check critical fields (e.g. transaction hash, block height, finality) across both APIs to combine cryptographic trust with query efficiency.
+</Info>
+
+## 3.1 Install Archival Node with Liteserver
+
+Follow these steps to install and configure an archival node with liteserver using MyTonCtrl.
+
+### Step 1 - Prepare storage (ZFS)
+
+1. Install ZFS:
+```shell
+sudo apt install zfsutils-linux
+```
+
+2. Create a pool on your dedicated `<disk>` named `data`:
+```shell
+sudo zpool create data <disk>
+```
+
+3. Enable compression:
+```shell
+sudo zfs set compression=lz4 data
+```
+
+4. Create a dataset and mount it at `/var/ton-work`:
+```shell
+sudo zfs create data/ton-work
+sudo zfs set mountpoint=/var/ton-work data/ton-work
+```
+
+### Step 2 - Install MyTonCtrl
+
+Download and run the installer:
+```bash
+wget https://raw.githubusercontent.com/ton-blockchain/mytonctrl/master/scripts/install.sh
+sudo bash install.sh
+```
+
+During setup:
+- Select **`liteserver`** mode and choose the network.
+- When prompted `Do you want to download archive blocks via TON Storage?`, enter **`1`** to set up an **archive node**.
+- Run installation **in the background** when asked, as archive sync can take several days.  
+
+### Step 3 - Run and sync
+
+After installation, the node will download and import all blocks. This may take **weeks** depending on hardware.
+
+### Step 4 - Verify sync status
+
+Check synchronization with MyTonCtrl:
+
+```bash
+mytonctrl
+MyTonCtrl> last
+```
+
+Example output:
+```txt
+last_masterchain_block: (seqno: 20498563)
+peers: 7
+is_working: true
+```
+
+- **last_masterchain_block**: latest block your node has synced  
+- **peers**: number of connected nodes (ideally >3)  
+- **is_working**: confirms the node is actively syncing  
+
+To confirm the node isn’t lagging, compare block height against a public explorer:  
+- [tonviewer testnet](https://testnet.tonviewer.com)  
+- [tonscan testnet](https://testnet.tonscan.org)  
+
+If your node is within 1–2 blocks, it’s considered healthy.
+
+#### Optional — Cross-check with Toncenter API
+
+You can also verify your node’s sync against Toncenter’s v3 API:
+
+- Endpoint: `/api/v3/masterchainInfo`  
+- Swagger UI: [Toncenter API v3](https://toncenter.com/api/v3/index.html#/blockchain/api_v3_get_masterchain_info)
+
+Example response:
+```json
+{
+  "last": {
+    "seqno": 20498563,
+    "shard": "-9223372036854775808",
+    "workchain": -1
+  }
+}
+```
+
+<Info>
+If `peers = 0` or `is_working = false`, check that the correct ports are open, the `-d` flag was used during install, and your server has a static IP with stable internet.
+</Info>
+
+## Step 6 - Connect SDKs to your Liteserver
+
+Once your node is running and synced, you can connect to it using SDKs in your backend. This allows you to:  
+
+- Query account states  
+- Track transactions  
+- Fetch traces  
+
+### Generate your config file
+
+Inside the MyTonCtrl CLI, run:  
+
+```txt
+MyTonCtrl> clcf
+```
+
+This generates a config file at:  
+`/usr/bin/ton/local.config.json`  
+
+Copy this file into your project directory (or rename it to `config.json`).  
+
+### Per-language SDK setup
+
+<AccordionGroup>
+
+<Accordion title="Java (ton4j)">
+```java
+// Placeholder
+```
+</Accordion>
+
+<Accordion title="Golang (tonutils-go)">
+```bash
+go get github.com/xssnick/tonutils-go
+go get github.com/xssnick/tonutils-go/lite
+go get github.com/xssnick/tonutils-go/ton
+```
+
+```go
+package main
+
+import (
+    "context"
+    "encoding/json"
+    "io/ioutil"
+    "log"
+
+    "github.com/xssnick/tonutils-go/liteclient"
+    "github.com/xssnick/tonutils-go/ton"
+)
+
+func main() {
+    client := liteclient.NewConnectionPool()
+
+    // Load config
+    content, err := ioutil.ReadFile("./config.json")
+    if err != nil {
+        log.Fatal("Failed to open config:", err)
+    }
+
+    var config liteclient.GlobalConfig
+    if err := json.Unmarshal(content, &config); err != nil {
+        log.Fatal("Failed to parse config:", err)
+    }
+
+    // Connect to node
+    if err := client.AddConnectionsFromConfig(context.Background(), &config); err != nil {
+        log.Fatal("Connection failed:", err)
+    }
+
+    api := ton.NewAPIClient(client)
+
+    master, err := api.GetMasterchainInfo(context.Background())
+    if err != nil {
+        log.Fatal("Masterchain query failed:", err)
+    }
+
+    log.Println("Masterchain info:", master)
+}
+```
+</Accordion>
+
+<Accordion title="Python (pytoniq)">
+```bash
+pip install pytonlib
+```
+
+```python
+from pytoniq import LiteClient
+
+async def main():
+    # Choose testnet or load custom config
+    client = LiteClient.from_mainnet_config(
+        ls_i=0,
+        trust_level=2,
+        timeout=15
+    )
+
+    await client.connect()
+    info = await client.get_masterchain_info()
+    print(info)
+    await client.close()
+
+# You can also use a context manager:
+# async with LiteClient.from_mainnet_config(...) as client:
+#     await client.get_masterchain_info()
+
+# To connect to your own config:
+# client = await LiteClient.from_file("config.json")
+```
+</Accordion>
+
+<Accordion title="JavaScript (ton-lite-client)">
+```bash
+npm install ton-core ton-lite-client
+```
+
+```js
+import { LiteSingleEngine } from 'ton-lite-client/dist/engines/single.js'
+import { LiteRoundRobinEngine } from 'ton-lite-client/dist/engines/roundRobin.js'
+import { Lite } from 'ton-lite-client/dist/index.js'
+import config from './config.json' assert {type: 'json'}
+
+function intToIP(int) {
+    return [
+        (int >> 24) & 255,
+        (int >> 16) & 255,
+        (int >> 8) & 255,
+        int & 255
+    ].join(".");
+}
+
+const server = config.liteservers[0];
+
+async function main() {
+    const engine = new LiteRoundRobinEngine([
+        new LiteSingleEngine({
+            host: `tcp://${intToIP(server.ip)}:${server.port}`,
+            publicKey: Buffer.from(server.id.key, 'base64'),
+        }),
+    ]);
+
+    const client = new Lite({ engine });
+    const master = await client.getMasterchainInfo();
+    console.log("Masterchain info:", master);
+}
+
+main();
+```
+</Accordion>
+
+</AccordionGroup>
+
+You’re now connected. Your backend is querying live data from your own node’s liteserver. This gives you full control over how and when data is fetched.
