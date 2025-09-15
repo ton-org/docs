@@ -1,10 +1,9 @@
 /**
  * Astro-compatible Aside component, which is called Callout by the Mintlify
- * TODO: Utilize title too
  *
- * @param {{type: 'note' | 'tip' | 'caution' | 'danger', title?: string, children: any}} props
+ * @param {{type: 'note' | 'tip' | 'caution' | 'danger', title: string, children: any}} props
  */
-export const Aside = ({ type = 'note', title, children }) => {
+export const Aside = ({ type = 'note', title = "", children }) => {
   const asideVariants = ['note', 'tip', 'caution', 'danger'];
   if (!asideVariants.includes(type)) {
     throw new Error(
@@ -45,7 +44,9 @@ export const Aside = ({ type = 'note', title, children }) => {
       className={`callout my-4 px-5 py-4 overflow-hidden rounded-2xl flex gap-3 border ${asideComponents[type].outerStyle}`}
       data-callout-type={asideComponents[type].calloutType}>
       <div className="mt-0.5 w-4" data-component-part="callout-icon">{asideComponents[type].icon}</div>
-      <div className={`text-sm prose min-w-0 w-full ${asideComponents[type].innerStyle}`} data-component-part="callout-content">{children}</div>
+      <div className={`text-sm prose min-w-0 w-full ${asideComponents[type].innerStyle}`} data-component-part="callout-content">
+        {title && <p className="font-bold">{title}</p>}
+        {children}</div>
     </div>
   </>);
 };
