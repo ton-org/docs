@@ -13,7 +13,7 @@ npm ci
 To start a local preview, run the following command at the root of your documentation, where your `docs.json` is located:
 
 ```shell
-npx mint dev
+npm start
 ```
 
 View your local preview at `http://localhost:3000`.
