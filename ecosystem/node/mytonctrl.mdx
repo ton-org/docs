@@ -1,5 +1,305 @@
 ---
-title: "Mytonctrl"
+title: "MyTonCtrl Reference"
+description: "Scenario-based checklist for deploying TON nodes with MyTonCtrl."
 ---
 
-Stub
+MyTonCtrl is the TON Foundation's supported CLI wrapper around the validator toolchain. It orchestrates `lite-client`, `validator-engine-console`, MyTonInstaller, and wallet utilities so you can manage production nodes from a single shell. The steps below are organised by common operator goals so you can focus on the workflow you need. Cross-check the [node maintenance guidelines](./setup-mytonctrl) for operational policies and security best practices.
+
+## 1. Setting up a node
+
+### 1.1 Launch the console
+
+Start every session by opening the interactive prompt:
+
+```bash
+mytonctrl
+```
+
+Helpful shortcuts once you are inside the console:
+
+| Command | What it does |
+| --- | --- |
+| `help` | Show available commands in the current context. |
+| `exit` | Leave the console. |
+| `update [<REPO_OR_BRANCH>]` | Pull the latest MyTonCtrl code (accepts author/repo overrides or commit hashes).
+| `upgrade [<REPO_OR_BRANCH> [<BRANCH>]] [--btc-teleport [<BRANCH>] [-u <USER>]]` | Rebuild TON binaries from your chosen repository (append `--btc-teleport` if you want to reinstall the BTC Teleport helper).
+| `rollback` | Roll back to the legacy MTC v1 layout (prompts before running migrations).
+| `about <MODE>` | Show a mode description, enabled state, and per-mode settings.
+
+### 1.2 Install the base services
+
+1. Open the embedded installer:
+
+   ```bash
+   MyTonCtrl> installer
+   ```
+
+2. Inspect the current state:
+
+   ```bash
+   Installer> status
+   ```
+
+3. Enable the components you need for any node:
+
+   ```bash
+   Installer> enable FN            # full node binaries
+   Installer> enable VC            # validator console for telemetry and control
+   Installer> enable JR            # JSON-RPC (optional)
+   Installer> enable THA           # ton-http-api (optional REST gateway)
+   Installer> enable PT            # Toncenter-compatible HTTP endpoint (optional)
+   Installer> setwebpass           # password for the tonadmin.org web panel
+   ```
+
+  Use uppercase codes (`FN`, `VC`, `LS`, `DS`, `JR`, `THA`, `LSP`, `PT`, `TS`) because `enable`/`update` forward them to installer events.
+
+4. Adjust TON node arguments as required by your environment:
+
+   ```bash
+   Installer> set_node_argument --threads 4
+   Installer> set_node_argument --metrics-port 40000
+   Installer> set_node_argument --state-ttl 604800
+   ```
+
+   Append `-d` to remove an argument (for example `set_node_argument --state-ttl -d`).
+
+5. Exit the installer with `exit` when you are done.
+
+### 1.3 Monitor health and configuration
+
+Run these checks whenever you change the node configuration or bring services online:
+
+- `status` — full validator status, election metadata, shard counts, wallet balances, and system metrics.
+- `status fast` — lighter variant that skips slow remote queries (ideal right after restarts).
+- `mode_status` — list every MyTonCtrl mode (`validator`, `liteserver`, `nominator-pool`, `single-nominator`, `liquid-staking`, `collator`, `alert-bot`, `prometheus`, etc.) with its on/off state.
+- `settings_status` — show each configurable key with its default and current value.
+- `get <SETTING>` / `set <SETTING> <VALUE> [--force]` — inspect or change persistent configuration without leaving the console.
+- `enable_mode <MODE>` / `disable_mode <MODE>` — toggle high-level features. Conflicting modes (for example `validator` and `liteserver`) enforce mutual exclusion.
+
+Capture logs from `/var/ton-work/log` and `/var/ton-work/db/log` before restarting services so you can debug regressions.
+
+### 1.4 Manage wallets and Toncoin flows
+
+Most advanced roles require at least one local wallet. MyTonCtrl exposes the following commands:
+
+| Command | Purpose |
+| --- | --- |
+| `wl` | List wallets with balance, status, version, workchain, and address.
+| `nw [<WORKCHAIN> <NAME> [version [subwallet]]]` | Create a new wallet (defaults to workchain `0` and an auto-generated name if omitted).
+| `aw <NAME>` | Activate a wallet after funding it (`aw all` checks every wallet).
+| `iw <ADDRESS> <SECRET_KEY_B64>` | Import a wallet using its address and Base64-encoded secret key.
+| `ew <NAME>` | Display the wallet address and Base64 secret key for offline backup.
+| `swv <ADDRESS> <VERSION>` | Override the detected wallet contract version.
+| `mg <NAME> <DESTINATION> <AMOUNT>` | Send TON from a wallet (`all`/`alld` amounts are supported; add `-C <COMMENT>`, `-n`, or `-b` flags as needed).
+| `mgtp <NAME> <DESTINATION> <AMOUNT>` | Move funds through temporary proxy wallets.
+| `dw <NAME>` | Delete the local wallet copy after confirmation.
+
+Example transfer:
+
+```bash
+MyTonCtrl> mg wallet_001 EQD... 250 -C "Elections"
+```
+
+### 1.5 Backups and recovery
+
+Protect your configuration and keys before every major change:
+
+- `create_backup [<ARCHIVE_NAME>] [-u <USER>]` — snapshot state into a compressed archive.
+- `restore_backup <ARCHIVE_NAME> [-y] [--skip-create-backup] [-u <USER>]` — restore a snapshot (with an optional pre-restore backup).
+
+Both commands run privileged scripts and may take a few minutes on slower disks.
+
+### 1.6 Optional tooling for any node
+
+- `add_custom_overlay <NAME> <PATH_TO_CONFIG>` / `list_custom_overlays` / `delete_custom_overlay <NAME>` — manage custom overlays. Definitions containing `@validators` are deployed after the next election on your behalf.
+- `vas <ACCOUNT_ADDR>` / `vah <ACCOUNT_ADDR> <LIMIT>` — inspect account state and recent transactions.
+- `nb <NAME> <ACCOUNT_ADDR>`, `bl`, `db <NAME>` — maintain local bookmarks for frequently used addresses.
+- `benchmark` — run fio/RocksDB storage benchmarks to validate performance targets.
+- `set sendTelemetry false` — opt out of sending validator statistics to Toncenter if your compliance policy requires it.
+
+Use these utilities from any role to keep your node responsive and observable.
+
+## 2. Enabling validator mode
+
+### 2.1 Prerequisites
+
+- A fully provisioned node as described in Section 1.
+- A funded validator wallet (≥400 TON is a typical buffer to cover stake, fees, and gas).
+- No conflicting modes (`liteserver` must be disabled before enabling `validator`).
+- Up-to-date `global.config.json` and consensus keys.
+
+### 2.2 Turn on validator mode
+
+1. Ensure other mutually exclusive modes are off:
+
+   ```bash
+   MyTonCtrl> disable_mode liteserver
+   MyTonCtrl> disable_mode collator   # only if you previously enabled it separately
+   ```
+
+2. Enable the validator workflow and verify it is active:
+
+   ```bash
+   MyTonCtrl> enable_mode validator
+   MyTonCtrl> mode_status
+   ```
+
+3. Review validator-specific settings:
+
+   ```bash
+   MyTonCtrl> about validator
+   MyTonCtrl> settings_status
+   ```
+
+### 2.3 Participate in elections
+
+MyTonCtrl automates most validator tasks once the mode is active:
+
+```bash
+MyTonCtrl> set stake 300000         # or set stakePercent 99
+MyTonCtrl> status fast
+MyTonCtrl> ve                       # update validator set, recover stake, and submit the election query
+MyTonCtrl> check_ef                 # monitor current and previous round efficiency
+```
+
+Additional validator commands:
+
+- `vo <OFFER_HASH>` — download governance data and vote for configuration proposals.
+- `vc <ELECTION_ID> <COMPLAINT_HASH>` — vote on validator complaints.
+- `vl [past] [fast] [--json]` — inspect validator lists; add `past` to review the previous round.
+
+### 2.4 Manage nominator pools (optional)
+
+Enable the `nominator-pool` mode when you act as a pool operator:
+
+```bash
+MyTonCtrl> enable_mode nominator-pool
+MyTonCtrl> set stake 0
+MyTonCtrl> new_pool even 0 20 1000 300000
+MyTonCtrl> activate_pool even
+MyTonCtrl> update_validator_set <POOL_ADDRESS>
+MyTonCtrl> deposit_to_pool <POOL_ADDRESS> <AMOUNT_TON>
+MyTonCtrl> withdraw_from_pool <POOL_ADDRESS> <AMOUNT_TON>
+```
+
+Use `pools_list`, `get_pool_data <POOL_NAME>`, and `import_pool <POOL_NAME> <POOL_ADDR>` to audit existing pools. Follow the [nominator pool guide](https://docs.ton.org/v3/guidelines/smart-contracts/howto/nominator-pool) for policy details.
+
+For single-staker scenarios, switch to `single-nominator` mode and use:
+
+```bash
+MyTonCtrl> enable_mode single-nominator
+MyTonCtrl> new_single_pool reserve EQC...
+MyTonCtrl> activate_single_pool reserve
+MyTonCtrl> withdraw_from_single_pool <POOL_ADDRESS> <AMOUNT_TON>
+```
+
+### 2.5 Collator operations (if you collate shards)
+
+Once `collator` mode is enabled, control shard assignments directly:
+
+- `add_collator <ADNL> <SHARD> [--self-collate <true|false>] [--select-mode <random|ordered|round_robin>]`
+- `delete_collator [<SHARD>] <ADNL>`
+- `print_collators [--json]`
+- `reset_collators`
+
+These commands adjust the collator list stored in `validator-engine-console`.
+
+### 2.6 BTC Teleport helpers
+
+Upgrades reinstall BTC Teleport by default. Validators can manage it manually:
+
+- `remove_btc_teleport [--force]`
+- `vote_offer_btc_teleport <OFFER_HASH>`
+- `print_offers_btc_teleport_list [--json]`
+
+### 2.7 Governance and troubleshooting
+
+- `ol [--json] [hash]` / `od <OFFER_HASH>` — audit proposals before voting.
+- `el [past] [--json]` / `cl [past] [--json]` — inspect election entries and complaints.
+- `status fast`, `mode_status`, `settings_status`, and `benchmark` — routine health checks every time you adjust stake or keys.
+
+## 3. Enabling liteserver mode
+
+### 3.1 When to use it
+
+Liteserver mode exposes lite-server endpoints without running validator logic. Typical use cases include explorers, API providers, or infrastructure that serves light client queries. Because `liteserver` conflicts with `validator`, choose one workflow or run separate machines for each role.
+
+### 3.2 Switch a node into liteserver mode
+
+1. Disable validator-specific features if they are active:
+
+   ```bash
+   MyTonCtrl> disable_mode validator
+   MyTonCtrl> disable_mode nominator-pool
+   MyTonCtrl> disable_mode single-nominator
+   ```
+
+2. Enable the liteserver workflow:
+
+   ```bash
+   MyTonCtrl> enable_mode liteserver
+   MyTonCtrl> mode_status
+   ```
+
+3. Configure the systemd service and keys through the installer:
+
+   ```bash
+   MyTonCtrl> installer
+   Installer> enable LS            # deploy lite-server service
+   Installer> enable LSP           # optional ls-proxy
+   Installer> plsc                 # review lite-server config to distribute to clients
+   Installer> exit
+   ```
+
+4. Distribute `/var/ton-work/keys/liteserver.pub` and the generated `config.json` to your clients.
+
+5. Use `status fast` and `mode_status` to confirm the node stays in sync. Combine with `vas`, `vah`, or custom overlays when you need to inspect state on behalf of clients.
+
+### 3.3 Hardening recommendations
+
+- Restrict lite-server access to trusted IP ranges.
+- Monitor `netLoadAvg` and disk usage from the `status` output to scale hardware ahead of demand.
+- Keep a warm backup by running `create_backup` after configuration changes and store keys securely offline.
+
+## 4. Enabling archive node mode
+
+### 4.1 What archive mode means
+
+Archive nodes retain all historical states and blocks instead of pruning older data. They are required for explorers, analytics, and any workflow that replays historical transactions. Archive retention is controlled by node arguments such as `--archive-ttl` and `--state-ttl`.
+
+### 4.2 Configure archive retention
+
+1. Size your hardware according to the [official guidelines](https://docs.ton.org/guidelines/nodes-guidelines) (multiple terabytes of NVMe storage are recommended).
+
+2. Update the node arguments through MyTonInstaller:
+
+   ```bash
+   MyTonCtrl> installer
+   Installer> set_node_argument --archive-ttl 0    # 0 keeps data indefinitely; choose a value that matches your policy
+   Installer> set_node_argument --state-ttl 0      # optional: prevent state pruning
+   Installer> exit
+   ```
+
+   Replace `0` with the retention (in seconds) that matches your storage budget if you do not need a permanent archive.
+
+3. Restart services if prompted and monitor disk growth:
+
+   ```bash
+   MyTonCtrl> status fast
+   MyTonCtrl> settings_status
+   ```
+
+4. Schedule regular snapshots with `create_backup` and replicate them to cold storage so you can recover from hardware failures.
+
+### 4.3 Serving archive data
+
+Combine archive retention with the mode that fits your audience:
+
+- Validators can keep `validator` mode enabled while retaining archive data for on-chain investigations.
+- Liteserver nodes can pair archive retention with `enable_mode liteserver` to answer historical queries from light clients.
+
+Document access procedures for your team and keep the node patched by running `update`/`upgrade` after each release.
+
+---
+
+Use these checklists alongside the [node maintenance guidelines](https://docs.ton.org/guidelines/nodes-guidelines) and your organisation’s runbooks. Always test configuration changes on staging nodes before rolling them out to production.
