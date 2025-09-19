@@ -1,0 +1,143 @@
+---
+title: "TON Connect manifests"
+sidebarTitle: "Manifests"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+TON Connect manifests are specially formatted JSON files that define meta information to either pass it from your dApp to the wallet ([app manifest](#app-manifest)) or to set up subsequent wallet interactions with the TON Connect protocol ([wallet manifest](#wallet-manifest)).
+
+## App manifest
+
+App manifest is a small JSON file that lets wallets discover information about your dApp. It should be named `tonconnect-manifest.json` and correspond to the following definition.
+
+| Field              | Requirement | Description
+| ------------------ | ----------- | -----------
+| `url`              | required    | Defines the app URL. It will be used to open the dApp after clicking its icon in the wallet. It is recommended to pass the URL without closing the slash, e.g., 'https://mydapp.com' instead of 'https://mydapp.com/'.
+| `name`             | required    | Defines the app name. Typically simple word. Shouldn't be used as identifier.
+| `iconUrl`          | required    | Defines the URL to the app icon. It must be in `PNG` or `ICO` format. `SVG` icons are not supported. An 180x180 px PNG icon is optimal.
+| `termsOfUseUrl`    | optional    | Only needed for apps to be featured in the wallet's recommendation lists.
+| `privacyPolicyUrl` | optional    | Only needed for apps to be featured in the wallet's recommendation lists.
+
+Here is a generic example of an app manifest:
+
+```jsonc
+{
+  "url": "<app-url>",                        // required
+  "name": "<app-name>",                      // required
+  "iconUrl": "<app-icon-url>",               // required
+  "termsOfUseUrl": "<terms-of-use-url>",     // optional
+  "privacyPolicyUrl": "<privacy-policy-url>" // optional
+}
+```
+
+For a web dApp, place its manifest at `https://[myapp.com]/tonconnect-manifest.json` so that wallets can fetch it with a simple GET request.
+
+<Aside>
+  Application manifest must be publicly available with CORS disabled, without any authorization required, and without a CloudFlare or similar service proxying them. If hosting that way is troublesome on your own, consider using a trusted CDN.
+</Aside>
+
+## Wallet manifest
+
+Wallet manifest is a JSON configuration that defines how your wallet interacts with the TON Connect.
+
+Here is an example of a custodian manifest:
+
+```json
+{
+  "app_name": "[custodian]",
+  "name": "[Custodian]",
+  "image": "https://cdn.[custodian].com/ton-connect-icon.png",
+  "about_url": "https://[custodian].com",
+  "universal_url": "https://wallet.[custodian].com/ton-connect",
+  "bridge": [
+    {
+      "type": "sse",
+      "url": "https://bridge.[custodian].com/bridge"
+    }
+  ],
+  "platforms": ["ios", "android", "web", "windows", "macos", "linux"],
+  "features": [
+    {
+      "name": "SendTransaction",
+      "maxMessages": 4,
+      "extraCurrencySupported": false
+    }
+  ]
+}
+```
+
+<Aside>
+  There, bridge refers to the way connectivity between the wallet and dApp is achieved. It can either be a JavaScript one, extending the `window` object, or an HTTP one, requiring a separate service to be running.
+
+  For more details, see the respective reference section: [WalletKit reference](/ecosystem/ton-connect/walletkit).
+</Aside>
+
+### Essential properties
+
+- `app_name`: A unique identifier for the wallet. This string should be lowercase, without spaces or special characters. It will be used as an identifier in connection events and must match the `ConnectEventSuccess.device.appName` value.
+
+- `name`: The display name of the wallet that will be shown to users in dApp interfaces. For your custodian, simply use "\[Custodian]" or "\[Custodian] Wallet" as appropriate.
+
+- `image`: A URL pointing to the wallet's icon. This should be a high-quality image with the following specifications:
+  - Resolution: 288×288 pixels
+  - Background: Non-transparent
+  - Corners: Non-rounded
+  - Format: PNG
+
+  Examples:
+  - https://wallet.tg/images/logo-288.png
+  - https://tonkeeper.com/assets/tonconnect-icon.png
+
+### Connection properties
+
+- `about_url`: A URL to the wallet information or landing page. This helps new TON users learn about your wallet.
+
+- `universal_url`: The base part of the wallet's universal URL that will handle TON Connect parameters. This is a critical component for enabling connections via universal links. For your custodian, this could be something like `https://wallet.[custodian].com/ton-connect`.
+
+- `bridge`: An array specifying connectivity options between dApps and the wallet.
+  - HTTP bridge setups should include:
+
+    ```json
+    "bridge": [
+      {
+        "type": "sse",
+        "url": "https://bridge.[custodian].com/bridge"
+      }
+    ]
+    ```
+
+    There, `url` points to the publicly exposed bridge.
+
+  - JavaScript bridge setups should include:
+
+    ```json
+    "bridge": [
+      {
+        "type": "js",
+        "key": "[custodian]"
+      }
+    ]
+    ```
+
+    There, `key` points to the property name within the `window` object on the same web page.
+
+### Platform and feature support
+
+- `platforms`: An array listing all platforms where the wallet is available. This can include any of the following values: `"ios"`, `"android"`, `"chrome"`, `"firefox"`, `"safari"`, `"windows"`, `"macos"`, `"linux"`, `"web"`. Include only the platforms that you actually support.
+
+- `features`: This section defines the capabilities of the wallet:
+
+  ```json
+  "features": [
+    {
+      "name": "SendTransaction",
+      "maxMessages": 4,
+      "extraCurrencySupported": false
+    }
+  ]
+  ```
+
+  - `name`: Currently, only "SendTransaction" is defined in the protocol.
+  - `maxMessages`: The maximum number of messages the wallet can sign in a single transaction (4 is standard for many wallets).
+  - `extraCurrencySupported`: Whether the wallet supports additional currencies beyond TON. Set to `false` initially; you can update this later if you add support.
