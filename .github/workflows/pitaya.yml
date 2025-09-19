@@ -77,11 +77,16 @@ jobs:
           COMMENT_ID: ${{ github.event.comment.id }}
         run: |
           set -euo pipefail
-          gh api -X POST \
+          resp="$(gh api -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
-            -f content="eyes" >/dev/null 2>&1 || true
+            -f content="eyes" 2>/dev/null || true)"
+          echo "$resp" > comment_reaction.json || true
+          COMMENT_REACTION_ID="$(jq -r '.id // empty' comment_reaction.json 2>/dev/null || true)"
+          if [ -n "${COMMENT_REACTION_ID:-}" ]; then
+            echo "COMMENT_REACTION_ID=$COMMENT_REACTION_ID" >> $GITHUB_ENV
+          fi
 
       - name: React on PR (start)
         env:
@@ -171,7 +176,7 @@ jobs:
           REVIEW_INSTRUCTIONS=$(cat <<'TXT'
           You are in a TON Documentation repository, reviewing this pull request. Only consider documentation content changes; ignore anything else. If there are no content changes, stop.
 
-          Otherwise, perform a focused review for accuracy and clarity against the style guide at `contribute/style-guide-extended.md`.
+          Otherwise, perform a focused review for accuracy and clarity against the style guide at `contribute/style-guide-extended.mdx`.
 
           For each finding, add EXACTLY ONE link to the relevant rule in the style guide using this format with concrete line(s):
           https://github.com/tact-lang/mintlify-ton-docs/blob/main/contribute/style-guide-extended.mdx?plain=1#LNN
@@ -186,9 +191,15 @@ jobs:
 
           COMPOSER_INSTRUCTIONS=$(cat <<'TXT'
           Write the final report in clear, simple language (no fancy words), using short, direct sentences.
+
           Use a checkbox list for Findings (- [ ] [SEVERITY] Area — concise description — Suggested change — Style guide: <link>).
           Each finding MUST include EXACTLY ONE link to the relevant rule using ?plain=1#L.. syntax (e.g., #L26 or #L26-L30).
-          Do not add a separate checklist.
+          Links MUST be full-length GitHub URLs to this exact file (no relative or short names):
+          https://github.com/tact-lang/mintlify-ton-docs/blob/main/contribute/style-guide-extended.mdx?plain=1#LNN
+          If a finding contains a short/relative link (e.g., STYLE_GUIDE.md?plain=1#L26), replace it with the full link above pointing to the correct line(s).
+
+          Sort Findings by severity from most critical to least: BLOCKER, HIGH, MEDIUM, LOW, INFO.
+          Do not add a separate compact checklist.
           TXT
           )
 
@@ -265,23 +276,26 @@ jobs:
         run: |
           set -euo pipefail
           RUN_DIR="$(ls -td results/run_* 2>/dev/null | head -n1 || true)"
-          REACTION_END="rocket"
+          REACTION_END="confused"  # default to sad; only rocket on PASS
           if [ -n "$RUN_DIR" ] && [ -d "$RUN_DIR/instances" ]; then
             COMPOSER_META="$(grep -rl '"role": "composer"' "$RUN_DIR/instances" | head -n1 || true)"
             if [ -n "$COMPOSER_META" ] && [ -f "$COMPOSER_META" ]; then
-              BLOCKERS=$(jq -r '.metrics.pr_review_counts.BLOCKER // 0' "$COMPOSER_META")
-              HIGH=$(jq -r '.metrics.pr_review_counts.HIGH // 0' "$COMPOSER_META")
-              if [ "${BLOCKERS:-0}" -gt 0 ] || [ "${HIGH:-0}" -gt 0 ]; then
-                REACTION_END="confused"
+              VERDICT=$(jq -r '.metrics.pr_review_verdict // ""' "$COMPOSER_META")
+              if [ "${VERDICT^^}" = "PASS" ]; then
+                REACTION_END="rocket"
               fi
             fi
           fi
-          # Remove eyes (best-effort)
-          rid="$(gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" \
-            "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
-            -q '.[] | select(.content=="eyes" and .user.login=="github-actions[bot]") | .id' | head -n1 || true)"
-          if [ -n "$rid" ]; then
-            gh api -X DELETE -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "/reactions/${rid}" || true
+          # Remove eyes (by stored ID first; fallback to lookup)
+          if [ -n "${COMMENT_REACTION_ID:-}" ]; then
+            gh api -X DELETE -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "/reactions/${COMMENT_REACTION_ID}" || true
+          else
+            rid="$(gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
+              -q '.[] | select(.content=="eyes" and .user.login=="github-actions[bot]") | .id' | head -n1 || true)"
+            if [ -n "$rid" ]; then
+              gh api -X DELETE -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "/reactions/${rid}" || true
+            fi
           fi
           # Add final reaction
           gh api -X POST -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" \
