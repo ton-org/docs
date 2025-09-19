@@ -141,6 +141,25 @@ jobs:
             echo "$CHANGED" | sed 's/^/- /' >&2
           fi
 
+      - name: Comment about skip
+        if: env.DOCS_CHANGED != 'true' && github.event_name == 'issue_comment'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          API="https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments"
+          BODY=$(cat <<'TXT'
+          Docs review skipped: no .md or .mdx changes were detected in this PR compared to the base branch. The /review command only targets documentation content. If you believe this is incorrect, please check that your docs files are included in the diff and try again.
+          TXT
+          )
+          jq -n --arg body "$BODY" '{body:$body}' > payload.json
+          curl -sS -X POST "$API" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -H "Content-Type: application/json" \
+            -d @payload.json >/dev/null
+
       - name: Set up Python 3.13
         if: env.DOCS_CHANGED == 'true'
         uses: actions/setup-python@v5
