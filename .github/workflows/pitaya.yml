@@ -1,0 +1,120 @@
+name: PR Review (Pitaya)
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  pr-review:
+    runs-on: ubuntu-latest
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch all remote branches
+        run: git fetch origin "+refs/heads/*:refs/remotes/origin/*"
+
+      - name: Ensure local base branch ref exists
+        run: |
+          BASE_REF="${{ github.event.pull_request.base.ref }}"
+          if ! git show-ref --verify --quiet "refs/heads/${BASE_REF}"; then
+            git branch --track "${BASE_REF}" "origin/${BASE_REF}" || true
+          fi
+
+      - name: Ensure provider key exists
+        run: |
+          if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+            echo "OPENROUTER_API_KEY is not set. Add it to repository secrets." >&2
+            exit 2
+          fi
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Checkout Pitaya
+        uses: actions/checkout@v4
+        with:
+          repository: tact-lang/pitaya
+          path: pitaya-src
+
+      - name: Install Pitaya deps via uv
+        working-directory: pitaya-src
+        run: uv sync
+
+      - name: Build agent Docker image
+        run: docker build -t pitaya-agents:latest pitaya-src
+
+      - name: Run PR Review
+        working-directory: pitaya-src
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+        run: |
+          uv run pitaya "Review this pull request" \
+            --repo "$GITHUB_WORKSPACE" \
+            --base-branch ${{ github.event.pull_request.base.ref }} \
+            --strategy pr-review \
+            -S reviewers=2 \
+            -S base_branch=${{ github.event.pull_request.base.ref }} \
+            -S ci_fail_policy=never \
+            -S review_instructions='You are in a TON Documentation repository, reviewing this pull request. You must only focus on documentation content changes, and completely ignore anything unrelated to that. If there are no content changes at all, just finish immediately. Otherwise, conduct a thorough review of the content changes, ensuring they are accurate, clear, and consistent with the style guide located at `contribute/style-guide-extended.md`. You must follow the style guide strictly. For any found issues, you must provide a clear explanation and refer to the relevant section of the style guide. If you are not sure about something, skip it and do not assume anything you do not know.' \
+            --plugin codex \
+            --model "openai/gpt-5" \
+            --no-tui
+
+      - name: Submit GitHub PR Review
+        working-directory: pitaya-src
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          RUN_DIR="$(ls -td results/run_* 2>/dev/null | head -n1)"
+          if [ -z "${RUN_DIR:-}" ] || [ ! -d "$RUN_DIR" ]; then
+            echo "No results directory found" >&2
+            exit 1
+          fi
+
+          COMPOSER_META="$(grep -rl '"role": "composer"' "$RUN_DIR/instances" | head -n1)"
+          if [ -z "${COMPOSER_META:-}" ]; then
+            echo "No composer metadata found in $RUN_DIR" >&2
+            exit 1
+          fi
+
+          BODY=$(jq -r '.final_message // ""' "$COMPOSER_META")
+          VERDICT=$(jq -r '.metrics.pr_review_verdict // ""' "$COMPOSER_META")
+          if [ -z "$BODY" ]; then
+            echo "Composer final_message is empty" >&2
+            exit 1
+          fi
+
+          EVENT="COMMENT"
+          case "${VERDICT^^}" in
+            PASS) EVENT="APPROVE" ;;
+            NEEDS_CHANGES|FAIL) EVENT="REQUEST_CHANGES" ;;
+          esac
+
+          API="https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews"
+          jq -n --arg event "$EVENT" --arg body "$BODY" '{event:$event, body:$body}' > payload.json
+          curl -sS -X POST "$API" \
+               -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+               -H "Accept: application/vnd.github+json" \
+               -H "X-GitHub-Api-Version: 2022-11-28" \
+               -H "Content-Type: application/json" \
+               -d @payload.json \
+            | jq -e '.id' >/dev/null
+          echo "Review submitted: $EVENT"
