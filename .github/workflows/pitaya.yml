@@ -63,28 +63,47 @@ jobs:
             exit 2
           fi
 
+      - name: Detect documentation changes
+        run: |
+          set -euo pipefail
+          # Compare PR head against BASE_REF and look for .md/.mdx changes
+          CHANGED=$(git diff --name-only "$BASE_REF"...HEAD | grep -E '\.(md|mdx)$' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "DOCS_CHANGED=false" >> $GITHUB_ENV
+            echo "No .md/.mdx changes detected; skipping AI review." >&2
+          else
+            echo "DOCS_CHANGED=true" >> $GITHUB_ENV
+            echo "$CHANGED" | sed 's/^/- /' >&2
+          fi
+
       - name: Set up Python 3.13
+        if: env.DOCS_CHANGED == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
       - name: Set up uv
+        if: env.DOCS_CHANGED == 'true'
         uses: astral-sh/setup-uv@v3
 
       - name: Checkout Pitaya
+        if: env.DOCS_CHANGED == 'true'
         uses: actions/checkout@v4
         with:
           repository: tact-lang/pitaya
           path: pitaya-src
 
       - name: Install Pitaya deps via uv
+        if: env.DOCS_CHANGED == 'true'
         working-directory: pitaya-src
         run: uv sync
 
       - name: Build agent Docker image
+        if: env.DOCS_CHANGED == 'true'
         run: docker build -t pitaya-agents:latest pitaya-src
 
       - name: Run PR Review
+        if: env.DOCS_CHANGED == 'true'
         working-directory: pitaya-src
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -102,6 +121,7 @@ jobs:
             --no-tui
 
       - name: Submit GitHub PR Comment
+        if: env.DOCS_CHANGED == 'true'
         working-directory: pitaya-src
         env:
           GITHUB_TOKEN: ${{ github.token }}
