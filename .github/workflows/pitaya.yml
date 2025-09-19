@@ -2,7 +2,7 @@ name: AI Review
 
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review]
+    types: [opened, reopened, ready_for_review, synchronize]
 
 permissions:
   contents: read
@@ -69,7 +69,6 @@ jobs:
             --base-branch ${{ github.event.pull_request.base.ref }} \
             --strategy pr-review \
             -S reviewers=2 \
-            -S base_branch=${{ github.event.pull_request.base.ref }} \
             -S ci_fail_policy=never \
             -S review_instructions='You are in a TON Documentation repository, reviewing this pull request. You must only focus on documentation content changes, and completely ignore anything unrelated to that. If there are no content changes at all, just finish immediately. Otherwise, conduct a thorough review of the content changes, ensuring they are accurate, clear, and consistent with the style guide located at `contribute/style-guide-extended.md`. You must follow the style guide strictly. For any found issues, you must provide a clear explanation and refer to the relevant section of the style guide. If you are not sure about something, skip it and do not assume anything you do not know.' \
             --plugin codex \
@@ -110,11 +109,25 @@ jobs:
 
           API="https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews"
           jq -n --arg event "$EVENT" --arg body "$BODY" '{event:$event, body:$body}' > payload.json
-          curl -sS -X POST "$API" \
+
+          echo "Submitting review..."
+          echo "Endpoint: $API"
+          echo "Event: $EVENT"
+          echo "Body (first 200 chars):"; echo "$BODY" | head -c 200; echo; echo
+
+          HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" -X POST "$API" \
                -H "Authorization: Bearer ${GITHUB_TOKEN}" \
                -H "Accept: application/vnd.github+json" \
                -H "X-GitHub-Api-Version: 2022-11-28" \
                -H "Content-Type: application/json" \
-               -d @payload.json \
-            | jq -e '.id' >/dev/null
-          echo "Review submitted: $EVENT"
+               -d @payload.json || true)
+
+          echo "GitHub API HTTP: $HTTP_CODE"
+          echo "Response body:"; cat response.json || true; echo
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] && jq -e '.id' response.json >/dev/null 2>&1; then
+            echo "Review submitted successfully."
+          else
+            echo "Failed to submit review (HTTP $HTTP_CODE). See response above." >&2
+            exit 1
+          fi
