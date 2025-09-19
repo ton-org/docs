@@ -3,6 +3,12 @@ name: AI Review
 on:
   pull_request:
     types: [opened, reopened, ready_for_review, synchronize]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: number
 
 permissions:
   contents: read
@@ -15,17 +21,37 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
     steps:
-      - name: Checkout PR
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Resolve PR context
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "null" ]; then
+            PR_NUMBER="${{ inputs.pr_number }}"
+          fi
+          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+          gh api repos/${{ github.repository }}/pulls/${PR_NUMBER} > pr.json
+          echo "BASE_REF=$(jq -r '.base.ref' pr.json)" >> $GITHUB_ENV
+          echo "HEAD_REF=$(jq -r '.head.ref' pr.json)" >> $GITHUB_ENV
+
+      - name: Check out PR head
+        run: |
+          set -euo pipefail
+          git fetch origin "pull/${PR_NUMBER}/head:pr_head"
+          git checkout -B pr_head pr_head
 
       - name: Fetch all remote branches
         run: git fetch origin "+refs/heads/*:refs/remotes/origin/*"
 
       - name: Ensure local base branch ref exists
         run: |
-          BASE_REF="${{ github.event.pull_request.base.ref }}"
+          BASE_REF="${BASE_REF:-main}"
           if ! git show-ref --verify --quiet "refs/heads/${BASE_REF}"; then
             git branch --track "${BASE_REF}" "origin/${BASE_REF}" || true
           fi
@@ -66,7 +92,7 @@ jobs:
         run: |
           uv run pitaya "Review this pull request" \
             --repo "$GITHUB_WORKSPACE" \
-            --base-branch ${{ github.event.pull_request.base.ref }} \
+            --base-branch "$BASE_REF" \
             --strategy pr-review \
             -S reviewers=2 \
             -S ci_fail_policy=never \
@@ -107,7 +133,7 @@ jobs:
             NEEDS_CHANGES|FAIL) EVENT="REQUEST_CHANGES" ;;
           esac
 
-          API="https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews"
+          API="https://api.github.com/repos/${{ github.repository }}/pulls/${PR_NUMBER}/reviews"
           jq -n --arg event "$EVENT" --arg body "$BODY" '{event:$event, body:$body}' > payload.json
 
           echo "Submitting review..."
