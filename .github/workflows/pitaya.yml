@@ -101,7 +101,7 @@ jobs:
             --model "openai/gpt-5" \
             --no-tui
 
-      - name: Submit GitHub PR Review
+      - name: Submit GitHub PR Comment
         working-directory: pitaya-src
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -127,19 +127,14 @@ jobs:
             exit 1
           fi
 
-          EVENT="COMMENT"
-          case "${VERDICT^^}" in
-            PASS) EVENT="APPROVE" ;;
-            NEEDS_CHANGES|FAIL) EVENT="REQUEST_CHANGES" ;;
-          esac
+          # Prepare issue comment body (prepend verdict line)
+          COMMENT_BODY=$(printf "**Verdict:** %s\n\n%s" "${VERDICT:-UNKNOWN}" "$BODY")
+          API="https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments"
+          jq -n --arg body "$COMMENT_BODY" '{body:$body}' > payload.json
 
-          API="https://api.github.com/repos/${{ github.repository }}/pulls/${PR_NUMBER}/reviews"
-          jq -n --arg event "$EVENT" --arg body "$BODY" '{event:$event, body:$body}' > payload.json
-
-          echo "Submitting review..."
+          echo "Submitting PR comment..."
           echo "Endpoint: $API"
-          echo "Event: $EVENT"
-          echo "Body (first 200 chars):"; echo "$BODY" | head -c 200; echo; echo
+          echo "Body (first 200 chars):"; echo "$COMMENT_BODY" | head -c 200; echo; echo
 
           HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" -X POST "$API" \
                -H "Authorization: Bearer ${GITHUB_TOKEN}" \
@@ -152,8 +147,8 @@ jobs:
           echo "Response body:"; cat response.json || true; echo
 
           if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] && jq -e '.id' response.json >/dev/null 2>&1; then
-            echo "Review submitted successfully."
+            echo "Comment submitted successfully."
           else
-            echo "Failed to submit review (HTTP $HTTP_CODE). See response above." >&2
+            echo "Failed to submit comment (HTTP $HTTP_CODE). See response above." >&2
             exit 1
           fi
