@@ -77,19 +77,25 @@ jobs:
           COMMENT_ID: ${{ github.event.comment.id }}
         run: |
           set -euo pipefail
-          gh api -X POST \
-            -H "Accept: application/vnd.github+json" \
+          resp="$(gh api -X POST \
+            -H "Accept: application/vnd.github.squirrel-girl-preview+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
-            -f content="eyes" >/dev/null 2>&1 || true
+            -f content="eyes" 2>/dev/null || true)"
+          echo "$resp" > comment_reaction.json || true
+          COMMENT_REACTION_ID="$(jq -r '.id // empty' comment_reaction.json 2>/dev/null || true)"
+          if [ -n "${COMMENT_REACTION_ID:-}" ]; then
+            echo "COMMENT_REACTION_ID=$COMMENT_REACTION_ID" >> $GITHUB_ENV
+          fi
 
       - name: React on PR (start)
+        if: env.DOCS_CHANGED == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           resp="$(gh api -X POST \
-            -H "Accept: application/vnd.github+json" \
+            -H "Accept: application/vnd.github.squirrel-girl-preview+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "/repos/${{ github.repository }}/issues/${PR_NUMBER}/reactions" \
             -f content="eyes" 2>/dev/null || true)"
@@ -135,6 +141,25 @@ jobs:
             echo "$CHANGED" | sed 's/^/- /' >&2
           fi
 
+      - name: Comment about skip
+        if: env.DOCS_CHANGED != 'true' && github.event_name == 'issue_comment'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          API="https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments"
+          BODY=$(cat <<'TXT'
+          Docs review skipped: no .md or .mdx changes were detected in this PR compared to the base branch. The /review command only targets documentation content. If you believe this is incorrect, please check that your docs files are included in the diff and try again.
+          TXT
+          )
+          jq -n --arg body "$BODY" '{body:$body}' > payload.json
+          curl -sS -X POST "$API" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -H "Content-Type: application/json" \
+            -d @payload.json >/dev/null
+
       - name: Set up Python 3.13
         if: env.DOCS_CHANGED == 'true'
         uses: actions/setup-python@v5
@@ -171,7 +196,7 @@ jobs:
           REVIEW_INSTRUCTIONS=$(cat <<'TXT'
           You are in a TON Documentation repository, reviewing this pull request. Only consider documentation content changes; ignore anything else. If there are no content changes, stop.
 
-          Otherwise, perform a focused review for accuracy and clarity against the style guide at `contribute/style-guide-extended.md`.
+          Otherwise, perform a focused review for accuracy and clarity against the style guide at `contribute/style-guide-extended.mdx`.
 
           For each finding, add EXACTLY ONE link to the relevant rule in the style guide using this format with concrete line(s):
           https://github.com/tact-lang/mintlify-ton-docs/blob/main/contribute/style-guide-extended.mdx?plain=1#LNN
@@ -186,9 +211,15 @@ jobs:
 
           COMPOSER_INSTRUCTIONS=$(cat <<'TXT'
           Write the final report in clear, simple language (no fancy words), using short, direct sentences.
+
           Use a checkbox list for Findings (- [ ] [SEVERITY] Area — concise description — Suggested change — Style guide: <link>).
           Each finding MUST include EXACTLY ONE link to the relevant rule using ?plain=1#L.. syntax (e.g., #L26 or #L26-L30).
-          Do not add a separate checklist.
+          Links MUST be full-length GitHub URLs to this exact file (no relative or short names):
+          https://github.com/tact-lang/mintlify-ton-docs/blob/main/contribute/style-guide-extended.mdx?plain=1#LNN
+          If a finding contains a short/relative link (e.g., STYLE_GUIDE.md?plain=1#L26), replace it with the full link above pointing to the correct line(s).
+
+          Sort Findings by severity from most critical to least: BLOCKER, HIGH, MEDIUM, LOW, INFO.
+          Do not add a separate compact checklist.
           TXT
           )
 
@@ -264,27 +295,44 @@ jobs:
           COMMENT_ID: ${{ github.event.comment.id }}
         run: |
           set -euo pipefail
+          if [ "${DOCS_CHANGED:-false}" != "true" ]; then
+            # No docs review was performed; just remove eyes and exit.
+            if [ -n "${COMMENT_REACTION_ID:-}" ]; then
+              gh api -X DELETE -H "Accept: application/vnd.github.squirrel-girl-preview+json" -H "X-GitHub-Api-Version: 2022-11-28" "/reactions/${COMMENT_REACTION_ID}" || true
+              exit 0
+            fi
+            rid="$(gh api -H "Accept: application/vnd.github.squirrel-girl-preview+json" -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
+              -q '.[] | select(.content=="eyes" and .user.login=="github-actions[bot]") | .id' | head -n1 || true)"
+            if [ -n "$rid" ]; then
+              gh api -X DELETE -H "Accept: application/vnd.github.squirrel-girl-preview+json" -H "X-GitHub-Api-Version: 2022-11-28" "/reactions/${rid}" || true
+            fi
+            exit 0
+          fi
           RUN_DIR="$(ls -td results/run_* 2>/dev/null | head -n1 || true)"
-          REACTION_END="rocket"
+          REACTION_END="confused"  # default to sad; only rocket on PASS
           if [ -n "$RUN_DIR" ] && [ -d "$RUN_DIR/instances" ]; then
             COMPOSER_META="$(grep -rl '"role": "composer"' "$RUN_DIR/instances" | head -n1 || true)"
             if [ -n "$COMPOSER_META" ] && [ -f "$COMPOSER_META" ]; then
-              BLOCKERS=$(jq -r '.metrics.pr_review_counts.BLOCKER // 0' "$COMPOSER_META")
-              HIGH=$(jq -r '.metrics.pr_review_counts.HIGH // 0' "$COMPOSER_META")
-              if [ "${BLOCKERS:-0}" -gt 0 ] || [ "${HIGH:-0}" -gt 0 ]; then
-                REACTION_END="confused"
+              VERDICT=$(jq -r '.metrics.pr_review_verdict // ""' "$COMPOSER_META")
+              if [ "${VERDICT^^}" = "PASS" ]; then
+                REACTION_END="rocket"
               fi
             fi
           fi
-          # Remove eyes (best-effort)
-          rid="$(gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" \
-            "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
-            -q '.[] | select(.content=="eyes" and .user.login=="github-actions[bot]") | .id' | head -n1 || true)"
-          if [ -n "$rid" ]; then
-            gh api -X DELETE -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "/reactions/${rid}" || true
+          # Remove eyes (by stored ID first; fallback to lookup)
+          if [ -n "${COMMENT_REACTION_ID:-}" ]; then
+            gh api -X DELETE -H "Accept: application/vnd.github.squirrel-girl-preview+json" -H "X-GitHub-Api-Version: 2022-11-28" "/reactions/${COMMENT_REACTION_ID}" || true
+          else
+            rid="$(gh api -H "Accept: application/vnd.github.squirrel-girl-preview+json" -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
+              -q '.[] | select(.content=="eyes" and .user.login=="github-actions[bot]") | .id' | head -n1 || true)"
+            if [ -n "$rid" ]; then
+              gh api -X DELETE -H "Accept: application/vnd.github.squirrel-girl-preview+json" -H "X-GitHub-Api-Version: 2022-11-28" "/reactions/${rid}" || true
+            fi
           fi
           # Add final reaction
-          gh api -X POST -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" \
+          gh api -X POST -H "Accept: application/vnd.github.squirrel-girl-preview+json" -H "X-GitHub-Api-Version: 2022-11-28" \
             "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
             -f content="$REACTION_END" >/dev/null 2>&1 || true
 
@@ -296,18 +344,18 @@ jobs:
           set -euo pipefail
           if [ -n "${PR_REACTION_ID:-}" ]; then
             gh api -X DELETE \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github.squirrel-girl-preview+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "/reactions/${PR_REACTION_ID}" || true
           else
             rid="$(gh api \
-              -H "Accept: application/vnd.github+json" \
+              -H "Accept: application/vnd.github.squirrel-girl-preview+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "/repos/${{ github.repository }}/issues/${PR_NUMBER}/reactions" \
               -q '.[] | select(.content=="eyes" and .user.login=="github-actions[bot]") | .id' | head -n1 || true)"
             if [ -n "$rid" ]; then
               gh api -X DELETE \
-                -H "Accept: application/vnd.github+json" \
+                -H "Accept: application/vnd.github.squirrel-girl-preview+json" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
                 "/reactions/${rid}" || true
             fi
