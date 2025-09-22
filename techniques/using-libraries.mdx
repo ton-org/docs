@@ -4,58 +4,54 @@ title: "Using libraries"
 
 import { Image, ImageControls } from '/snippets/image.jsx';
 
-Before reading this article, we recommend first reading the fundamentals in [this article](ton/cells/library-cells.mdx).
-
-All of the theoretical background is described in [this article](ton/cells/library-cells.mdx).
+Read 'Library cells' first: /ton/cells/library-cells.
 
 Everything in TON is stored in cells, even account code. One of the most common use cases for libraries is to store code that is shared by multiple contracts.
 When a library cell is part of an account’s `code`, it is automatically dereferenced on first access. This allows you to replace part of the contract code—or even the entire code—with a library cell.
 
 Replacing the entire code with a library cell is widely used in TON smart contracts.
 Some common examples:
-1. USDT (and other popular jettons) jetton wallets
-2. The Order contract in the Multisig‑v2 system
+1. USDT (and other popular jettons) Jetton wallet contracts
+2. The Order contract in Multisig v2
 3. NFT item contracts in popular collections
 
-And others.
+You can check if a contract is using a library as its code by looking into its `code` cell in an explorer.
 
-You can easily check if a contract is using a library as its code by looking into its `code` cell in an explorer.
-
-<Image src="/resources/images/using-libraries/library-in-explorer.png" />
+<Image src="/resources/images/using-libraries/library-in-explorer.png" alt="Code cell showing library reference in explorer" />
 
 Here you can see that the entire contract code consists of the 8‑bit tag equal to 2 and a 256‑bit representation hash of the referenced cell.
 
-However, if you do not want to make the entire code a library cell, you can make only a part of the code a library cell. For example, if the same function is used in multiple different contracts, it makes sense to turn it into a library. However, you will likely need to set up the build process for such non‑standard code yourself.
+If you don’t want to put the entire code in a library cell, you can make only part of it a library cell. For example, if the same function is used in multiple different contracts, it makes sense to turn it into a library. However, you will likely need to set up the build process for such nonstandard code yourself.
 
-### Saving on fees
+### Fee savings
 
 Library cells help reduce fees in two main ways.
 
-1. Storage costs. Because a library must be hosted in the masterchain, where storage is approximately 1000× more expensive than in the basechain, hosting a copy of the code in the basechain may be cheaper if there are fewer than 1000 instances of the contract. The 1000 factor is not constant and is subject to change. Consult [blockchain config parameter 18](https://tonviewer.com/config#18) for the latest value.
+1. Storage costs. Because a library must be hosted in the Masterchain, where storage is approximately 1000× more expensive than in the Basechain, hosting a copy of the code in the Basechain may be cheaper if there are fewer than 1000 instances of the contract. The 1000 factor is not constant and is subject to change. Consult [blockchain config parameter 18](https://tonviewer.com/config#18) for the latest value.
 
-2. Forwarding fees. For example, in [jettons](/standard/tokens/jetton.mdx) the StateInit must be forwarded with each transfer, which results in high forwarding fees. Moving the code into a library cell significantly reduces these fees.
+2. Forwarding fees. For example, in [jettons](/standard/tokens/jetton) the StateInit must be forwarded with each transfer, which results in high forwarding fees. Moving the code into a library cell significantly reduces these fees.
 
 
-### Using with @ton/core
+### Using @ton/core
 
 You can construct a library cell entirely in TypeScript using the `@ton/core` library. Here’s how to do it in a Blueprint project:
 
 ```ts
 import { Cell, beginCell } from '@ton/core';
 
-let lib_prep = beginCell().storeUint(2,8).storeBuffer(jwallet_code_raw.hash()).endCell();
-jwallet_code = new Cell({ exotic:true, bits: lib_prep.bits, refs:lib_prep.refs});
+const libPrep = beginCell().storeUint(2, 8).storeBuffer(jwalletCodeRaw.hash()).endCell();
+const jwalletCode = new Cell({ exotic: true, bits: libPrep.bits, refs: libPrep.refs });
 ```
 
 - [View source](https://github.com/ton-blockchain/stablecoin-contract/blob/de08b905214eb253d27009db6a124fd1feadbf72/sandbox_tests/JettonWallet.spec.ts#L104C1-L105C90)
 
-### Publishing an ordinary cell in the masterchain library context
+### Publishing an ordinary cell in the Masterchain library context
 
 A practical example is available [here](https://github.com/ton-blockchain/multisig-contract-v2/blob/master/contracts/helper/librarian.func).
 
 The core of this contract is the line: `set_lib_code(lib_to_publish, 2);`. This function call publishes an ordinary cell with the flag set to `2`, which indicates that the library is public and can be used by anyone.
 
-**Note:** the contract that publishes the cell is responsible for paying its own and the masterchain’s storage fees. Storage costs in the masterchain are approximately 1000 times higher than in the basechain. Therefore, using a library cell is only cost‑effective for contracts that are used by thousands of users.
+**Note:** the contract that publishes the cell is responsible for paying its own and the Masterchain’s storage fees. Storage costs in the Masterchain are approximately 1000 times higher than in the Basechain. Therefore, using a library cell is only cost‑effective for contracts that are used by thousands of users.
 
 Also, another library manager contract exists and is available on [GitHub](https://github.com/bidask-protocol/func-library-manager).
 
@@ -70,21 +66,21 @@ An example implementation can be found [here](https://github.com/ton-blockchain/
 
 ### Get methods for library‑cell‑based contracts
 
-When working with a jetton wallet where the code is stored in a library cell, you may need to check its balance. To do so, you must execute a get method in the code. This involves the following steps:
+When working with a Jetton wallet where the code is stored in a library cell, you may need to check its balance. To do so, you must execute a get method in the code. This involves the following steps:
 
 - Accessing the library cell
 - Retrieving the hash of the referenced cell
-- Finding the cell with that hash in the masterchain’s library collection
+- Finding the cell with that hash in the Masterchain’s library collection
 - Executing the code from there
 
-In liteservers (LS), all these processes happen automatically behind the scenes, and users needn’t be concerned with the specific method of code storage.
+In LiteServer (LS), all these processes happen automatically behind the scenes, and users needn’t be concerned with the specific method of code storage.
 
-However, the process differs when working locally. For example, when using an explorer or wallet, you might examine the account state to determine its type, such as whether it is an NFT, wallet, token, or auction.
+However, the process differs when working locally. For example, when using an explorer or wallet, you might examine the account state to determine its type, such as whether it is an NFT item, wallet, token, or auction.
 
 You can review the available get methods (the contract interface) of regular contracts to understand how they work. Alternatively, you may take the account state to your local system and execute methods there.
 
 This approach is not feasible for a library cell because it does not store data on its own. Instead, you must manually detect and retrieve the necessary cells from the context. This can be done using LS (bindings may not yet support this) or via DTon.
 
-#### Retrieving a library cell with Liteserver
+#### Retrieving a library cell with LiteServer
 
-When running get methods with a liteserver, the correct library context is automatically set. If you need to detect the contract type using get methods or run them locally, download the corresponding cells via the LS method [liteServer.getLibraries](https://github.com/ton-blockchain/ton/blob/4cfe1d1a96acf956e28e2bbc696a143489e23631/tl/generate/scheme/lite_api.tl#L96).
+When running get methods with a LiteServer, the correct library context is automatically set. If you need to detect the contract type using get methods or run them locally, download the corresponding cells via the LS method [liteServer.getLibraries](https://github.com/ton-blockchain/ton/blob/4cfe1d1a96acf956e28e2bbc696a143489e23631/tl/generate/scheme/lite_api.tl#L96).
