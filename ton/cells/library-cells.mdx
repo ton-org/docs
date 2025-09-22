@@ -1,0 +1,64 @@
+---
+title: "Library cells"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+# Introduction 
+
+One of the native features of how TON stores data in cells is deduplication: duplicate cells are stored only once in storage, messages, blocks, transactions, and other elements. This significantly reduces the size of serialized data and enables efficient storage of incrementally updated data.
+
+As a result, many data structures in TON are rich in information and optimized for performance. For example, the block structure may contain the same message in multiple places—such as in the message queue, the list of transactions, and Merkle updates. Since duplication carries no overhead, data can be stored redundantly wherever it is needed without impacting efficiency.
+
+Library cells extend this deduplication mechanism on-chain, enabling the incorporation of the same efficiency into custom smart contracts.
+
+<Aside type="info" title="High-level-analogy">
+You can think of a library cell as a const weak C++ pointer: a small cell that references a larger one, which may include many references. The referenced cell must exist and be registered publicly, i.e., “published”.
+</Aside>
+
+### Low-level details
+
+They always have a level of 0.
+
+They stores the tag, equal to 2 in the first 8 bits.
+Then 256 bits follow, which are the representation hash of the referenced cell.
+
+When a library cell is stored in account storage, account pays storage for this cell, equal to storage cost of 1 cell and 256 + 8 bits.
+
+### Recursive library cells
+
+One can create library cell, that directly reference other library reference. However, such cells won't be automatically dereferenced by "CTOS" instruction (begin_parse in FunC), and the attempt to do so will result the exit code 9, so one need to dereference them manually, by using "XLOAD" or "XCTOS" instructions.
+
+However, creating libraries, that reference cell, that has other library cells in their tree it totally fine.
+
+### Smart-contract library environment
+
+When a contract tries to load a library cell, the library is being looked up in its library environment.
+
+The library environment of a smart contract is a hashmap mapping 256-bit cell (representation) hashes into the corresponding cells themselves. When an external cell reference is accessed during the execution of a smart contract, the cell referred to is looked up in the library environment and the external cell reference is transparently replaced by the cell found. The library environment for an invocation of a smart contract is computed as follows: 
+
+1. The global library environment for the workchain in question is taken from the current state of the masterchain.
+
+2. Next, it is augmented by the local library environment of the smart contract, stored in the library field of the smart contract’s state. Only 256-bit keys equal to the hashes of the corresponding value cells are taken into account. If a key is present in both the global and lo- cal library environments, the local environment takes precedence while merging the two library environments.
+
+3. Finally, the message library stored in the library field of the init field of the inbound message is similarly taken into account. Notice, however, that if the account is frozen or uninitialized, the library field of the message is part of the suggested state of the account, and is used instead of the local library environment in the previous step. The message library has lower precedence than both the local and the global library environments.
+
+### Hosting a library cell
+
+Libraries are hosted in the states of accounts. More specifically they reside in `library` field in account.
+```tlb
+_ fixed_prefix_length:(Maybe (## 5)) special:(Maybe TickTock)
+  code:(Maybe ^Cell) data:(Maybe ^Cell)
+  library:(HashmapE 256 SimpleLib) = StateInitWithLibs;
+
+simple_lib$_ public:Bool root:^Cell = SimpleLib;
+```
+One can see `public` flag in SimpleLib. 
+This flag allows to make library cell private (being accessible only from account hosting it), even if the account hosting it resides in masterchain.
+
+Also, if the account, hosting the library becomes frozen, the library becomes inaccessible. So it's very important to have in mind, that storage cost in masterchain is much higher than in basechain, and carefully control the balance of an account, that hosts the library. 
+
+### Other articles
+
+If you want to check a practical examples on how to manage libraries, please check out [this article](guidebook/working-with-libraries.mdx).
+Library cells are mainly used to minimise storage cost of accounts with equal code. Read more about this pattern [here](techniques/using-libraries.mdx)
