@@ -1,0 +1,773 @@
+---
+title: "The Open Network"
+sidebarTitle: "The Open Network"
+---
+
+based on the work of Dr. Nikolai Durov
+
+**July 26, 2021**
+
+## Abstract
+
+The aim of this text is to provide a first description of the The Open
+Network (TON) and related blockchain, peer-to-peer, distributed storage
+and service hosting technologies. To reduce the size of this document
+to reasonable proportions, we focus mainly on the unique and defining
+features of the TON platform that are important for it to achieve its
+stated goals.
+
+# Introduction
+
+The *The Open Network (TON)* is a fast, secure and scalable blockchain and
+network project, capable of handling millions of transactions per second if
+necessary, and both user-friendly and service provider-friendly. We aim for
+it to be able to host all reasonable applications currently proposed and conceived.  
+
+One might think about TON as a huge distributed supercomputer,
+or rather a huge “superserver”, intended to host and provide a variety of
+services.  
+
+This text is not intended to be the ultimate reference with respect to
+all implementation details. Some particulars are likely to change during the
+development and testing phases.
+
+# 2 TON Blockchain
+
+We start with a description of the The Open Network (TON) Blockchain, the core component of the project. Our approach here is “top-down”: we give a general description of the whole, and then provide more detail on each component.  
+
+For simplicity, we speak here about the TON Blockchain, even though in principle several instances of this blockchain protocol may be running independently (for example, as a result of hard forks). We consider only one of them.  
+
+## 2.1 TON Blockchain as a Collection of 2-Blockchains
+
+The TON Blockchain is actually a collection of blockchains (even a collection of blockchains of blockchains, or 2-blockchains — this point will be clarified later in 2.1.17), because no single blockchain project is capable of achieving our goal of processing millions of transactions per second, as opposed to the now-standard dozens of transactions per second.  
+
+### 2.1.1. List of blockchain types  
+
+The blockchains in this collection are:  
+
+- **Masterchain**  
+  The unique master blockchain, or masterchain for short, containing general information about the protocol and the current values of its parameters, the set of validators and their stakes, the set of currently active workchains and their “shards”, and, most importantly, the set of hashes of the most recent blocks of all workchains and shardchains.  
+
+- **Workchains**  
+  Several (up to $2^{32}$) working blockchains, or workchains for short, which are actually the “workhorses”, containing the value-transfer and smart contract transactions. Different workchains may have different “rules”, meaning different formats of account addresses, different formats of transactions, different virtual machines (VMs) for smart contracts, different basic cryptocurrencies and so on. However, they all must satisfy certain basic interoperability criteria to make interaction between different workchains possible and relatively simple. In this respect, the TON Blockchain is heterogeneous (cf. 2.8.8), similarly to the EOS (cf. 2.9.7) and PolkaDot (cf. 2.9.8) projects.  
+
+- **Shardchains**  
+  Each workchain is in turn subdivided into up to $2^{60}$ shard blockchains, or shardchains for short, having the same rules and block format as the workchain itself, but responsible only for a subset of accounts, depending on several first (most significant) bits of the account address.  
+  In other words, a form of sharding is built into the system (cf. 2.8.12). Because all these shardchains share a common block format and rules, the TON Blockchain is homogeneous in this respect (cf. 2.8.8), similarly to what has been discussed in one of Ethereum scaling proposals.[¹](#footnote-1)
+
+- **Vertical blockchains**  
+  Each block in a shardchain (and in the masterchain) is actually not just a block, but a small blockchain. Normally, this “block blockchain” or “vertical blockchain” consists of exactly one block, and then we might think this is just the corresponding block of the shardchain (also called  “horizontal blockchain” in this situation). However, if it becomes necessary to fix incorrect shardchain blocks, a new block is committed into the “vertical blockchain”, containing either the replacement for the invalid “horizontal blockchain” block, or a “block difference”, containing only a description of those parts of the previous version of this block that need to be changed. This is a TON-specific mechanism to replace detected invalid blocks without making a true fork of all shardchains involved; it will be explained in more detail in 2.1.17. For now, we just remark that each shardchain (and the masterchain) is not a conventional blockchain, but a blockchain of blockchains, or 2D-blockchain, or just a 2-blockchain.  
+
+### 2.1.2. Infinite Sharding Paradigm  
+
+Almost all blockchain sharding proposals are “top-down”: one first imagines a single blockchain, and then discusses how to split it into several interacting shardchains to improve performance and achieve scalability.  
+
+The TON approach to sharding is “bottom-up”, explained as follows. Imagine that sharding has been taken to its extreme, so that exactly one account or smart contract remains in each shardchain. Then we have a huge number of “account-chains”, each describing the state and state transitions of only one account, and sending value-bearing messages to each other to  
+transfer value and information.  
+
+Of course, it is impractical to have hundreds of millions of blockchains, with updates (i.e., new blocks) usually appearing quite rarely in each of them. In order to implement them more efficiently, we group these “account-chains” into “shardchains”, so that each block of the shardchain is essentially a  collection of blocks of account-chains that have been assigned to this shard. Thus the account-chains have only a purely virtual or logical existence inside the shardchains.
+We call this perspective the **Infnite Sharding Paradigm**. It explains many of the design decisions for the TON Blockchain.
+
+### 2.1.3. Messages. Instant Hypercube Routing  
+
+The Infinite Sharding Paradigm instructs us to regard each account (or smart contract) as if it were in its own shardchain by itself. Then the only way one account might affect the state of another is by sending a message to it (this is a special instance of the so-called Actor model, with accounts as Actors; cf. 2.4.2). Therefore, a system of messages between accounts (and shardchains, because the source and destination accounts are, generally speaking, located in different shardchains) is of paramount importance to a scalable system such as the TON Blockchain.  
+
+In fact, a novel feature of the TON Blockchain, called **Instant Hypercube Routing** (cf. 2.4.20), enables it to deliver and process a message created in a block of one shardchain into the very next block of the destination shardchain, regardless of the total number of shardchains in the system.  
+
+### 2.1.4. Quantity of masterchains, workchains and shardchains  
+
+A TON Blockchain contains exactly one masterchain. However, the system can potentially accommodate up to $2^{32}$ workchains, each subdivided into up to $2^{60}$ shardchains.  
+
+### 2.1.5. Workchains can be virtual blockchains, not true blockchains  
+
+Because a workchain is usually subdivided into shardchains, the existence of the workchain is “virtual”, meaning that it is not a true blockchain in the sense of the general definition provided in 2.2.1 below, but just a collection of shardchains.  
+
+When only one shardchain corresponds to a workchain, this unique shardchain may be identified with the workchain, which in this case becomes a “true” blockchain, at least for some time, thus gaining a superficial similarity to customary single-blockchain design.  
+
+However, the Infinite Sharding Paradigm (cf. 2.1.2) tells us that this similarity is indeed superficial: it is just a coincidence that the potentially huge number of “account-chains” can temporarily be grouped into one blockchain.  
+
+
+### 2.1.6. Identification of workchains  
+
+Each workchain is identified by its number or **workchain identifier** (`workchain_id : uint32`), which is simply an unsigned 32-bit integer. Workchains are created by special transactions in the masterchain, defining the (previously unused) `workchain_id` and the formal description of the workchain, sufficient at least for the interaction of this workchain with other workchains and for superficial verification of this workchain's blocks.  
+
+### 2.1.7. Creation and activation of new workchains  
+
+The creation of a new workchain may be initiated by essentially any member of the community, ready to pay the (high) masterchain transaction fees required to publish the formal specification of a new workchain.  
+
+However, in order for the new workchain to become active, a two-thirds consensus of validators is required, because they will need to upgrade their software to process blocks of the new workchain, and signal their readiness to work with the new workchain by special masterchain transactions.  
+
+The party interested in the activation of the new workchain might provide some incentive for the validators to support the new workchain by means of some rewards distributed by a smart contract.  
+
+### 2.1.8. Identification of shardchains  
+
+Each shardchain is identified by a couple  
+
+$$(w, s) = (workchain\_id, shard\_prefix),$$  
+
+where `workchain_id : uint32` identifies the corresponding workchain, and `shard_prefix : 2⁰…⁶⁰` is a bit string of length at most 60, defining the subset of accounts for which this shardchain is responsible.  
+
+Namely, all accounts with `account_id` starting with `shard_prefix` (i.e., having `shard_prefix` as most significant bits) will be assigned to this shardchain.  
+
+
+### 2.1.9. Identification of account-chains  
+
+Recall that account-chains have only a virtual existence (cf. 2.1.2). However, they have a natural identifier — namely, `(workchain_id, account_id)` — because any account-chain contains information about the state and updates of exactly one account (either a simple account or smart contract — the distinction is unimportant here).  
+
+### 2.1.10. Dynamic splitting and merging of shardchains; cf. 2.7  
+
+A less sophisticated system might use static sharding — for example, by using the top eight bits of the `account_id` to select one of 256 pre-defined shards.  
+
+An important feature of the TON Blockchain is that it implements **dynamic sharding**, meaning that the number of shards is not fixed. Instead, shard $(w, s)$ can be automatically subdivided into shards $(w, s.0)$ and $(w, s.1)$ if some formal conditions are met (essentially, if the transaction load on the original shard is high enough for a prolonged period of time).  
+
+Conversely, if the load stays too low for some period of time, the shards $(w, s.0)$ and $(w, s.1)$ can be automatically merged back into shard $(w, s)$.  
+
+Initially, only one shard $(w, ∅)$ is created for workchain $w$. Later, it is subdivided into more shards, if and when this becomes necessary (cf. 2.7.6 and 2.7.8).  
+
+
+### 2.1.11. Basic workchain or Workchain Zero  
+
+While up to $2^{32}$ workchains can be defined with their specific rules and transactions, we initially define only one, with `workchain_id = 0`. This workchain, called **Workchain Zero** or the **basic workchain**, is the one used to work with TON smart contracts and transfer TON coins (cf. Appendix A).  
+
+Most applications are likely to require only Workchain Zero. Shardchains of the basic workchain will be called **basic shardchains**.  
+
+
+### 2.1.12. Block generation intervals  
+
+We expect a new block to be generated in each shardchain and the masterchain approximately once every five seconds. This will lead to reasonably small transaction confirmation times.  
+
+New blocks of all shardchains are generated approximately simultaneously; a new block of the masterchain is generated approximately one second later, because it must contain the hashes of the latest blocks of all shardchains.  
+
+
+### 2.1.13. Using the masterchain to make workchains and shardchains tightly coupled  
+
+Once the hash of a block of a shardchain is incorporated into a block of the masterchain, that shardchain block and all its ancestors are considered “canonical”, meaning that they can be referenced from the subsequent blocks of all shardchains as something fixed and immutable.  
+
+In fact, each new shardchain block contains a hash of the most recent masterchain block, and all shardchain blocks referenced from that masterchain block are considered immutable by the new block.  
+
+Essentially, this means that a transaction or a message committed in a shardchain block may be safely used in the very next blocks of the other shardchains, without needing to wait for, say, twenty confirmations (i.e., twenty blocks generated after the original block in the same blockchain) before forwarding a message or taking other actions based on a previous transaction, as is common in most proposed “loosely-coupled” systems (cf. 2.8.14), such as EOS.  
+
+This ability to use transactions and messages in other shardchains a mere five seconds after being committed is one of the reasons we believe our “tightly-coupled” system, the first of its kind, will be able to deliver unprecedented performance (cf. 2.8.12 and 2.8.14).  
+
+### 2.1.14. Masterchain block hash as a global state  
+
+According to 2.1.13, the hash of the last masterchain block completely determines the overall state of the system from the perspective of an external observer. One does not need to monitor the state of all shardchains separately.  
+
+### 2.1.15. Generation of new blocks by validators; cf. 2.6  
+
+The TON Blockchain uses a **Proof-of-Stake (PoS)** approach for generating new blocks in the shardchains and the masterchain. This means that there is a set of, say, up to a few hundred **validators** — special nodes that have deposited stakes (large amounts of TON coins) by a special masterchain transaction to be eligible for new block generation and validation.  
+
+Then a smaller subset of validators is assigned to each shard $(w, s)$ in a deterministic pseudorandom way, changing approximately every 1024 blocks. This subset of validators suggests and reaches consensus on what the next shardchain block would be, by collecting suitable proposed transactions from the clients into new valid block candidates. For each block, there is a pseudorandomly chosen order on the validators to determine whose block candidate has the highest priority to be committed at each turn.  
+
+Validators and other nodes check the validity of the proposed block candidates; if a validator signs an invalid block candidate, it may be automatically punished by losing part or all of its stake, or by being suspended from the set of validators for some time.  
+
+After that, the validators should reach consensus on the choice of the next block, essentially by an efficient variant of the BFT (Byzantine Fault Tolerant; cf. 2.8.4) consensus protocol, similar to PBFT [4] or Honey Badger BFT [11]. If consensus is reached, a new block is created, and validators divide between themselves the transaction fees for the transactions included, plus some newly-created (“minted”) coins.  
+
+Each validator can be elected to participate in several validator subsets; in this case, it is expected to run all validation and consensus algorithms in parallel.  
+
+After all new shardchain blocks are generated or a timeout is passed, a new masterchain block is generated, including the hashes of the latest blocks of all shardchains. This is done by BFT consensus of all validators.[²](#footnote-2)  
+
+More detail on the TON PoS approach and its economical model is provided in section 2.6.  
+
+### 2.1.16. Forks of the masterchain  
+
+A complication that arises from our tightly-coupled approach is that switching to a different fork in the masterchain will almost necessarily require switching to another fork in at least some of the shardchains.  
+
+On the other hand, as long as there are no forks in the masterchain, no forks in the shardchain are even possible, because no blocks in the alternative forks of the shardchains can become “canonical” by having their hashes incorporated into a masterchain block.  
+
+The general rule is that if masterchain block $B'$ is a predecessor of $B$, $B'$ includes hash $\text{Hash}(B'_{(w,s)})$ of $(w,s)$-shardchain block $B'_{(w,s)}$, and $B$ includes hash $\text{Hash}(B_{(w,s)})$, then $B'_{(w,s)}$ must be a predecessor of $B_{(w,s)}$; otherwise, the masterchain block $B$ is invalid.
+
+We expect masterchain forks to be rare, next to non-existent, because in the BFT paradigm adopted by the TON Blockchain they can happen only in the case of incorrect behavior by a majority of validators (cf. 2.6.1 and 2.6.15), which would imply significant stake losses by the offenders.  
+
+Therefore, no true forks in the shardchains should be expected. Instead, if an invalid shardchain block is detected, it will be corrected by means of the “vertical blockchain” mechanism of the 2-blockchain (cf. 2.1.17), which can achieve this goal without forking the “horizontal blockchain” (i.e., the shardchain).  
+
+The same mechanism can be used to fix non-fatal mistakes in the masterchain blocks as well.  
+
+### 2.1.17. Correcting invalid shardchain blocks
+
+Normally, only valid shardchain blocks will be committed, because validators assigned to the shardchain must reach a two-thirds Byzantine consensus before a new block can be committed. However, the system must allow for detection of previously committed invalid blocks and their correction.  
+
+Of course, once an invalid shardchain block is found — either by a validator (not necessarily assigned to this shardchain) or by a “fisherman” (any node of the system that made a certain deposit to be able to raise questions about block validity; cf. 2.6.4) — the invalidity claim and its proof are committed into the masterchain, and the validators that have signed the invalid block are punished by losing part of their stake and/or being temporarily suspended from the set of validators (the latter measure is important for the case of an attacker stealing the private signing keys of an otherwise benign validator).  
+
+However, this is not sufficient, because the overall state of the system (TON Blockchain) turns out to be invalid because of the invalid shardchain block previously committed. This invalid block must be replaced by a newer valid version.  
+
+Most systems would achieve this by “rolling back” to the last block before the invalid one in this shardchain and the last blocks unaffected by messages propagated from the invalid block in each of the other shardchains, and creating a new fork from these blocks. This approach has the disadvantage that a large number of otherwise correct and committed transactions are suddenly rolled back, and it is unclear whether they will be included later at all.  
+
+The TON Blockchain solves this problem by making each “block” of each shardchain and of the masterchain (“horizontal blockchains”) a small blockchain (“vertical blockchain”) by itself, containing different versions of this “block”, or their “differences”. Normally, the vertical blockchain consists of exactly one block, and the shardchain looks like a classical blockchain.  
+
+However, once the invalidity of a block is confirmed and committed into a masterchain block, the “vertical blockchain” of the invalid block is allowed to grow by a new block in the vertical direction, replacing or editing the invalid block. The new block is generated by the current validator subset for the shardchain in question.  
+
+The rules for a new “vertical” block to be valid are quite strict. In particular, if a virtual “account-chain block” (cf. 2.1.2) contained in the invalid block is valid by itself, it must be left unchanged by the new vertical block.  
+
+Once a new “vertical” block is committed on top of the invalid block, its hash is published in a new masterchain block (or rather in a new “vertical” block, lying above the original masterchain block where the hash of the invalid shardchain block was originally published), and the changes are propagated further to any shardchain blocks referring to the previous version of this block (e.g., those having received messages from the incorrect block). This is fixed by committing new “vertical” blocks in vertical blockchains for all blocks previously referring to the “incorrect” block; new vertical blocks will refer to the most recent (corrected) versions instead.  
+
+Again, strict rules forbid changing account-chains that are not really affected (i.e., that receive the same messages as in the previous version). In this way, fixing an incorrect block generates “ripples” that are ultimately propagated towards the most recent blocks of all affected shardchains; these changes are reflected in new “vertical” masterchain blocks as well.  
+
+Once the “history rewriting” ripples reach the most recent blocks, the new shardchain blocks are generated in one version only, being successors of the newest block versions only. This means that they will contain references to the correct (most recent) vertical blocks from the very beginning.  
+
+The masterchain state implicitly defines a map transforming the hash of the first block of each “vertical” blockchain into the hash of its latest version. This enables a client to identify and locate any vertical blockchain by the hash of its very first (and usually the only) block.  
+
+
+### 2.1.18. TON coins and multi-currency workchains
+
+The TON Blockchain supports up to $2^{32}$ different “cryptocurrencies”, “coins”, or “tokens”, distinguished by a 32-bit `currency_id`. New cryptocurrencies can be added by special transactions in the masterchain. Each workchain has a basic cryptocurrency, and can have several additional cryptocurrencies.  
+
+There is one special cryptocurrency with `currency_id = 0`, namely, the TON coin (cf. Appendix A). It is the basic cryptocurrency of Workchain Zero. It is also used for transaction fees and validator stakes.  
+
+In principle, other workchains may collect transaction fees in other tokens. In this case, some smart contract for automated conversion of these transaction fees into TON coins should be provided.  
+
+
+### 2.1.19. Messaging and value transfer
+
+Shardchains belonging to the same or different workchains may send messages to each other. While the exact form of the messages allowed depends on the receiving workchain and receiving account (smart contract), there are some common fields making inter-workchain messaging possible.  
+
+In particular, each message may have some value attached, in the form of a certain amount of TON coins and/or other registered cryptocurrencies, provided they are declared as acceptable cryptocurrencies by the receiving workchain.  
+
+The simplest form of such messaging is a value transfer from one (usually not a smart-contract) account to another.  
+
+
+### 2.1.20. TON Virtual Machine
+
+The **TON Virtual Machine** — also abbreviated as **TON VM** or **TVM** — is the virtual machine used to execute smart-contract code in the masterchain and in the basic workchain. Other workchains may use other virtual machines alongside or instead of the TVM.  
+
+Here we list some of its features. They are discussed further in 2.3.12, 2.3.14 and elsewhere:  
+
+- TVM represents all data as a collection of (TVM) **cells** (cf. 2.3.14). Each cell contains up to 128 data bytes and up to 4 references to other cells. As a consequence of the “everything is a bag of cells” philosophy (cf. 2.5.14), this enables TVM to work with all data related to the TON Blockchain, including blocks and blockchain global state if necessary.  
+- TVM can work with values of arbitrary algebraic data types (cf. 2.3.12), represented as trees or directed acyclic graphs of TVM cells. However, it is agnostic towards the existence of algebraic data types; it just works with cells.  
+- TVM has built-in support for **hashmaps** (cf. 2.3.7).  
+- TVM is a **stack machine**. Its stack keeps either 64-bit integers or cell references.  
+- **64-bit, 128-bit and 256-bit arithmetic** is supported. All $n$-bit arithmetic operations come in three flavors: for unsigned integers, for signed integers and for integers modulo $2^n$ (no automatic overflow checks in the latter case).  
+- TVM has unsigned and signed integer conversion from $n$-bit to $m$-bit, for all $0 \leq m, n \leq 256$, with overflow checks.  
+- All arithmetic operations perform overflow checks by default, greatly simplifying the development of smart contracts.  
+- TVM has “multiply-then-shift” and “shift-then-divide” arithmetic operations with intermediate values computed in a larger integer type; this simplifies implementing fixed-point arithmetic.  
+- TVM offers support for **bit strings** and **byte strings**.  
+- Support for **256-bit Elliptic Curve Cryptography (ECC)** for some predefined curves, including Curve25519, is present.  
+- Support for **Weil pairings** on some elliptic curves, useful for fast implementation of zk-SNARKs, is also present.  
+- Support for popular **hash functions**, including SHA-256, is present.  
+- TVM can work with **Merkle proofs** (cf. 5.1.9).  
+- TVM offers support for “large” or “global” smart contracts. Such smart contracts must be aware of sharding (cf. 2.3.18 and 2.3.16). Usual (local) smart contracts can be sharding-agnostic.  
+- TVM supports **closures**.  
+- A “spineless tagless G-machine” [13] can be easily implemented inside TVM.  
+
+Several high-level languages can be designed for TVM, in addition to the “TVM assembly”. All these languages will have static types and will support algebraic data types. We envision the following possibilities:  
+
+- A **Java-like imperative language**, with each smart contract resembling a separate class.  
+- A **lazy functional language** (think of Haskell).  
+- An **eager functional language** (think of ML).  
+
+### 2.1.21. Configurable parameters  
+
+An important feature of the TON Blockchain is that many of its parameters are configurable. This means that they are part of the masterchain state, and can be changed by certain special proposal/vote/result transactions in the masterchain, without any need for hard forks.  
+
+Changing such parameters will require collecting two-thirds of validator votes and more than half of the votes of all other participants who would care to take part in the voting process in favor of the proposal.  
+
+----
+
+## 2.2 Generalities on Blockchains
+
+### 2.2.1. General blockchain definition  
+
+In general, any (true) blockchain is a sequence of blocks, each block $B$ containing a reference $\text{blk-prev}(B)$ to the previous block (usually by including the hash of the previous block into the header of the current block), and a list of transactions.  
+
+Each transaction describes some transformation of the global blockchain state; the transactions listed in a block are applied sequentially to compute the new state starting from the old state, which is the resulting state after the evaluation of the previous block.  
+
+### 2.2.2. Relevance for the TON Blockchain  
+
+Recall that the TON Blockchain is not a true blockchain, but a collection of 2-blockchains (i.e., of blockchains of blockchains; cf. 2.1.1), so the above is not directly applicable to it.  
+
+However, we start with these generalities on true blockchains to use them as building blocks for our more sophisticated constructions.  
+
+### 2.2.3. Blockchain instance and blockchain type  
+
+One often uses the word blockchain to denote both a general blockchain type and its specific blockchain instances, defined as sequences of blocks satisfying certain conditions. For example, 2.2.1 refers to blockchain instances.  
+
+In this way, a blockchain type is usually a “subtype” of the type $\text{Block}^\ast$ of lists (i.e., finite sequences) of blocks, consisting of those sequences of blocks that satisfy certain compatibility and validity conditions:  
+
+```math
+\text{Blockchain} \subset \text{Block}^\ast \tag{1}
+```
+
+A better way to define Blockchain would be to say that Blockchain is a dependent couple type, consisting of couples $(B, v)$, with first component $B : \text{Block}^\ast$ being of type $\text{Block}^\ast$ (i.e., a list of blocks), and the second component $v : \text{isValidBc}(B)$ being a proof or a witness of the validity of $B$.  
+
+In this way,  
+
+```math
+\text{Blockchain} \equiv \Sigma_{(B : \text{Block}^\ast)} \ \text{isValidBc}(B) \tag{2}
+```
+
+We use here the notation for dependent sums of types borrowed from [16].  
+
+---
+
+### 2.2.4. Dependent type theory, Coq and TL  
+
+Note that we are using (Martin-Löf) dependent type theory here, similar to that used in the Coq[³](#footnote-3) proof assistant. A simplified version of dependent type theory is also used in TL (Type Language)[⁴](#footnote-4), which will be used in the formal specification of the TON Blockchain to describe the serialization of all data structures and the layouts of blocks, transactions, and the like.  
+
+In fact, dependent type theory gives a useful formalization of what a proof is, and such formal proofs (or their serializations) might become handy when one needs to provide proof of invalidity for some block, for example.  
+
+---
+
+### 2.2.5. TL, or the Type Language  
+
+Since TL (Type Language) will be used in the formal specifications of TON blocks, transactions, and network datagrams, it warrants a brief discussion.  
+
+TL is a language suitable for description of dependent algebraic types, which are allowed to have numeric (natural) and type parameters. Each type is described by means of several constructors. Each constructor has a (human-readable) identifier and a name, which is a bit string (32-bit integer by default).  
+
+Apart from that, the definition of a constructor contains a list of fields along with their types.  
+
+A collection of constructor and type definitions is called a **TL-scheme**. It is usually kept in one or several files with the suffix `.tl`.  
+
+An important feature of TL-schemes is that they determine an unambiguous way of serializing and deserializing values (or objects) of algebraic types defined. Namely, when a value needs to be serialized into a stream of bytes, first the name of the constructor used for this value is serialized. Recursively computed serializations of each field follow.  
+
+The description of a previous version of TL, suitable for serializing arbitrary objects into sequences of 32-bit integers, is available at https://core.telegram.org/mtproto/TL.  
+
+A new version of TL, called **TL-B**, is being developed for the purpose of describing the serialization of objects used by the TON Project. This new version can serialize objects into streams of bytes and even bits (not just 32-bit integers), and offers support for serialization into a tree of TVM cells (cf. 2.3.14). A description of TL-B will be a part of the formal specification of the TON Blockchain.  
+
+### 2.2.6. Blocks and transactions as state transformation operators
+
+Normally, any blockchain (type) $Blockchain$ has an associated global state (type) $State$, and a transaction (type) $Transaction$. The semantics of a blockchain are to a large extent determined by the transaction application function:
+
+```math
+ev_{trans0} : Transaction \times State \to State? \tag{3}
+```
+
+Here $X?$ denotes $\text{Maybe } X$, the result of applying the Maybe monad to type $X$. This is similar to our use of $X^\ast$ for List $X$. Essentially, a value of type $X?$ is either a value of type $X$ or a special value $\bot$ indicating the absence of an actual value (think about a null pointer). In our case, we use $State?$ instead of $State$ as the result type because a transaction may be invalid if invoked from certain original states (think about attempting to withdraw from an account more money than is actually there).
+
+We might prefer a curried version of $ev_{trans0}$:
+
+```math
+ev_{trans} : Transaction \to State \to State? \tag{4}
+```
+
+Because a block is essentially a list of transactions, the block evaluation function
+
+```math
+ev_{block} : Block \to State \to State? \tag{5}
+```
+
+can be derived from $ev_{trans}$. It takes a block $B : \text{Block}$ and the previous blockchain state $s : \text{State}$ (which might include the hash of the previous block) and computes the next blockchain state
+
+```math
+s' = ev_{block}(B)(s) : State
+```
+
+which is either a true state or a special value $\bot$ indicating that the next state cannot be computed (i.e., that the block is invalid if evaluated from the starting state given — for example, the block includes a transaction trying to debit an empty account).
+
+
+## 2.2.7. Block Sequence Numbers
+
+## 2.2.7. Block Sequence Numbers
+
+Each block B in the blockchain can be referred to by its sequence number `blk-seqno(B)`, starting from zero for the very rst block, and incremented by one whenever passing to the next block.
+
+More formally:
+
+```math
+blk-seqno(B) = blk-seqno(blk-prev(B)) + 1          (6)
+```
+
+Notice that the sequence number does not identify a block uniquely in the presence of forks.
+
+## 2.2.8. Block Hashes
+
+Another way of referring to a block B is by its hash `blk-hash(B)`, which is actually the hash of the header of block B (however, the header of the block usually contains hashes that depend on all content of block B). 
+
+Assuming that there are no collisions for the hash function used (or at least that they are very improbable), a block is uniquely identified by its hash.
+
+## 2.2.9. Hash assumption
+
+During formal analysis of blockchain algorithms, we assume that there are no collisions for the k-bit hash function $Hash : Bytes^* \rightarrow 2^k$ used:
+
+```math
+Hash(s) = Hash(s') \Rightarrow s = s'   \text{ for any } s, s' \in Bytes^*     (7)
+```
+
+Here $Bytes = \{0 \ldots 255\} = 2^8$ is the type of bytes, or the set of all byte values, and $Bytes^*$ is the type or set of arbitrary (nite) lists of bytes; while $2 = \{0, 1\}$ is the bit type, and $2^k$ is the set (or actually the type) of all k-bit sequences (i.e., of k-bit numbers).
+
+Of course, (7) is impossible mathematically, because a map from an in- nite set to a nite set cannot be injective. A more rigorous assumption would be
+
+```math
+\forall s, s': s \neq s', P[Hash(s) = Hash(s')] = 2^{-k}     (8)
+```
+
+However, this is not so convenient for the proofs. If (8) is used at most N times in a proof with $2^{-k}N < \epsilon$ for some small $\epsilon$ (say, $\epsilon = 10^{-18}$), we careason as if (7) were true, provided we accept a failure probability $\epsilon$ (i.e., the nal conclusions will be true with probability at least $1 - \epsilon$).
+
+Final remark: in order to make the probability statement of (8) really rigorous, one must introduce a probability distribution on the set $Bytes^*$ of all byte sequences. A way of doing this is by assuming all byte sequences of the same length l equiprobable, and setting the probability of observing a sequence of length l equal to $p^l - p^{l+1}$ for some $p \rightarrow 1^-$. Then (8) should be understood as a limit of conditional probability $P[Hash(s) = Hash(s')|s \neq s']$ when p tends to one from below
+
+## 2.3 Blockchain State, Accounts and Hashmaps
+
+We have noted above that any blockchain denes a certain global state, and each block and each transaction denes a transformation of this global state. Here we describe the global state used by TON blockchains.
+
+### 2.3.1. Account IDs
+
+The basic account IDs used by TON blockchains or at least by its masterchain and Workchain Zeroare 256-bit integers, assumed to be public keys for 256-bit Elliptic Curve Cryptography (ECC) for a specic elliptic curve. In this way,
+
+```math
+account\_id : Account = uint256 = 2^{256}     (9)
+```
+
+Here $Account$ is the account type, while $account\_id : Account$ is a specic variable of type $Account$. Other workchains can use other account ID formats, 256-bit or otherwise. For example, one can use Bitcoin-style account IDs, equal to sha256 of an ECC public key. However, the bit length l of an account ID must be xed during the creation of the workchain (in the masterchain), and it must be at least 64, because the rst 64 bits of $account\_id$ are used for sharding and message routing
+
+### 2.3.2. Main component: Hashmaps
+
+The principal component of the TON blockchain state is a hashmap. In some cases we consider (partially dened) maps $h : 2^n \rightharpoonup 2^m$. More generally, we might be interested in hashmaps $h : 2^n \rightharpoonup X$ for a composite type $X$. However, the source (or index) type is almost always $2^n$. Sometimes, we have a default value $empty : X$, and the hashmap $h : 2^n \rightarrow X$ is initialized by its default value $i \mapsto empty$.
+
+### 2.3.3. Example: TON account balances
+
+An important example is given by TON account balances. It is a hashmap
+
+```math
+balance : Account \rightarrow uint128     (10)
+```
+
+mapping $Account = 2^{256}$ into a TON coin balance of type $uint128 = 2^{128}$. This hashmap has a default value of zero, meaning that initially (before the rst block is processed) the balance of all accounts is zero.
+
+### 2.3.4. Example: smart-contract persistent storage
+
+Another example is given by smart-contract persistent storage, which can be (very approximately) represented as a hashmap
+
+```math
+storage : 2^{256} \rightharpoonup 2^{256}     (11)
+```
+
+This hashmap also has a default value of zero, meaning that uninitialized cells of persistent storage are assumed to be zero.
+
+### 2.3.5. Example: persistent storage of all smart contracts
+
+Because we have more than one smart contract, distinguished by $account\_id$, each having its separate persistent storage, we must actually have a hashmap
+
+```math
+Storage : Account \rightharpoonup (2^{256} \rightharpoonup 2^{256})     (12)
+```
+
+mapping $account\_id$ of a smart contract into its persistent storage.
+
+### 2.3.6. Hashmap type
+
+The hashmap is not just an abstract (partially dened) function $2^n \rightharpoonup X$; it has a specic representation. Therefore, we suppose that we have a special hashmap type
+
+```math
+Hashmap(n, X) : Type     (13)
+```
+
+corresponding to a data structure encoding a (partial) map $2^n \rightharpoonup X$. We can also write
+
+```math
+Hashmap(n : nat)(X : Type) : Type     (14)
+```
+
+or
+
+```math
+Hashmap : nat \rightarrow Type \rightarrow Type     (15)
+```
+
+We can always transform $h : Hashmap(n, X)$ into a map $hget(h) : 2^n \rightarrow X^?$. Henceforth, we usually write $h[i]$ instead of $hget(h)(i)$:
+
+```math
+h[i] :\equiv hget(h)(i) : X^?   \text{ for any } i : 2^n, h : Hashmap(n, X)     (16)
+```
+
+### 2.3.7. Denition of hashmap type as a Patricia tree
+
+Logically, one might dene Hashmap(n, X) as an (incomplete) binary tree of depth n with edge labels 0 and 1 and with values of type X in the leaves. Another way to describe the same structure would be as a (bitwise) trie for binary strings of length equal to n. In practice, we prefer to use a compact representation of this trie, by compressing each vertex having only one child with its parent. The resulting representation is known as a Patricia tree or a binary radix tree.
+
+Each intermediate vertex now has exactly two children, labeled by two non-empty binary strings, beginning with zero for the left child and with one for the right child. In other words, there are two types of (non-root) nodes in a Patricia tree:
+
+• $Leaf(x)$, containing value $x$ of type $X$.
+
+• $Node(l, s_l, r, s_r)$, where $l$ is the (reference to the) left child or subtree, $s_l$ is the bitstring labeling the edge connecting this vertex to its left child (always beginning with 0), $r$ is the right subtree, and $s_r$ is the bitstring labeling the edge to the right child (always beginning with 1).
+
+A third type of node, to be used only once at the root of the Patricia tree, is also necessary:
+
+• $Root(n, s_0, t)$, where $n$ is the common length of index bitstrings of $Hashmap(n, X)$, $s_0$ is the common prex of all index bitstrings, and $t$ is a reference to a $Leaf$ or a $Node$.
+
+If we want to allow the Patricia tree to be empty, a fourth type of (root) node would be used:
+
+• $EmptyRoot(n)$, where $n$ is the common length of all index bitstrings.
+
+We dene the height of a Patricia tree by
+
+```math
+height(Leaf(x)) = 0     (17)
+```
+
+```math
+height(Node(l, s_l, r, s_r)) = height(l) + len(s_l) = height(r) + len(s_r)     (18)
+```
+
+```math
+height(Root(n, s_0, t)) = len(s_0) + height(t) = n     (19)
+```
+
+The last two expressions in each of the last two formulas must be equal. We use Patricia trees of height $n$ to represent values of type $Hashmap(n, X)$. If there are $N$ leaves in the tree (i.e., our hashmap contains $N$ values), then there are exactly $N − 1$ intermediate vertices. Inserting a new value always involves splitting an existing edge by inserting a new vertex in the middle and adding a new leaf as the other child of this new vertex. Deleting a value from a hashmap does the opposite: a leaf and its parent are deleted, and the parent's parent and its other child become directly linked.
+
+### 2.3.8. Merkle-Patricia trees
+
+When working with blockchains, we want to be able to compare Patricia trees (i.e., hash maps) and their subtrees, by reducing them to a single hash value. The classical way of achieving this is given by the Merkle tree. Essentially, we want to describe a way of hashing objects $h$ of type $Hashmap(n, X)$ with the aid of a hash function $Hash$ dened for binary strings, provided we know how to compute hashes $Hash(x)$ of objects $x : X$ (e.g., by applying the hash function $Hash$ to a binary serialization of object $x$). One might dene $Hash(h)$ recursively as follows:
+
+```math
+Hash(Leaf(x)) := Hash(x)     (20)
+```
+
+```math
+Hash(Node(l, s_l, r, s_r)) := Hash(Hash(l) \cdot Hash(r) \cdot code(s_l) \cdot code(s_r))     (21)
+```
+
+```math
+Hash(Root(n, s_0, t)) := Hash(code(n) \cdot code(s_0) \cdot Hash(t))     (22)
+```
+
+Here $s \cdot t$ denotes the concatenation of (bit) strings $s$ and $t$, and $code(s)$ is a prex code for all bit strings $s$. For example, one might encode 0 by 10, 1 by 11, and the end of the string by 0.[⁵](#footnote-5). 
+
+We will see later (cf. 2.3.12 and 2.3.14) that this is a (slightly tweaked) version of recursively defined hashes for values of arbitrary (dependent) algebraic types.
+
+### 2.3.9. Recomputing Merkle tree hashes
+
+This way of recursively dening $Hash(h)$, called a Merkle tree hash, has the advantage that, if one explicitly stores $Hash(h')$ along with each node $h'$ (resulting in a structure called a Merkle tree, or, in our case, a MerklePatricia tree), one needs to recompute only at most $n$ hashes when an element is added to, deleted from or changed in the hashmap. In this way, if one represents the global blockchain state by a suitable Merkle tree hash, it is easy to recompute this state hash after each transaction.
+
+### 2.3.10. Merkle proofs
+
+Under the assumption (7) of injectivity of the chosen hash function $Hash$, one can construct a proof that, for a given value $z$ of $Hash(h)$, $h : Hashmap(n, X)$, one has $hget(h)(i) = x$ for some $i : 2^n$ and $x : X$. Such a proof will consist of the path in the MerklePatricia tree from the leaf corresponding to $i$ to the root, augmented by the hashes of all siblings of all nodes occurring on this path. In this way, a light node[⁶](#footnote-6) knowing only the value of $Hash(h)$ for some hashmap $h$ (e.g., smart-contract persistent storage or global blockchain state) might request from a full node[⁷](#footnote-7) not only the value $x = h[i] = hget(h)(i)$, but such a value along with a Merkle proof starting from the already known value $Hash(h)$. Then, under assumption (7), the light node can check for itself that $x$ is indeed the correct value of $h[i]$. In some cases, the client may want to obtain the value $y = Hash(x) = Hash(h[i])$ insteadfor example, if $x$ itself is very large (e.g., a hashmap itself). Then a Merkle proof for $(i, y)$ can be provided instead. If $x$ is a hashmap as well, then a second Merkle proof starting from $y = Hash(x)$ may be obtained from a full node, to provide a value $x[j] = h[i][j]$ or just its hash.
+
+### 2.3.11. Importance of Merkle proofs for a multi-chain system such as TON
+
+Notice that a node normally cannot be a full node for all shardchains existing in the TON environment. It usually is a full node only for some shardchainsfor instance, those containing its own account, a smart contract it is interested in, or those that this node has been assigned to be a validator of. For other shardchains, it must be a light nodeotherwise the storage, computing and network bandwidth requirements would be prohibitive. This means that such a node cannot directly check assertions about the state of other shardchains; it must rely on Merkle proofs obtained from full nodes for those shardchains, which is as safe as checking by itself unless (7) fails (i.e., a hash collision is found).
+
+### 2.3.12. Peculiarities of TON VM
+
+The TON VM or TVM (TON Virtual Machine), used to run smart contracts in the masterchain and Workchain Zero, is considerably dierent from customary designs inspired by the EVM (Ethereum Virtual Machine): it works not just with 256-bit integers, but actually with (almost) arbitrary records, structures, or sum-product types, making it more suitable to execute code written in high-level (especially functional) languages. Essentially, TVM uses tagged data types, not unlike those used in implementations of Prolog or Erlang.
+
+One might imagine rst that the state of a TVM smart contract is not just a hashmap $2^{256} \rightarrow 2^{256}$, or $Hashmap(256, 2^{256})$, but (as a rst step) $Hashmap(256, X)$, where $X$ is a type with several constructors, enabling it to store, apart from 256-bit integers, other data structures, including other hashmaps $Hashmap(256, X)$ in particular. This would mean that a cell of TVM (persistent or temporary) storageor a variable or an element of an array in a TVM smart-contract codemay contain not only an integer, but a whole new hashmap. Of course, this would mean that a cell contains not just 256 bits, but also, say, an 8-bit tag, describing how these 256 bits should be interpreted.
+
+In fact, values do not need to be precisely 256-bit. The value format used by TVM consists of a sequence of raw bytes and references to other structures, mixed in arbitrary order, with some descriptor bytes inserted in suitable locations to be able to distinguish pointers from raw data (e.g., strings or integers); cf. 2.3.14. This raw value format may be used to implement arbitrary sum-product algebraic types. In this case, the value would contain a raw byte rst, describing the constructor being used (from the perspective of a high-levellanguage), and then other elds or constructor arguments, consisting of raw bytes and references to other structures depending on the constructor chosen (cf. 2.2.5). However, TVM does not know anything about the correspondence between constructors and their arguments; the mixture of bytes and references is explicitly described by certain descriptor bytes.[⁸](#footnote-8)
+
+The Merkle tree hashing is extended to arbitrary such structures: to compute the hash of such a structure, all references are recursively replaced by hashes of objects referred to, and then the hash of the resulting byte string (descriptor bytes included) is computed. In this way, the Merkle tree hashing for hashmaps, described in 2.3.8, is just a special case of hashing for arbitrary (dependent) algebraic data types, applied to type $Hashmap(n, X)$ with two constructors.[⁹](#footnote-9)
+
+### 2.3.13. Persistent storage of TON smart contracts
+
+Persistent storage of a TON smart contract essentially consists of its global variables, preserved between calls to the smart contract. As such, it is just a product, tuple, or record type, consisting of elds of the correct types, corresponding to one global variable each. If there are too many global variables, they cannot t into one TON cell because of the global restriction on TON cell size. In such a case, they are split into several records and organized into a tree, essentially becoming a product of products or product of products of products type instead of just a product type.
+
+### 2.3.14. TVM Cells
+
+Ultimately, the TON VM keeps all data in a collection of (TVM) cells. Each cell contains two descriptor bytes rst, indicating how many bytes of raw data are present in this cell (up to 128) and how many references to other cells are present (up to four). Then these raw data bytes and references follow. Each cell is referenced exactly once, so we might have included in each cell a reference to its parent (the only cell referencing this one). However, this reference need not be explicit. In this way, the persistent data storage cells of a TON smart contract are organized into a tree,[¹⁰](#footnote-10) with a reference to the root of this tree kept in the smart-contract description. If necessary, a Merkle tree hash of this entire persistent storage is recursively computed, starting from the leaves and then simply replacing all references in a cell with the recursively computed hashes of the referenced cells, and subsequently computing the hash of the byte string thus obtained.
+
+### 2.3.15. Generalized Merkle proofs for values of arbitrary algebraic types
+
+Because the TON VM represents a value of arbitrary algebraic type by means of a tree consisting of (TVM) cells, and each cell has a well-dened (recursively computed) Merkle hash, depending in fact on the whole subtree rooted in this cell, we can provide generalized Merkle proofs for (parts of) values of arbitrary algebraic types, intended to prove that a certain subtree of a tree with a known Merkle hash takes a specic value or a value with a specic hash. This generalizes the approach of 2.3.10, where only Merkle proofs for $x[i] = y$ have been considered.
+
+## 2.3.16. Support for sharding in TON VM data structures
+
+We have just outlined how the TON VM, without being overly complicated, supports arbitrary (dependent) algebraic data types in high-level smart-contract languages. However, sharding of large (or global) smart contracts requires special support on the level of TON VM. To this end, a special version of the hashmap type has been added to the system, amounting to a map $Account \rightharpoonup X$. This map might seem equivalent to $Hashmap(m, X)$, where $Account = 2^m$. However, when a shard is split in two, or two shards are merged, such hashmaps are automatically split in two, or merged back, so as to keep only those keys that belong to the corresponding shard.
+
+## 2.3.17. Payment for persistent storage
+
+A noteworthy feature of the TON Blockchain is the payment exacted from smart contracts for storing their persistent data (i.e., for enlarging the total state of the blockchain). It works as follows: Each block declares two rates, nominated in the principal currency of the blockchain (usually the TON coin): the price for keeping one cell in the persistent storage, and the price for keeping one raw byte in some cell of the persistent storage. Statistics on the total numbers of cells and bytes used by each account are stored as part of its state, so by multiplying these numbers by the two rates declared in the block header, we can compute the payment to be deducted from the account balance for keeping its data between the previous block and the current one.
+
+However, payment for persistent storage usage is not exacted for every account and smart contract in each block; instead, the sequence number of the block where this payment was last exacted is stored in the account data, and when any action is done with the account (e.g., a value transfer or a message is received and processed by a smart contract), the storage usage payment for all blocks since the previous such payment is deducted from the account balance before performing any further actions. If the account's balance would become negative after this, the account is destroyed.
+
+A workchain may declare some number of raw data bytes per account to be free (i.e., not participating in the persistent storage payments) in order to make simple accounts, which keep only their balance in one or two cryptocurrencies, exempt from these constant payments. Notice that, if nobody sends any messages to an account, its persistent storage payments are not collected, and it can exist indenitely. However, anybody can send, for instance, an empty message to destroy such an account. A small incentive, collected from part of the original balance of the account to be destroyed, can be given to the sender of such a message.
+
+We expect, however, that the validators would destroy such insolvent accounts for free, simply to decrease the global blockchain state size and to avoid keeping large amounts of data without compensation. Payments collected for keeping persistent data are distributed among the validators of the shardchain or the masterchain (proportionally to their stakes in the latter case).
+
+
+### 2.3.18. Local and global smart contracts; smart-contract instances
+
+A smart contract normally resides just in one shard, selected according to the smart contract's $account\_id$, similarly to an ordinary account. This is usually sucient for most applications. However, some high-load smart contracts may want to have an instance in each shardchain of some workchain. To achieve this, they must propagate their creating transaction into all shardchains, for instance, by committing this transaction into the root shardchain $(w, \emptyset)$[¹¹](#footnote-11) of the workchain $w$ and paying a large commission.[¹²](#footnote-12)
+
+This action eectively creates instances of the smart contract in each shard, with separate balances. Originally, the balance transferred in the creating transaction is distributed simply by giving the instance in shard $(w, s)$ the 2<sup>−&#124;s&#124;</sup> part of the total balance. When a shard splits into two child shards, balances of all instances of global smart contracts are split in half; when two shards merge, balances are added together.
+
+In some cases, splitting/merging instances of global smart contracts may involve (delayed) execution of special methods of these smart contracts. By default, the balances are split and merged as described above, and some special account-indexed hashmaps are also automatically split and merged (cf. 2.3.16).
+
+### 2.3.19. Limiting splitting of smart contracts
+
+A global smart contract may limit its splitting depth $d$ upon its creation, in order to make persistent storage expenses more predictable. This means that, if shardchain $(w, s)$ with $|s| \geq d$ splits in two, only one of two new shardchains inherits an instance of the smart contract. This shardchain is chosen deterministically: each global smart contract has some $account\_id$, which is essentially the hash of its creating transaction, and its instances have the same $account\_id$ with the rst $\leq d$ bits replaced by suitable values needed to fall into the correct shard. This $account\_id$ selects which shard will inherit the smart-contract instance after splitting.
+
+### 2.3.20. Account/Smart-contract state
+
+We can summarize all of the above to conclude that an account or smart-contract state consists of the following:
+
+• A balance in the principal currency of the blockchain
+
+• A balance in other currencies of the blockchain
+
+• Smart-contract code (or its hash)
+
+• Smart-contract persistent data (or its Merkle hash)
+
+• Statistics on the number of persistent storage cells and raw bytes used
+
+• The last time (actually, the masterchain block number) when payment for smart-contract persistent storage was collected
+
+• The public key needed to transfer currency and send messages from this account (optional; by default equal to $account\_id$ itself). In some cases, more sophisticated signature checking code may be located here, similar to what is done for Bitcoin transaction outputs; then the $account\_id$ will be equal to the hash of this code.
+
+We also need to keep somewhere, either in the account state or in some other account-indexed hashmap, the following data:
+
+• The output message queue of the account (cf. 2.4.17)
+
+• The collection of (hashes of) recently delivered messages (cf. 2.4.23)
+
+Not all of these are really required for every account; for example, smart-contract code is needed only for smart contracts, but not for simple accounts. Furthermore, while any account must have a non-zero balance in the principal currency (e.g., TON coins for the masterchain and shardchains of the basic workchain), it may have balances of zero in other currencies. In order to avoid keeping unused data, a sum-product type (depending on the workchain) is dened (during the workchain's creation), which uses dierent tag bytes (e.g., TL constructors; cf. 2.2.5) to distinguish between dierent constructors used. Ultimately, the account state is itself kept as a collection of cells of the TVM persistent storage.
+
+---
+
+## 2.4 Messages Between Shardchains
+
+An important component of the TON Blockchain is the messaging system between blockchains. These blockchains may be shardchains of the same workchain, or of dierent workchains.
+
+### 2.4.1. Messages, accounts and transactions: a bird's eye view of the system
+
+Messages are sent from one account to another. Each transaction consists of an account receiving one message, changing its state according to certain rules, and generating several (maybe one or zero) new messages to other accounts. Each message is generated and received (delivered) exactly once.
+
+This means that messages play a fundamental role in the system, comparable to that of accounts (smart contracts). From the perspective of the Innite Sharding Paradigm (cf. 2.1.2), each account resides in its separate account-chain, and the only way it can aect the state of some other account is by sending a message.
+
+### 2.4.2. Accounts as processes or actors; Actor model
+
+One might think about accounts (and smart contracts) as processes, or actors, that are able to process incoming messages, change their internal state and generate some outbound messages as a result. This is closely related to the so-called Actor model, used in languages such as Erlang (however, actors in Erlang are usually called processes). Since new actors (i.e., smart contracts) are also allowed to be created by existing actors as a result of processing an inbound message, the correspondence with the Actor model is essentially complete.
+
+### 2.4.3. Message recipient
+
+Any message has its recipient, characterized by the target workchain identier $w$ (assumed by default to be the same as that of the originating shardchain), and the recipient account $account\_id$. The exact format (i.e., number of bits) of $account\_id$ depends on $w$; however, the shard is always determined by its rst (most signicant) 64 bits.
+
+### 2.4.4. Message sender
+
+In most cases, a message has a sender, characterized again by a $(w', account\_id')$ pair. If present, it is located after the message recipient and message value. Sometimes, the sender is unimportant or it is somebody outside the blockchain (i.e., not a smart contract), in which case this eld is absent.
+
+Notice that the Actor model does not require the messages to have an implicit sender. Instead, messages may contain a reference to the Actor to which an answer to the request should be sent; usually it coincides with the sender. However, it is useful to have an explicit unforgeable sender eld in a message in a cryptocurrency (Byzantine) environment.
+
+### 2.4.5. Message value
+
+Another important characteristic of a message is its attached value, in one or several cryptocurrencies supported both by the source and by the target workchain. The value of the message is indicated at its very beginning immediately after the message recipient; it is essentially a list of $(currency\_id, value)$ pairs.
+
+Notice that simple value transfers between simple accounts are just empty (no-op) messages with some value attached to them. On the other hand, a slightly more complicated message body might contain a simple text or binary comment (e.g., about the purpose of the payment).
+
+### 2.4.6. External messages, or messages from nowhere
+
+Some messages arrive into the system from nowherethat is, they are not generated by an account (smart contract or not) residing in the blockchain. The most typical example arises when a user wants to transfer some funds from an account controlled by her to some other account. In this case, the user sends a message from nowhere to her own account, requesting it to generate a message to the receiving account, carrying the specied value. If this message is correctly signed, her account receives it and generates the required outbound messages.
+
+In fact, one might consider a simple account as a special case of a smart contract with predened code. This smart contract receives only one type of message. Such an inbound message must contain a list of outbound messages to be generated as a result of delivering (processing) the inbound message, along with a signature. The smart contract checks the signature, and, if it is correct, generates the required messages.
+
+Of course, there is a dierence between messages from nowhere and normal messages, because the messages from nowhere cannot bear value, so they cannot pay for their gas (i.e., their processing) themselves. Instead, they are tentatively executed with a small gas limit before even being suggested for inclusion in a new shardchain block; if the execution fails (the signature is incorrect), the message from nowhere is deemed incorrect and is discarded. If the execution does not fail within the small gas limit, the message may be included in a new shardchain block and processed completely, with the payment for the gas (processing capacity) consumed exacted from the receiver's account. Messages from nowhere can also dene some transaction fee which is deducted from the receiver's account on top of the gas payment for redistribution to the validators.
+
+In this sense, messages from nowhere or external messages take the role of transaction candidates used in other blockchain systems (e.g., Bitcoin and Ethereum).
+
+## 2.4.7. Log messages, or messages to nowhere
+
+Similarly, sometimes a special message can be generated and routed to a specic shardchain not to be delivered to its recipient, but to be logged in order to be easily observable by anybody receiving updates about the shard in question. These logged messages may be output in a user's console, or trigger an execution of some script on an o-chain server. In this sense, they represent the external output of the blockchain supercomputer, just as the messages from nowhere represent the external input of the blockchain supercomputer.
+
+## 2.4.8. Interaction with o-chain services and external blockchains
+
+These external input and output messages can be used for interacting with o-chain services and other (external) blockchains, such as Bitcoin or Ethereum. One might create tokens or cryptocurrencies inside the TON Blockchain pegged to Bitcoins, Ethers or any ERC-20 tokens dened in the Ethereum blockchain, and use messages from nowhere and messages to nowhere, generated and processed by scripts residing on some third-party o-chain servers, to implement the necessary interaction between the TON Blockchain and these external blockchains.
+
+### 2.4.9. Message body
+
+The message body is simply a sequence of bytes, the meaning of which is determined only by the receiving workchain and/or smart contract. For blockchains using TON VM, this could be the serialization of any TVM cell, generated automatically via the Send() operation. Such a serialization is obtained simply by recursively replacing all references in a TON VM cell with the cells referred to. Ultimately, a string of raw bytes appears, which is usually prepended by a 4-byte message type or message constructor, used to select the correct method of the receiving smart contract.
+
+Another option would be to use TL-serialized objects (cf. 2.2.5) as message bodies. This might be especially useful for communication between dierent workchains, one or both of which are not necessarily using the TON VM.
+
+### 2.4.10. Gas limit and other workchain/VM-specic parameters
+
+Sometimes a message needs to carry information about the gas limit, the gas price, transaction fees and similar values that depend on the receiving workchain and are relevant only for the receiving workchain, but not necessarily for the originating workchain. Such parameters are included in or before the message body, sometimes (depending on the workchain) with special 4-byte prexes indicating their presence (which can be dened by a TL-scheme; cf. 2.2.5).
+
+### 2.4.11. Creating messages: smart contracts and transactions
+
+There are two sources of new messages. Most messages are created during smart-contract execution (via the Send() operation in TON VM), when some smart contract is invoked to process an incoming message. Alternatively, messages may come from the outside as external messages or messages from nowhere (cf. 2.4.6).[¹³](#footnote-13)
+
+### 2.4.12. Delivering messages
+
+When a message reaches the shardchain containing its destination account,[¹⁴](#footnote-14) it is delivered to its destination account. What happens next depends on the workchain; from an outside perspective, it is important that such a message can never be forwarded further from this shardchain.
+
+For shardchains of the basic workchain, delivery consists in adding the message value (minus any gas payments) to the balance of the receiving account, and possibly in invoking a message-dependent method of the receiving smart contract afterwards, if the receiving account is a smart contract. In fact, a smart contract has only one entry point for processing all incoming messages, and it must distinguish between dierent types of messages by looking at their rst few bytes (e.g., the rst four bytes containing a TL constructor; cf. 2.2.5).
+
+### 2.4.13. Delivery of a message is a transaction
+
+Because the delivery of a message changes the state of an account or smart contract, it is a special transaction in the receiving shardchain, and is explicitly registered as such. Essentially, all TON Blockchain transactions consist in the delivery of one inbound message to its receiving account (smart contract), neglecting some minor technical details.
+
+### 2.4.14. Messages between instances of the same smart contract
+
+Recall that a smart contract may be local (i.e., residing in one shardchain as any ordinary account does) or global (i.e., having instances in all shards, or at least in all shards up to some known depth $d$; cf. 2.3.18). Instances of a global smart contract may exchange special messages to transfer information and value between each other if required. In this case, the (unforgeable) sender $account\_id$ becomes important (cf. 2.4.4).
+
+## 2.4.15. Messages to any instance of a smart contract; wildcard addresses
+
+Sometimes a message (e.g., a client request) needs be delivered to any instance of a global smart contract, usually the closest one (if there is one residing in the same shardchain as the sender, it is the obvious candidate). One way of doing this is by using a wildcard recipient address, with the rst $d$ bits of the destination $account\_id$ allowed to take arbitrary values. In practice, one will usually set these $d$ bits to the same values as in the sender's $account\_id$.
+
+## 2.4.16. Input queue is absent
+
+All messages received by a blockchain (usually a shardchain; sometimes the masterchain)or, essentially, by an account-chain residing inside some shardchainare immediately delivered (i.e., processed by the receiving account). Therefore, there is no input queue as such. Instead, if not all messages destined for a specic shardchain can be processed because of limitations on the total size of blocks and gas usage, some messages are simply left to accumulate in the output queues of the originating shardchains.
+
+### 2.4.17. Output queues
+
+From the perspective of the Innite Sharding Paradigm (cf. 2.1.2), each account-chain (i.e., each account) has its own output queue, consisting of all messages it has generated, but not yet delivered to their recipients. Of course, account-chains have only a virtual existence; they are grouped into shardchains, and a shardchain has an output queue, consisting of the union of the output queues of all accounts belonging to the shardchain.
+
+This shardchain output queue imposes only partial order on its member messages. Namely, a message generated in a preceding block must be delivered before any message generated in a subsequent block, and any messages generated by the same account and having the same destination must be delivered in the order of their generation.
+
+### 2.4.18. Reliable and fast inter-chain messaging
+
+It is of paramount importance for a scalable multi-blockchain project such as TON to be able to forward and deliver messages between dierent shardchains (cf. 2.1.3), even if there are millions of them in the system. The messages should be delivered reliably (i.e., messages should not be lost or delivered more than once) and quickly. The TON Blockchain achieves this goal by using a combination of two message routing mechanisms.
+
+### 2.4.19. Hypercube routing: slow path for messages with assured delivery
+
+The TON Blockchain uses hypercube routing as a slow, but safe and reliable way of delivering messages from one shardchain to another, using several intermediate shardchains for transit if necessary. Otherwise, the validators of any given shardchain would need to keep track of the state of (the output queues of) all other shardchains, which would require prohibitive amounts of computing power and network bandwidth as the total quantity of shardchains grows, thus limiting the scalability of the system. Therefore, it is not possible to deliver messages directly from any shard to every other.
+
+## 2.4.23. Preventing double delivery of messages
+
+To prevent double delivery of messages taken from the output queues of the neighboring shardchains, each shardchain (more precisely, each account-chain inside it) keeps the collection of recently delivered messages (or just their hashes) as part of its state. When a delivered message is observed to be deleted from the output queue by its originating neighboring shardchain (cf. 2.4.22), it is deleted from the collection of recently delivered messages as well.
+
+## 2.4.24. Forwarding messages intended for other shardchains
+
+Hypercube routing (cf. 2.4.19) means that sometimes outbound messages are delivered not to the shardchain containing the intended recipient, but to a neighboring shardchain lying on the hypercube path to the destination. In this case, delivery consists in moving the inbound message to the outbound queue. This is reected explicitly in the block as a special forwarding transaction, containing the message itself. Essentially, this looks as if the message had been received by somebody inside the shardchain, and one identical message had been generated as result.
+
+## 2.4.25. Payment for forwarding and keeping a message
+
+The forwarding transaction actually spends some gas (depending on the size of the message being forwarded), so a gas payment is deducted from the value of the message being forwarded on behalf of the validators of this shardchain. This forwarding payment is normally considerably smaller than the gas payment exacted when the message is nally delivered to its recipient, even if the message has been forwarded several times because of hypercube routing. Furthermore, as long as a message is kept in the output queue of some shardchain, it is part of the shardchain's global state, so a payment for keeping global data for a long time may be also collected by special transactions.
+
+## 2.4.26. Messages to and from the masterchain
+
+Messages can be sent directly from any shardchain to the masterchain, and vice versa. However, gas prices for sending messages to and for processing messages in the masterchain are quite high, so this ability will be used only when truly necessary for example, by the validators to deposit their stakes. In some cases, a minimal deposit (attached value) for messages sent to the masterchain may be dened, which is returned only if the message is deemed valid by the receiving party.
+
+Messages cannot be automatically routed through the masterchain. A message with $workchain\_id \neq -1$ ($-1$ being the special $workchain\_id$ indicating the masterchain) cannot be delivered to the masterchain. In principle, one can create a message-forwarding smart contract inside the masterchain, but the price of using it would be prohibitive.
+
+## 2.4.27. Messages between accounts in the same shardchain
+
+In some cases, a message is generated by an account belonging to some shardchain, destined to another account in the same shardchain. For example, this happens in a new workchain which has not yet split into several shardchains because the load is manageable.
+
+Such messages might be accumulated in the output queue of the shardchain and then processed as incoming messages in subsequent blocks (any shard is considered a neighbor of itself for this purpose). However, in most cases it is possible to deliver these messages within the originating block itself.
+
+In order to achieve this, a partial order is imposed on all transactions included in a shardchain block, and the transactions (each consisting in the delivery of a message to some account) are processed respecting this partial order. In particular, a transaction is allowed to process some output message of a preceding transaction with respect to this partial order.
+
+In this case, the message body is not copied twice. Instead, the originating and the processing transactions refer to a shared copy of the message.
+
+
+---
+
+
+
+## Footnote
+
+<a name="footnote-1"></a> **1** Ethereum Sharding FAQ: (https://github.com/ethereum/wiki/wiki/Sharding-FAQ) [Back ↑](#2-ton-blockchain)
+
+<a name="footnote-2"></a> **2** Actually, two-thirds by stake is enough to achieve consensus, but an effort is made to collect as many signatures as possible. [Back ↑](#2-1-15-generation-of-new-blocks-by-validators-cf-2-6)
+
+<a name="footnote-3"></a> **3** Coq: (https://coq.inria.fr) [Back ↑](#2-2-generalities-on-blockchains)  
+
+<a name="footnote-4"></a> **4** TL / MTProto TL: (https://core.telegram.org/mtproto/TL) [Back ↑](#2-2-generalities-on-blockchains)
+
+<a name="footnote-5"></a> **5** One can show that this encoding is optimal for approximately half of all edge labels of a Patricia tree with random or consecutive indices. Remaining edge labels are likely to be long (i.e., almost 256 bits long). Therefore, a nearly optimal encoding for edge labels is to use the above code with prex 0 for short bit strings, and encode 1, then nine bits containing length $l = |s|$ of bitstring $s$, and then the $l$ bits of $s$ for long bitstrings (with $l > 10$). [Back ↑](#238-merkle-patricia-trees)
+
+<a name="footnote-6"></a> **6** A light node is a node that does not keep track of the full state of a shardchain; instead, it keeps minimal information such as the hashes of the several most recent blocks, and relies on information obtained from full nodes when it becomes necessary to inspect some parts of the full state. [Back ↑](#2310-merkle-proofs)
+
+<a name="footnote-7"></a> **7** A full node is a node keeping track of the complete up-to-date state of the shardchain in question. [Back ↑](#2310-merkle-proofs)
+
+<a name="footnote-8"></a> **8** These two descriptor bytes, present in any TVM cell, describe only the total number of references and the total number of raw bytes; references are kept together either before or after all raw bytes. [Back ↑](#2312-peculiarities-of-ton-vm)
+
+<a name="footnote-9"></a> **9** Actually, $Leaf$ and $Node$ are constructors of an auxiliary type, $HashmapAux(n, X)$. Type $Hashmap(n, X)$ has constructors $Root$ and $EmptyRoot$, with $Root$ containing a value of type $HashmapAux(n, X)$. [Back ↑](#2312-peculiarities-of-ton-vm)
+
+<a name="footnote-10"></a> **10** Logically; the bag of cells representation described in 2.5.5 identies all duplicate cells, transforming this tree into a directed acyclic graph (dag) when serialized. [Back ↑](#2314-tvm-cells)
+
+<a name="footnote-11"></a> **11** A more expensive alternative is to publish such a global smart contract in the masterchain. [Back ↑](#2318-local-and-global-smart-contracts-smart-contract-instances)
+
+<a name="footnote-12"></a> **12** This is a sort of broadcast feature for all shards, and as such, it must be quite expensive. [Back ↑](#2318-local-and-global-smart-contracts-smart-contract-instances)
+
+<a name="footnote-13"></a> **13** The above needs to be literally true only for the basic workchain and its shardchains; other workchains may provide other ways of creating messages. [Back ↑](#2411-creating-messages-smart-contracts-and-transactions)
+
+<a name="footnote-14"></a> **14** As a degenerate case, this shardchain may coincide with the originating shardchain for example, if we are working inside a workchain which has not yet been split. [Back ↑](#2412-delivering-messages)
