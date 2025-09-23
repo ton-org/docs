@@ -157,7 +157,7 @@ def inject_into_mdx(mdx_path: str, new_block: str) -> None:
     with open(mdx_path, "r", encoding="utf-8") as fh:
         src = fh.read()
     start_idx = src.find(START_MARK)
-    end_idx = src.find(END_MARK)
+    end_idx = src.find(END_MARK) + len(END_MARK)
     if start_idx == -1 or end_idx == -1 or end_idx <= start_idx:
         raise RuntimeError("Static markers not found or malformed in instructions.mdx")
 
@@ -167,7 +167,7 @@ def inject_into_mdx(mdx_path: str, new_block: str) -> None:
 
     # Hide the static block in the rendered page to avoid duplicating the
     # interactive table. Keeping it in the DOM still enables full-text search.
-    wrapped_block = f"<div hidden data-static-tvm=\"true\">\n{new_block}\n</div>"
+    wrapped_block = f"<div>\n{new_block}\n</div>"
     replacement = f"{START_MARK}\n{wrapped_block}\n{END_MARK}"
 
     updated = before + replacement[len(START_MARK):] + after
