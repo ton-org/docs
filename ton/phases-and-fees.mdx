@@ -3,17 +3,18 @@ title: "Execution phases and fees"
 ---
 
 import { FeePlayground } from '/snippets/feePlayground.jsx';
+import { Aside } from '/snippets/aside.jsx';
 
 # Transactions and phases
 
-When an event occurs on an account in the TON blockchain, it triggers a **transaction**.  
+When an event occurs on an account in The Open Network (TON) blockchain, it triggers a **transaction**.  
 The most common event is receiving a message, but other events like `tick-tock`, `merge`, and `split` can also initiate transactions.
 
 Each transaction consists of up to five phases:
 
 1. **Storage phase**: calculates storage fees for the contract based on the space it occupies in the blockchain state.
 2. **Credit phase**: updates the contract balance by accounting for incoming message values and storage fees.
-3. **Compute phase**: executes the contract code on TVM. The result includes `exit_code`, `actions`, `gas_details`, `new_storage`, and other data.
+3. **Compute phase**: executes the contract code on the TON Virtual Machine (TVM). The result includes `exit_code`, `actions`, `gas_details`, `new_storage`, and other data.
 4. **Action phase**: processes actions from the compute phase if it succeeds.  
 Actions may include sending messages, updating contract code, or modifying libraries. If an action fails (for example, due to a lack of funds), the transaction may revert or skip the action, depending on its mode. For example, `mode = 0, flag = 2` means that any errors arising while processing this message during the action phase are ignored.
 5. **Bounce phase**: if the compute or action phase ends with an error and the inbound message has the bounce flag set, this phase generates a bounce message.
@@ -22,7 +23,9 @@ Actions may include sending messages, updating contract code, or modifying libra
 
 The compute phase involves executing the contract code on TVM.
 
-> See section 4.3.5 of the [TON whitepaper](/resources/pdfs/tblkch.pdf). It may include outdated information.
+<Aside type="note" title="Background">
+See section 4.3.5 of the [TON whitepaper](/resources/pdfs/tblkch.pdf). It may include outdated information.
+</Aside>
 
 ### When the compute phase is skipped
 
@@ -36,16 +39,17 @@ for example, incorrect state for a frozen or uninitialized account.
 
 # Fee calculation
 
-When your contract begins processing an incoming message, you should verify the amount of Toncoin attached to the message to ensure it is sufficient to cover all types of fees. To achieve this, you need to calculate (or predict) the fee for the current transaction.
+Verify the attached Toncoin covers storage, import, compute, action, and forwarding fees. Then calculate the transaction fee.
 
-This document explains how to calculate fees in FunC contracts using the latest TVM opcodes.
-
-> For a comprehensive list of TVM opcodes, refer to [TVM instructions](/tvm/instructions).
+<Aside type="note" title="Reference">
+For a comprehensive list of TVM opcodes, refer to [TVM instructions](/tvm/instructions).
+</Aside>
 
 ## Basic fees formula
 
 Fees on TON are calculated using this formula:
 
+Not runnable
 ```cpp
 transaction_fee = storage_fees
                 + in_fwd_fees // also called import fee
@@ -54,6 +58,7 @@ transaction_fee = storage_fees
                 + out_fwd_fees
 ```
 
+Example of a fee calculator logic:
 ```jsx expandable
 // Check https://txtracer.ton.org/?tx=b5e14a9c4a4e982fda42d6079c3f84fa48e76497a8f3fca872f9a3737f1f6262
 
@@ -113,12 +118,12 @@ function FeeCalculator() {
 
 - `storage_fees` is the amount you pay for storing a smart contract on the blockchain. In fact, you pay for every second the smart contract is stored on the blockchain.
   - _Example_: your TON wallet is also a smart contract, and it pays a storage fee every time you receive or send a transaction.
-- `in_fwd_fees` is a charge for importing messages only from outside the blockchain, e.g., `external` messages. Every time you make a transaction, it must be delivered to the validators who will process it. For ordinary messages from contract to contract, this fee does not apply. Read [the TON Blockchain paper](/resources/pdfs/tblkch.pdf) to learn more about inbound messages.
+- `in_fwd_fees` is a charge for importing messages only from outside the blockchain, for example, `external` messages. Every time you make a transaction, it must be delivered to the validators who will process it. For ordinary messages from contract to contract, this fee does not apply. Read [the TON Blockchain paper](/resources/pdfs/tblkch.pdf) to learn more about inbound messages.
   - _Example_: each transaction you make with your wallet app (like Tonkeeper) must first be distributed among validators.
 - `computation_fees` is the amount you pay for executing code in the virtual machine. Computation fees depend on executed operations (gas used), not code size.
   - _Example_: each time you send a transaction with your wallet (which is a smart contract), you execute the code of your wallet contract and pay for it.
 - `action_fees` is a charge for sending outgoing messages made by a smart contract, updating the smart contract code, updating libraries, etc.
-- `out_fwd_fees` is a charge for forwarding outgoing internal messages within TON between shardchains; it depends on message size and routing via HR/IHR.
+- `out_fwd_fees` is a charge for forwarding outgoing internal messages within TON between shardchains; it depends on message size and routing via Hypercube Routing (HR) or Instant Hypercube Routing (IHR).
 
 ## Storage fee
 
@@ -126,16 +131,11 @@ function FeeCalculator() {
 
 In short, storage fees are the costs of storing a smart contract on the blockchain. You pay for every second the smart contract remains stored on the blockchain.
 
-Use the `GETSTORAGEFEE` opcode with the following parameters:
+Use the [`GETSTORAGEFEE`](/tvm/instructions) opcode.
 
-| Param name | Description                                             |
-| :--------- | :------------------------------------------------------ |
-| cells      | Number of contract cells                                |
-| bits       | Number of contract bits                                 |
-| seconds    | Duration in seconds for the estimate                    |
-| is_mc      | True if execution is in the masterchain; false if basechain |
-
-> The system counts only unique hash cells for storage and forward fees. For example, it counts three identical hash cells as one. This mechanism deduplicates data by storing the content of multiple equivalent sub-cells only once, even if they are referenced across different branches. [Read more about deduplication](/tvm/serialization/library).
+<Aside type="note" title="Deduplication">
+The system counts only unique hash cells for storage and forward fees. For example, it counts three identical hash cells as one. This mechanism deduplicates data by storing the content of multiple equivalent sub-cells only once, even if they are referenced across different branches. [Read more about deduplication](/tvm/serialization/library).
+</Aside>
 
 ### Calculation flow
 
@@ -175,12 +175,7 @@ If `min_storage_fee` is hardcoded, **remember to update it** during the contract
 
 ### Overview
 
-In most cases, use the `GETGASFEE` opcode with the following parameters:
-
-| Param      | Description                                                    |
-| :--------- | :------------------------------------------------------------- |
-| `gas_used` | Gas amount, calculated in tests and hardcoded                  |
-| `is_mc`    | True if execution is in the masterchain; false if basechain    |
+In most cases, use the [`GETGASFEE`](/tvm/instructions) opcode.
 
 ### Calculation flow
 
@@ -277,7 +272,7 @@ const send_gas_fee = printTxGasStats("Jetton transfer", transferTx);
 
 ### Overview
 
-The forward fee is charged for outgoing messages.
+TON charges a forward fee for outgoing messages.
 
 Generally, there are three scenarios for forward fee processing:
 
@@ -287,32 +282,23 @@ Generally, there are three scenarios for forward fee processing:
 
 ### Calculation flow
 
-1. If the message structure is deterministic, use the `GETFORWARDFEE` opcode with the following parameters:
-
-| Param name | Description                                             |
-| :--------- | :------------------------------------------------------ |
-| cells      | Number of cells                                         |
-| bits       | Number of bits                                          |
-| is_mc      | True if execution is in the masterchain; false if basechain |
+1. If the message structure is deterministic, use the [`GETFORWARDFEE`](/tvm/instructions) opcode.
 
 
-> The system counts only unique hash cells for storage and forward fees. For example, it counts three identical hash cells as one. This mechanism deduplicates data by storing the content of multiple equivalent sub-cells only once, even if they are referenced across different branches. [Read more about deduplication](/tvm/serialization/library).
+<Aside type="note" title="Deduplication">
+The system counts only unique hash cells for storage and forward fees. For example, it counts three identical hash cells as one. This mechanism deduplicates data by storing the content of multiple equivalent sub-cells only once, even if they are referenced across different branches. [Read more about deduplication](/tvm/serialization/library).
+</Aside>
 
-2. However, if the outgoing message depends significantly on the incoming structure, you may not be able to fully predict the fee. In such cases, try using the `GETORIGINALFWDFEE` opcode with the following parameters:
+2. However, if the outgoing message depends significantly on the incoming structure, you may not be able to fully predict the fee. In such cases, try using the [`GETORIGINALFWDFEE`](/tvm/instructions) opcode.
 
-| Param name | Description                                             |
-| :--------- | :------------------------------------------------------ |
-| fwd_fee    | Parsed from the incoming message                        |
-| is_mc      | True if execution is in the masterchain; false if basechain |
+3. The [`SENDMSG`](/tvm/instructions) opcode is the least optimal way to calculate fees, but it is better than not checking.
 
-3. The `SENDMSG` opcode is the least optimal way to calculate fees, but it is better than not checking.
+<Aside type="caution" title="Caution">
+`SENDMSG` uses an unpredictable amount of gas.  
+Prefer the methods above whenever possible.
+</Aside>
 
-> Be careful: `SENDMSG` uses an **unpredictable amount of gas**. Prefer the methods above whenever possible.
-
-| Param name | Description                   |
-| :--------- | :---------------------------- |
-| msg        | Serialized message cell       |
-| mode       | Message mode                  |
+Use it with a serialized message cell and a message mode.
 
 Important modes when estimating with `SENDMSG`:
 
