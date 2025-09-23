@@ -5,12 +5,6 @@ on:
     types: [opened, ready_for_review]
   issue_comment:
     types: [created]
-  workflow_dispatch:
-    inputs:
-      pr_number:
-        description: Pull request number to review
-        required: true
-        type: number
 
 permissions:
   contents: read
@@ -20,21 +14,14 @@ permissions:
 jobs:
   pr-review:
     # Run on:
-    # - Manual dispatch
     # - PR events when ready_for_review or opened as non‑draft
     # - Issue comments only when it's a PR thread, command is /review, and commenter is trusted
     if: |
-      github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && ((github.event.action == 'ready_for_review') || (github.event.action == 'opened' && github.event.pull_request.draft == false))) ||
       (
         github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
-        (github.event.comment.body == '/review' || startsWith(github.event.comment.body, '/review ')) &&
-        (
-          github.event.comment.author_association == 'OWNER' ||
-          github.event.comment.author_association == 'MEMBER' ||
-          github.event.comment.author_association == 'COLLABORATOR'
-        )
+        (github.event.comment.body == '/review' || startsWith(github.event.comment.body, '/review '))
       )
     runs-on: ubuntu-latest
     env:
@@ -51,15 +38,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_FROM_PR: ${{ github.event.pull_request.number }}
           PR_FROM_ISSUE: ${{ github.event.issue.number }}
-          PR_FROM_INPUT: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
           PR_NUMBER="${PR_FROM_PR:-}"
           if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
             PR_NUMBER="${PR_FROM_ISSUE:-}"
-          fi
-          if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
-            PR_NUMBER="${PR_FROM_INPUT:-}"
           fi
           if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
             echo "PR number not provided." >&2
@@ -75,34 +58,43 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           COMMENT_ID: ${{ github.event.comment.id }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          resp="$(gh api -X POST \
-            -H "Accept: application/vnd.github.squirrel-girl-preview+json" \
+          reaction_id=""
+          if reaction_id=$(gh api \
+            -X POST \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
-            -f content="eyes" 2>/dev/null || true)"
-          echo "$resp" > comment_reaction.json || true
-          COMMENT_REACTION_ID="$(jq -r '.id // empty' comment_reaction.json 2>/dev/null || true)"
-          if [ -n "${COMMENT_REACTION_ID:-}" ]; then
-            echo "COMMENT_REACTION_ID=$COMMENT_REACTION_ID" >> $GITHUB_ENV
+            "/repos/${REPO}/issues/comments/${COMMENT_ID}/reactions" \
+            -f content=eyes \
+            --jq '.id // empty'); then
+            if [ -n "${reaction_id}" ]; then
+              echo "COMMENT_REACTION_ID=${reaction_id}" >> "$GITHUB_ENV"
+            fi
+          else
+            status=$?
+            echo "::warning::Failed to add eyes reaction to comment ${COMMENT_ID} (exit ${status})." >&2
           fi
 
       - name: React on PR (start)
-        if: env.DOCS_CHANGED == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          resp="$(gh api -X POST \
-            -H "Accept: application/vnd.github.squirrel-girl-preview+json" \
+          reaction_id=""
+          if reaction_id=$(gh api \
+            -X POST \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "/repos/${{ github.repository }}/issues/${PR_NUMBER}/reactions" \
-            -f content="eyes" 2>/dev/null || true)"
-          echo "$resp" > pr_reaction.json || true
-          PR_REACTION_ID="$(jq -r '.id // empty' pr_reaction.json 2>/dev/null || true)"
-          if [ -n "${PR_REACTION_ID:-}" ]; then
-            echo "PR_REACTION_ID=$PR_REACTION_ID" >> $GITHUB_ENV
+            "/repos/${REPO}/issues/${PR_NUMBER}/reactions" \
+            -f content=eyes \
+            --jq '.id // empty'); then
+            if [ -n "${reaction_id}" ]; then
+              echo "PR_REACTION_ID=${reaction_id}" >> "$GITHUB_ENV"
+            fi
+          else
+            status=$?
+            echo "::warning::Failed to add eyes reaction to PR ${PR_NUMBER} (exit ${status})." >&2
           fi
 
       - name: Check out PR head
@@ -293,20 +285,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           COMMENT_ID: ${{ github.event.comment.id }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          remove_reaction() {
+            if [ -n "${COMMENT_REACTION_ID:-}" ]; then
+              if ! gh api -X DELETE \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "/repos/${REPO}/issues/comments/${COMMENT_ID}/reactions/${COMMENT_REACTION_ID}" \
+                >/dev/null; then
+                status=$?
+                echo "::warning::Failed to remove initial reaction from comment ${COMMENT_ID} (exit ${status})." >&2
+              fi
+            fi
+          }
           if [ "${DOCS_CHANGED:-false}" != "true" ]; then
             # No docs review was performed; just remove eyes and exit.
-            if [ -n "${COMMENT_REACTION_ID:-}" ]; then
-              gh api -X DELETE -H "Accept: application/vnd.github.squirrel-girl-preview+json" -H "X-GitHub-Api-Version: 2022-11-28" "/reactions/${COMMENT_REACTION_ID}" || true
-              exit 0
-            fi
-            rid="$(gh api -H "Accept: application/vnd.github.squirrel-girl-preview+json" -H "X-GitHub-Api-Version: 2022-11-28" \
-              "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
-              -q '.[] | select(.content=="eyes" and .user.login=="github-actions[bot]") | .id' | head -n1 || true)"
-            if [ -n "$rid" ]; then
-              gh api -X DELETE -H "Accept: application/vnd.github.squirrel-girl-preview+json" -H "X-GitHub-Api-Version: 2022-11-28" "/reactions/${rid}" || true
-            fi
+            remove_reaction
             exit 0
           fi
           RUN_DIR="$(ls -td results/run_* 2>/dev/null | head -n1 || true)"
@@ -320,43 +315,28 @@ jobs:
               fi
             fi
           fi
-          # Remove eyes (by stored ID first; fallback to lookup)
-          if [ -n "${COMMENT_REACTION_ID:-}" ]; then
-            gh api -X DELETE -H "Accept: application/vnd.github.squirrel-girl-preview+json" -H "X-GitHub-Api-Version: 2022-11-28" "/reactions/${COMMENT_REACTION_ID}" || true
-          else
-            rid="$(gh api -H "Accept: application/vnd.github.squirrel-girl-preview+json" -H "X-GitHub-Api-Version: 2022-11-28" \
-              "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
-              -q '.[] | select(.content=="eyes" and .user.login=="github-actions[bot]") | .id' | head -n1 || true)"
-            if [ -n "$rid" ]; then
-              gh api -X DELETE -H "Accept: application/vnd.github.squirrel-girl-preview+json" -H "X-GitHub-Api-Version: 2022-11-28" "/reactions/${rid}" || true
-            fi
+          remove_reaction
+          if ! gh api -X POST \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${REPO}/issues/comments/${COMMENT_ID}/reactions" \
+            -f content="$REACTION_END" >/dev/null; then
+            status=$?
+            echo "::warning::Failed to add ${REACTION_END} reaction to comment ${COMMENT_ID} (exit ${status})." >&2
           fi
-          # Add final reaction
-          gh api -X POST -H "Accept: application/vnd.github.squirrel-girl-preview+json" -H "X-GitHub-Api-Version: 2022-11-28" \
-            "/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}/reactions" \
-            -f content="$REACTION_END" >/dev/null 2>&1 || true
 
       - name: Remove PR reaction (finish)
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if [ -n "${PR_REACTION_ID:-}" ]; then
-            gh api -X DELETE \
-              -H "Accept: application/vnd.github.squirrel-girl-preview+json" \
+            if ! gh api -X DELETE \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "/reactions/${PR_REACTION_ID}" || true
-          else
-            rid="$(gh api \
-              -H "Accept: application/vnd.github.squirrel-girl-preview+json" \
-              -H "X-GitHub-Api-Version: 2022-11-28" \
-              "/repos/${{ github.repository }}/issues/${PR_NUMBER}/reactions" \
-              -q '.[] | select(.content=="eyes" and .user.login=="github-actions[bot]") | .id' | head -n1 || true)"
-            if [ -n "$rid" ]; then
-              gh api -X DELETE \
-                -H "Accept: application/vnd.github.squirrel-girl-preview+json" \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                "/reactions/${rid}" || true
+              "/repos/${REPO}/issues/${PR_NUMBER}/reactions/${PR_REACTION_ID}" \
+              >/dev/null; then
+              status=$?
+              echo "::warning::Failed to remove eyes reaction from PR ${PR_NUMBER} (exit ${status})." >&2
             fi
           fi
