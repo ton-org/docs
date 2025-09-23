@@ -1,0 +1,342 @@
+name: AI Review
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  pr-review:
+    # Run on:
+    # - PR events when ready_for_review or opened as non‑draft
+    # - Issue comments only when it's a PR thread, command is /review, and commenter is trusted
+    if: |
+      (github.event_name == 'pull_request' && ((github.event.action == 'ready_for_review') || (github.event.action == 'opened' && github.event.pull_request.draft == false))) ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        (github.event.comment.body == '/review' || startsWith(github.event.comment.body, '/review '))
+      )
+    runs-on: ubuntu-latest
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve PR context
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_FROM_PR: ${{ github.event.pull_request.number }}
+          PR_FROM_ISSUE: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          PR_NUMBER="${PR_FROM_PR:-}"
+          if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
+            PR_NUMBER="${PR_FROM_ISSUE:-}"
+          fi
+          if [ -z "${PR_NUMBER:-}" ] || [ "$PR_NUMBER" = "null" ]; then
+            echo "PR number not provided." >&2
+            exit 1
+          fi
+          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+          gh api repos/${{ github.repository }}/pulls/${PR_NUMBER} > pr.json
+          echo "BASE_REF=$(jq -r '.base.ref' pr.json)" >> $GITHUB_ENV
+          echo "HEAD_REF=$(jq -r '.head.ref' pr.json)" >> $GITHUB_ENV
+
+      - name: React to /review (start)
+        if: github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          reaction_id=""
+          if reaction_id=$(gh api \
+            -X POST \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${REPO}/issues/comments/${COMMENT_ID}/reactions" \
+            -f content=eyes \
+            --jq '.id // empty'); then
+            if [ -n "${reaction_id}" ]; then
+              echo "COMMENT_REACTION_ID=${reaction_id}" >> "$GITHUB_ENV"
+            fi
+          else
+            status=$?
+            echo "::warning::Failed to add eyes reaction to comment ${COMMENT_ID} (exit ${status})." >&2
+          fi
+
+      - name: React on PR (start)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          reaction_id=""
+          if reaction_id=$(gh api \
+            -X POST \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${REPO}/issues/${PR_NUMBER}/reactions" \
+            -f content=eyes \
+            --jq '.id // empty'); then
+            if [ -n "${reaction_id}" ]; then
+              echo "PR_REACTION_ID=${reaction_id}" >> "$GITHUB_ENV"
+            fi
+          else
+            status=$?
+            echo "::warning::Failed to add eyes reaction to PR ${PR_NUMBER} (exit ${status})." >&2
+          fi
+
+      - name: Check out PR head
+        run: |
+          set -euo pipefail
+          git fetch origin "pull/${PR_NUMBER}/head:pr_head"
+          git checkout -B pr_head pr_head
+
+      - name: Fetch all remote branches
+        run: git fetch origin "+refs/heads/*:refs/remotes/origin/*"
+
+      - name: Ensure local base branch ref exists
+        run: |
+          BASE_REF="${BASE_REF:-main}"
+          if ! git show-ref --verify --quiet "refs/heads/${BASE_REF}"; then
+            git branch --track "${BASE_REF}" "origin/${BASE_REF}" || true
+          fi
+
+      - name: Ensure provider key exists
+        run: |
+          if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+            echo "OPENROUTER_API_KEY is not set. Add it to repository secrets." >&2
+            exit 2
+          fi
+
+      - name: Detect documentation changes
+        run: |
+          set -euo pipefail
+          # Compare PR head against BASE_REF and look for .md/.mdx changes
+          CHANGED=$(git diff --name-only "$BASE_REF"...HEAD | grep -E '\.(md|mdx)$' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "DOCS_CHANGED=false" >> $GITHUB_ENV
+            echo "No .md/.mdx changes detected; skipping AI review." >&2
+          else
+            echo "DOCS_CHANGED=true" >> $GITHUB_ENV
+            echo "$CHANGED" | sed 's/^/- /' >&2
+          fi
+
+      - name: Comment about skip
+        if: env.DOCS_CHANGED != 'true' && github.event_name == 'issue_comment'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          API="https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments"
+          BODY=$(cat <<'TXT'
+          Docs review skipped: no .md or .mdx changes were detected in this PR compared to the base branch. The /review command only targets documentation content. If you believe this is incorrect, please check that your docs files are included in the diff and try again.
+          TXT
+          )
+          jq -n --arg body "$BODY" '{body:$body}' > payload.json
+          curl -sS -X POST "$API" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -H "Content-Type: application/json" \
+            -d @payload.json >/dev/null
+
+      - name: Set up Python 3.13
+        if: env.DOCS_CHANGED == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        if: env.DOCS_CHANGED == 'true'
+        uses: astral-sh/setup-uv@v3
+
+      - name: Checkout Pitaya
+        if: env.DOCS_CHANGED == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: tact-lang/pitaya
+          path: pitaya-src
+
+      - name: Install Pitaya deps via uv
+        if: env.DOCS_CHANGED == 'true'
+        working-directory: pitaya-src
+        run: uv sync
+
+      - name: Build agent Docker image
+        if: env.DOCS_CHANGED == 'true'
+        run: docker build -t pitaya-agents:latest pitaya-src
+
+      - name: Run PR Review
+        if: env.DOCS_CHANGED == 'true'
+        working-directory: pitaya-src
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+        run: |
+          REVIEW_INSTRUCTIONS=$(cat <<'TXT'
+          You are in a TON Documentation repository, reviewing this pull request. Only consider documentation content changes; ignore anything else. If there are no content changes, stop.
+
+          Otherwise, perform a focused review for accuracy and clarity against the style guide at `contribute/style-guide-extended.mdx`.
+
+          For each finding, add EXACTLY ONE link to the relevant rule in the style guide using this format with concrete line(s):
+          https://github.com/tact-lang/mintlify-ton-docs/blob/main/contribute/style-guide-extended.mdx?plain=1#LNN
+          (or a range like #LNN-LMM).
+
+          Use this checkbox format for each finding:
+          - [ ] [SEVERITY] Area — concise description — Suggested change — Style guide: <link>
+
+          Use simple, clear language.
+          TXT
+          )
+
+          COMPOSER_INSTRUCTIONS=$(cat <<'TXT'
+          Write the final report in clear, simple language (no fancy words), using short, direct sentences.
+
+          Use a checkbox list for Findings (- [ ] [SEVERITY] Area — concise description — Suggested change — Style guide: <link>).
+          Each finding MUST include EXACTLY ONE link to the relevant rule using ?plain=1#L.. syntax (e.g., #L26 or #L26-L30).
+          Links MUST be full-length GitHub URLs to this exact file (no relative or short names):
+          https://github.com/tact-lang/mintlify-ton-docs/blob/main/contribute/style-guide-extended.mdx?plain=1#LNN
+          If a finding contains a short/relative link (e.g., STYLE_GUIDE.md?plain=1#L26), replace it with the full link above pointing to the correct line(s).
+
+          Sort Findings by severity from most critical to least: BLOCKER, HIGH, MEDIUM, LOW, INFO.
+          Do not add a separate compact checklist.
+          TXT
+          )
+
+          uv run pitaya "Review this pull request" \
+            --repo "$GITHUB_WORKSPACE" \
+            --base-branch "$BASE_REF" \
+            --strategy pr-review \
+            -S reviewers=2 \
+            -S ci_fail_policy=never \
+            -S review_instructions="$REVIEW_INSTRUCTIONS" \
+            -S composer_instructions="$COMPOSER_INSTRUCTIONS" \
+            --plugin codex \
+            --model "openai/gpt-5" \
+            --no-tui
+
+      - name: Submit GitHub PR Comment
+        if: env.DOCS_CHANGED == 'true'
+        working-directory: pitaya-src
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          RUN_DIR="$(ls -td results/run_* 2>/dev/null | head -n1)"
+          if [ -z "${RUN_DIR:-}" ] || [ ! -d "$RUN_DIR" ]; then
+            echo "No results directory found" >&2
+            exit 1
+          fi
+
+          COMPOSER_META="$(grep -rl '"role": "composer"' "$RUN_DIR/instances" | head -n1)"
+          if [ -z "${COMPOSER_META:-}" ]; then
+            echo "No composer metadata found in $RUN_DIR" >&2
+            exit 1
+          fi
+
+          BODY=$(jq -r '.final_message // ""' "$COMPOSER_META")
+          VERDICT=$(jq -r '.metrics.pr_review_verdict // ""' "$COMPOSER_META")
+          if [ -z "$BODY" ]; then
+            echo "Composer final_message is empty" >&2
+            exit 1
+          fi
+
+          # Prepare issue comment body (prepend verdict line)
+          COMMENT_BODY=$(printf "**Verdict:** %s\n\n%s" "${VERDICT:-UNKNOWN}" "$BODY")
+          API="https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments"
+          jq -n --arg body "$COMMENT_BODY" '{body:$body}' > payload.json
+
+          echo "Submitting PR comment..."
+          echo "Endpoint: $API"
+          echo "Body (first 200 chars):"; echo "$COMMENT_BODY" | head -c 200; echo; echo
+
+          HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" -X POST "$API" \
+               -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+               -H "Accept: application/vnd.github+json" \
+               -H "X-GitHub-Api-Version: 2022-11-28" \
+               -H "Content-Type: application/json" \
+               -d @payload.json || true)
+
+          echo "GitHub API HTTP: $HTTP_CODE"
+          echo "Response body:"; cat response.json || true; echo
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] && jq -e '.id' response.json >/dev/null 2>&1; then
+            echo "Comment submitted successfully."
+          else
+            echo "Failed to submit comment (HTTP $HTTP_CODE). See response above." >&2
+            exit 1
+          fi
+
+      - name: Swap reaction based on outcome
+        if: always() && github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          remove_reaction() {
+            if [ -n "${COMMENT_REACTION_ID:-}" ]; then
+              if ! gh api -X DELETE \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "/repos/${REPO}/issues/comments/${COMMENT_ID}/reactions/${COMMENT_REACTION_ID}" \
+                >/dev/null; then
+                status=$?
+                echo "::warning::Failed to remove initial reaction from comment ${COMMENT_ID} (exit ${status})." >&2
+              fi
+            fi
+          }
+          if [ "${DOCS_CHANGED:-false}" != "true" ]; then
+            # No docs review was performed; just remove eyes and exit.
+            remove_reaction
+            exit 0
+          fi
+          RUN_DIR="$(ls -td results/run_* 2>/dev/null | head -n1 || true)"
+          REACTION_END="confused"  # default to sad; only rocket on PASS
+          if [ -n "$RUN_DIR" ] && [ -d "$RUN_DIR/instances" ]; then
+            COMPOSER_META="$(grep -rl '"role": "composer"' "$RUN_DIR/instances" | head -n1 || true)"
+            if [ -n "$COMPOSER_META" ] && [ -f "$COMPOSER_META" ]; then
+              VERDICT=$(jq -r '.metrics.pr_review_verdict // ""' "$COMPOSER_META")
+              if [ "${VERDICT^^}" = "PASS" ]; then
+                REACTION_END="rocket"
+              fi
+            fi
+          fi
+          remove_reaction
+          if ! gh api -X POST \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${REPO}/issues/comments/${COMMENT_ID}/reactions" \
+            -f content="$REACTION_END" >/dev/null; then
+            status=$?
+            echo "::warning::Failed to add ${REACTION_END} reaction to comment ${COMMENT_ID} (exit ${status})." >&2
+          fi
+
+      - name: Remove PR reaction (finish)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "${PR_REACTION_ID:-}" ]; then
+            if ! gh api -X DELETE \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/${REPO}/issues/${PR_NUMBER}/reactions/${PR_REACTION_ID}" \
+              >/dev/null; then
+              status=$?
+              echo "::warning::Failed to remove eyes reaction from PR ${PR_NUMBER} (exit ${status})." >&2
+            fi
+          fi
