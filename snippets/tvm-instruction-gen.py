@@ -3,9 +3,13 @@ import os
 import sys
 import urllib.request
 from typing import Any, Dict, List
+try:
+    import markdown  # type: ignore
+except Exception:
+    markdown = None  # Will be validated at runtime
 
 SPEC_REPO = "https://github.com/ton-community/tvm-spec"
-SPEC_COMMIT = "refs/heads/dev"
+SPEC_COMMIT = "6f7a7dd91e06790a05137eb0243a0514e317aa2b"
 SPEC_URL = f"{SPEC_REPO.replace('github.com', 'raw.githubusercontent.com')}/{SPEC_COMMIT}/cp0.json"
 
 WORKSPACE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
@@ -50,7 +54,7 @@ def extract_instructions(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
         doc = raw.get("doc") or {}
         bytecode = raw.get("bytecode") or {}
         value_flow = raw.get("value_flow") or {}
-        opcode = doc.get("opcode") or bytecode.get("prefix") or ""
+        opcode = bytecode.get("prefix") or ""
         since = raw.get("since_version") or 0
         category_key = doc.get("category") or "uncategorized"
         fift = doc.get("fift") or ""
@@ -101,48 +105,14 @@ def render_instruction_block(item: Dict[str, Any]) -> str:
         if a.get("mnemonic")
     )
 
-    title = mdx_escape(item.get("fift") or item.get("mnemonic") or "?")
-    opcode = mdx_escape(item.get("opcode") or "—")
+    title = mdx_escape(item.get("mnemonic"))
+    opcode = mdx_escape(item["opcode"])
     lines: List[str] = []
 
     # Heading
     lines.append(f"#### `{opcode}` {title}")
     lines.append("")
-
-    # Meta bullets
-    lines.append(f"- **Category**: {mdx_escape(item.get('category_label'))}")
-    lines.append(f"- **Since**: v{mdx_escape(item.get('since'))}")
-    lines.append(f"- **Gas**: {mdx_escape(item.get('gas'))}")
-    if alias_text:
-        lines.append(f"- **Aliases**: {alias_text}")
-
-    # Description
-    if item.get("description"):
-        lines.append("")
-        lines.append(mdx_escape(item["description"]))
-
-    # Stack
-    if item.get("stack_doc"):
-        lines.append("")
-        lines.append(f"- **Stack**: {mdx_escape(item['stack_doc'])}")
-
-    # Keywords surface for search
-    keywords = " ".join(
-        filter(
-            None,
-            [
-                mdx_escape(item.get("mnemonic")),
-                mdx_escape(item.get("fift")),
-                mdx_escape(item.get("opcode")),
-                mdx_escape(item.get("category_label")),
-                alias_text,
-            ],
-        )
-    )
-    if keywords:
-        lines.append("")
-        lines.append(f"- {keywords}")
-
+    lines.append(f"```json\n{json.dumps(item, indent=2)}\n```")
     lines.append("")
     return "\n".join(lines)
 
@@ -153,7 +123,70 @@ def render_static_mdx(instructions: List[Dict[str, Any]]) -> str:
     return "\n".join(render_instruction_block(i) for i in instructions)
 
 
-def inject_into_mdx(mdx_path: str, new_block: str) -> None:
+def render_embedded_json(spec: Dict[str, Any]) -> str:
+    """Render the original tvm-spec JSON into a non-executing script tag.
+
+    This allows the interactive table to synchronously read the payload from the DOM
+    without issuing a network request.
+    """
+    # Compact JSON to keep bundle size reasonable
+    payload = json.dumps(spec, separators=(",", ":"))
+    return f"<script id=\"tvm-spec-json\" type=\"application/json\">{payload}</script>"
+
+def prepare_spec_for_embed(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a shallow-copied spec with doc.description pre-rendered to HTML.
+
+    Adds field doc.description_html alongside existing doc.description.
+    Requires the 'markdown' Python package.
+    """
+    if markdown is None:
+        raise RuntimeError(
+            "python-markdown is required. Install with: pip3 install markdown"
+        )
+
+    prepared: Dict[str, Any] = dict(spec)
+    prepared_instructions: List[Dict[str, Any]] = []
+    prepared_aliases: List[Dict[str, Any]] = []
+    for raw in spec.get("instructions", []) or []:
+        item = dict(raw)
+        doc = dict(item.get("doc") or {})
+        desc = doc.get("description")
+        # Use common useful extensions; keep HTML output compact
+        html = markdown.markdown(
+            desc,
+            extensions=[
+                "extra",
+                "sane_lists",
+                "smarty",
+            ],
+            output_format="xhtml1",
+        )
+        doc["description"] = html
+        item["doc"] = doc
+        prepared_instructions.append(item)
+
+    for raw in spec.get("aliases", []) or []:
+        item = dict(raw)
+        desc = item.get("description")
+        html = markdown.markdown(
+            desc,
+            extensions=[
+                "extra",
+                "sane_lists",
+                "smarty",
+            ],
+            output_format="xhtml1",
+        )
+        item["description"] = html
+        prepared_aliases.append(item)
+    
+    prepared["aliases"] = prepared_aliases
+    prepared["instructions"] = prepared_instructions
+    return prepared
+
+
+
+def inject_into_mdx(mdx_path: str, new_block: str, embedded_json: str) -> None:
     with open(mdx_path, "r", encoding="utf-8") as fh:
         src = fh.read()
     start_idx = src.find(START_MARK)
@@ -167,7 +200,9 @@ def inject_into_mdx(mdx_path: str, new_block: str) -> None:
 
     # Hide the static block in the rendered page to avoid duplicating the
     # interactive table. Keeping it in the DOM still enables full-text search.
-    wrapped_block = f"<div>\n{new_block}\n</div>"
+    # We also embed the original spec JSON in a non-executing script tag so the
+    # client does not need to fetch it over the network.
+    wrapped_block = f"<div hidden>\n{embedded_json}\n{new_block}\n</div>"
     replacement = f"{START_MARK}\n{wrapped_block}\n{END_MARK}"
 
     updated = before + replacement[len(START_MARK):] + after
@@ -188,7 +223,9 @@ def generate() -> int:
 
     instructions.sort(key=lambda x: (opcode_key(x.get("opcode", "")), x.get("mnemonic", "")))
     static_block = render_static_mdx(instructions)
-    inject_into_mdx(MDX_PATH, static_block)
+    prepared_spec = prepare_spec_for_embed(spec)
+    embedded_json = render_embedded_json(prepared_spec)
+    inject_into_mdx(MDX_PATH, static_block, embedded_json)
     return len(instructions)
 
 
