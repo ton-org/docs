@@ -2,4 +2,52 @@
 title: "Cells"
 ---
 
-Stub
+## Basic structure
+
+The TVM memory with persistent storage and even a code of a smart contract consist of (TVM) cells. In turn, each cell consists of
+- up to 1023 bits;
+- up to 4 references to other cells.
+
+**Nota bene: Circular references are forbidden and cannot be created by means of TVM.**
+In this way, all cells kept in TVM memory and persistent storage
+constitute a [directed acyclic graph (DAG)](https://en.wikipedia.org/wiki/Directed_acyclic_graph).
+
+From the perspective of low-level cell operations, these data bits and cell references
+are not intermixed. In other words, a cell essentially is a couple consisting of
+a list of up to 1023 bits and of a list of up to four cell references, without prescribing an
+order in which the references and the data bits should be deserialized, even though TL-B
+schemes appear to suggest such an order.
+
+## Kinds of cells
+
+There are two kinds of cells: **ordinary** and **exotic**. The former are the simplest and most commonly used flavor of cells, which can 
+only contain data and references, while the latter are used for special purposes only. They sometimes appear in actual representations of
+blocks and other data structures on TON Blockchain. Their memory layouts and purposes differ significantly from ordinary cells.
+
+From the low-level perspective, ordinary and exotic cells can be distinguished 
+by a special 1-bit flag that is stored outside the main 1023 bits and read by TVM at run-time. This flag cannot be read manually by users. 
+
+TVM can potentially support up to 256 different types of exotic cells that differ by a special 8-bit type identifier stored in the first byte of the cell data.
+Currently, only four types of exotic cells are supported:
+- **pruned branch** (type identifier `0x01`);
+- **library reference** (type identifier `0x02`);
+- **merkle proof** (type identifier `0x03`);
+- **merkle update** (type identifier `0x04`).
+
+## Level of a cell
+
+Every cell c has attribute `Lvl(c)` called its **level**, which currently takes integer values in the range `0…3`.
+A cell’s level affects the number of higher hashes it has, see the [section on hashes](./hashes.mdx) for details.
+The level of an ordinary cell `c` is equal to the maximum of the levels of all its children `c_i`:
+$$
+Lvl(c) = \max_i Lvl(c_i).
+$$
+For instance, each cell in a tree of cells that does not contain any exotic cell has level 0.
+
+Exotic cells may have different rules for setting their level.
+
+## Standard cell representation and its hash
+
+Before a cell can be transferred over the network or stored on disk, it must be serialized. A common way to do
+this is to use the so-called **standard cell representation**. The standard representation `CellRepr(c)` of a cell `c` is a byte sequence that constructed as follows:
+
