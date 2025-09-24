@@ -13,11 +13,11 @@ The TL-B scheme describes how to serialize a certain algebraic data structure in
 
 In general, each TL-B scheme has the following structure:
 
-- **Constructor** that is consist of
+- **Constructor** that consists of
     - optional constructor name;
     - tag: empty, `$` or `#`;
     - prefix code or `_`.
-```tbl
+```tlb
 bool_true$1;
 transfer#5fcc3d14;
 some#_;
@@ -27,12 +27,12 @@ _#_.
 - **Fields definitions**, each of which is consist of
     - optional field name (ident);
     - type expression (type-expr).
-```tbl
+```tlb
 val:(## 32);
 src:MsgAddressInt;
 ```
 - **Constraints**: optional expressions that restrict values which are instances of `Nat` type.
-```tbl
+```tlb
 { n <= 100 };
 { ~b = a + 10 };
 { anycast = 0 };
@@ -40,12 +40,12 @@ src:MsgAddressInt;
 ```
 - **Parameters declarations**: declare fields of types `#` (natural numbers) or `Type` (types of types) that may be used as parameters for parameterized types. 
 Always framed by curly `{}` brackets.
-```tbl
+```tlb
 _ {x:#} my_val:(## x) = A x;
 _ {X:Type} my_val:(## 32) next_val:X = A X; 
 ```
 - **Combinator name**: a right side of TL-B scheme that represented name of defined combinator. Could be parameterized.
-```tbl
+```tlb
 ... = MsgAddrSmpl;
 // parameterized combinators
 ... = Maybe X;
@@ -69,7 +69,7 @@ a comment
 You can use **TL-B libraries** to extend your documents and to avoid writing repetitive schemes.
 In TL-B libraries there is no concept of cyclic import. 
 Just indicate the dependency on some other document (library) at the top of the document with the keyword `dependson`:
-```tbl
+```tlb
 //
 // dependson "libraries/tosstdlib.tlb"
 //
@@ -94,7 +94,7 @@ In dependencies, you are required to specify the correct relative path. The exam
 From a high-level perspective, the **right-hand side** of each _scheme_ is a type, either simple (such as `Bit` or `True`) or parametrized (such as `Hashmap n X`) and
 the **left-hand side** describes a way to define, or even to serialize, a value of the type indicated in the right-hand side.
 
-Below, we gradually describe each component of TL-B shemes.
+Below, we gradually describe each component of TL-B schemes.
 
 ### Constructors
 
@@ -104,7 +104,7 @@ bitstring used to encode (serialize) the constructor in question.
 
 Tags may be given in either **binary** (after a dollar sign) or **hexadecimal** notation (after a hash sign). 
 If a tag is not explicitly provided, TL-B parser must computes a default 32-bit constructor tag by hashing with 
-[crc32 algorithm](https://en.wikipedia.org/wiki/Cyclic_redundancy_check) the text of the scheme with `| 0x80000000` defining this constructor in a certain fashion. Therefore, 
+[CRC32 algorithm](https://en.wikipedia.org/wiki/Cyclic_redundancy_check) the text of the scheme with `| 0x80000000` defining this constructor in a certain fashion. Therefore, 
 empty tags must be explicitly provided by `#_` or `$_`.
 
 All constructor names must be distinct, and constructor tags for the same combinator must constitute a [prefix code](https://en.wikipedia.org/wiki/Prefix_code#:~:text=A%20prefix%20code%20is%20a,code%20word%20in%20the%20system.) 
@@ -114,9 +114,9 @@ Also, there are size limitations:
 - maximum number of constructors per type: `64`;
 - maximum number of bits for a tag: `63`.
 
-For example, each address in TON could be either an **internal** message or an **external**, see [general info page]().
+For example, each address in TON could be either an **internal** message or an **external**, see [general info page](/ton/addresses/addresses-general-info).
 Addresses are serialized according to the following TL-B schemes:
-```tbl
+```tlb
 addr_none$00 = MsgAddressExt;
 addr_extern$01 ... = MsgAddressExt;
 addr_std$10 ...  = MsgAddressInt;
@@ -126,18 +126,18 @@ addr_var$11 ... = MsgAddressInt;
 _ _:MsgAddressInt = MsgAddress;
 _ _:MsgAddressExt = MsgAddress;
 ```
-When parsing the binary string `10...` that should be an instance of `MsgAddress` combinator, the parser extract the initial two bits that determine the tag.
+When parsing the binary string `10...` that should be an instance of `MsgAddress` combinator, the parser extracts the initial two bits that determine the tag.
 It then understands that this address is further serialized as `add_std` and continues to parse our string relative to the fields defined in this constructor.
 
 All main variations of constructors are presented in the following table:
 
-| Constructor                 | Serialization                                |
-|-----------------------------|-------------------------------------------   |
-| `some#3f5476ca`             | A 32-bit uint is serialized from a hex value.|
-| `some#5fe`                  | A 12-bit uint is serialized from a hex value.|
-| `some$0101` or `_$0101`     | Serialize the `0101` raw bits.               |
-| `some` or `some#`           | Serialize `crc32(equation) \| 0x80000000`.   |
-| `some#_` or `some$_` or `_` | Serialize nothing.                           |
+| Constructor                 | Serialization                                  |
+|-----------------------------|------------------------------------------------|
+| `some#3f5476ca`             | A 32-bit `uint` is serialized from a hex value.|
+| `some#5fe`                  | A 12-bit `uint` is serialized from a hex value.|
+| `some$0101` or `_$0101`     | Serialize the `0101` raw bits.                 |
+| `some` or `some#`           | Serialize `crc32(equation) \| 0x80000000`.     |
+| `some#_` or `some$_` or `_` | Serialize nothing.                             |
 
 In addition to the standard hex tag definition, a hexadecimal number may be followed by an underscore `_` character.
 This indicates that the tag should be interpreted as the hexadecimal value with the [least significant bit (LSB)](https://en.wikipedia.org/wiki/Bit_numbering#Least_significant_bit) removed.
@@ -158,7 +158,7 @@ The resulting tag is the 15-bit binary number `0b000000100000000`.
 
 Field definitions follow each constructor and its optional tag. A field definition has the format `ident:type-expr`, where:
 - `ident` is the field's name. If you don't want to assign a specific name to the field, just leave it as `_`.
-- `type-expr` is the field's type. Сan be a simple type, a parameterized type with appropriate arguments, or a more complex expression.
+- `type-expr` is the field's type. Can be a simple type, a parameterized type with appropriate arguments, or a more complex expression.
 
 **Note: the total size of all fields in a type must not exceed the limits of a single cell:  `1023` bits and `4` references**.
 
@@ -228,9 +228,9 @@ In the `Example` type, the field `b` is serialized only if the `a` field is equa
 ```tlb
 _ a:(## 2) b:(a . 1)?(## 32) = CondExample;
 ```
-Similar as above, in the `CondExample` type, the variable `b` is serialized only if the **second bit** of `a` is `1`.
+Similarly, in the `CondExample` type, the variable `b` is serialized only if the **second bit** of `a` is `1`.
 
-For the real world example, one may consider the following `McStateExtra` combinator that describes data stored in each masterchain block.
+For the real-world example, one may consider the following `McStateExtra` combinator that describes data stored in each masterchain block.
 ```tlb
 masterchain_state_extra#cc26
   shard_hashes:ShardHashes
@@ -247,7 +247,7 @@ masterchain_state_extra#cc26
 
 #### Parameterized
 **Parameterized types** are patterns in which other types are parameters. Such parameters are declared in curly brackets `{}` or must be declared previously
-as combinator's field. Only indentifiers of the `Nat` and `Type` types can be parameters.
+as combinator's field. Only identifiers of the `Nat` and `Type` types can be parameters.
 
 A simple example of a parameterized type is the following definition of a type `A` that parameterized by a natural number `x`:
 
@@ -259,10 +259,6 @@ During the deserialization process, it fetches an x-bit unsigned integer. For ex
 _ value:(A 32) = My32UintValue;
 ```
 During the deserialization process of `My32UintValue`, it fetches a 32-bit unsigned integer, as specified by the `32` natural parameter in the `A` type.
-
-```tlb
-_ {X:Type} a:# b:X = IntWithObj X;
-```
 
 Let's consider another example where a combinator `A` parameterized by a type variable `X` is defined:
 ```tlb
@@ -304,7 +300,7 @@ _ {input:#} c:(## input) = B input;
 _ a:(## 8) c_in_b:(B a) = A;
 ```
 
-Since parametrs can be natural numbers, one can use arithmetic operations on them:
+Since parameters can be natural numbers, one can use arithmetic operations on them:
 ```tlb
 _ {x:#} value:(## x) = ExampleMult (x * 2);
 _ _:(ExampleMult 4) = 2BitInteger;
@@ -322,7 +318,7 @@ vm_tuple_nil$_ = VmTuple 0;
 vm_tuple_tcons$_ {n:#} head:(VmTupleRef n) tail:^VmStackValue = VmTuple (n + 1);
 vm_stk_tuple#07 len:(## 16) data:(VmTuple len) = VmStackValue;
 ```
-For a detailed explanation of how it works, see the [Complex and non-trivial examples page](/language/TL-B/complex-and-non-trivial-examples).
+For a detailed explanation of how it works, see the [complex and non-trivial examples page](/language/TL-B/complex-and-non-trivial-examples).
 
 #### Special
 
@@ -334,7 +330,7 @@ Currently, TVM allows the following types of cells:
 - MerkleProof
 - MerkleUpdate
 
-By default, all cells are classified as `Ordinary`. This applies to all cells described in the TL‑B as well.
+By default, all cells are classified and parsed as `Ordinary`. This applies to all cells described in the TL‑B as well.
 
 To enable the loading of special types in the constructor, prepend `!` before the constructor.
 
@@ -349,18 +345,24 @@ To enable the loading of special types in the constructor, prepend `!` before th
 
 This technique allows code generation to mark `SPECIAL` cells when printing a structure and ensures proper validation of structures with special cells.
 
-### Negate operator (`~`)
+### Implicit fields and the negate operator (`~`)
+Some fields may be **implicit**. These fields are defined within curly brackets `{}`, as constraints and parameters of the parametrized types,
+indicating that they are not directly serialized. Instead, their values must be deduced from other data, usually the parameters of the type being serialized.
 
-Some occurrences of "variables", i.e., already-defined fields, are prefixed by a tilde `~`. This indicates that the variable's occurrence is used oppositely from the default behavior. On the left-hand side of the equation, it means that the variable is deduced (computed) based on this occurrence, rather than substituting its previously calculated value. Conversely, on the right-hand side, the variable is not deduced from the serialized type but will instead be computed during the deserialization process. In other words, a tilde transforms an "input argument" into an "output argument" or vice versa.
+
+Some occurrences of the indicators already defined earlier in a scheme are prefixed by a tilde `~`. This indicates that the indicator's occurrence is used 
+oppositely from the default behavior. On the left-hand side of the equation, it means that the indicator is deduced (computed) based on this occurrence, 
+rather than substituting its type's defined value. Conversely, on the right-hand side, the indicator is not deduced from 
+the serialized type but instead computed during the deserialization process. In other words, 
+a `~` transforms an _input argument_ into an _output argument_ or vice versa.
 
 
-A simple example of the negate operator is the definition of a new variable based on another variable:
+A simple example of the negate operator is the definition of the implicit indicator `b` based on another indicator `a`:
 
 ```tlb
 _ a:(## 32) { b:# } { ~b = a + 100 } = B_Calc_Example;
 ```
-
-After definition, you can use the new variable as input for `Nat` types:
+So, after deserialization of `a`, the value of `b` is computed as `a + 100`. After this definition, you can use the new indicator as input for `Nat` types:
 
 
 ```tlb
@@ -368,7 +370,7 @@ _ a:(## 8) { b:# } { ~b = a + 10 }
   example_dynamic_var:(## b) = B_Calc_Example;
 ```
 
-The size of `example_dynamic_var` is computed at runtime when we load the `a` variable and use its value to determine the size of `example_dynamic_var`.
+The size of `example_dynamic_var` is computed at runtime when we load `a` and use its value to determine the size of `example_dynamic_var`.
 
 Alternatively, it can be applied to other types:
 
@@ -376,16 +378,6 @@ Alternatively, it can be applied to other types:
 _ {X:Type} a:^X = PutToRef X;
 _ a:(## 32) { b:# } { ~b = a + 100 }
   my_ref: (PutToRef b) = B_Calc_Example;
-```
-
-You can also define variables with the negate operator within add or multiply complex expressions:
-
-```tlb
-_ a:(## 32) { b:# } { ~b + 100 = a }  = B_Calc_Example;
-```
-
-```tlb
-_ a:(## 32) { b:# } { ~b * 5 = a }  = B_Calc_Example;
 ```
 
 #### Negate operator (`~`) in type definition
@@ -399,7 +391,7 @@ Assume we have a class `Define ~n m` that takes `m` and computes `n` by loading 
 
 In the `Example` type, we store the variable computed by the `Define` type into `n_from_define`. We also know it's an `8`-bit unsigned integer because we apply the `Define` type with `Define ~n_from_define 8`. Now, we can use the `n_from_define` variable for other kinds to determine the serialization process.
 
-This technique leads to more complex type definitions, such as Unions or Hashmaps.
+This technique leads to more complex type definitions such as **Unions** that represent dynamic chains of some type.
 
 
 ```tlb
@@ -407,22 +399,31 @@ unary_zero$0 = Unary ~0;
 unary_succ$1 {n:#} x:(Unary ~n) = Unary ~(n + 1);
 _ u:(Unary Any) = UnaryChain;
 ```
+and **Hashmaps**.
 
-This example is explained well in the [TL‑B types](/v3/documentation/data-formats/tlb/types#unary) article. The main idea here is that `UnaryChain` recursively deserializes until it reaches `unary_zero$0` because we know the last element of the `Unary X` type by the definition `unary_zero$0 = Unary ~0`. The value of `X` is calculated at runtime due to the definition `Unary ~(n + 1)`.
+```tlb
+hm_edge#_ {n:#} {X:Type} {l:#} {m:#} label:(HmLabel ~l n)
+          {n = (~m) + l} node:(HashmapNode m X) = Hashmap n X;
 
+hmn_leaf#_ {X:Type} value:X = HashmapNode 0 X;
+hmn_fork#_ {n:#} {X:Type} left:^(Hashmap n X)
+           right:^(Hashmap n X) = HashmapNode (n + 1) X;
 
-Note: `x:(Unary ~n)` means that `n` is defined during the serialization process of the `Unary` class.
+hml_short$0 {m:#} {n:#} len:(Unary ~n) {n <= m} s:(n * Bit) = HmLabel ~n m;
+hml_long$10 {m:#} n:(#<= m) s:(n * Bit) = HmLabel ~n m;
+hml_same$11 {m:#} v:Bit n:(#<= m) = HmLabel ~n m;
+
+unary_zero$0 = Unary ~0;
+unary_succ$1 {n:#} x:(Unary ~n) = Unary ~(n + 1);
+
+hme_empty$0 {n:#} {X:Type} = HashmapE n X;
+hme_root$1 {n:#} {X:Type} root:^(Hashmap n X) = HashmapE n X;
+```
+
+For a detailed explanation of how these combinators are deserialized, see the [complex and non-trivial examples page](/language/TL-B/complex-and-non-trivial-examples).
 
 
 ## References
 
-- [A description of an older version of TL](https://core.telegram.org/mtproto/TL)
-- [block.tlb](https://github.com/ton-blockchain/ton/blob/master/crypto/block/block.tlb)
-- [tlbc tool](https://github.com/ton-blockchain/ton/blob/master/crypto/tl/tlbc.cpp)
-- [CPP Codegen](https://github.com/ton-blockchain/ton/blob/master/crypto/tl/tlbc-gen-cpp.cpp)
-- [tonpy tlb tests](https://github.com/disintar/tonpy/blob/main/src/tonpy/tests/test_tlb.py)
-- [tonpy py codegen](https://github.com/disintar/ton/blob/master/crypto/tl/tlbc-gen-py.cpp)
-
-<hr/>
-
-The documentation is provided by the _[Disintar](https://dton.io/) team_.
+- [A description of an older version of TL](https://core.telegram.org/mtproto/TL);
+- [block.tlb](https://github.com/ton-blockchain/ton/blob/master/crypto/block/block.tlb): the main TL-B file that describes all basic TON blockchain structures.
