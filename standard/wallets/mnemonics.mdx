@@ -1,43 +1,39 @@
 ---
-title: "Wallet mnemonic"
+title: "Wallet mnemonic Deep Dive"
 ---
 
 import { Aside } from '/snippets/aside.jsx';
 
 
 ## Key pair 
-TON uses [Ed25519](https://en.wikipedia.org/wiki/EdDSA#Ed25519) key pairs.
 
+Ton uses asymmetric cryptography, and [Ed25519](https://en.wikipedia.org/wiki/EdDSA#Ed25519) is a particular kind of it.
 
 There are multiple ways to derive a key pair from a mnemonic. Below is the most common approach in TON (some apps may use a different derivation).
 
 ## Key pair from a mnemonic
 ### Under the hood 
-To transform a mnemonic phrase into a key pair, a `seed` is first derived using [PBKDF2](https://en.wikipedia.org/wiki/PBKDF2) (PRF, Password, Salt, c, dkLen). The key pair is then derived from that seed.
+To transform a mnemonic phrase into a key pair, a `seed` is first derived using [PBKDF2](https://en.wikipedia.org/wiki/PBKDF2)(PRF, Password, Salt, c, dkLen). The key pair is then derived from that seed.
 
 - PRF — HMAC‑SHA512
-- Password — `''`
-- Salt — `'TON seed version'`
+- Password — `""`
+- Salt — `"TON seed version"`
 - c — $\mathrm{floor}(\frac{100000}{256}) = 390$
 - dkLen — 64
 
 ### Generate a key pair 
-<Tabs groupId="code-examples">
+```typescript TypeScript
+import { mnemonicToWalletKey, mnemonicNew } from "@ton/crypto";
 
-    <Tab title="TypeScript">
-    ```ts
-    import { mnemonicToWalletKey, mnemonicNew } from "@ton/crypto";
+// Replace with your own persisted mnemonic phrase (see note below).
+const mnemonicArray = await mnemonicNew();
 
-    // const mnemonicArray = 'your mnemonic phrase here'.split(' '); // mnemonic as an array of words
-    
-    // derive private and public keys from the mnemonic
-    const keyPair = await mnemonicToWalletKey(mnemonicArray); 
-    
-    // optionally, print the mnemonic
-    console.log(mnemonicArray);
-    ```
-    </Tab>
-</Tabs>
+// derive private and public keys from the mnemonic
+const keyPair = await mnemonicToWalletKey(mnemonicArray); 
+
+console.log("Public Key: " + keyPair.publicKey.toString('hex'));
+console.log("Private Key: " + keyPair.secretKey.toString('hex'));
+```
 
 The private key is needed to sign messages, and the public key is stored in the wallet’s smart contract.
 
@@ -47,20 +43,16 @@ Make sure to persist the generated mnemonic seed phrase. If you need determinist
 
 
 ## Mnemonic validation 
-The first byte of the derived `seed` must be zero. 
+1) Words only from BIP-39
+2) The first byte of the derived `seed` must be zero. 
 
 ### Under the hood
 Random mnemonic phrases are generated until PBKDF2 yields a seed whose first byte is zero.
 
 ### Generate a mnemonic
-<Tabs groupId="code-examples">
-    <Tab title="TypeScript">
-    ```ts
-    import { mnemonicToWalletKey, mnemonicNew } from "@ton/crypto";
+```typescript TypeScript
+import { mnemonicToWalletKey, mnemonicNew } from "@ton/crypto";
 
-    // const mnemonicArray = 'your mnemonic phrase here'.split(' '); // mnemonic as an array of words
-    const mnemonicArray = await mnemonicNew(24); // number of words in the seed phrase
-    console.log(mnemonicArray); // optionally, print the mnemonic
-    ```
-    </Tab>
-</Tabs> 
+const mnemonicArray = await mnemonicNew(24); // number of words in the seed phrase
+console.log(mnemonicArray); 
+```
