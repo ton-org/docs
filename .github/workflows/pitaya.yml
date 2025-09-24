@@ -187,32 +187,29 @@ jobs:
         run: |
           REPO_URL="https://github.com/${{ github.repository }}"
           HEAD_SHA="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
-          BLOB_BASE="$REPO_URL/blob/$HEAD_SHA/"
+          echo "PR_HEAD_SHA=$HEAD_SHA" >> "$GITHUB_ENV"
 
           REVIEW_INSTRUCTIONS=$(cat <<TXT
           Context: This repository contains the TON Blockchain documentation. Follow our style rules in contribute/style-guide-extended.mdx.
           You are reviewing documentation-only changes in this pull request.
           - If there are no .md/.mdx content changes compared to the base branch, stop.
           - Review only .md/.mdx files and only the lines touched in this PR’s diff; ignore other file types entirely.
-          - When a style-guide rule applies, include exactly ONE link to that rule as a full GitHub URL with a ?plain=1#L.. anchor (single line or range). Example:
-            https://github.com/tact-lang/mintlify-ton-docs/blob/main/contribute/style-guide-extended.mdx?plain=1#L26-L30
+          - When a style-guide rule applies, reference it with the repo-relative path (for example: contribute/style-guide-extended.mdx?plain=1#L26-L30).
           - If the issue is a factual error, typo, or something the style guide doesn’t cover, explain it clearly without a style-guide link.
           - Perform an exhaustive pass over every changed paragraph, table, list, and code block. Capture **all** issues you see in the diff during this run—no “save it for later”.
           - Do NOT speculate about TON Docs rendering/build behavior. Examples of out‑of‑scope speculation:
             Mermaid/diagram rendering, Mintlify theme/plugin internals, MDX component bundling, search indexing, or external CI/CD. Only report issues observable in repo content (e.g., broken anchors/links, wrong examples, grammar/style rule violations).
           - If you cannot validate a claim from the files in this PR and repository configuration, do not include it.
           - You may read entire files (and supporting pages) for context, but only report findings caused by lines changed in this PR. If an issue exists solely in unchanged content, skip it.
-          - For every finding, the Location must be a full GitHub blob URL built from this PR’s head commit (for example: ${BLOB_BASE}ecosystem/ide/jetbrains.mdx?plain=1#L2-L2).
+          - For every finding, write the Location as a repo-relative link such as pending/discover/web3-basics/glossary.mdx?plain=1#L10-L12 (no https:// prefix).
           - Validate the line range against file content before output (use read-only git commands).
           - Keep language simple and clear.
           TXT
           )
 
-          STYLE_GUIDE_URL="https://github.com/tact-lang/mintlify-ton-docs/blob/main/contribute/style-guide-extended.mdx"
-
-          COMPOSER_INSTRUCTIONS=$(cat <<TXT
-          Each finding must include a Location line with the full PR-head blob URL (for example: ${BLOB_BASE}ecosystem/ide/jetbrains.mdx?plain=1#L2-L2).
-          Only cite the TON docs style guide in the Description when relevant, using ${STYLE_GUIDE_URL}?plain=1#L<start>-L<end>.
+          COMPOSER_INSTRUCTIONS=$(cat <<'TXT'
+          Use repo-relative Location links (e.g., pending/discover/web3-basics/glossary.mdx?plain=1#L10-L12) with no https://.
+          When a style rule applies, cite it as contribute/style-guide-extended.mdx?plain=1#L<start>-L<end>; otherwise explain the issue plainly.
           TXT
           )
 
@@ -221,7 +218,7 @@ jobs:
             --repo "$GITHUB_WORKSPACE" \
             --base-branch "$BASE_REF" \
             --strategy pr-review \
-            -S reviewers=4 \
+            -S reviewers=2 \
             -S ci_fail_policy=never \
             -S review_instructions="$REVIEW_INSTRUCTIONS" \
             -S composer_instructions="$COMPOSER_INSTRUCTIONS" \
@@ -253,6 +250,55 @@ jobs:
           if [ -z "$BODY" ]; then
             echo "Composer final_message is empty" >&2
             exit 1
+          fi
+
+          if [ -n "${PR_HEAD_SHA:-}" ]; then
+            BODY=$(python <<'PY'
+import os, re, sys
+
+repo = os.environ.get("GITHUB_REPOSITORY", "")
+sha = os.environ.get("PR_HEAD_SHA")
+text = sys.stdin.read()
+
+if not repo:
+    sys.stdout.write(text)
+    sys.exit(0)
+
+blob_prefix = f"https://github.com/{repo}/blob/"
+style_rel = "contribute/style-guide-extended.mdx"
+
+def to_abs(link: str) -> str:
+    normalized = link.lstrip("./")
+    if normalized.startswith(style_rel):
+        base = "main"
+    else:
+        base = sha or "main"
+    return f"{blob_prefix}{base}/{normalized}"
+
+# Convert repo-relative links to absolute
+pattern_rel = re.compile(r'(?<!https://)(?<!http://)((?:\.?/)?(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.(?:md|mdx)\?plain=1#L\d+(?:-L\d+)?)')
+text = pattern_rel.sub(lambda m: to_abs(m.group(1)), text)
+
+# Ensure blob URLs use the PR head SHA (style guide stays on main)
+if sha:
+    pattern_abs = re.compile(rf'{re.escape(blob_prefix)}([^/]+)/([^\s)]+)')
+
+    def fix_abs(match: re.Match) -> str:
+        base = match.group(1)
+        remainder = match.group(2)
+        target = "main" if remainder.startswith(style_rel) else sha
+        if base == target:
+            return match.group(0)
+        return f"{blob_prefix}{target}/{remainder}"
+
+    text = pattern_abs.sub(fix_abs, text)
+
+sys.stdout.write(text)
+PY
+            <<'EOF'
+$BODY
+EOF
+            )
           fi
 
           # Prepare issue comment body (composer already produces a friendly intro; no verdict line)
