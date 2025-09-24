@@ -185,7 +185,6 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
         run: |
-          REPO_URL="https://github.com/${{ github.repository }}"
           HEAD_SHA="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
           echo "PR_HEAD_SHA=$HEAD_SHA" >> "$GITHUB_ENV"
 
@@ -253,53 +252,7 @@ jobs:
           fi
 
           if [ -n "${PR_HEAD_SHA:-}" ]; then
-            BODY=$(printf '%s\n' "$BODY" | python <<'PY'
-              import textwrap
-              code = textwrap.dedent("""
-              import os, re, sys
-
-              repo = os.environ.get("GITHUB_REPOSITORY", "")
-              sha = os.environ.get("PR_HEAD_SHA")
-              text = sys.stdin.read()
-
-              if not repo:
-                  sys.stdout.write(text)
-                  sys.exit(0)
-
-              blob_prefix = f"https://github.com/{repo}/blob/"
-              style_rel = "contribute/style-guide-extended.mdx"
-
-              def to_abs(link: str) -> str:
-                  normalized = link.lstrip("./")
-                  if normalized.startswith(style_rel):
-                      base = "main"
-                  else:
-                      base = sha or "main"
-                  return f"{blob_prefix}{base}/{normalized}"
-
-              # Convert repo-relative links to absolute
-              pattern_rel = re.compile(r'(?<!https://)(?<!http://)((?:\.?/)?(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.(?:md|mdx)\?plain=1#L\d+(?:-L\d+)?)')
-              text = pattern_rel.sub(lambda m: to_abs(m.group(1)), text)
-
-              # Ensure blob URLs use the PR head SHA (style guide stays on main)
-              if sha:
-                  pattern_abs = re.compile(rf'{re.escape(blob_prefix)}([^/]+)/([^\s)]+)')
-
-                  def fix_abs(match: re.Match) -> str:
-                      base = match.group(1)
-                      remainder = match.group(2)
-                      target = "main" if remainder.startswith(style_rel) else sha
-                      if base == target:
-                          return match.group(0)
-                      return f"{blob_prefix}{target}/{remainder}"
-
-                  text = pattern_abs.sub(fix_abs, text)
-
-              sys.stdout.write(text)
-              """)
-              exec(code)
-              PY
-            )
+            BODY=$(printf '%s\n' "$BODY" | python3 "$GITHUB_WORKSPACE/.github/scripts/rewrite_review_links.py")
           fi
 
           # Prepare issue comment body (composer already produces a friendly intro; no verdict line)
