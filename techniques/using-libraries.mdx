@@ -3,8 +3,21 @@ title: "Using libraries"
 ---
 
 import { Image } from '/snippets/image.jsx';
+import { Aside } from '/snippets/aside.jsx';
 
 It is recommended to read [Library cells](/ton/cells/library-cells) first.
+
+<Aside type='danger'>
+You should always monitor the balance of the account that hosts the library. It should be sufficient for at least 10 years.
+</Aside>
+
+### Fee savings
+
+Library cells help reduce fees in two main ways.
+
+1. Forwarding fees. For example, in [jettons](/standard/tokens/jetton), the StateInit must be forwarded with each transfer, resulting in high forwarding fees. Moving the code into a library cell significantly reduces these fees.
+
+2. Storage costs. Because a library must be hosted in the Masterchain, where storage is approximately 1,000 times more expensive than in the Basechain, hosting a copy of the code in the Basechain may be cheaper if there are fewer than 1,000 instances of the contract. The 1,000 factor is not constant and is subject to change. Consult [blockchain config parameter 18](https://tonviewer.com/config#18) for the latest value. However, due to the savings on forwarding fees, you should calculate whether this approach is cost-effective for your specific use case.
 
 Everything in TON is stored in cells, even account code. One of the most common use cases for libraries is to store code shared by multiple contracts.
 When a library cell is part of an account’s `code`, it is automatically dereferenced on first access. This allows you to replace part of the contract code—or even the entire code—with a library cell.
@@ -19,17 +32,11 @@ You can check if a contract is using a library as its code by looking into its `
 
 <Image src="/resources/images/using-libraries/library-in-explorer.png" alt="Code cell showing library reference in explorer" />
 
+While it is not crucial to understand the exact representation shown on https://explorer.toncoin.org/ ([more about explorers](/ecosystem/explorers/overview)), the key point is that there is only one cell in the contract code, tagged as SPECIAL (indicating it is an exotic cell). Following this is the hexadecimal representation of the library cell's internals. The first byte equals 2, indicating that it is a library cell, and the remaining bytes contain the hash of the referenced cell.
+
 Here you can see that the entire contract code consists of the 8‑bit tag equal to 2 and a 256‑bit representation hash of the referenced cell.
 
 If you don’t want to put the entire code in a library cell, you can make only part of it a library cell. For example, if the same function is used in multiple different contracts, it makes sense to turn it into a library. However, you will likely need to set up the build process for such code yourself.
-
-### Fee savings
-
-Library cells help reduce fees in two main ways.
-
-1. Storage costs. Because a library must be hosted in the Masterchain, where storage is approximately 1000× more expensive than in the Basechain, hosting a copy of the code in the Basechain may be cheaper if there are fewer than 1000 instances of the contract. The 1000 factor is not constant and is subject to change. Consult [blockchain config parameter 18](https://tonviewer.com/config#18) for the latest value.
-
-2. Forwarding fees. For example, in [jettons](/standard/tokens/jetton) the StateInit must be forwarded with each transfer, which results in high forwarding fees. Moving the code into a library cell significantly reduces these fees.
 
 
 ### Using @ton/core
@@ -47,18 +54,89 @@ const jwalletCode = new Cell({ exotic: true, bits: libPrep.bits, refs: libPrep.r
 
 ### Publishing an ordinary cell in the Masterchain library context
 
-A practical example is available [in multisig v2 repository](https://github.com/ton-blockchain/multisig-contract-v2/blob/master/contracts/helper/librarian.func).
+
+
+The following example was taken from [multisig v2 repository](https://github.com/ton-blockchain/multisig-contract-v2/blob/master/contracts/helper/librarian.func).
+
+```func
+;; Simple library keeper
+
+#include "../imports/stdlib.fc";
+#include "../messages.func";
+
+const int DEFAULT_DURATION = 3600 * 24 * 365 * 10; ;; 10 years, can top-up in any time
+const int ONE_TON = 1000000000;
+
+;; https://docs.ton.org/tvm.pdf, page 138, SETLIBCODE
+() set_lib_code(cell code, int mode) impure asm "SETLIBCODE";
+
+cell empty_cell() asm "<b b> PUSHREF";
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    slice in_msg_full_slice = in_msg_full.begin_parse();
+    int msg_flags = in_msg_full_slice~load_msg_flags();
+    slice sender_address = in_msg_full_slice~load_msg_addr();
+
+    cell lib_to_publish = get_data();
+
+    int initial_gas = gas_consumed();
+    (int order_cells, int order_bits, _) = compute_data_size(lib_to_publish, 1000); ;; according network config, max cells in library = 1000
+    int size_counting_gas = gas_consumed() - initial_gas;
+
+    int to_reserve = get_simple_compute_fee(MASTERCHAIN, size_counting_gas) +
+                     get_storage_fee(MASTERCHAIN, DEFAULT_DURATION, order_bits, order_cells);
+    raw_reserve(to_reserve, RESERVE_BOUNCE_ON_ACTION_FAIL);
+
+    send_message_with_only_body(sender_address, 0, begin_cell(), NON_BOUNCEABLE, SEND_MODE_CARRY_ALL_BALANCE);
+    ;; https://docs.ton.org/tvm.pdf, page 138, SETLIBCODE
+    set_lib_code(lib_to_publish, 2); ;; if x = 2, the library is added as a public library (and becomes available to all smart contracts if the current smart contract resides in the masterchain);
+    ;; brick contract
+    set_code(empty_cell());
+    set_data(empty_cell());
+}
+```
+          
+The main benefit of using this contract to publish library cells is that it requires you to provide sufficient TON for at least 10 years of storage. This prevents a common problem where, after a short time, the library freezes and becomes inaccessible, which can lead to unexpected scenarios.
 
 The core of this contract is the line: `set_lib_code(lib_to_publish, 2);`. This function call publishes an ordinary cell with the flag set to `2`, which indicates that the library is public and can be used by anyone.
 
-**Note:** the contract that publishes the cell is responsible for paying its own and the Masterchain’s storage fees. Storage costs in the Masterchain are approximately 1000 times higher than in the Basechain. Therefore, using a library cell is only cost‑effective for contracts that are used by thousands of users.
+Note that this contract becomes bricked after the cell is published, so no further operations on this contract can be performed.
+        
 
 ### Testing in Blueprint
 
-To test how contracts that use library cells work in Blueprint, manually add the referenced cells to the emulator’s library context. This can be done as follows:
 
-1. Create a library context dictionary (a Hashmap) of type `uint256 -> Cell`, where `uint256` is the hash of the corresponding cell.
-2. Set this library context in the emulator’s settings.
+When testing smart contracts locally, there are **two ways to register libraries** in your blockchain environment.
+
+#### Option 1: **Automatic Library Deployment**
+
+Enable automatic library detection by passing the `autoDeployLibs` flag when creating the blockchain:
+
+```ts
+const blockchain = await Blockchain.create({ autoDeployLibs: true });
+```
+
+In your contract, deployed in **Masterchain**, deploy the library using the librarian example above.
+
+This allows the contract to dynamically install and register the library at runtime, with the environment automatically tracking and using it as needed.
+
+#### Option 2: **Manual Library Deployment**
+
+If `autoDeployLibs` is **not enabled**, you'll need to register libraries manually:
+
+```ts
+const blockchain = await Blockchain.create();
+const code = await compile('Contract');
+
+// Create a dictionary of library hash → library cell
+const libsDict = Dictionary.empty(Dictionary.Keys.Buffer(32), Dictionary.Values.Cell());
+libsDict.set(code.hash(), code);
+
+// Manually assign the libraries
+blockchain.libs = beginCell().storeDictDirect(libsDict).endCell();
+```
+
+This gives you full control but requires explicitly managing which libraries are available during testing.
 
 An example implementation can be found [here](https://github.com/ton-blockchain/stablecoin-contract/blob/de08b905214eb253d27009db6a124fd1feadbf72/sandbox_tests/JettonWallet.spec.ts#L100C9-L103C32).
 
@@ -66,14 +144,14 @@ An example implementation can be found [here](https://github.com/ton-blockchain/
 
 When working with a Jetton wallet where the code is stored in a library cell, you may need to check its balance. To do so, you must execute a get method in the code. This involves the following steps:
 
+If you call methods using one of [HTTP APIs](/ecosystem/rpc/overview) or [LiteServer](/ecosystem/node/overview), the library cell will be automatically resolved and the method will be executed.
+
+Alternatively, you may take the account state to your local system and execute methods there.
+
 - Accessing the library cell
 - Retrieving the hash of the referenced cell
 - Finding the cell with that hash in the Masterchain’s library collection
 - Executing the code from there
-
-In [LiteServer](/ecosystem/node/overview) (LS), all these processes happen automatically behind the scenes, and users needn’t be concerned with the specific method of code storage.
-
-Alternatively, you may take the account state to your local system and execute methods there.
 
 This approach is not feasible for a library cell because it does not store data on its own. Instead, you must manually detect and retrieve the necessary cells from the context. This can be done using LS or via [DTon graphql api](https://dton.io/graphql).
 
