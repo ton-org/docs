@@ -24,6 +24,12 @@ Mintlify does them in each PR with the help of [Vale](https://vale.sh/). To also
 
 Then, run `vale sync` to synchronize necessary packages and add-ons.
 
+#### Adding new words to the spell checking dictionary
+
+The dictionaries (_vocabularies_) for custom words is placed under `.vale/config/vocabularies/Custom`: the `accept.txt` file describes all allowed entries, while `reject.txt` file states all invalid entries that must be rejected.
+
+See more info on dictionaries here: [Vale vocabularies docs](https://vale.sh/docs/keys/vocab).
+
 ## Publishing changes
 
 [Mintlify's GitHub app](https://dashboard.mintlify.com/settings/organization/github-app) is connected to this repository. Thus, changes are deployed to production automatically after pushing to the default branch (`main`).
