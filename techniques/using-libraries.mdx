@@ -146,7 +146,10 @@ When working with a Jetton wallet where the code is stored in a library cell, yo
 
 If you call methods using one of [HTTP APIs](/ecosystem/rpc/overview) or [LiteServer](/ecosystem/node/overview), the library cell will be automatically resolved and the method will be executed.
 
+For example, for toncenter, you only need to call [getLibraries method](/api-reference/blocks/getLibraries)
+
 Alternatively, you may take the account state to your local system and execute methods there.
+The process is as follow:
 
 - Accessing the library cell
 - Retrieving the hash of the referenced cell
@@ -158,3 +161,63 @@ This approach is not feasible for a library cell because it does not store data 
 #### Retrieving a library cell with LiteServer
 
 To retrieve library cells from LiteServer, use the [liteServer.getLibraries](https://github.com/ton-blockchain/ton/blob/4cfe1d1a96acf956e28e2bbc696a143489e23631/tl/generate/scheme/lite_api.tl#L96) method.
+
+```ts
+import { LiteClient, LiteRoundRobinEngine, LiteSingleEngine } from "ton-lite-client";
+import { Cell } from "@ton/core";
+import { z } from "zod";
+
+function intToIP(int: number): string {
+    const buf = Buffer.alloc(4);
+    buf.writeUInt32BE(int >>> 0, 0);
+    return Array.from(buf).join(".");
+}
+
+const Server = z.object({
+    ip: z.number(),
+    port: z.number(),
+    id: z.object({ key: z.string() }),
+});
+
+const Response = z.object({
+    liteservers: z.array(Server),
+});
+
+// testnet https://ton.org/testnet-global.config.json
+// mainnet https://ton.org/global.config.json
+const configEndpoint = "https://ton.org/global.config.json";
+
+async function getServers() {
+    const data = Response.parse(await (await fetch(configEndpoint)).json());
+    return data.liteservers.map((server) => {
+        return new LiteSingleEngine({
+            host: `tcp://${intToIP(server.ip)}:${server.port}`,
+            publicKey: Buffer.from(server.id.key, 'base64'),
+        });
+    });
+}
+
+async function getLibraryByHash(hash: Buffer) {
+    const engine = new LiteRoundRobinEngine(await getServers());
+    const client = new LiteClient({ engine });
+    const libs = await client.getLibraries([hash]);
+    const lib = libs.result[0];
+    if (!lib || libs.result.length !== 1) {
+        throw new Error("Library not found");
+    }
+    const roots = Cell.fromBoc(lib.data);
+    const root = roots[0];
+    if (!root || roots.length !== 1) {
+        throw new Error("Malformed BoC for a library");
+    }
+    return root.toBoc().toString("hex");
+}
+
+async function main() {
+    const hash = Buffer.from("8F452D7A4DFD74066B682365177259ED05734435BE76B5FD4BD5D8AF2B7C3D68", "hex");
+    const code = await getLibraryByHash(hash);
+    console.log(code);
+}
+
+void main();
+```
