@@ -123,70 +123,7 @@ def render_static_mdx(instructions: List[Dict[str, Any]]) -> str:
     return "\n".join(render_instruction_block(i) for i in instructions)
 
 
-def render_embedded_json(spec: Dict[str, Any]) -> str:
-    """Render the original tvm-spec JSON into a non-executing script tag.
-
-    This allows the interactive table to synchronously read the payload from the DOM
-    without issuing a network request.
-    """
-    # Compact JSON to keep bundle size reasonable
-    payload = json.dumps(spec, separators=(",", ":"))
-    return f"<script id=\"tvm-spec-json\" type=\"application/json\">{payload}</script>"
-
-def prepare_spec_for_embed(spec: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a shallow-copied spec with doc.description pre-rendered to HTML.
-
-    Adds field doc.description_html alongside existing doc.description.
-    Requires the 'markdown' Python package.
-    """
-    if markdown is None:
-        raise RuntimeError(
-            "python-markdown is required. Install with: pip3 install markdown"
-        )
-
-    prepared: Dict[str, Any] = dict(spec)
-    prepared_instructions: List[Dict[str, Any]] = []
-    prepared_aliases: List[Dict[str, Any]] = []
-    for raw in spec.get("instructions", []) or []:
-        item = dict(raw)
-        doc = dict(item.get("doc") or {})
-        desc = doc.get("description")
-        # Use common useful extensions; keep HTML output compact
-        html = markdown.markdown(
-            desc,
-            extensions=[
-                "extra",
-                "sane_lists",
-                "smarty",
-            ],
-            output_format="xhtml1",
-        )
-        doc["description"] = html
-        item["doc"] = doc
-        prepared_instructions.append(item)
-
-    for raw in spec.get("aliases", []) or []:
-        item = dict(raw)
-        desc = item.get("description")
-        html = markdown.markdown(
-            desc,
-            extensions=[
-                "extra",
-                "sane_lists",
-                "smarty",
-            ],
-            output_format="xhtml1",
-        )
-        item["description"] = html
-        prepared_aliases.append(item)
-    
-    prepared["aliases"] = prepared_aliases
-    prepared["instructions"] = prepared_instructions
-    return prepared
-
-
-
-def inject_into_mdx(mdx_path: str, new_block: str, embedded_json: str) -> None:
+def inject_into_mdx(mdx_path: str, new_block: str) -> None:
     with open(mdx_path, "r", encoding="utf-8") as fh:
         src = fh.read()
     start_idx = src.find(START_MARK)
@@ -202,7 +139,7 @@ def inject_into_mdx(mdx_path: str, new_block: str, embedded_json: str) -> None:
     # interactive table. Keeping it in the DOM still enables full-text search.
     # We also embed the original spec JSON in a non-executing script tag so the
     # client does not need to fetch it over the network.
-    wrapped_block = f"<div hidden>\n{embedded_json}\n{new_block}\n</div>"
+    wrapped_block = f"<div hidden>\n{new_block}\n</div>"
     replacement = f"{START_MARK}\n{wrapped_block}\n{END_MARK}"
 
     updated = before + replacement[len(START_MARK):] + after
@@ -223,9 +160,7 @@ def generate() -> int:
 
     instructions.sort(key=lambda x: (opcode_key(x.get("opcode", "")), x.get("mnemonic", "")))
     static_block = render_static_mdx(instructions)
-    prepared_spec = prepare_spec_for_embed(spec)
-    embedded_json = render_embedded_json(prepared_spec)
-    inject_into_mdx(MDX_PATH, static_block, embedded_json)
+    inject_into_mdx(MDX_PATH, static_block)
     return len(instructions)
 
 

@@ -1,5 +1,3 @@
-import MarkdownBlock from "./markdown";
-
 const React =
     typeof globalThis !== "undefined" && globalThis.React
       ? globalThis.React
@@ -12,8 +10,8 @@ const React =
 export const TvmInstructionTable = () => {
   const { useCallback, useEffect, useMemo, useState } = React;
 
-  const SPEC_REPO = "https://github.com/ton-community/tvm-spec";
-  const SPEC_COMMIT = "6f7a7dd91e06790a05137eb0243a0514e317aa2b";
+  const SPEC_REPO = "https://github.com/hacker-volodya/tvm-spec-docs-builder";
+  const SPEC_COMMIT = "refs/heads/master";
   const SPEC_URL = `${SPEC_REPO.replace(
     "github.com",
     "raw.githubusercontent.com"
@@ -1334,12 +1332,13 @@ export const TvmInstructionTable = () => {
       try {
         setLoading(true);
         setError(null);
-        // Prefer embedded JSON (injected into MDX) to avoid a network request
-        const el = document.getElementById("tvm-spec-json");
-        const text = el && typeof el.textContent === "string" ? el.textContent : null;
-        const embedded = JSON.parse(text);
+        const response = await fetch(SPEC_URL);
+        if (!response.ok) {
+          throw new Error(`Failed to load spec (${response.status})`);
+        }
+        const payload = await response.json();
         if (!cancelled) {
-          setSpec(embedded);
+          setSpec(payload);
           setLoading(false);
           return;
         }
@@ -1760,18 +1759,12 @@ export const TvmInstructionTable = () => {
                         )}
                       </div>
                       <div className="tvm-spec-cell tvm-spec-cell--description">
-                        {instruction.descriptionHtml ? (
+                        {instruction.description ? (
                           <div
                             className="tvm-description"
-                            dangerouslySetInnerHTML={{ __html: instruction.descriptionHtml }}
+                            dangerouslySetInnerHTML={{ __html: instruction.description }}
                           />
-                        ) : instruction.description ? (
-                          <div className="tvm-description">
-                            <MarkdownBlock source={instruction.description} />
-                          </div>
-                        ) : (
-                          <p className="tvm-description">Description pending in tvm-spec.</p>
-                        )}
+                        ) : null }
                         <div className="tvm-description-meta">
                           <span className="tvm-category-pill">
                             {instruction.categoryLabel}
