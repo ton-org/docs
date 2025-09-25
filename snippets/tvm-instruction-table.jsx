@@ -8,7 +8,9 @@ const React =
         })();
 
 export const TvmInstructionTable = () => {
-  const { useCallback, useEffect, useMemo, useState } = React;
+  const { useCallback, useEffect, useMemo, useRef, useState } = React;
+
+  const PERSIST_KEY = "tvm-instruction-table::filters";
 
   const SPEC_REPO = "https://github.com/hacker-volodya/tvm-spec-docs-builder";
   const SPEC_COMMIT = "refs/heads/master";
@@ -113,6 +115,25 @@ export const TvmInstructionTable = () => {
     return `${name}${type ? `:${type}` : ""}${sizePart}${range}`;
   }
 
+  function formatInlineMarkdown(text) {
+    if (typeof text !== "string") return "";
+    const trimmed = text.trim();
+    if (!trimmed) return "";
+    const escaped = trimmed
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    const withCode = escaped.replace(/`([^`]+)`/g, (_match, code) => {
+      return `<code>${code}</code>`;
+    });
+    const withLinks = withCode.replace(
+      /\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
+      (_match, label, url) =>
+        `<a href="${url}" target="_blank" rel="noreferrer">${label}</a>`
+    );
+    return withLinks.replace(/\n/g, "<br />");
+  }
+
   function compareOpcodes(a, b) {
     const sanitize = (value) => (value || "").replace(/[^0-9a-f]/gi, "");
     const ax = Number.parseInt(sanitize(a), 16);
@@ -131,6 +152,48 @@ export const TvmInstructionTable = () => {
       .split(/\s+/)
       .map((t) => t.trim())
       .filter((t) => t.length >= 2); // drop 1-char tokens as too noisy
+  }
+
+  function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function highlightMatches(text, tokens) {
+    if (typeof text !== "string") return text;
+    const safeTokens = Array.isArray(tokens)
+      ? tokens.filter((token) => token && token.length > 0)
+      : [];
+    if (safeTokens.length === 0) return text;
+    const pattern = safeTokens.map(escapeRegExp).join("|");
+    const regex = new RegExp(`(${pattern})`, "gi");
+    const parts = text.split(regex);
+    return parts.map((part, idx) =>
+      idx % 2 === 1 ? (
+        <span key={`highlight-${idx}`} className="tvm-highlight">
+          {part}
+        </span>
+      ) : (
+        part
+      )
+    );
+  }
+
+  function highlightHtmlContent(html, tokens) {
+    if (typeof html !== "string") return html || "";
+    const safeTokens = Array.isArray(tokens)
+      ? tokens.filter((token) => token && token.length > 0)
+      : [];
+    if (safeTokens.length === 0) return html;
+    const pattern = safeTokens.map(escapeRegExp).join("|");
+    if (!pattern) return html;
+    const regex = new RegExp(`(${pattern})`, "gi");
+    return html
+      .split(/(<[^>]+>)/g)
+      .map((segment) => {
+        if (segment.startsWith("<")) return segment;
+        return segment.replace(regex, '<span class="tvm-highlight">$1</span>');
+      })
+      .join("");
   }
 
   function getItemSearchFields(item) {
@@ -224,20 +287,6 @@ export const TvmInstructionTable = () => {
     }
   }
 
-  function formatRegister(register) {
-    if (!register) return "?";
-    if (register.type === "constant") {
-      return `c${register.index}`;
-    }
-    if (register.type === "variable") {
-      return register.var_name || "var";
-    }
-    if (register.type === "special") {
-      return register.name || "special";
-    }
-    return "register";
-  }
-
   function formatAliasOperands(operands) {
     return Object.entries(operands)
       .map(([name, value]) => `${name}=${value}`)
@@ -282,13 +331,11 @@ export const TvmInstructionTable = () => {
     return url;
   }
 
-  function renderControlFlowSummary(controlFlow, isMissing) {
+  function renderControlFlowSummary(controlFlow) {
     if (!controlFlow) {
       return (
         <p className="tvm-missing-placeholder">
-          {isMissing
-            ? "Control flow branches missing in tvm-spec."
-            : "Control flow data unavailable."}
+          Control flow details are not available.
         </p>
       );
     }
@@ -319,9 +366,7 @@ export const TvmInstructionTable = () => {
 
     return (
       <p className="tvm-missing-placeholder">
-        {isMissing
-          ? "Control flow documentation incomplete in tvm-spec."
-          : "Control flow data unavailable."}
+        Control flow details are not available.
       </p>
     );
   }
@@ -336,7 +381,7 @@ export const TvmInstructionTable = () => {
             key={key}
             className="tvm-stack-pill tvm-stack-pill--conditional"
           >
-            Conditional: {entry.name || "?"}
+            Conditional: {highlightMatches(String(entry.name || "?"), searchTokens)}
           </span>
         );
       }
@@ -344,7 +389,7 @@ export const TvmInstructionTable = () => {
       return (
         <div key={key} className="tvm-stack-conditional">
           <span className="tvm-stack-conditional-name">
-            Conditional: {entry.name || "?"}
+            Conditional: {highlightMatches(String(entry.name || "?"), searchTokens)}
           </span>
           {Array.isArray(entry.match) && entry.match.length > 0 ? (
             entry.match.map((matchArm, idx) => (
@@ -353,7 +398,7 @@ export const TvmInstructionTable = () => {
                 className="tvm-stack-conditional-branch"
               >
                 <span className="tvm-stack-conditional-label">
-                  = {String(matchArm.value)}
+                  = {highlightMatches(String(matchArm.value ?? ""), searchTokens)}
                 </span>
                 <div className="tvm-stack-conditional-values">
                   {Array.isArray(matchArm.stack) &&
@@ -412,7 +457,7 @@ export const TvmInstructionTable = () => {
       const label = `${entry.name || "items"}[${entry.length_var ?? ""}]`;
       return (
         <span key={key} className="tvm-stack-pill tvm-stack-pill--array">
-          {label}
+          {highlightMatches(label, searchTokens)}
         </span>
       );
     }
@@ -426,7 +471,10 @@ export const TvmInstructionTable = () => {
           : entry.value;
       return (
         <span key={key} className="tvm-stack-pill tvm-stack-pill--const">
-          {String(value)}: {entry.value_type || "Const"}
+          {highlightMatches(String(value), searchTokens)}: {highlightMatches(
+            String(entry.value_type || "Const"),
+            searchTokens
+          )}
         </span>
       );
     }
@@ -439,7 +487,7 @@ export const TvmInstructionTable = () => {
 
     return (
       <span key={key} className="tvm-stack-pill tvm-stack-pill--simple">
-        {label}
+        {highlightMatches(label, searchTokens)}
       </span>
     );
   }
@@ -499,143 +547,299 @@ export const TvmInstructionTable = () => {
     const writesRegisters = Array.isArray(instruction.registers?.outputs)
       ? instruction.registers.outputs
       : [];
+    const hasRegisterInfo = readsRegisters.length > 0 || writesRegisters.length > 0;
+    const hasStackData =
+      !instruction.missing.inputs || !instruction.missing.outputs;
+    const hasFiftExamples =
+      Array.isArray(instruction.fiftExamples) &&
+      instruction.fiftExamples.length > 0;
+    const descriptionHtml = highlightHtmlContent(
+      instruction.descriptionHtml || instruction.description || "",
+      searchTokens
+    );
+    const implementationRefs = Array.isArray(instruction.implementationRefs)
+      ? instruction.implementationRefs.filter(Boolean)
+      : [];
+    const hasImplementation = implementationRefs.length > 0;
+
+    const renderRegisterList = (list, keyPrefix) => {
+      const tokens = Array.isArray(list)
+        ? list
+            .map((register, idx) => {
+              if (!register) return null;
+              if (register.type === "special" && register.name) {
+                return (
+                  <span
+                    key={`${keyPrefix}-special-${idx}`}
+                    className="tvm-register-token tvm-register-token--special"
+                  >
+                    {register.name}
+                  </span>
+                );
+              }
+              const sub =
+                register.type === "variable"
+                  ? register.var_name || "i"
+                  : typeof register.index === "number"
+                  ? register.index
+                  : register.var_name || "?";
+              return (
+                <span key={`${keyPrefix}-const-${idx}`} className="tvm-register-token">
+                  c<sub>{sub}</sub>
+                </span>
+              );
+            })
+            .filter(Boolean)
+        : [];
+
+      return tokens.flatMap((token, idx) =>
+        idx === 0
+          ? [token]
+          : [
+              <span key={`${keyPrefix}-sep-${idx}`} className="tvm-register-sep">
+                ,{" "}
+              </span>,
+              token,
+            ]
+      );
+    };
+
+    const badgeNodes = [
+      <span key="gas" className="tvm-detail-badge">
+        <span className="tvm-detail-badge-label">Gas</span>{" "}
+        <span className="tvm-detail-badge-value">
+          {highlightMatches(String(instruction.gasDisplay || "N/A"), searchTokens)}
+        </span>
+      </span>,
+      <span key="version" className="tvm-detail-badge">
+        <span className="tvm-detail-badge-label">TVM</span>{" "}
+        <span className="tvm-detail-badge-value">
+          {highlightMatches(
+            instruction.since > 0 ? `v${instruction.since}` : "v0",
+            searchTokens
+          )}
+        </span>
+      </span>,
+    ];
+
+    if (hasRegisterInfo) {
+      if (readsRegisters.length > 0) {
+        badgeNodes.push(
+          <span key="registers-read" className="tvm-detail-badge tvm-detail-badge--register">
+            <span className="tvm-detail-badge-label">Read registers</span>{" "}
+            <span className="tvm-detail-badge-value">
+              {renderRegisterList(readsRegisters, "read")}
+            </span>
+          </span>
+        );
+      }
+      if (writesRegisters.length > 0) {
+        badgeNodes.push(
+          <span key="registers-write" className="tvm-detail-badge tvm-detail-badge--register">
+            <span className="tvm-detail-badge-label">Write registers</span>{" "}
+            <span className="tvm-detail-badge-value">
+              {renderRegisterList(writesRegisters, "write")}
+            </span>
+          </span>
+        );
+      }
+    }
 
     return (
       <div className="tvm-detail-panel">
-        <div className="tvm-detail-grid">
-          <section className="tvm-detail-section">
-            <h4 className="tvm-detail-title">Summary</h4>
-            <dl className="tvm-detail-dl">
-              <div className="tvm-detail-row">
-                <dt>Category</dt>
-                <dd>{instruction.categoryLabel}</dd>
-              </div>
-              <div className="tvm-detail-row">
-                <dt>Since</dt>
-                <dd>v{instruction.since}</dd>
-              </div>
-              <div className="tvm-detail-row">
-                <dt>Gas</dt>
-                <dd>{instruction.gasDisplay}</dd>
-              </div>
-              {instruction.fift && (
-                <div className="tvm-detail-row">
-                  <dt>Fift</dt>
-                  <dd>
-                    <code>{instruction.fift}</code>
-                  </dd>
-                </div>
-              )}
-              {readsRegisters.length > 0 && (
-                <div className="tvm-detail-row">
-                  <dt>Reads</dt>
-                  <dd>{readsRegisters.map(formatRegister).join(", ")}</dd>
-                </div>
-              )}
-              {writesRegisters.length > 0 && (
-                <div className="tvm-detail-row">
-                  <dt>Writes</dt>
-                  <dd>{writesRegisters.map(formatRegister).join(", ")}</dd>
-                </div>
-              )}
-            </dl>
-          </section>
-
-          {(!instruction.missing.inputs || !instruction.missing.outputs) && (
-            <section className="tvm-detail-section">
-              <h4 className="tvm-detail-title">Stack signature</h4>
-              {renderStackColumns(instruction, "detail")}
-            </section>
-          )}
-
-          <section className="tvm-detail-section">
-            <h4 className="tvm-detail-title">Bytecode</h4>
-            {instruction.tlb ? (
-              <code className="tvm-detail-code">{instruction.tlb}</code>
-            ) : (
-              <p className="tvm-missing-placeholder">
-                TL-B layout missing in tvm-spec.
-              </p>
-            )}
-          </section>
-
-          <section className="tvm-detail-section">
-            <h4 className="tvm-detail-title">Control flow</h4>
-            {renderControlFlowSummary(
-              instruction.controlFlow,
-              instruction.missing.controlFlow
-            )}
-          </section>
-
-          
-          {hasAliases && (
-            <section className="tvm-detail-section">
-              <h4 className="tvm-detail-title">Aliases</h4>
-              <ul className="tvm-alias-list">
-                {instruction.aliases.map((alias) => (
-                  <li key={alias.mnemonic} className="tvm-alias-item">
-                    <div className="tvm-alias-headline">
-                      <code>{alias.mnemonic}</code>
-                      <span className="tvm-alias-meta">
-                        alias of <code>{alias.alias_of}</code>
-                      </span>
-                    </div>
-                    {alias.description && (
-                      <p className="tvm-alias-description">
-                        {alias.description}
-                      </p>
-                    )}
-                    <div className="tvm-alias-meta-row">
-                      {alias.doc_fift && (
-                        <span className="tvm-alias-pill">
-                          Fift <code>{alias.doc_fift}</code>
-                        </span>
-                      )}
-                      {alias.doc_stack && (
-                        <span className="tvm-alias-pill">
-                          Stack {alias.doc_stack}
-                        </span>
-                      )}
-                      {alias.operands &&
-                        Object.keys(alias.operands).length > 0 && (
-                          <span className="tvm-alias-pill">
-                            Operands {formatAliasOperands(alias.operands)}
-                          </span>
-                        )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          <section className="tvm-detail-section">
-            <h4 className="tvm-detail-title">Implementation</h4>
-            {Array.isArray(instruction.implementationRefs) && instruction.implementationRefs.length > 0 ? (
-              <ul className="tvm-impl-list">
-                {instruction.implementationRefs.map((ref, idx) => {
-                  const filename = ref.file || "source";
-                  const linePart = typeof ref.line === "number" && ref.line > 0 ? `:${ref.line}` : "";
-                  const func = ref.functionName || "";
-                  const href = buildGitHubLineUrl(ref.path, ref.line);
-                  return (
-                    <li key={`${instruction.mnemonic}-impl-${idx}`} className="tvm-impl-item">
-                      <a className="tvm-impl-link" href={href} target="_blank" rel="noreferrer">
-                        <code className="tvm-impl-filename">{filename}{linePart}</code>
-                        {func && (
-                          <>
-                            <span className="tvm-impl-sep">–</span>
-                            <code className="tvm-impl-func">{func}</code>
-                          </>
-                        )}
-                      </a>
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : null }
-          </section>
+        <div className="tvm-detail-header">
+          <div className="tvm-detail-header-main">
+            <h4 className="tvm-detail-title">Description</h4>
+            <span className="tvm-category-pill">{instruction.categoryLabel}</span>
+          </div>
+          <div className="tvm-detail-badges">{badgeNodes}</div>
         </div>
+
+        <div className="tvm-detail-columns">
+          <div className="tvm-detail-main">
+            {descriptionHtml ? (
+              <div
+                className="tvm-description"
+                dangerouslySetInnerHTML={{ __html: descriptionHtml }}
+              />
+            ) : (
+              <p className="tvm-missing-placeholder">Description not available.</p>
+            )}
+
+            <div className="tvm-detail-fift">
+              <span className="tvm-detail-subtitle">Fift command</span>
+              {instruction.fift ? (
+                <code className="tvm-detail-code tvm-detail-code--inline">
+                  {highlightMatches(String(instruction.fift), searchTokens)}
+                </code>
+              ) : (
+                <span className="tvm-detail-muted">Not documented.</span>
+              )}
+            </div>
+          </div>
+
+          <aside className="tvm-detail-side">
+            <div className="tvm-side-block">
+              <span className="tvm-side-title">Opcode</span>
+              {instruction.tlb ? (
+                <code className="tvm-detail-code">
+                  {highlightMatches(String(instruction.tlb), searchTokens)}
+                </code>
+              ) : (
+                <p className="tvm-missing-placeholder">TL-B layout not available.</p>
+              )}
+            </div>
+
+            <div className="tvm-side-block">
+              <span className="tvm-side-title">Operands</span>
+              {Array.isArray(instruction.operands) && instruction.operands.length > 0 ? (
+                <ul className="tvm-operands-list tvm-operands-list--simple">
+                  {instruction.operands.map((operand, idx) => {
+                    if (!operand || typeof operand !== "object") return null;
+                    const summary = highlightMatches(
+                      formatOperandSummary(operand),
+                      searchTokens
+                    );
+                    const range =
+                      operand.min_value !== undefined || operand.max_value !== undefined
+                        ? [operand.min_value, operand.max_value]
+                        : null;
+                    const hints = Array.isArray(operand.display_hints)
+                      ? operand.display_hints.map((hint) => hint?.type).filter(Boolean)
+                      : [];
+                    return (
+                      <li key={`operand-${idx}`} className="tvm-operands-item">
+                        <div className="tvm-operands-line">{summary}</div>
+                        {range && range.some((value) => value !== undefined) && (
+                          <div className="tvm-operands-detail">
+                            Range {highlightMatches(String(range[0] ?? "?"), searchTokens)} – {highlightMatches(
+                              String(range[1] ?? "?"),
+                              searchTokens
+                            )}
+                          </div>
+                        )}
+                        {hints.length > 0 && (
+                          <div className="tvm-operands-detail">
+                            Hints: {highlightMatches(hints.join(", "), searchTokens)}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="tvm-detail-muted">No operands.</p>
+              )}
+            </div>
+
+            <div className="tvm-side-block">
+              <span className="tvm-side-title">Stack</span>
+              {hasStackData ? (
+                renderStackColumns(instruction, "detail")
+              ) : (
+                <p className="tvm-missing-placeholder">Stack effects not available.</p>
+              )}
+            </div>
+          </aside>
+        </div>
+
+        <section className="tvm-detail-section">
+          <h4 className="tvm-detail-title">Control flow</h4>
+          {renderControlFlowSummary(instruction.controlFlow)}
+        </section>
+
+        {hasFiftExamples && (
+          <section className="tvm-detail-section tvm-detail-section--wide">
+            <h4 className="tvm-detail-title">Fift examples</h4>
+            <ul className="tvm-example-list">
+              {instruction.fiftExamples.map((example, idx) => {
+                const description =
+                  typeof example.description === "string" ? example.description : "";
+                const fiftCode = typeof example.fift === "string" ? example.fift : "";
+                return (
+                  <li
+                    key={`${instruction.mnemonic}-example-${idx}`}
+                    className="tvm-example-item"
+                  >
+                    {description && (
+                      <p
+                        className="tvm-example-description"
+                        dangerouslySetInnerHTML={{
+                          __html: formatInlineMarkdown(description),
+                        }}
+                      />
+                    )}
+                    {fiftCode && (
+                      <code className="tvm-detail-code tvm-example-code">{fiftCode}</code>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
+        {hasAliases && (
+          <section className="tvm-detail-section tvm-detail-section--wide">
+            <h4 className="tvm-detail-title">Aliases</h4>
+            <ul className="tvm-alias-list">
+              {instruction.aliases.map((alias) => (
+                <li key={alias.mnemonic} className="tvm-alias-item">
+                  <div className="tvm-alias-headline">
+                    <code>{alias.mnemonic}</code>
+                    <span className="tvm-alias-meta">
+                      alias of <code>{alias.alias_of}</code>
+                    </span>
+                  </div>
+                  {alias.description && (
+                    <p className="tvm-alias-description">{alias.description}</p>
+                  )}
+                  <div className="tvm-alias-meta-row">
+                    {alias.doc_fift && (
+                      <span className="tvm-alias-pill">
+                        Fift <code>{alias.doc_fift}</code>
+                      </span>
+                    )}
+                    {alias.doc_stack && (
+                      <span className="tvm-alias-pill">Stack {alias.doc_stack}</span>
+                    )}
+                    {alias.operands && Object.keys(alias.operands).length > 0 && (
+                      <span className="tvm-alias-pill">
+                        Operands {formatAliasOperands(alias.operands)}
+                      </span>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {hasImplementation && (
+          <section className="tvm-detail-section tvm-detail-section--wide">
+            <h4 className="tvm-detail-title">Implementation</h4>
+            <div className="tvm-impl-badges">
+              {implementationRefs.map((ref, idx) => {
+                const filename = ref.file || "source";
+                const linePart =
+                  typeof ref.line === "number" && ref.line > 0 ? `:${ref.line}` : "";
+                const href = buildGitHubLineUrl(ref.path, ref.line);
+                return (
+                  <a
+                    key={`${instruction.mnemonic}-impl-${idx}`}
+                    className="tvm-detail-badge tvm-detail-badge--link"
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {filename}
+                    {linePart}
+                  </a>
+                );
+              })}
+            </div>
+          </section>
+        )}
       </div>
     );
   }
@@ -648,6 +852,8 @@ export const TvmInstructionTable = () => {
   const [sortMode, setSortMode] = useState("opcode");
   const [expanded, setExpanded] = useState({});
   const [copied, setCopied] = useState({});
+  const [activeAnchorId, setActiveAnchorId] = useState(null);
+  const searchInputRef = useRef(null);
   const tableStyles = useMemo(
     () => `
 .tvm-instruction-app {
@@ -676,6 +882,10 @@ export const TvmInstructionTable = () => {
   --tvm-stack-conditional-border: rgb(var(--primary-dark) / 0.32);
   --tvm-stack-label: var(--mint-text-tertiary, rgb(var(--gray-600) / 0.65));
   --tvm-pill-muted-bg: rgb(var(--gray-400) / 0.12);
+  --tvm-row-padding-y: 0.85rem;
+  --tvm-row-padding-x: 1rem;
+  --tvm-chip-padding-y: 0.2rem;
+  --tvm-chip-padding-x: 0.6rem;
   color: var(--tvm-text-primary);
   background: var(--tvm-surface);
   border: 1px solid var(--tvm-border);
@@ -684,12 +894,30 @@ export const TvmInstructionTable = () => {
   box-shadow: 0 24px 60px -40px rgb(var(--gray-900) / 0.9);
 }
 
+.tvm-instruction-app.is-density-compact {
+  --tvm-row-padding-y: 0.6rem;
+  --tvm-row-padding-x: 0.75rem;
+  --tvm-chip-padding-y: 0.16rem;
+  --tvm-chip-padding-x: 0.5rem;
+  padding: 1.25rem;
+}
+
 .tvm-instruction-toolbar {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
   align-items: flex-end;
   margin-bottom: 1.25rem;
+}
+
+.tvm-toolbar-utilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+  flex: 1 1 240px;
 }
 
 .tvm-field {
@@ -719,24 +947,183 @@ export const TvmInstructionTable = () => {
   font-size: 0.95rem;
 }
 
+.tvm-field--search {
+  min-width: min(260px, 100%);
+}
+
+.tvm-search-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.tvm-field--search input {
+  padding-left: 2.2rem;
+}
+
+.tvm-search-icon {
+  position: absolute;
+  left: 0.75rem;
+  width: 1rem;
+  height: 1rem;
+  color: var(--tvm-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tvm-search-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.tvm-clear-search {
+  position: absolute;
+  right: 0.5rem;
+  border: none;
+  background: none;
+  color: var(--tvm-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem;
+  cursor: pointer;
+  transition: color 0.2s ease-in-out;
+}
+
+.tvm-clear-search svg {
+  width: 14px;
+  height: 14px;
+}
+
+.tvm-clear-search:hover {
+  color: var(--tvm-accent-strong);
+}
+
+.tvm-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 8px;
+  border: 1px solid var(--tvm-border);
+  background: var(--tvm-surface-secondary);
+  color: var(--tvm-text-primary);
+  font-size: 0.82rem;
+  padding: 0.45rem 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease-in-out, border-color 0.2s ease-in-out, color 0.2s ease-in-out;
+}
+
+.tvm-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.tvm-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.tvm-button:not(:disabled):hover {
+  border-color: var(--tvm-border-strong);
+  background: rgb(var(--gray-200) / 0.12);
+}
+
+.tvm-button--ghost {
+  background: transparent;
+  color: var(--tvm-text-secondary);
+}
+
+.tvm-button--ghost:not(:disabled):hover {
+  color: var(--tvm-text-primary);
+  background: rgb(var(--gray-200) / 0.1);
+}
+
 .tvm-instruction-meta {
   margin-bottom: 1rem;
   font-size: 0.85rem;
   color: var(--tvm-text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.tvm-meta-items {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
   align-items: center;
 }
 
-.tvm-missing-banner {
-  margin-bottom: 1rem;
-  padding: 0.65rem 0.9rem;
-  border-radius: 10px;
-  background: var(--tvm-callout-bg);
-  border: 1px solid var(--tvm-callout-border);
-  color: var(--tvm-callout-text);
-  font-size: 0.85rem;
+.tvm-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.tvm-meta-link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--tvm-accent-subtle);
+  font-weight: 500;
+  text-decoration: none;
+  gap: 0.3rem;
+}
+
+.tvm-meta-link:hover {
+  text-decoration: underline;
+}
+
+.tvm-meta-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.tvm-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 999px;
+  padding: var(--tvm-chip-padding-y) var(--tvm-chip-padding-x);
+  font-size: 0.72rem;
+  color: var(--tvm-text-secondary);
+  background: var(--tvm-pill-muted-bg);
+  border: 1px solid transparent;
+  appearance: none;
+  cursor: pointer;
+  transition: border-color 0.2s ease-in-out, color 0.2s ease-in-out, background 0.2s ease-in-out;
+}
+
+.tvm-meta-chip:hover {
+  border-color: var(--tvm-border-strong);
+  color: var(--tvm-text-primary);
+}
+
+.tvm-meta-chip:focus-visible {
+  outline: 2px solid var(--tvm-accent-strong);
+  outline-offset: 2px;
+}
+
+.tvm-meta-chip-label {
+  white-space: nowrap;
+}
+
+.tvm-meta-chip-close {
+  font-size: 0.85em;
+  line-height: 1;
+}
+
+.tvm-highlight {
+  display: inline;
+  background: rgb(var(--primary) / 0.18);
+  color: var(--tvm-accent-subtle);
+  border-radius: 4px;
+  padding: 0.05em 0.12em;
+  margin: 0 -0.04em;
+  line-height: inherit;
+  box-decoration-break: clone;
 }
 
 .tvm-spec-grid-container {
@@ -761,7 +1148,7 @@ export const TvmInstructionTable = () => {
 
 .tvm-spec-header,
 .tvm-spec-row {
-  --tvm-grid-template: 60px 110px 260px minmax(240px, 2fr) minmax(260px, 1.5fr);
+  --tvm-grid-template: 60px 110px 260px minmax(320px, 2fr);
   display: grid;
   grid-template-columns: var(--tvm-grid-template);
   min-width: 860px;
@@ -776,7 +1163,7 @@ export const TvmInstructionTable = () => {
 }
 
 .tvm-spec-header > div {
-  padding: 0.75rem 1rem;
+  padding: calc(var(--tvm-row-padding-y) - 0.1rem) var(--tvm-row-padding-x);
   font-weight: 600;
 }
 
@@ -802,7 +1189,7 @@ export const TvmInstructionTable = () => {
 }
 
 .tvm-spec-cell {
-  padding: 0.85rem 1rem;
+  padding: var(--tvm-row-padding-y) var(--tvm-row-padding-x);
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
@@ -828,6 +1215,32 @@ export const TvmInstructionTable = () => {
 
 .tvm-spec-cell--name {
   gap: 0.4rem;
+}
+
+.tvm-instruction-app.is-density-compact .tvm-spec-row {
+  border-top-width: 0.5px;
+}
+
+.tvm-instruction-app.is-density-compact .tvm-mnemonic {
+  font-size: 0.92rem;
+}
+
+.tvm-instruction-app.is-density-compact .tvm-spec-cell--opcode {
+  font-size: 0.78rem;
+}
+
+.tvm-instruction-app.is-density-compact .tvm-operand-chip {
+  font-size: 0.7rem;
+  padding: 0.14rem 0.38rem;
+}
+
+.tvm-instruction-app.is-density-compact .tvm-inline-badge {
+  font-size: 0.68rem;
+  padding: 0.14rem 0.45rem;
+}
+
+.tvm-instruction-app.is-density-compact .tvm-spec-cell--description {
+  gap: 0.2rem;
 }
 
 .tvm-name-line {
@@ -867,6 +1280,34 @@ export const TvmInstructionTable = () => {
   align-items: baseline;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+.tvm-row-indicator {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: var(--tvm-text-muted);
+  transition: transform 0.2s ease-in-out, color 0.2s ease-in-out, background 0.2s ease-in-out;
+  pointer-events: none;
+}
+
+.tvm-row-indicator svg {
+  width: 14px;
+  height: 14px;
+}
+
+.tvm-spec-row:hover .tvm-row-indicator {
+  background: var(--tvm-pill-muted-bg);
+  color: var(--tvm-text-secondary);
+}
+
+.tvm-row-indicator.is-expanded {
+  transform: rotate(180deg);
+  color: var(--tvm-accent-strong);
 }
 
 .tvm-mnemonic {
@@ -957,16 +1398,16 @@ export const TvmInstructionTable = () => {
 }
 
 .tvm-stack-columns {
-  display: flex;
-  gap: 0.75rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.6rem;
 }
 
 .tvm-stack-column {
-  flex: 1;
   background: var(--tvm-surface-secondary);
-  border: 1px dashed var(--tvm-border-strong);
+  border: 1px solid rgb(var(--gray-400) / 0.35);
   border-radius: 10px;
-  padding: 0.65rem 0.7rem;
+  padding: 0.6rem 0.65rem;
   min-width: 0;
 }
 
@@ -1004,6 +1445,11 @@ export const TvmInstructionTable = () => {
   width: fit-content;
 }
 
+.tvm-instruction-app.is-density-compact .tvm-stack-pill {
+  font-size: 0.7rem;
+  padding: 0.14rem 0.35rem;
+}
+
 .tvm-stack-pill--simple {
   background: var(--tvm-stack-simple-bg);
   color: var(--tvm-stack-simple-text);
@@ -1032,6 +1478,19 @@ export const TvmInstructionTable = () => {
 .tvm-stack-pill--more {
   background: rgb(var(--gray-400) / 0.18);
   color: var(--tvm-text-secondary);
+}
+
+.tvm-stack-footnote {
+  display: inline-block;
+  font-family: 'JetBrains Mono', 'Menlo', 'Monaco', monospace;
+  font-size: 0.75rem;
+  background: rgb(var(--gray-200) / 0.12);
+  border: 1px solid var(--tvm-border);
+  border-radius: 6px;
+  padding: 0.3rem 0.45rem;
+  color: var(--tvm-text-secondary);
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .tvm-stack-conditional {
@@ -1086,58 +1545,145 @@ export const TvmInstructionTable = () => {
 }
 
 .tvm-detail-panel {
-  background: var(--tvm-surface-secondary);
+  background: var(--tvm-surface);
   border: 1px solid var(--tvm-border);
-  border-radius: 12px;
-  padding: 1.1rem;
+  border-radius: 14px;
+  padding: 1rem 1.15rem 1.25rem;
+  box-shadow: 0 18px 40px -30px rgb(var(--gray-900) / 0.7);
 }
 
-.tvm-detail-grid {
-  display: grid;
-  gap: 1.1rem;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-}
-
-.tvm-detail-section {
+.tvm-detail-header {
   display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.tvm-detail-header-main {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  flex-wrap: wrap;
 }
 
 .tvm-detail-title {
   margin: 0;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--tvm-text-secondary);
 }
 
-.tvm-detail-dl {
-  margin: 0;
-  display: grid;
-  gap: 0.35rem;
-}
-
-.tvm-detail-row {
+.tvm-detail-badges {
   display: flex;
-  justify-content: space-between;
-  gap: 0.6rem;
-  font-size: 0.84rem;
+  flex-wrap: wrap;
+  gap: 0.45rem;
 }
 
-.tvm-detail-row dt {
-  margin: 0;
+.tvm-detail-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--tvm-border);
+  border-radius: 999px;
+  background: var(--tvm-surface-secondary);
+  padding: 0.28rem 0.7rem;
+  font-size: 0.78rem;
+  color: var(--tvm-text-primary);
+}
+
+.tvm-detail-badge-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   color: var(--tvm-text-secondary);
-  font-size: 0.72rem;
-  letter-spacing: 0.05em;
+}
+
+.tvm-detail-badge-value {
+  font-weight: 600;
+  display: inline-flex;
+  gap: 0.2rem;
+  color: var(--tvm-text-primary);
+}
+
+.tvm-detail-badge--register {
+  background: rgb(var(--primary) / 0.08);
+  border-color: rgb(var(--primary) / 0.2);
+}
+
+.tvm-register-token {
+  font-family: 'JetBrains Mono', 'Menlo', 'Monaco', monospace;
+  font-size: 0.82rem;
+  color: var(--tvm-text-primary);
+}
+
+.tvm-register-token sub {
+  font-size: 0.7em;
+}
+
+.tvm-register-token--special {
+  font-weight: 600;
   text-transform: uppercase;
 }
 
-.tvm-detail-row dd {
-  margin: 0;
+.tvm-register-sep {
+  color: var(--tvm-text-secondary);
+}
+
+.tvm-detail-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: clamp(1rem, 2.5vw, 1.6rem);
+  align-items: flex-start;
+  margin-bottom: 1.1rem;
+}
+
+.tvm-detail-main {
+  flex: 1 1 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.tvm-detail-main .tvm-description {
+  display: block;
   color: var(--tvm-text-primary);
-  font-weight: 600;
-  font-size: 0.85rem;
+  -webkit-line-clamp: initial;
+  -webkit-box-orient: initial;
+  overflow: visible;
+}
+
+.tvm-detail-subtitle {
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--tvm-text-secondary);
+}
+
+.tvm-detail-fift {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.tvm-detail-code {
+  display: block;
+  font-family: 'JetBrains Mono', 'Menlo', 'Monaco', monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  background: rgb(var(--gray-200) / 0.08);
+  border: 1px solid var(--tvm-border);
+  border-radius: 8px;
+  padding: 0.6rem 0.65rem;
+  color: var(--tvm-text-primary);
+}
+
+.tvm-detail-code--inline {
+  display: inline-flex;
+  padding: 0.35rem 0.5rem;
 }
 
 .tvm-detail-muted {
@@ -1146,16 +1692,115 @@ export const TvmInstructionTable = () => {
   color: var(--tvm-text-secondary);
 }
 
-.tvm-detail-code {
-  display: block;
-  font-family: 'JetBrains Mono', 'Menlo', 'Monaco', monospace;
-  font-size: 0.78rem;
-  white-space: pre-wrap;
+.tvm-detail-side {
+  flex: 0 1 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.tvm-side-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
   background: var(--tvm-surface-secondary);
-  border: 1px solid var(--tvm-border);
-  border-radius: 8px;
-  padding: 0.6rem 0.65rem;
+  border: 1px solid rgb(var(--gray-400) / 0.3);
+  border-radius: 12px;
+  padding: 0.85rem 0.95rem;
+}
+
+.tvm-side-title {
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--tvm-text-secondary);
+}
+
+.tvm-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  background: var(--tvm-surface-secondary);
+  border: 1px solid rgb(var(--gray-400) / 0.3);
+  border-radius: 12px;
+  padding: 0.85rem 0.95rem;
+  margin-bottom: 0.9rem;
+}
+
+.tvm-detail-section--wide {
+  margin-bottom: 0.9rem;
+}
+
+.tvm-operands-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.tvm-operands-list--simple .tvm-operands-item {
+  background: var(--tvm-surface);
+  border: 1px solid rgb(var(--gray-400) / 0.25);
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.tvm-operands-line {
+  font-weight: 600;
+  font-size: 0.88rem;
   color: var(--tvm-text-primary);
+}
+
+.tvm-operands-detail {
+  font-size: 0.78rem;
+  color: var(--tvm-text-secondary);
+}
+
+.tvm-impl-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.tvm-detail-badge--link {
+  text-decoration: none;
+  color: var(--tvm-text-primary);
+  transition: border-color 0.2s ease-in-out, color 0.2s ease-in-out;
+}
+
+.tvm-detail-badge--link:hover {
+  border-color: var(--tvm-accent);
+  color: var(--tvm-accent);
+}
+
+@media (max-width: 960px) {
+  .tvm-detail-header {
+    align-items: stretch;
+  }
+
+  .tvm-detail-columns {
+    flex-direction: column;
+  }
+
+  .tvm-detail-section {
+    margin-bottom: 0.8rem;
+  }
+}
+
+@media (max-width: 720px) {
+  .tvm-detail-panel {
+    padding: 0.95rem 1rem 1.1rem;
+  }
+
+  .tvm-side-block,
+  .tvm-detail-section {
+    padding: 0.85rem 0.9rem;
+  }
 }
 
 .tvm-control-flow {
@@ -1168,11 +1813,51 @@ export const TvmInstructionTable = () => {
   margin: 0;
   font-size: 0.78rem;
   color: var(--tvm-callout-text);
-  background: var(--tvm-callout-bg);
-  border: 1px solid var(--tvm-callout-border);
+  background: rgb(var(--primary) / 0.04);
+  border: 1px solid rgb(var(--primary) / 0.12);
   border-radius: 8px;
-  padding: 0.4rem 0.55rem;
+  padding: 0.35rem 0.55rem;
 }
+
+.tvm-example-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.tvm-example-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  background: var(--tvm-surface);
+  border: 1px solid rgb(var(--gray-400) / 0.28);
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem;
+}
+
+.tvm-example-description {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--tvm-text-primary);
+}
+
+.tvm-example-description a {
+  color: var(--tvm-accent);
+  text-decoration: none;
+}
+
+.tvm-example-description a:hover {
+  text-decoration: underline;
+}
+
+.tvm-example-code {
+  white-space: pre-wrap;
+}
+
+
 
 .tvm-alias-list {
   list-style: none;
@@ -1237,49 +1922,6 @@ export const TvmInstructionTable = () => {
   font-family: 'JetBrains Mono', 'Menlo', 'Monaco', monospace;
 }
 
-.tvm-impl-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  text-decoration: none;
-  color: var(--tvm-text-primary);
-  font-size: 0.9rem;
-  max-width: 100%;
-  overflow: hidden;
-}
-
-.tvm-impl-link:hover {
-  text-decoration: underline;
-}
-
-.tvm-impl-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.tvm-impl-item {
-  padding: 0.1rem 0;
-}
-
-.tvm-impl-filename,
-.tvm-impl-func {
-  font-family: 'JetBrains Mono', 'Menlo', 'Monaco', monospace;
-  background: var(--tvm-surface-secondary);
-  border: 1px solid var(--tvm-border);
-  border-radius: 6px;
-  padding: 0.1rem 0.35rem;
-  color: var(--tvm-text-primary);
-  white-space: nowrap;
-}
-
-.tvm-impl-sep {
-  color: var(--tvm-text-secondary);
-}
-
 .tvm-loading-row,
 .tvm-empty-row,
 .tvm-error-row {
@@ -1301,7 +1943,7 @@ export const TvmInstructionTable = () => {
 
   .tvm-spec-header,
   .tvm-spec-row {
-    --tvm-grid-template: 48px 95px 220px minmax(200px, 2fr) minmax(220px, 1.2fr);
+    --tvm-grid-template: 48px 95px 220px minmax(280px, 2fr);
     min-width: 720px;
   }
 }
@@ -1317,6 +1959,22 @@ export const TvmInstructionTable = () => {
     min-width: 0;
   }
 
+  .tvm-toolbar-utilities {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+
+  .tvm-toolbar-divider {
+    display: none;
+  }
+
+  .tvm-meta-items {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
   .tvm-stack-columns {
     flex-direction: column;
   }
@@ -1324,6 +1982,7 @@ export const TvmInstructionTable = () => {
 `,
     []
   );
+  const searchTokens = useMemo(() => createSearchTokens(search), [search]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1364,21 +2023,69 @@ export const TvmInstructionTable = () => {
     setExpanded({});
   }, [spec]);
 
-  const { instructions, missing } = useMemo(() => {
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(PERSIST_KEY);
+      if (!raw) return;
+      const prefs = JSON.parse(raw);
+      if (prefs && typeof prefs === "object") {
+        if (typeof prefs.search === "string") setSearch(prefs.search);
+        if (typeof prefs.category === "string") setCategory(prefs.category);
+        if (
+          typeof prefs.sortMode === "string" &&
+          ["opcode", "name", "category", "since"].includes(prefs.sortMode)
+        ) {
+          setSortMode(prefs.sortMode);
+        }
+      }
+    } catch (err) {
+      // ignore malformed localStorage content
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const payload = JSON.stringify({
+        search,
+        category,
+        sortMode,
+      });
+      window.localStorage.setItem(PERSIST_KEY, payload);
+    } catch (err) {
+      // ignore persistence failures (private mode, etc.)
+    }
+  }, [search, category, sortMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = (event) => {
+      if (event.defaultPrevented || event.key !== "/") return;
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      const active = document.activeElement;
+      if (active) {
+        const tagName = active.tagName ? active.tagName.toLowerCase() : "";
+        if (
+          tagName === "input" ||
+          tagName === "textarea" ||
+          active.isContentEditable
+        ) {
+          return;
+        }
+      }
+      event.preventDefault();
+      if (searchInputRef.current && typeof searchInputRef.current.focus === "function") {
+        searchInputRef.current.focus();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  const instructions = useMemo(() => {
     if (!spec) {
-      return {
-        instructions: [],
-        missing: {
-          description: [],
-          stackInputs: [],
-          stackOutputs: [],
-          stackDoc: [],
-          tlb: [],
-          implementation: [],
-          gas: [],
-          controlFlow: [],
-        },
-      };
+      return [];
     }
 
     const aliasByMnemonic = new Map();
@@ -1390,99 +2097,97 @@ export const TvmInstructionTable = () => {
       aliasByMnemonic.set(alias.alias_of, list);
     });
 
-    const missing = {
-      description: [],
-      stackInputs: [],
-      stackOutputs: [],
-      stackDoc: [],
-      tlb: [],
-      implementation: [],
-      gas: [],
-      controlFlow: [],
-    };
+    return (Array.isArray(spec.instructions) ? spec.instructions : []).map(
+      (raw, idx) => {
+        const doc = raw.doc || {};
+        const bytecode = raw.bytecode || {};
+        const valueFlow = raw.value_flow || {};
+        const inputs = Array.isArray(valueFlow.inputs?.stack)
+          ? valueFlow.inputs.stack
+          : [];
+        const outputs = Array.isArray(valueFlow.outputs?.stack)
+          ? valueFlow.outputs.stack
+          : [];
+        const registersIn = Array.isArray(valueFlow.inputs?.registers)
+          ? valueFlow.inputs.registers
+          : [];
+        const registersOut = Array.isArray(valueFlow.outputs?.registers)
+          ? valueFlow.outputs.registers
+          : [];
 
-    const instructions = (
-      Array.isArray(spec.instructions) ? spec.instructions : []
-    ).map((raw, idx) => {
-      const doc = raw.doc || {};
-      const bytecode = raw.bytecode || {};
-      const valueFlow = raw.value_flow || {};
-      const inputs = Array.isArray(valueFlow.inputs?.stack)
-        ? valueFlow.inputs.stack
-        : [];
-      const outputs = Array.isArray(valueFlow.outputs?.stack)
-        ? valueFlow.outputs.stack
-        : [];
-      const registersIn = Array.isArray(valueFlow.inputs?.registers)
-        ? valueFlow.inputs.registers
-        : [];
-      const registersOut = Array.isArray(valueFlow.outputs?.registers)
-        ? valueFlow.outputs.registers
-        : [];
+        const categoryKey = doc.category || "uncategorized";
+        const descriptionMissing = !doc.description;
+        const stackDocMissing = !doc.stack;
+        const gasMissing = !doc.gas;
+        const tlbMissing = !bytecode.tlb;
+        const inputsMissing = !Array.isArray(valueFlow.inputs?.stack);
+        const outputsMissing = !Array.isArray(valueFlow.outputs?.stack);
+        const implementationRefs = extractImplementationRefs(raw.implementation);
+        const implementationMissing = implementationRefs.length === 0;
+        const controlFlowMissing =
+          !raw.control_flow || !Array.isArray(raw.control_flow.branches);
 
-      const categoryKey = doc.category || "uncategorized";
-      const descriptionMissing = !doc.description;
-      const stackDocMissing = !doc.stack;
-      const gasMissing = !doc.gas;
-      const tlbMissing = !bytecode.tlb;
-      const inputsMissing = !Array.isArray(valueFlow.inputs?.stack);
-      const outputsMissing = !Array.isArray(valueFlow.outputs?.stack);
-      const implementationRefs = extractImplementationRefs(raw.implementation);
-      const implementationMissing = implementationRefs.length === 0;
-      const controlFlowMissing =
-        !raw.control_flow || !Array.isArray(raw.control_flow.branches);
+        const opcode = bytecode.prefix || "";
 
-      if (descriptionMissing) missing.description.push(raw.mnemonic);
-      if (stackDocMissing) missing.stackDoc.push(raw.mnemonic);
-      if (gasMissing) missing.gas.push(raw.mnemonic);
-      if (tlbMissing) missing.tlb.push(raw.mnemonic);
-      if (inputsMissing) missing.stackInputs.push(raw.mnemonic);
-      if (outputsMissing) missing.stackOutputs.push(raw.mnemonic);
-      if (implementationMissing) missing.implementation.push(raw.mnemonic);
-      if (controlFlowMissing) missing.controlFlow.push(raw.mnemonic);
-
-      const opcode = bytecode.prefix || "";
-
-      return {
-        uid: `${raw.mnemonic}__${opcode || 'nop'}__${idx}`,
-        mnemonic: raw.mnemonic,
-        since: typeof raw.since_version === "number" ? raw.since_version : 0,
-        categoryKey,
-        categoryLabel: humanizeCategoryKey(categoryKey),
-        description: doc.description || "",
-        descriptionHtml: typeof doc.description_html === "string" ? doc.description_html : "",
-        fift: doc.fift || "",
-        gas: doc.gas || "",
-        gasDisplay: formatGasDisplay(doc.gas),
-        stackDoc: doc.stack || "",
-        opcode,
-        tlb: bytecode.tlb || "",
-        operands: Array.isArray(bytecode.operands) ? bytecode.operands : [],
-        valueFlow: {
-          inputs,
-          outputs,
-        },
-        registers: {
-          inputs: registersIn,
-          outputs: registersOut,
-        },
-        controlFlow: raw.control_flow || null,
-        implementationRefs,
-        aliases: aliasByMnemonic.get(raw.mnemonic) || [],
-        missing: {
-          description: descriptionMissing,
-          gas: gasMissing,
-          tlb: tlbMissing,
-          stackDoc: stackDocMissing,
-          inputs: inputsMissing,
-          outputs: outputsMissing,
-          implementation: implementationMissing,
-          controlFlow: controlFlowMissing,
-        },
-      };
-    });
-
-    return { instructions, missing };
+        return {
+          uid: `${raw.mnemonic}__${opcode || 'nop'}__${idx}`,
+          mnemonic: raw.mnemonic,
+          since: typeof raw.since_version === "number" ? raw.since_version : 0,
+          categoryKey,
+          categoryLabel: humanizeCategoryKey(categoryKey),
+          description: doc.description || "",
+          descriptionHtml: typeof doc.description_html === "string"
+            ? doc.description_html
+            : "",
+          fift: doc.fift || "",
+          fiftExamples: Array.isArray(doc.fift_examples)
+            ? doc.fift_examples
+                .map((example) =>
+                  example && typeof example === "object"
+                    ? {
+                        description:
+                          typeof example.description === "string"
+                            ? example.description
+                            : "",
+                        fift:
+                          typeof example.fift === "string" ? example.fift : "",
+                      }
+                    : null
+                )
+                .filter((example) =>
+                  example && (example.description || example.fift)
+                )
+            : [],
+          gas: doc.gas || "",
+          gasDisplay: formatGasDisplay(doc.gas),
+          stackDoc: doc.stack || "",
+          opcode,
+          tlb: bytecode.tlb || "",
+          operands: Array.isArray(bytecode.operands) ? bytecode.operands : [],
+          valueFlow: {
+            inputs,
+            outputs,
+          },
+          registers: {
+            inputs: registersIn,
+            outputs: registersOut,
+          },
+          controlFlow: raw.control_flow || null,
+          implementationRefs,
+          aliases: aliasByMnemonic.get(raw.mnemonic) || [],
+          missing: {
+            description: descriptionMissing,
+            gas: gasMissing,
+            tlb: tlbMissing,
+            stackDoc: stackDocMissing,
+            inputs: inputsMissing,
+            outputs: outputsMissing,
+            implementation: implementationMissing,
+            controlFlow: controlFlowMissing,
+          },
+        };
+      }
+    );
   }, [spec]);
 
   const categoryOptions = useMemo(() => {
@@ -1502,18 +2207,17 @@ export const TvmInstructionTable = () => {
   }, [instructions]);
 
   const filtered = useMemo(() => {
-    const tokens = createSearchTokens(search);
     return instructions.filter((item) => {
       if (category !== "All" && item.categoryKey !== category) return false;
-      return itemRelevanceScore(item, tokens) !== Infinity;
+      return itemRelevanceScore(item, searchTokens) !== Infinity;
     });
-  }, [instructions, category, search]);
+  }, [instructions, category, searchTokens]);
 
   const sorted = useMemo(() => {
     const copy = filtered.slice();
-    const hasQuery = typeof search === "string" && search.trim().length > 0;
+    const hasQuery = searchTokens.length > 0;
     if (hasQuery) {
-      const tokens = createSearchTokens(search);
+      const tokens = searchTokens;
       copy.sort((a, b) => {
         const sa = itemRelevanceScore(a, tokens);
         const sb = itemRelevanceScore(b, tokens);
@@ -1550,29 +2254,105 @@ export const TvmInstructionTable = () => {
       }
     });
     return copy;
-  }, [filtered, sortMode, search]);
+  }, [filtered, sortMode, searchTokens]);
 
-  const missingSummary = useMemo(() => {
-    if (!missing) return [];
-    const summary = [];
-    if (missing.description.length)
-      summary.push(`${missing.description.length} descriptions`);
-    if (missing.stackInputs.length || missing.stackOutputs.length) {
-      summary.push(
-        `${
-          missing.stackInputs.length + missing.stackOutputs.length
-        } stack annotations`
-      );
+  const visibleIds = useMemo(() => sorted.map((item) => item.uid), [sorted]);
+
+  const hasExpandedRows = useMemo(
+    () => visibleIds.some((id) => expanded[id]),
+    [visibleIds, expanded]
+  );
+
+  const hasActiveFilters = useMemo(
+    () =>
+      searchTokens.length > 0 ||
+      category !== "All" ||
+      sortMode !== "opcode",
+    [searchTokens, category, sortMode]
+  );
+
+  const handleResetFilters = useCallback(() => {
+    setSearch("");
+    setCategory("All");
+    setSortMode("opcode");
+  }, []);
+
+  const handleExpandAll = useCallback(() => {
+    if (visibleIds.length === 0) return;
+    setExpanded((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      visibleIds.forEach((id) => {
+        if (!next[id]) {
+          next[id] = true;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [visibleIds]);
+
+  const handleCollapseAll = useCallback(() => {
+    if (visibleIds.length === 0) return;
+    setExpanded((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      visibleIds.forEach((id) => {
+        if (next[id]) {
+          changed = true;
+          delete next[id];
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [visibleIds]);
+
+  const activeFilters = useMemo(() => {
+    const chips = [];
+    const searchDisplay = search.trim();
+    if (searchTokens.length > 0 && searchDisplay) {
+      chips.push({
+        key: "search",
+        label: `Query: "${searchDisplay}"`,
+        ariaLabel: `Remove search filter ${searchDisplay}`,
+        onRemove: () => setSearch(""),
+      });
     }
-    if (missing.tlb.length) summary.push(`${missing.tlb.length} TL-B layouts`);
-    if (missing.controlFlow.length) {
-      summary.push(`${missing.controlFlow.length} control-flow entries`);
+    if (category !== "All") {
+      const match = categoryOptions.find((option) => option.value === category);
+      const label = match ? match.label : humanizeCategoryKey(category);
+      chips.push({
+        key: "category",
+        label: `Category: ${label}`,
+        ariaLabel: `Remove category filter ${label}`,
+        onRemove: () => setCategory("All"),
+      });
     }
-    if (missing.implementation.length) {
-      summary.push(`${missing.implementation.length} implementation notes`);
+    if (sortMode !== "opcode") {
+      const sortLabels = {
+        name: "Mnemonic",
+        category: "Category",
+        since: "Since version",
+      };
+      const label = sortLabels[sortMode] || "Opcode";
+      chips.push({
+        key: "sort",
+        label: `Sort: ${label}`,
+        ariaLabel: `Remove sort override ${label}`,
+        onRemove: () => setSortMode("opcode"),
+      });
     }
-    return summary;
-  }, [missing]);
+    return chips;
+  }, [
+    searchTokens,
+    search,
+    category,
+    categoryOptions,
+    sortMode,
+    setSearch,
+    setCategory,
+    setSortMode,
+  ]);
 
   const toggleRow = useCallback((uid) => {
     setExpanded((prev) => ({
@@ -1582,19 +2362,70 @@ export const TvmInstructionTable = () => {
   }, []);
 
   return (
-    <div className="tvm-instruction-app">
+    <div className="tvm-instruction-app is-density-cozy">
       <style>{tableStyles}</style>
 
       <div className="tvm-instruction-toolbar">
-        <div className="tvm-field" style={{ flex: 2 }}>
+        <div className="tvm-field tvm-field--search" style={{ flex: 2 }}>
           <label htmlFor="tvm-search">Search</label>
-          <input
-            id="tvm-search"
-            type="search"
-            placeholder="Find by mnemonic, opcode, description, stack…"
-            value={search}
-            onChange={(event) => setSearch(event.currentTarget.value)}
-          />
+          <div className="tvm-search-input">
+            <span className="tvm-search-icon" aria-hidden="true">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <circle
+                  cx="11"
+                  cy="11"
+                  r="6"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                />
+                <path
+                  d="M20 20l-3.5-3.5"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </span>
+            <input
+              id="tvm-search"
+              type="search"
+              placeholder="Find by mnemonic, opcode, description…"
+              value={search}
+              onChange={(event) => setSearch(event.currentTarget.value)}
+              ref={searchInputRef}
+            />
+            {search && (
+              <button
+                type="button"
+                className="tvm-clear-search"
+                onClick={() => setSearch("")}
+                aria-label="Clear search"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    d="M15 9l-6 6"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                  <path
+                    d="M9 9l6 6"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="tvm-field" style={{ maxWidth: 210 }}>
@@ -1625,24 +2456,51 @@ export const TvmInstructionTable = () => {
             ))}
           </select>
         </div>
+
+        <div className="tvm-toolbar-utilities">
+          <button
+            type="button"
+            className="tvm-button tvm-button--ghost"
+            onClick={handleResetFilters}
+            disabled={!hasActiveFilters}
+          >
+            Reset filters
+          </button>
+        </div>
       </div>
 
       <div className="tvm-instruction-meta">
-        {loading && <span>Loading specification…</span>}
-        {!loading && !error && (
-          <span>
-            Showing {sorted.length} instructions (of {instructions.length}{" "}
-            total)
-          </span>
+        <div className="tvm-meta-items">
+          {loading && <span className="tvm-meta-item">Loading specification…</span>}
+          {error && !loading && (
+            <span className="tvm-meta-item">Failed to load specification.</span>
+          )}
+          {!loading && !error && (
+            <span className="tvm-meta-item">
+              Showing {sorted.length} of {instructions.length} instructions
+            </span>
+          )}
+        </div>
+        {activeFilters.length > 0 && (
+          <div className="tvm-meta-chips" aria-live="polite">
+            {activeFilters.map(({ key, label, ariaLabel, onRemove }) => (
+              <button
+                key={key}
+                type="button"
+                className="tvm-meta-chip"
+                onClick={onRemove}
+                aria-label={ariaLabel || `Remove filter ${label}`}
+                title={label}
+              >
+                <span className="tvm-meta-chip-label">{label}</span>
+                <span className="tvm-meta-chip-close" aria-hidden="true">
+                  ×
+                </span>
+              </button>
+            ))}
+          </div>
         )}
       </div>
-
-      {!loading && !error && missingSummary.length > 0 && (
-        <div className="tvm-missing-banner">
-          Incomplete fields in tvm-spec: {missingSummary.join(", ")}. Expand a
-          row to see placeholders.
-        </div>
-      )}
 
       <div className="tvm-spec-grid-container">
         <div className="tvm-spec-grid-scroll">
@@ -1651,7 +2509,6 @@ export const TvmInstructionTable = () => {
             <div>Opcode</div>
             <div>Instruction</div>
             <div>Description</div>
-            <div>Stack</div>
           </div>
 
           {error && <div className="tvm-error-row">{error}</div>}
@@ -1674,6 +2531,10 @@ export const TvmInstructionTable = () => {
                     : 0;
                   const detailId = `tvm-detail-${instruction.uid}`;
                   const anchorId = buildAnchorId(instruction);
+                  const descriptionHtml = highlightHtmlContent(
+                    instruction.descriptionHtml || instruction.description || "",
+                    searchTokens
+                  );
 
                   const nodes = [
                     <div
@@ -1730,12 +2591,20 @@ export const TvmInstructionTable = () => {
                         </button>
                       </div>
                       <div className="tvm-spec-cell tvm-spec-cell--opcode">
-                        <code>{instruction.opcode || "—"}</code>
+                        <code>
+                          {highlightMatches(
+                            instruction.opcode || "—",
+                            searchTokens
+                          )}
+                        </code>
                       </div>
                       <div className="tvm-spec-cell tvm-spec-cell--name">
                         <div className="tvm-name-line">
                           <span className="tvm-mnemonic">
-                            {instruction.mnemonic}
+                            {highlightMatches(
+                              instruction.mnemonic,
+                              searchTokens
+                            )}
                           </span>
                           {instruction.since > 0 && (
                             <span className="tvm-inline-badge">
@@ -1747,37 +2616,52 @@ export const TvmInstructionTable = () => {
                               {aliasCount} alias{aliasCount > 1 ? "es" : ""}
                             </span>
                           )}
+                          <span
+                            className={`tvm-row-indicator ${
+                              isExpanded ? "is-expanded" : ""
+                            }`}
+                            aria-hidden="true"
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              xmlns="http://www.w3.org/2000/svg"
+                            >
+                              <path
+                                d="M6 9l6 6 6-6"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          </span>
                         </div>
                         {instruction.operands.length > 0 && (
                           <div className="tvm-operands">
                             {instruction.operands.map((operand, idx) => (
                               <span key={idx} className="tvm-operand-chip">
-                                {formatOperandSummary(operand)}
+                                {highlightMatches(
+                                  formatOperandSummary(operand),
+                                  searchTokens
+                                )}
                               </span>
                             ))}
                           </div>
                         )}
                       </div>
                       <div className="tvm-spec-cell tvm-spec-cell--description">
-                        {instruction.description ? (
+                        {instruction.description || instruction.descriptionHtml ? (
                           <div
                             className="tvm-description"
-                            dangerouslySetInnerHTML={{ __html: instruction.description }}
+                            dangerouslySetInnerHTML={{ __html: descriptionHtml }}
                           />
-                        ) : null }
+                        ) : null}
                         <div className="tvm-description-meta">
                           <span className="tvm-category-pill">
                             {instruction.categoryLabel}
                           </span>
-                          {instruction.missing.description && (
-                            <span className="tvm-inline-badge tvm-inline-badge--muted">
-                              Needs docs
-                            </span>
-                          )}
                         </div>
-                      </div>
-                      <div className="tvm-spec-cell tvm-spec-cell--stack">
-                        {instruction.missing.inputs && instruction.missing.outputs ? instruction.stackDoc : renderStackColumns(instruction, "compact")}
                       </div>
                     </div>,
                   ];

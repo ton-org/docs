@@ -111,10 +111,11 @@ def render_instruction_block(item: Dict[str, Any]) -> str:
 
     # Heading
     lines.append(f"#### `{opcode}` {title}")
+    lines.append(f"Fift: {item['fift']}\nDescription: {item['description']}\nCategory: {item['category_key']} {item['category_label']}")
+    for alias in item["aliases"]:
+        lines.append(f"Alias: {alias['mnemonic']} {alias['description']}")
     lines.append("")
-    lines.append(f"```json\n{json.dumps(item, indent=2)}\n```")
-    lines.append("")
-    return "\n".join(lines)
+    return "\n".join(lines).replace("{", f"&#{ord('{')}").replace("}", f"&#{ord('}')}")
 
 
 def render_static_mdx(instructions: List[Dict[str, Any]]) -> str:
