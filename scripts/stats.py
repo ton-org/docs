@@ -9,10 +9,7 @@ Single entry point that:
 - Prints console summaries (totals, distribution, extremes)
 
 Usage:
-  python3 scripts/stats.py           # run everything (latest + history + charts)
-  python3 scripts/stats.py latest    # latest only
-  python3 scripts/stats.py history   # history only
-  python3 scripts/stats.py charts    # charts only (requires stats/history.csv)
+  python3 scripts/stats.py  # runs everything (latest + history + charts)
 
 Outputs are written to stats/ (gitignored by repo).
 """
@@ -636,20 +633,10 @@ def main():
     if not DOCS_JSON_PATH.exists():
         print('docs.json not found at repo root', file=sys.stderr)
         sys.exit(1)
-    cmd = sys.argv[1] if len(sys.argv) > 1 else 'all'
-    if cmd in ('all', 'run', 'both', 'everything'):
-        run_latest()
-        run_history()
-        run_charts()
-    elif cmd == 'latest':
-        run_latest()
-    elif cmd == 'history':
-        run_history()
-    elif cmd == 'charts':
-        run_charts()
-    else:
-        print('Unknown command. Use: latest | history | charts | (default: all)', file=sys.stderr)
-        sys.exit(1)
+    # Always run the full pipeline
+    run_latest()
+    run_history()
+    run_charts()
 
 
 if __name__ == '__main__':
