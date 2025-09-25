@@ -1,5 +1,6 @@
 ---
-title: "Wallet mnemonic Deep Dive"
+title: "Wallet mnemonic deep dive"
+sidebarTitle: "Mnemonics"
 ---
 
 import { Aside } from '/snippets/aside.jsx';
@@ -7,22 +8,33 @@ import { Aside } from '/snippets/aside.jsx';
 
 ## Key pair 
 
-Ton uses asymmetric cryptography, and [Ed25519](https://en.wikipedia.org/wiki/EdDSA#Ed25519) is a particular kind of it.
+TON Blockchain uses asymmetric cryptography, such as the [Ed25519](https://en.wikipedia.org/wiki/EdDSA#Ed25519) signature scheme.
 
-There are multiple ways to derive a key pair from a mnemonic. Below is the most common approach in TON (some apps may use a different derivation).
+Thus, there are multiple ways to derive a key pair from a mnemonic. Below is the most common approach in TON.
+
+<Aside>
+  Some apps in the TON ecosystem may use a different derivation method, eventually producing an Ed25519-conformant key pair.
+</Aside>
 
 ## Key pair from a mnemonic
-### Under the hood 
-To transform a mnemonic phrase into a key pair, a `seed` is first derived using [PBKDF2](https://en.wikipedia.org/wiki/PBKDF2)(PRF, Password, Salt, c, dkLen). The key pair is then derived from that seed.
 
-- PRF — HMAC‑SHA512
-- Password — `""`
-- Salt — `"TON seed version"`
-- c — $\mathrm{floor}(\frac{100000}{256}) = 390$
-- dkLen — 64
+To transform a mnemonic phrase into a key pair, a `seed` is first derived using [PBKDF2](https://en.wikipedia.org/wiki/PBKDF2), and the key pair is then derived from that `seed`.
+
+PBKDF2 has [five input parameters](https://en.wikipedia.org/wiki/PBKDF2#Key_derivation_process): `PRF`, `Password`, `Salt`, `c`, and `dkLen`. Each of those parameters is assigned a concrete value which depends on the current derivation strategy.
+
+The most commonly used values are:
+
+| Parameter  | Description | Value
+| :--------- | :---------- | :----
+| `PRF`      | Pseudorandom function of two parameters | [HMAC‑SHA512](https://en.wikipedia.org/wiki/HMAC)
+| `Password` | Master password from which a derived key is generated | `""`
+| `Salt`     | Sequence of bits, known as a [cryptographic salt](https://en.wikipedia.org/wiki/Salt_(cryptography)) | `"TON seed version"`
+| `c`        | Number of iterations desired | $\mathrm{floor}(\frac{100000}{256}) = 390$
+| `dkLen`    | Desired bit-length of the derived key | 64
 
 ### Generate a key pair 
-```typescript TypeScript
+
+```ts title="TypeScript"
 import { mnemonicToWalletKey, mnemonicNew } from "@ton/crypto";
 
 // Replace with your own persisted mnemonic phrase (see note below).
@@ -35,22 +47,22 @@ console.log("Public Key: " + keyPair.publicKey.toString('hex'));
 console.log("Private Key: " + keyPair.secretKey.toString('hex'));
 ```
 
-The private key is needed to sign messages, and the public key is stored in the wallet’s smart contract.
+The private key is needed to sign messages, and the public key is stored in the wallet's smart contract. When new external messages arrive on that smart contract, the public key would be used to check the authenticity of the messages signed using the corresponding private key.
 
 <Aside type="caution" title="Important">
-Make sure to persist the generated mnemonic seed phrase. If you need deterministic behavior during development, print and reuse the same phrase so the wallet derives the same key pair on every run.
+  Persist the generated mnemonic seed phrase. If you need deterministic behavior during development, print and reuse the exact phrase so the wallet derives the same key pair on every run.
 </Aside>
 
-
 ## Mnemonic validation 
-1) Words only from BIP-39
-2) The first byte of the derived `seed` must be zero. 
 
-### Under the hood
+1. Words only from [BIP-39](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki)
+2. The first byte of the derived `seed` must be zero.
+
 Random mnemonic phrases are generated until PBKDF2 yields a seed whose first byte is zero.
 
 ### Generate a mnemonic
-```typescript TypeScript
+
+```ts title="TypeScript"
 import { mnemonicToWalletKey, mnemonicNew } from "@ton/crypto";
 
 const mnemonicArray = await mnemonicNew(24); // number of words in the seed phrase
