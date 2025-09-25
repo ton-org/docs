@@ -19,6 +19,15 @@ Each transaction consists of up to five phases:
 Actions may include sending messages, updating contract code, or modifying libraries. If an action fails (for example, due to a lack of funds), the transaction may revert or skip the action, depending on its mode. For example, `mode = 0, flag = 2` means that any errors arising while processing this message during the action phase are ignored.
 5. **Bounce phase**: if the compute or action phase ends with an error and the inbound message has the bounce flag set, this phase generates a bounce message.
 
+## Gas
+
+All computation is measured in gas units; each TVM operation has a fixed gas cost. The gas price is defined by network configuration and is not set by users (there is no fee market).
+
+- Basechain: 1 gas = `26214400 / 2^16` nanotons = 0.0000004 TON
+- Masterchain: 1 gas = `655360000 / 2^16` nanotons = 0.00001 TON
+
+See config parameters `20` and `21` for current gas prices (for example, `https://tonviewer.com/config#20`, `https://tonviewer.com/config#21`). The values can change through validator governance.
+
 ## Compute phase
 
 The compute phase involves executing the contract code on TVM.
@@ -136,6 +145,17 @@ Use the [`GETSTORAGEFEE`](/tvm/instructions) opcode.
 <Aside type="note" title="Deduplication">
 The system counts only unique hash cells for storage and forward fees. For example, it counts three identical hash cells as one. This mechanism deduplicates data by storing the content of multiple equivalent sub-cells only once, even if they are referenced across different branches. [Read more about deduplication](/tvm/serialization/library).
 </Aside>
+
+### Formula (low-level)
+
+Approximate storage fees for smart contracts (values are defined in network config param 18):
+
+```cpp
+storage_fee = ceil(
+                   (account.bits * bit_price
+                   + account.cells * cell_price)
+                * time_delta / 2^16)
+```
 
 ### Calculation flow
 
@@ -268,6 +288,30 @@ printTxGasStats = (name, transaction) => {
 const send_gas_fee = printTxGasStats("Jetton transfer", transferTx);
 ```
 
+## Accept message effects
+
+The `accept_message` and `set_gas_limit` TVM primitives control gas limits and indicate readiness to pay fees.
+
+### External messages
+
+- Initial gas limit is a small credit (`gas_credit` = 10,000 gas units from config `20/21`).
+- During Compute, call `accept_message` to raise the gas limit to the maximum allowed (`gm`), or use `set_gas_limit(limit)` to set it to `min(limit, gm)`.
+- If `gas_credit` is exhausted or you never call `accept_message`, the external message is not included in a block and no transaction is created.
+- After processing, full computation fees are deducted from the contract balance (the credit is not free gas).
+
+If an error occurs after `accept_message`:
+- A transaction is recorded and fees are paid from the contract balance.
+- State changes are reverted unless you committed state explicitly.
+- Actions are not applied.
+
+Security note: accepting an invalid external message and then throwing makes the contract pay and can allow replay until funds are depleted. Validate before accepting.
+
+### Internal messages
+
+- Default gas limit equals `message_value / gas_price`; the incoming value covers its processing.
+- You may still adjust limits with `accept_message`/`set_gas_limit`.
+- Bounce semantics are unaffected: a bounceable message will bounce if there is enough value to pay processing and bounce creation.
+
 ## Forward fee
 
 ### Overview
@@ -280,10 +324,17 @@ Generally, there are three scenarios for forward fee processing:
 2. The message structure depends heavily on the incoming message structure.
 3. You cannot predict the outgoing message structure at all.
 
-### Calculation flow
+<Aside type="note" title="Typical pattern">
+In most apps, the sender:
+1. Attaches enough TON to cover gas and forwarding fees to the internal message
+2. Sets the bounce flag (sends a bounceable internal message)
+
+The receiver then returns the unused portion of the received value with the answer, deducting message forwarding fees. In Jetton contracts this is typically done via `RAWRESERVE` with `SENDRAWMSG` and message modes `128/130/144`.
+</Aside>
+
+### Calculation in smart contracts
 
 1. If the message structure is deterministic, use the [`GETFORWARDFEE`](/tvm/instructions) opcode.
-
 
 <Aside type="note" title="Deduplication">
 The system counts only unique hash cells for storage and forward fees. For example, it counts three identical hash cells as one. This mechanism deduplicates data by storing the content of multiple equivalent sub-cells only once, even if they are referenced across different branches. [Read more about deduplication](/tvm/serialization/library).
@@ -323,6 +374,62 @@ int gas_consumed() asm "GASCONSUMED";
  ;; gas_usage -- the amount of gas used to send the message
 }
 ```
+
+### Formula (low-level)
+
+Forwarding fees for a message of size `msg.bits` and `msg.cells` are computed using config params 24/25:
+
+```cpp
+// bits in the root cell of a message are not included in msg.bits (lump_price pays for them)
+msg_fwd_fees = (lump_price
+             + ceil(
+                (bit_price * msg.bits + cell_price * msg.cells) / 2^16)
+             );
+
+ihr_fwd_fees = ceil((msg_fwd_fees * ihr_price_factor) / 2^16);
+
+total_fwd_fees = msg_fwd_fees + ihr_fwd_fees; // ihr_fwd_fees is 0 for external messages
+```
+
+<Aside type="info" title="Action fee relation">
+`msg_fwd_fees` already includes the action fee for the corresponding `SENDRAWMSG`. For a basic internal message with `lump_price = 400000` and `first_frac = 21845`, `action_fee ≈ 133331` nanotons and `fwd_fee ≈ 266669` nanotons.
+</Aside>
+
+## Action fee
+
+The action fee is charged when processing the action list (after Compute). Practically, you pay it for `SENDRAWMSG`; other actions such as `RAWRESERVE` or `SETCODE` do not incur action fees.
+
+```cpp
+action_fee = floor((msg_fwd_fees * first_frac)/ 2^16);  // internal
+
+action_fee = msg_fwd_fees;  // external
+```
+
+`first_frac` is defined in config params 24/25 and is approximately one third (currently 21845).
+
+Action fine (failed send): starting from Global Version 4, if a "send message" action fails, the account pays a fine proportional to the attempted message size:
+
+```cpp
+fine_per_cell = floor((cell_price >> 16) / 4)
+max_cells = floor(remaining_balance / fine_per_cell)
+action_fine = fine_per_cell * min(max_cells, cells_in_msg);
+```
+
+## Fees configuration
+
+All fees are denominated in nanotons (often scaled by `2^16` for precision) and come from network configuration:
+
+- storage_fees: param 18 (`https://tonviewer.com/config#18`)
+- in_fwd_fees: params 24/25 (`https://tonviewer.com/config#24`, `https://tonviewer.com/config#25`)
+- computation_fees: params 20/21 (`https://tonviewer.com/config#20`, `https://tonviewer.com/config#21`)
+- action_fees: params 24/25 (`https://tonviewer.com/config#24`, `https://tonviewer.com/config#25`)
+- out_fwd_fees: params 24/25 (`https://tonviewer.com/config#24`, `https://tonviewer.com/config#25`)
+
+### Message bouncing
+
+- If the receiver cannot parse the message and terminates with a non‑zero exit code, the message bounces back automatically.
+- The bounced message has its `bounce` flag cleared and `bounced` flag set, and contains `0xffffffff` (32‑bit) followed by the original message body (256‑bit).
+- Always check the `bounced` flag before parsing `op` to avoid treating a bounce as a new query.
 
 ## See also
 
