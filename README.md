@@ -13,7 +13,7 @@ npm ci
 To start a local preview, run the following command at the root of your documentation, where your `docs.json` is located:
 
 ```shell
-npx mint dev
+npm start
 ```
 
 View your local preview at `http://localhost:3000`.
@@ -23,6 +23,12 @@ View your local preview at `http://localhost:3000`.
 Mintlify does them in each PR with the help of [Vale](https://vale.sh/). To also use Vale locally and run corresponding "scripts" in `package.json`, see: [Vale installation docs](https://vale.sh/docs/install).
 
 Then, run `vale sync` to synchronize necessary packages and add-ons.
+
+#### Adding new words to the spell checking dictionary
+
+The dictionaries (_vocabularies_) for custom words is placed under `.vale/config/vocabularies/Custom`: the `accept.txt` file describes all allowed entries, while `reject.txt` file states all invalid entries that must be rejected.
+
+See more info on dictionaries here: [Vale vocabularies docs](https://vale.sh/docs/keys/vocab).
 
 ## Publishing changes
 
