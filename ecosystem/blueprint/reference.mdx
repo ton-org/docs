@@ -2,17 +2,299 @@
 title: "Blueprint reference"
 ---
 
-Stub
+Blueprint is a CLI tool for TON smart contract development. This reference covers all available commands, options, configuration, and API methods.
 
+## Quick navigation
 
-TODO:
+### CLI commands
+- [`create`](#create) — create new contracts from templates
+- [`build`](#build) — build contracts
+- [`run`](#run) — execute deployment and custom scripts
+- [`test`](#test) — run test suites
+- [`verify`](#verify) — verify contracts using [TON Contract Verifier](https://verifier.ton.org).
+- [`help`](#help) — display command help information
+- [`set`](#set) — configure language version
+- [`convert`](#convert) — convert legacy build scripts
+- [`rename`](#rename) — rename contracts across the project
+- [`pack`](#pack) — package contracts for deployment
+- [`snapshot`](#snapshot) — create gas usage snapshots
 
-### Contract verification using a custom network
+### API reference
+- [`tonDeepLink`](#tondeeplink) — generate transaction deep links
+- [`getExplorerLink`](#getexplorerlink) — generate blockchain explorer URLs
+- [`getNormalizedExtMessageHash`](#getnormalizedextmessagehash) — hash external messages
+- [`compile`](#compile) — compile smart contracts programmatically
+- [`libraryCellFromCode`](#librarycellfromcode) — create library cells
+- [`NetworkProvider`](#networkprovider) — network interaction interface
+- [`UIProvider`](#uiprovider) — user interface interaction
+- [Type definitions](#type-definitions) — configuration and option types
 
-You can also use a custom network to verify contracts using the following CLI command:
+### Configuration
+- [Environment variables](#environment-variables) — wallet and network configuration
+- [Blueprint configuration](/ecosystem/blueprint/config) — detailed configuration guide
+
+## CLI commands
+
+Blueprint provides a comprehensive set of CLI commands for smart contract development, testing, and deployment. Commands support both interactive and non-interactive modes.
+
+### `create`
 
 ```bash
-npx blueprint verify \
+npx blueprint create <CONTRACT> --type <TYPE>
+```
+
+Creates a new smart contract with all necessary files including the contract source, TypeScript wrapper, test file, and deployment script.
+
+#### Interactive mode
+
+```bash
+npx blueprint create
+```
+
+Launches an interactive wizard that guides you through:
+1. Contract name selection (validates CamelCase format)
+2. Programming language choice (Tolk, FunC, or Tact)
+3. Template type selection (empty or counter example)
+
+#### Non-interactive mode
+
+```bash
+npx blueprint create <CONTRACT> --type <TYPE>
+```
+
+**Parameters:**
+- `<CONTRACT>` — contract name in CamelCase format (e.g., `MyAwesomeContract`)
+- `<TYPE>` — template type from available options
+
+**Available template types:**
+- `tolk-empty` — an empty contract (Tolk)
+- `func-empty` — an empty contract (FunC)
+- `tact-empty` — an empty contract (Tact)
+- `tolk-counter` — a simple counter contract (Tolk)
+- `func-counter` — a simple counter contract (FunC)
+- `tact-counter` — a simple counter contract (Tact)
+
+**Usage examples:**
+
+```bash
+# Create empty Tolk contract
+npx blueprint create MyToken --type tolk-empty
+
+# Create Tolk counter example
+npx blueprint create SimpleCounter --type tolk-counter
+
+# Create contract interactively
+npx blueprint create
+```
+
+**Generated files:**
+- `contracts/MyContract.{tolk|fc|tact}` — contract source code
+- `wrappers/MyContract.ts` — TypeScript wrapper for contract interaction
+- `tests/MyContract.spec.ts` — Jest test suite with basic test cases
+- `scripts/deployMyContract.ts` — deployment script with network configuration
+
+### `build`
+
+```bash
+npx blueprint build <CONTRACT> --all
+```
+
+Compiles smart contracts using their corresponding `.compile.ts` configuration files.
+
+#### Interactive mode
+
+```bash
+npx blueprint build
+```
+
+Displays a list of all available contracts with `.compile.ts` files for selection. Shows compilation status and allows building individual contracts or all at once.
+
+#### Non-interactive mode
+
+```bash
+npx blueprint build <CONTRACT>
+npx blueprint build --all
+```
+
+**Parameters:**
+- `<CONTRACT>` — specific contract name to build (matches the `.compile.ts` filename)
+- `--all` — build all contracts in the project that have compilation configurations
+
+**Usage examples:**
+
+```bash
+# Build specific contract
+npx blueprint build MyToken
+
+# Build all contracts
+npx blueprint build --all
+
+# Interactive selection
+npx blueprint build
+```
+
+For detailed information about build artifacts, see [Compiled Artifacts](/ecosystem/blueprint/develop#compiled-artifacts).
+
+### `run`
+
+```bash
+npx blueprint run <SCRIPT> <ARGS...> <OPTIONS>
+```
+
+Executes TypeScript scripts from the `scripts/` directory with full network provider access. Commonly used for contract deployment, interaction, and maintenance tasks.
+
+#### Interactive mode
+
+```bash
+npx blueprint run
+```
+
+Displays a list of all available scripts in the `scripts/` directory to select from.
+
+#### Non-interactive mode
+
+```bash
+npx blueprint run <SCRIPT> <ARGS...>
+```
+
+**Parameters:**
+- `<SCRIPT>` — script name (without `.ts` extension)
+- `<ARGS...>` — optional arguments passed to the script
+- `--<NETWORK>` — network selection (`mainnet`, `testnet`)
+- `--<DEPLOY_METHOD>` — deployment method (`tonconnect`, `mnemonic`)
+
+**Network options:**
+- `--mainnet` — use TON Mainnet
+- `--testnet` — use TON Testnet
+- `--custom <URL>` — use custom network endpoint
+- `--custom-version <VERSION>` — API version (`v2`, `v4`)
+- `--custom-type <TYPE>` — network type (`custom`, `mainnet`, `testnet`)
+- `--custom-key <KEY>` — API key (`v2 only`)
+
+**Deploy options:**
+- `--tonconnect` — use TON Connect for deployment
+- `--deeplink` — use deep link for deployment
+- `--mnemonic` — use mnemonic for deployment
+
+**Explorer options:**
+- `--tonscan` — use Tonscan explorer
+- `--tonviewer` — use Tonviewer explorer (default)
+- `--toncx` — use Toncx explorer
+- `--dton` — use Dton explorer
+
+**Usage examples:**
+
+```bash
+# Deploy contract to testnet with TON Connect
+npx blueprint run deployCounter --testnet --tonconnect
+
+# Deploy to testnet with mnemonic
+npx blueprint run deployCounter --testnet --mnemonic
+
+# Run script with custom arguments
+npx blueprint run updateConfig arg1 arg2 --testnet
+
+# Use custom network configuration
+npx blueprint run deployContract \
+  --custom https://toncenter.com/api/v2/jsonRPC \
+  --custom-version v2 \
+  --custom-type mainnet \
+  --custom-key <YOUR_API_KEY>
+```
+
+- `<YOUR_API_KEY>` — API key for the selected provider (`v2` only).
+
+**Requirements:**
+- Scripts must be located in `scripts/` directory
+- Script files must export a `run` function:
+
+```typescript
+import { NetworkProvider } from '@ton/blueprint';
+
+export async function run(provider: NetworkProvider, args: string[]) {
+
+}
+```
+
+**Environment variables:**
+
+For mnemonic-based deployments, configure these [environment variables](#environment-variables).
+
+### `test`
+
+Run the full project test suite with all `.spec.ts` files.
+
+#### Basic usage
+```bash
+npx blueprint test
+```
+Run all test files in the `tests/` directory.
+
+#### Collecting coverage
+```bash
+npx blueprint test --coverage
+```
+
+Run tests and collect coverage into `coverage/` directory.
+
+#### Gas reporting
+```bash
+npx blueprint test --gas-report
+# or
+npx blueprint test -g
+```
+
+Run tests and compare with the last snapshot's metrics.
+
+#### Specific test file
+```bash
+npx blueprint test <CONTRACT_NAME>
+```
+
+**Examples:**
+```bash
+npx blueprint test
+npx blueprint test MyContract
+```
+
+**Test file requirements:**
+- Test files should be located in `tests/` directory
+- Use `.spec.ts` extension
+- Supports standard Jest syntax and matchers
+
+### `verify`
+
+Verify a deployed contract using [TON Contract Verifier](https://verifier.ton.org).
+
+#### Basic usage
+```bash
+npx blueprint verify
+```
+Interactive mode to select contract and network.
+
+#### Non-interactive mode
+```bash
+npx blueprint verify <CONTRACT> --network <NETWORK>
+```
+
+**Parameters:**
+- `<CONTRACT>` — contract name to verify
+- `--network <NETWORK>` — network (`mainnet`, `testnet`)
+- `--compiler-version <VERSION>` — compiler version used for building
+- `--custom <URL>` — custom network endpoint
+- `--custom-version <VERSION>` — API version (`v2` default)
+- `--custom-type <TYPE>` — network type (`mainnet`, `testnet`)
+- `--custom-key <KEY>` — API key (`v2` only)
+
+**Examples:**
+```bash
+npx blueprint verify MyContract --network mainnet
+npx blueprint verify MyContract --network testnet --compiler-version 0.4.4-newops.1
+```
+
+**Custom network verification:**
+```bash
+npx blueprint verify MyContract \
   --custom https://toncenter.com/api/v2/jsonRPC \
   --custom-version v2 \
   --custom-type mainnet \
@@ -20,5 +302,808 @@ npx blueprint verify \
   --compiler-version 0.4.4-newops.1
 ```
 
-You can achieve the same result by specifying the network in your configuration file.
-When verifying contracts, the type **must** be either `mainnet` or `testnet`.
+### `help`
+
+Show detailed help.
+
+```bash
+npx blueprint help
+npx blueprint help <COMMAND>
+```
+
+**Examples:**
+```bash
+npx blueprint help
+npx blueprint help create
+npx blueprint help run
+```
+
+### `set`
+
+Sets language versions.
+
+```bash
+npx blueprint set <KEY> <VALUE>
+```
+
+**Available keys:**
+- `func` — overrides `@ton-community/func-js-bin` version
+
+### `convert`
+
+Converts legacy bash build scripts to Blueprint wrappers.
+
+```bash
+npx blueprint convert <PATH_TO_BUILD_SCRIPT>
+```
+
+### `rename`
+
+Renames a contract by matching in wrappers, scripts, and tests.
+
+```bash
+npx blueprint rename <OLD_NAME> <NEW_NAME>
+```
+
+### `pack`
+
+Builds and prepares a publish-ready package of wrappers.
+
+```bash
+npx blueprint pack
+```
+
+**Flags:**
+- `--no-warn`, `-n` — ignore warnings about modifying `tsconfig.json` and `package.json`, and about removing the `dist` directory
+
+**Output:**
+- Creates deployment-ready package
+- Includes compiled artifacts
+- Bundles dependencies
+
+### `snapshot`
+
+Creates snapshots with gas usage and cell sizes.
+
+```bash
+npx blueprint snapshot
+```
+
+**Flags:**
+- `--label=<COMMENT>`, `-l=<COMMENT>` — add a comment label to the snapshot
+
+**Features:**
+- Run with gas usage and cell sizes collected
+- Write a new snapshot
+- Useful for regression testing
+
+## Environment variables
+
+Blueprint supports environment variables for wallet configuration when using mnemonic provider:
+
+- `WALLET_MNEMONIC` — wallet mnemonic phrase (space-separated words).
+- `WALLET_VERSION` — wallet contract version (`v1r1`, `v1r2`, `v1r3`, `v2r1`, `v2r2`, `v3r1`, `v3r2`, `v4r1`, `v4r2`, `v4`, `v5r1`).
+- `WALLET_ID` — wallet ID for versions earlier than `v5r1`.
+- `SUBWALLET_NUMBER` — subwallet number for `v5r1` wallets.
+
+### Example .env file
+
+```bash
+WALLET_MNEMONIC="<MNEMONIC_24_WORDS>"
+WALLET_VERSION=v4
+WALLET_ID=698983191
+SUBWALLET_NUMBER=0
+```
+
+- `<MNEMONIC_24_WORDS>` — 24-word wallet mnemonic (space-separated).
+
+## API reference
+
+Blueprint exports functions and classes for programmatic interaction with TON smart contracts.
+
+### `tonDeepLink`
+
+Generates a TON deep link for transfer.
+
+```typescript
+function tonDeepLink(
+  address: Address,
+  amount: bigint,
+  body?: Cell,
+  stateInit?: Cell,
+  testOnly?: boolean
+): string;
+```
+
+**Parameters:**
+- `address` — the recipient's TON address
+- `amount` — the amount of nanoTON to send
+- `body` — optional message body as a Cell
+- `stateInit` — optional state init cell for deploying a contract
+- `testOnly` — optional flag to determine output address format
+
+**Returns:** a URL deep link that can be opened in TON wallets
+
+**Example:**
+```typescript
+const link = tonDeepLink(myAddress, 10_000_000n); // 0.01 TON
+// "ton://transfer/..."
+```
+
+### `getExplorerLink`
+
+Generates a link to view a TON address in a selected blockchain explorer.
+
+```typescript
+function getExplorerLink(
+  address: string,
+  network: string,
+  explorer: 'tonscan' | 'tonviewer' | 'toncx' | 'dton'
+): string;
+```
+
+**Parameters:**
+- `address` — the TON address to view in explorer
+- `network` — the target network (`mainnet` or `testnet`)
+- `explorer` — the desired explorer (`tonscan`, `tonviewer`, `toncx`, `dton`)
+
+**Returns:** a full URL pointing to the address in the selected explorer
+
+**Example:**
+```typescript
+const link = getExplorerLink("<ADDR>", "testnet", "tonscan");
+// "https://testnet.tonscan.org/address/EQC...9gA"
+// <ADDR> — TON address to view.
+```
+
+### `getNormalizedExtMessageHash`
+
+Generates a normalized hash of an `external-in` message for comparison.
+
+```typescript
+function getNormalizedExtMessageHash(message: Message): string;
+```
+
+This function ensures consistent hashing of external-in messages by following [TEP-467](https://github.com/ton-blockchain/TEPs/blob/8b3beda2d8611c90ec02a18bec946f5e33a80091/text/0467-normalized-message-hash.md).
+
+**Parameters:**
+- `message` — the message to be normalized and hashed (must be of type `external-in`)
+
+**Returns:** the hash of the normalized message
+
+**Throws:** error if the message type is not `external-in`
+
+### `compile`
+
+Compiles a contract using the specified configuration for `tact`, `func`, or `tolk` languages.
+
+```typescript
+async function compile(name: string, opts?: CompileOpts): Promise<Cell>
+```
+
+**Parameters:**
+- `name` — the name of the contract to compile (should correspond to a file named `<name>.compile.ts`)
+- `opts` — optional compilation options, including user data passed to hooks
+
+**Returns:** a promise that resolves to the compiled contract code as a `Cell`
+
+**Example:**
+```typescript
+import { compile } from '@ton/blueprint';
+
+async function main() {
+    const codeCell = await compile('Contract');
+    console.log('Compiled code BoC:', codeCell.toBoc().toString('base64'));
+}
+```
+
+### `libraryCellFromCode`
+
+Packs resulting code hash into library cell.
+
+```typescript
+function libraryCellFromCode(code: Cell): Cell
+```
+
+**Parameters:**
+- `code` — the contract code cell
+
+**Returns:** a library cell containing the code hash
+
+### `NetworkProvider`
+
+Interface representing a network provider for interacting with the TON Blockchain.
+
+```typescript
+interface NetworkProvider {
+  network(): 'mainnet' | 'testnet' | 'custom';
+  explorer(): Explorer;
+  sender(): SenderWithSendResult;
+  api(): BlueprintTonClient;
+  provider(address: Address, init?: { code?: Cell; data?: Cell }): ContractProvider;
+  isContractDeployed(address: Address): Promise<boolean>;
+  waitForDeploy(address: Address, attempts?: number, sleepDuration?: number): Promise<void>;
+  waitForLastTransaction(attempts?: number, sleepDuration?: number): Promise<void>;
+  getContractState(address: Address): Promise<ContractState>;
+  getConfig(configAddress?: Address): Promise<BlockchainConfig>;
+  open<T extends Contract>(contract: T): OpenedContract<T>;
+  ui(): UIProvider;
+}
+```
+
+#### `network()`
+
+```typescript
+network(): 'mainnet' | 'testnet' | 'custom';
+```
+
+
+**Returns:** current network type that the provider is connected to
+
+#### `explorer()`
+
+```typescript
+explorer(): 'tonscan' | 'tonviewer' | 'toncx' | 'dton';
+```
+
+
+**Returns:** explorer name for the current network
+
+#### `sender()`
+
+```typescript
+sender(): SenderWithSendResult
+```
+
+**Returns:** the sender instance used for sending transactions
+
+#### `api()`
+
+```typescript
+api(): BlueprintTonClient
+```
+
+**Returns:** the underlying TON client API for direct blockchain interactions
+
+#### `provider()`
+
+```typescript
+provider(address: Address, init?: { code?: Cell; data?: Cell }): ContractProvider
+```
+
+Creates a contract provider for interacting with a contract at the specified address.
+
+**Parameters:**
+- `address` — the contract address to interact with
+- `init` — optional contract initialization data
+  - `code` — Contract code cell
+  - `data` — Contract initial data cell
+
+**Returns:** `contractProvider` instance for the specified address
+
+#### `isContractDeployed()`
+
+```typescript
+isContractDeployed(address: Address): Promise<boolean>
+```
+
+Checks whether a contract is deployed at the specified address.
+
+**Parameters:**
+- `address` — the contract address to check
+
+**Returns:** promise resolving to `true` if contract is deployed, `false` otherwise
+
+**Usage example:**
+```typescript
+export async function run(provider: NetworkProvider) {
+  const isDeployed = await provider.isContractDeployed(contractAddress);
+  if (!isDeployed) {
+    console.log('Contract not yet deployed');
+  }
+}
+```
+
+#### `waitForDeploy()`
+
+```typescript
+waitForDeploy(address: Address, attempts?: number, sleepDuration?: number): Promise<void>
+```
+
+Waits for a contract to be deployed by polling the address until the contract appears on-chain.
+
+**Parameters:**
+- `address` — the contract address to monitor
+- `attempts` — maximum number of polling attempts (default: 20)
+- `sleepDuration` — delay between attempts in milliseconds (default: 2000)
+
+**Returns:** promise that resolves when contract is deployed
+
+**Throws:** error if contract is not deployed within the specified attempts
+
+**Usage example:**
+```typescript
+export async function run(provider: NetworkProvider) {
+  // Send deployment transaction
+  await contract.sendDeploy(provider.sender(), { value: toNano('0.01') });
+  
+  // Wait for deployment to complete
+  await provider.waitForDeploy(contract.address);
+  console.log('Contract deployed successfully');
+}
+```
+
+#### `waitForLastTransaction()`
+
+```typescript
+waitForLastTransaction(attempts?: number, sleepDuration?: number): Promise<void>
+```
+
+Waits for the last sent transaction to be processed and confirmed on the blockchain.
+
+**Parameters:**
+- `attempts` — maximum number of polling attempts (default: 20)
+- `sleepDuration` — delay between attempts in milliseconds (default: 2000)
+
+**Returns:** promise that resolves when the last transaction is confirmed
+
+**Usage example:**
+```typescript
+export async function run(provider: NetworkProvider) {
+  await contract.sendIncrement(provider.sender(), { value: toNano('0.01') });
+  await provider.waitForLastTransaction();
+}
+```
+
+#### `getContractState()`
+
+```typescript
+getContractState(address: Address): Promise<ContractState>
+```
+
+Retrieves the current state of a contract including its balance, code, and data.
+
+**Parameters:**
+- `address` — the contract address to query
+
+**Returns:** promise resolving to `ContractState`.
+
+**Usage example:**
+```typescript
+export async function run(provider: NetworkProvider) {
+  const state = await provider.getContractState(contractAddress);
+  console.log(`Contract balance: ${fromNano(state.balance)} TON`);
+}
+```
+
+#### `getConfig()`
+
+```typescript
+getConfig(configAddress?: Address): Promise<BlockchainConfig>
+```
+
+Fetches the current blockchain configuration parameters.
+
+**Parameters:**
+- `configAddress` — optional config contract address (uses default if not provided)
+
+**Returns:** promise resolving to blockchain configuration
+
+#### `open()`
+
+```typescript
+open<T extends Contract>(contract: T): OpenedContract<T>
+```
+
+Opens a contract instance for interaction, binding it to the current provider.
+
+**Parameters:**
+- `contract` — the contract instance to open
+
+**Returns:** `openedContract` wrapper that enables direct method calls
+
+**Usage example:**
+```typescript
+export async function run(provider: NetworkProvider) {
+  const counter = provider.open(Counter.fromAddress(contractAddress));
+  const currentValue = await counter.getCounter();
+  console.log('Current counter value:', currentValue);
+}
+```
+
+#### `ui()`
+
+```typescript
+ui(): UIProvider
+```
+
+**Returns:** `UIProvider` instance for console interactions
+
+**Usage example:**
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  ui.write('Deployment starting...');
+  const confirmed = await ui.prompt('Deploy to mainnet?');
+}
+```
+
+### `UIProvider`
+
+Interface for handling user interactions, such as displaying messages, prompting for input, and managing action prompts. This interface abstracts console interactions and can be used in both interactive and automated scenarios.
+
+```typescript
+interface UIProvider {
+  write(message: string): void;
+  prompt(message: string): Promise<boolean>;
+  inputAddress(message: string, fallback?: Address): Promise<Address>;
+  input(message: string): Promise<string>;
+  choose<T>(message: string, choices: T[], display: (v: T) => string): Promise<T>;
+  setActionPrompt(message: string): void;
+  clearActionPrompt(): void;
+}
+```
+
+#### `write()`
+
+```typescript
+write(message: string): void
+```
+
+Displays a message to the user console.
+
+**Parameters:**
+- `message` — the text message to display
+
+**Usage example:**
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  ui.write('Starting contract deployment...');
+  ui.write(`Network: ${provider.network()}`);
+}
+```
+
+#### `prompt()`
+
+```typescript
+prompt(message: string): Promise<boolean>
+```
+
+Displays a yes/no prompt to the user and waits for their response.
+
+**Parameters:**
+- `message` — the prompt message to display
+
+**Returns:** promise resolving to `true` for yes, `false` for no
+
+**Usage example:**
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  const confirmed = await ui.prompt('Deploy to mainnet? This will cost real TON');
+  if (confirmed) {
+    ui.write('Proceeding with deployment...');
+  } else {
+    ui.write('Deployment cancelled');
+    return;
+  }
+}
+```
+
+#### `inputAddress()`
+
+```typescript
+inputAddress(message: string, fallback?: Address): Promise<Address>
+```
+
+Prompts the user to input a TON address with validation.
+
+**Parameters:**
+- `message` — the prompt message to display
+- `fallback` — optional default address to use if user provides empty input
+
+**Returns:** promise resolving to Address object
+
+**Usage example:**
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  const targetAddress = await ui.inputAddress(
+    'Enter the contract address to interact with:',
+    Address.parse('EQD4FPq-PRDieyQKkizFTRtSDyucUIqrj0v_zXJmqaDp6_0t') // fallback
+  );
+  ui.write(`Using address: ${targetAddress.toString()}`);
+}
+```
+
+#### `input()`
+
+```typescript
+input(message: string): Promise<string>
+```
+
+Prompts the user for a text input and returns the entered string.
+
+**Parameters:**
+- `message` — the prompt message to display
+
+**Returns:** promise resolving to the user's input as a string
+
+**Usage example:**
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  const contractName = await ui.input('Enter the contract name:');
+  ui.write(`Deploying contract: ${contractName}`);
+}
+```
+
+#### `choose()`
+
+```typescript
+choose<T>(message: string, choices: T[], display: (v: T) => string): Promise<T>
+```
+
+Presents a list of choices to the user and returns the selected option.
+
+**Parameters:**
+- `message` — the prompt message to display
+- `choices` — array of options to choose from
+- `display` — function to convert each choice to a display string
+
+**Returns:** promise resolving to the selected choice
+
+**Usage example:**
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  
+  const networks = ['mainnet', 'testnet'];
+  const selectedNetwork = await ui.choose(
+    'Select deployment network:',
+    networks,
+    (network) => network.toUpperCase()
+  );
+  
+  ui.write(`Selected network: ${selectedNetwork}`);
+}
+```
+
+#### `setActionPrompt()`
+
+```typescript
+setActionPrompt(message: string): void
+```
+
+Sets a persistent action prompt that remains visible during operations.
+
+**Parameters:**
+- `message` — the action prompt message to display
+
+**Usage example:**
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  ui.setActionPrompt('⏳ Waiting for transaction confirmation...');
+  
+  await contract.send(provider.sender(), { value: toNano('0.01') }, 'increment');
+  await provider.waitForLastTransaction();
+  
+  ui.clearActionPrompt();
+  ui.write('✅ Transaction confirmed');
+}
+```
+
+#### `clearActionPrompt()`
+
+```typescript
+clearActionPrompt(): void
+```
+
+Clears the current action prompt, removing it from display.
+
+**Usage example:**
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  ui.setActionPrompt('🔄 Processing...');
+  
+  // Perform some operation
+  await someAsyncOperation();
+  
+  ui.clearActionPrompt();
+  ui.write('Operation completed');
+}
+```
+
+## Type definitions
+
+Blueprint exports several TypeScript types for configuration and compilation options. These types provide type safety and IntelliSense support when working with Blueprint programmatically.
+
+### `CompileOpts`
+
+Optional compilation settings, including user data passed to hooks and compilation flags.
+
+```typescript
+type CompileOpts = {
+  hookUserData?: any;
+  debugInfo?: boolean;
+  buildLibrary?: boolean;
+};
+```
+
+**Properties:**
+- `hookUserData` — optional user data passed to pre/post compile hooks
+- `debugInfo` — enable debug information in compiled output (default: `false`)
+- `buildLibrary` — build as a library instead of a regular contract (default: `false`)
+
+**Usage example:**
+```typescript
+import { compile } from '@ton/blueprint';
+
+const codeCell = await compile('MyContract', {
+  debugInfo: true,
+  hookUserData: { customFlag: true }
+});
+```
+
+### `CommonCompilerConfig`
+
+Base configuration shared by all compiler types. This interface defines common compilation hooks and options.
+
+```typescript
+type CommonCompilerConfig = {
+  preCompileHook?: (params: HookParams) => Promise<void>;
+  postCompileHook?: (code: Cell, params: HookParams) => Promise<void>;
+  buildLibrary?: boolean;
+};
+```
+
+**Properties:**
+- `preCompileHook` — optional function called before compilation starts
+- `postCompileHook` — optional function called after compilation completes
+- `buildLibrary` — whether to build as a library (default: `false`)
+
+**Usage example:**
+```typescript title="./wrappers/MyContract.compile.ts"
+import { CompilerConfig } from '@ton/blueprint';
+
+export const compile: CompilerConfig = {
+  lang: 'func',
+  targets: ['contracts/my_contract.fc'],
+  preCompileHook: async (params) => {
+    console.log('Starting compilation...');
+  },
+  postCompileHook: async (code, params) => {
+    console.log('Compilation completed!');
+  }
+};
+```
+
+### `FuncCompilerConfig`
+
+Configuration specific to the FunC compiler, including optimization levels and source file specifications.
+
+```typescript
+type FuncCompilerConfig = {
+  lang?: 'func';
+  optLevel?: number;
+  debugInfo?: boolean;
+} & (
+  | {
+      targets: string[];
+      sources?: SourceResolver | SourcesMap;
+    }
+  | {
+      targets?: string[];
+      sources: SourcesArray;
+    }
+);
+```
+
+**Properties:**
+- `lang` — compiler language identifier (optional, defaults to `'func'`)
+- `optLevel` — optimization level (0-2, default: 2)
+- `debugInfo` — include debug information in output
+- `targets` — array of FunC source file paths to compile
+- `sources` — alternative source specification method
+
+**Usage example:**
+```typescript title="./wrappers/MyContract.compile.ts"
+import { CompilerConfig } from '@ton/blueprint';
+
+export const compile: CompilerConfig = {
+  lang: 'func',
+  targets: [
+    'contracts/imports/stdlib.fc',
+    'contracts/my_contract.fc'
+  ],
+  optLevel: 2,
+  debugInfo: false
+};
+```
+
+### `TolkCompilerConfig`
+
+Configuration for the Tolk compiler, including optimization and debugging options.
+
+```typescript
+type TolkCompilerConfig = {
+  lang: 'tolk';
+  entrypoint: string;
+  optimizationLevel?: number;
+  withStackComments?: boolean;
+  withSrcLineComments?: boolean;
+  experimentalOptions?: string;
+};
+```
+
+**Properties:**
+- `lang` — compiler language identifier (must be `'tolk'`)
+- `entrypoint` — path to the main Tolk source file
+- `optimizationLevel` — optimization level
+- `withStackComments` — include stack operation comments in Fift output
+- `withSrcLineComments` — include source line comments in Fift output
+- `experimentalOptions` — additional experimental compiler flags
+
+**Usage example:**
+```typescript title="./wrappers/MyContract.compile.ts"
+import { CompilerConfig } from '@ton/blueprint';
+
+export const compile: CompilerConfig = {
+  lang: 'tolk',
+  entrypoint: 'contracts/my_contract.tolk',
+  optimizationLevel: 2,
+  withStackComments: true,
+  withSrcLineComments: true
+};
+```
+
+### `TactLegacyCompilerConfig`
+
+Configuration for the Tact compiler (legacy configuration format).
+
+```typescript
+type TactLegacyCompilerConfig = {
+  lang: 'tact';
+  target: string;
+  options?: Options;
+};
+```
+
+**Properties:**
+- `lang` — compiler language identifier (must be `'tact'`)
+- `target` — path to the main Tact source file
+- `options` — additional Tact compiler options
+
+**Usage example:**
+```typescript title="./wrappers/MyContract.compile.ts"
+import { CompilerConfig } from '@ton/blueprint';
+
+export const compile: CompilerConfig = {
+  lang: 'tact',
+  target: 'contracts/my_contract.tact',
+  options: {
+    debug: false,
+    external: true
+  }
+};
+```
+
+### `HookParams`
+
+Parameters passed to compilation hooks, providing context about the compilation process.
+
+```typescript
+type HookParams = {
+  userdata?: any;
+};
+```
+
+**Properties:**
+- `userdata` — optional user data passed from CompileOpts
+
+## Configuration
+
+For detailed configuration options, refer to the [Blueprint Configuration](/ecosystem/blueprint/config) guide.
