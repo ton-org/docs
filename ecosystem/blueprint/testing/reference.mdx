@@ -2,4 +2,1499 @@
 title: "Testing reference"
 ---
 
-Stub
+Blueprint provides comprehensive testing capabilities for TON smart contracts using the TON Sandbox emulator and test utilities. This reference covers all available testing APIs, methods, and utilities.
+
+## Quick Navigation
+
+### Core Testing Classes
+- [`Blockchain`](#blockchain) — blockchain emulator instance
+- [`SandboxContract`](#sandboxcontract) — contract wrapper for testing
+- [`Treasury`](#treasury) — test wallet for transactions
+- [`SmartContract`](#smartcontract) — base contract interface
+
+### Storage and Network
+- [`RemoteBlockchainStorage`](#remoteblockchainstorage) — remote network storage
+- [`BlockchainSnapshot`](#blockchainsnapshot) — state snapshot utilities
+
+### Test Utilities
+- [`Matchers`](#matchers) — jest testing matchers
+- [`Message Builders`](#message-builders) — transaction message helpers
+- [`Time Helpers`](#time-helpers) — blockchain time manipulation
+
+### Configuration
+- [Environment setup](#environment-setup) — testing environment configuration
+- [Network configuration](#network-configuration) — blockchain network settings
+- [Logging configuration](#logging-configuration) — test output and debugging
+
+**Related Documentation:**
+- [Blueprint testing overview](/ecosystem/blueprint/testing/overview) — getting started with testing
+- [Testing guidelines](/ecosystem/blueprint/testing/testing-guidelines) — best practices and patterns
+- [Testing on real network](/ecosystem/blueprint/testing/testing-on-real-network) — mainnet/testnet testing
+
+## Environment setup
+
+Blueprint testing environment requires proper setup of the TON Sandbox and test utilities.
+
+### Installation
+
+```bash
+npm install --save-dev @ton/sandbox @ton/test-utils
+```
+
+### Basic test structure
+
+```typescript
+import { Blockchain, SandboxContract, TreasuryContract } from '@ton/sandbox';
+import { Cell, toNano } from '@ton/core';
+import '@ton/test-utils';
+import { MyContract } from '../wrappers/MyContract';
+
+describe('MyContract', () => {
+    let blockchain: Blockchain;
+    let myContract: SandboxContract<MyContract>;
+    let deployer: SandboxContract<TreasuryContract>;
+
+    beforeEach(async () => {
+        blockchain = await Blockchain.create();
+        deployer = await blockchain.treasury('deployer');
+        
+        myContract = blockchain.openContract(MyContract.createFromConfig({
+            // initialization config
+        }, code));
+
+        // Deploy the contract
+        const deployResult = await myContract.sendDeploy(deployer.getSender(), toNano('0.05'));
+        expect(deployResult.transactions).toHaveTransaction({
+            from: deployer.address,
+            to: myContract.address,
+            success: true,
+        });
+    });
+
+    it('should deploy', async () => {
+        // Contract is already deployed in beforeEach
+    });
+});
+```
+
+## Core Testing Classes
+
+### `Blockchain`
+
+Main blockchain emulator class that provides isolated testing environment.
+
+```typescript
+class Blockchain {
+    readonly executor: IExecutor
+    
+    static create(opts?: {
+        executor?: IExecutor;
+        config?: BlockchainConfig;
+        storage?: BlockchainStorage;
+        meta?: ContractsMeta;
+        autoDeployLibs?: boolean;
+    }): Promise<Blockchain>
+    
+    // Core messaging methods
+    sendMessage(message: Message | Cell, params?: MessageParams): Promise<SendMessageResult>
+    sendMessageIter(message: Message | Cell, params?: SendMessageIterParams): Promise<AsyncIterator<BlockchainTransaction> & AsyncIterable<BlockchainTransaction>>
+    runTickTock(on: Address | Address[], which: TickOrTock, params?: MessageParams): Promise<SendMessageResult>
+    runGetMethod(address: Address, method: number | string, stack?: TupleItem[], params?: GetMethodParams): Promise<GetMethodResult>
+    
+    // Contract and treasury methods
+    treasury(seed: string, params?: TreasuryParams): Promise<SandboxContract<TreasuryContract>>
+    createWallets(n: number, params?: TreasuryParams): Promise<SandboxContract<TreasuryContract>[]>
+    openContract<T extends Contract>(contract: T): SandboxContract<T>
+    provider(address: Address, init?: StateInit | null): ContractProvider
+    sender(address: Address): Sender
+    getContract(address: Address): Promise<SmartContract>
+    
+    // Transaction and state methods
+    getTransactions(address: Address, opts?: { limit?: number; lt?: string | bigint; hash?: string | Buffer }): Promise<BlockchainTransaction[]>
+    setShardAccount(address: Address, account: ShardAccount): Promise<void>
+    
+    // Configuration and state management
+    snapshot(): BlockchainSnapshot
+    loadFrom(snapshot: BlockchainSnapshot): Promise<void>
+    setVerbosityForAddress(address: Address, verbosity: Partial<LogsVerbosity> | Verbosity | undefined): Promise<void>
+    setConfig(config: BlockchainConfig): void
+    enableCoverage(enable?: boolean): void
+    coverage(contract: Contract): Coverage | undefined
+    coverageForCell(code: Cell, address?: Address): Coverage | undefined
+    randomize(): Promise<Buffer>
+    
+    // Properties
+    get now(): number | undefined
+    set now(now: number | undefined)
+    get lt(): bigint
+    get config(): Cell
+    get configBase64(): string
+    get verbosity(): LogsVerbosity
+    set verbosity(value: LogsVerbosity)
+    get libs(): Cell | undefined
+    set libs(value: Cell | undefined)
+    get random(): Buffer | undefined
+    set random(value: Buffer | undefined)
+    get recordStorage(): boolean
+    set recordStorage(v: boolean)
+    get autoDeployLibraries(): boolean
+    set autoDeployLibraries(value: boolean)
+    get debug(): boolean
+    set debug(value: boolean)
+    get prevBlocks(): PrevBlocksInfo | undefined
+    set prevBlocks(value: PrevBlocksInfo | undefined)
+}
+```
+
+#### `Blockchain.create()`
+
+```typescript
+static create(opts?: {
+    executor?: IExecutor;
+    config?: BlockchainConfig;
+    storage?: BlockchainStorage;
+    meta?: ContractsMeta;
+    autoDeployLibs?: boolean;
+}): Promise<Blockchain>
+```
+
+Creates a new blockchain instance for testing.
+
+**Parameters:**
+- `opts` — optional blockchain configuration
+  - `executor` — custom contract executor (default: `Executor`)
+  - `config` — blockchain configuration (`Cell`, `'default'`, or `'slim'`)
+  - `storage` — contracts storage (default: `LocalBlockchainStorage`)
+  - `meta` — optional contracts metadata provider
+  - `autoDeployLibs` — automatically collect and deploy libraries
+
+**Returns:** promise resolving to blockchain instance
+
+**Usage example:**
+```typescript
+// Basic blockchain
+const blockchain = await Blockchain.create();
+
+// With slim config for faster execution
+const blockchain = await Blockchain.create({ config: 'slim' });
+
+// With remote storage
+const blockchain = await Blockchain.create({
+    storage: new RemoteBlockchainStorage(client)
+});
+
+// With auto-deploy libraries
+const blockchain = await Blockchain.create({
+    autoDeployLibs: true
+});
+```
+
+#### `treasury()`
+
+```typescript
+treasury(seed: string, params?: TreasuryParams): Promise<SandboxContract<TreasuryContract>>
+```
+
+Creates a treasury wallet contract. This wallet is used as alternative to wallet smart contract.
+
+**Parameters:**
+- `seed` — initial seed for treasury. If the same seed is used to create a treasury, then these treasuries will be identical
+- `params` — optional treasury parameters
+  - `workchain` — the workchain ID of the treasury (default: 0)
+  - `predeploy` — if set the treasury will be deployed on the moment of creation
+  - `balance` — initial balance of the treasury (default: 1_000_000 TON if omitted)
+  - `resetBalanceIfZero` — if set and treasury balance is zero on moment of calling method it reset balance to `balance`
+
+**Returns:** promise resolving to treasury contract wrapper
+
+**Usage example:**
+```typescript
+const deployer = await blockchain.treasury('deployer');
+const user = await blockchain.treasury('user', { balance: toNano('100') });
+
+// Same seed creates identical treasury
+const wallet1 = await blockchain.treasury('same-seed');
+const wallet2 = await blockchain.treasury('same-seed');
+// wallet1.address equals wallet2.address
+```
+
+#### `openContract()`
+
+```typescript
+openContract<T extends Contract>(contract: T): SandboxContract<T>
+```
+
+Wraps a contract for testing with additional methods and state tracking.
+
+**Parameters:**
+- `contract` — contract instance to wrap
+
+**Returns:** sandboxContract wrapper with testing capabilities
+
+**Usage example:**
+```typescript
+const myContract = blockchain.openContract(MyContract.createFromConfig(config, code));
+```
+
+#### `sendMessage()`
+
+```typescript
+sendMessage(message: Message | Cell, params?: MessageParams): Promise<SendMessageResult>
+```
+
+Emulates the result of sending a message to this Blockchain. Emulates the whole chain of transactions before returning the result. Each transaction increases lt by 1000000.
+
+**Parameters:**
+- `message` — message to send (Message object or Cell for external messages)
+- `params` — optional message parameters
+  - `now` — override blockchain time for this message
+  - `randomSeed` — random seed for deterministic execution
+
+**Returns:** promise resolving to SendMessageResult containing transactions, events, and externals
+
+**Usage example:**
+```typescript
+const result = await blockchain.sendMessage(internal({
+    from: sender.address,
+    to: contract.address,
+    value: toNano('1'),
+    body: beginCell().storeUint(0, 32).endCell(),
+}));
+
+// Check transactions
+expect(result.transactions).toHaveTransaction({
+    from: sender.address,
+    to: contract.address,
+    success: true
+});
+```
+
+#### `runGetMethod()`
+
+```typescript
+runGetMethod(address: Address, method: number | string, stack?: TupleItem[], params?: GetMethodParams): Promise<GetMethodResult>
+```
+
+Runs get method on contract.
+
+**Parameters:**
+- `address` — contract address
+- `method` — method ID (number) or method name (string) to run
+- `stack` — method parameters as TupleItem array
+- `params` — optional execution parameters
+  - `now` — override blockchain time for this call
+  - `randomSeed` — random seed for deterministic execution
+
+**Returns:** promise resolving to GetMethodResult with stackReader and other execution details
+
+**Usage example:**
+```typescript
+const { stackReader } = await blockchain.runGetMethod(address, 'get_now', [], {
+    now: 2,
+});
+const now = stackReader.readNumber();
+
+// With method ID
+const result = await blockchain.runGetMethod(address, 123, []);
+```
+
+#### `sendMessageIter()`
+
+```typescript
+sendMessageIter(message: Message | Cell, params?: SendMessageIterParams): Promise<AsyncIterator<BlockchainTransaction> & AsyncIterable<BlockchainTransaction>>
+```
+
+Starts emulating the result of sending a message to this Blockchain. Each iterator call emulates one transaction, so the whole chain is not emulated immediately, unlike in `sendMessage`.
+
+**Parameters:**
+- `message` — message to send
+- `params` — optional parameters
+  - `allowParallel` — when `true`, allows many consequential executions of this method (default: `false`)
+  - other MessageParams (now, randomSeed)
+
+**Returns:** promise resolving to async iterator of BlockchainTransaction
+
+**Usage example:**
+```typescript
+const message = internal({
+    from: sender.address,
+    to: address,
+    value: toNano('1'),
+    body: beginCell().storeUint(0, 32).endCell(),
+});
+
+for await (const tx of await blockchain.sendMessageIter(message, { randomSeed: crypto.randomBytes(32) })) {
+    // process transaction
+    console.log(tx);
+}
+```
+
+#### `getTransactions()`
+
+```typescript
+getTransactions(address: Address, opts?: {
+    limit?: number;
+    lt?: string | bigint;
+    hash?: string | Buffer;
+}): Promise<BlockchainTransaction[]>
+```
+
+Retrieves transactions for the specified address. Transactions are ordered from newest to oldest.
+
+**Parameters:**
+- `address` — the address to retrieve transactions for
+- `opts` — options to fetch transactions
+  - `lt` — logical time of the transaction to start from (must be used with `hash`)
+  - `hash` — hash of the transaction to start from (must be used with `lt`)
+  - `limit` — maximum number of transactions to return
+
+**Returns:** promise resolving to array of transactions involving the given address
+
+**Usage example:**
+```typescript
+const transactions = await blockchain.getTransactions(Address.parse('...'), {
+    lt: '1234567890',
+    hash: 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+    limit: 10
+});
+```
+
+#### `createWallets()`
+
+```typescript
+createWallets(n: number, params?: TreasuryParams): Promise<SandboxContract<TreasuryContract>[]>
+```
+
+Bulk variant of `treasury()` method.
+
+**Parameters:**
+- `n` — number of wallets to create
+- `params` — params for treasury creation
+
+**Returns:** array of opened treasury contracts
+
+**Usage example:**
+```typescript
+const [wallet1, wallet2, wallet3] = await blockchain.createWallets(3);
+```
+
+#### `runTickTock()`
+
+```typescript
+runTickTock(on: Address | Address[], which: TickOrTock, params?: MessageParams): Promise<SendMessageResult>
+```
+
+Runs tick or tock transaction.
+
+**Parameters:**
+- `on` — address or addresses to run tick-tock
+- `which` — type of transaction (`'tick'` or `'tock'`)
+- `params` — optional parameters (now, randomSeed)
+
+**Returns:** promise resolving to SendMessageResult
+
+**Usage example:**
+```typescript
+let res = await blockchain.runTickTock(address, 'tock');
+```
+
+#### `provider()`
+
+```typescript
+provider(address: Address, init?: StateInit | null): ContractProvider
+```
+
+Creates new ContractProvider for contract address.
+
+**Parameters:**
+- `address` — address to create contract provider for
+- `init` — initial state of contract
+
+**Returns:** ContractProvider instance
+
+**Usage example:**
+```typescript
+const contractProvider = blockchain.provider(address, init);
+```
+
+#### `sender()`
+
+```typescript
+sender(address: Address): Sender
+```
+
+Creates Sender for address. Note, that this sender pushes internal messages to Blockchain directly. No value is deducted from sender address, all the values are set to defaults. Use for test purposes only.
+
+**Parameters:**
+- `address` — address to create sender for
+
+**Returns:** Sender instance
+
+**Usage example:**
+```typescript
+const sender = blockchain.sender(address);
+await contract.send(sender, ...);
+```
+
+#### `getContract()`
+
+```typescript
+getContract(address: Address): Promise<SmartContract>
+```
+
+Retrieves SmartContract from BlockchainStorage.
+
+**Parameters:**
+- `address` — address of contract to get
+
+**Returns:** promise resolving to SmartContract instance
+
+#### `setVerbosityForAddress()`
+
+```typescript
+setVerbosityForAddress(address: Address, verbosity: Partial<LogsVerbosity> | Verbosity | undefined): Promise<void>
+```
+
+Updates logs verbosity level for address.
+
+**Parameters:**
+- `address` — contract address
+- `verbosity` — verbosity configuration or undefined to reset
+
+**Usage example:**
+```typescript
+await blockchain.setVerbosityForAddress(contract.address, {
+    blockchainLogs: true,
+    vmLogs: 'vm_logs_full'
+});
+```
+
+#### `setConfig()`
+
+```typescript
+setConfig(config: BlockchainConfig): void
+```
+
+Updates blockchain config.
+
+**Parameters:**
+- `config` — custom config in Cell format, or predefined `'default'` | `'slim'`
+
+**Usage example:**
+```typescript
+blockchain.setConfig('slim'); // Use slim config for faster execution
+blockchain.setConfig(customConfigCell); // Use custom config
+```
+
+#### `setShardAccount()`
+
+```typescript
+setShardAccount(address: Address, account: ShardAccount): Promise<void>
+```
+
+Sets the account state directly for a contract address.
+
+**Parameters:**
+- `address` — contract address
+- `account` — shard account state to set
+
+#### `enableCoverage()`
+
+```typescript
+enableCoverage(enable?: boolean): void
+```
+
+Enable coverage collection.
+
+**Parameters:**
+- `enable` — if false, disable coverage collection (default: true)
+
+**Usage example:**
+```typescript
+blockchain.enableCoverage();
+// ... execute contract methods
+const coverage = blockchain.coverage(contract);
+```
+
+#### `coverage()`
+
+```typescript
+coverage(contract: Contract): Coverage | undefined
+```
+
+Returns coverage analysis for the specified contract. Coverage is collected at the TVM assembly instruction level from all executed transactions and get method calls.
+
+**Parameters:**
+- `contract` — contract to analyze coverage for
+
+**Returns:** Coverage object with detailed coverage data or undefined
+
+**Throws:** Error if the contract has no code or if verbose VM logs are not enabled
+
+**Usage example:**
+```typescript
+blockchain.enableCoverage();
+await contract.send(sender, { value: toNano('1') }, 'increment');
+
+const coverage = blockchain.coverage(contract);
+const summary = coverage?.summary();
+console.log(`Coverage: ${summary?.coveragePercentage?.toFixed(2)}%`);
+
+const htmlReport = coverage?.report("html");
+await fs.writeFile("coverage.html", htmlReport);
+```
+
+#### `coverageForCell()`
+
+```typescript
+coverageForCell(code: Cell, address?: Address): Coverage | undefined
+```
+
+Returns coverage analysis for the specified code cell. This method allows analyzing coverage for code cells directly, with optional address filtering.
+
+**Parameters:**
+- `code` — Cell containing contract code to analyze
+- `address` — optional contract address to filter transactions by
+
+**Returns:** Coverage object with detailed coverage data
+
+**Usage example:**
+```typescript
+blockchain.enableCoverage();
+const coverage = blockchain.coverageForCell(codeCell, contractAddress);
+const allCoverage = blockchain.coverageForCell(codeCell); // Without address filtering
+```
+
+#### `randomize()`
+
+```typescript
+randomize(): Promise<Buffer>
+```
+
+Generates and sets a new random seed using secure random bytes.
+
+**Returns:** promise resolving to the generated random seed Buffer
+
+**Usage example:**
+```typescript
+const newSeed = await blockchain.randomize();
+```
+
+#### `getDebuggerExecutor()`
+
+```typescript
+getDebuggerExecutor(): Promise<Executor>
+```
+
+Gets the debugger executor instance for debugging purposes.
+
+**Returns:** promise resolving to Executor instance for debugging
+
+**Usage example:**
+```typescript
+const debugExecutor = await blockchain.getDebuggerExecutor();
+// Use debugExecutor for debugging operations
+```
+
+#### `snapshot()`
+
+```typescript
+snapshot(): BlockchainSnapshot
+```
+
+Saves snapshot of current blockchain.
+
+**Returns:** blockchain snapshot object
+
+**Usage example:**
+```typescript
+const snapshot = blockchain.snapshot();
+// some operations
+await blockchain.loadFrom(snapshot); // restores blockchain state
+```
+
+#### `loadFrom()`
+
+```typescript
+loadFrom(snapshot: BlockchainSnapshot): Promise<void>
+```
+
+Restores blockchain state from snapshot.
+
+**Parameters:**
+- `snapshot` — snapshot of blockchain
+
+**Usage example:**
+```typescript
+const snapshot = blockchain.snapshot();
+// ... perform operations
+await blockchain.loadFrom(snapshot);
+```
+
+## Blockchain Properties
+
+The Blockchain class provides several properties for accessing and configuring the blockchain state.
+
+#### `executor`
+
+```typescript
+readonly executor: IExecutor
+```
+
+The blockchain executor instance used for low-level operations.
+
+**Returns:** IExecutor instance
+
+#### `now`
+
+```typescript
+get now(): number | undefined
+set now(now: number | undefined)
+```
+
+Gets or sets the current time in the blockchain (UNIX timestamp).
+
+**Usage example:**
+```typescript
+// Get current time
+const currentTime = blockchain.now;
+
+// Set blockchain time
+blockchain.now = Math.floor(Date.now() / 1000);
+
+// Clear time (use system time)
+blockchain.now = undefined;
+```
+
+#### `lt`
+
+```typescript
+get lt(): bigint
+```
+
+Gets the current logical time in the blockchain.
+
+**Returns:** current logical time as bigint
+
+#### `config`
+
+```typescript
+get config(): Cell
+```
+
+Gets the configuration used in the blockchain.
+
+**Returns:** configuration as Cell
+
+#### `configBase64`
+
+```typescript
+get configBase64(): string
+```
+
+Gets the configuration used in the blockchain in base64 format.
+
+**Returns:** configuration as base64 string
+
+#### `verbosity`
+
+```typescript
+get verbosity(): LogsVerbosity
+set verbosity(value: LogsVerbosity)
+```
+
+Gets or sets the logs verbosity level.
+
+**Usage example:**
+```typescript
+// Get current verbosity
+const currentVerbosity = blockchain.verbosity;
+
+// Set verbosity
+blockchain.verbosity = {
+    print: true,
+    blockchainLogs: true,
+    vmLogs: 'vm_logs_full',
+    debugLogs: true
+};
+```
+
+#### `libs`
+
+```typescript
+get libs(): Cell | undefined
+set libs(value: Cell | undefined)
+```
+
+Gets or sets the global blockchain libraries.
+
+**Usage example:**
+```typescript
+// Get current libs
+const currentLibs = blockchain.libs;
+
+// Set libraries
+const libsDict = Dictionary.empty(Dictionary.Keys.Buffer(32), Dictionary.Values.Cell());
+libsDict.set(code.hash(), code);
+blockchain.libs = beginCell().storeDictDirect(libsDict).endCell();
+```
+
+#### `random`
+
+```typescript
+get random(): Buffer | undefined
+set random(value: Buffer | undefined)
+```
+
+Gets or sets the random seed.
+
+**Usage example:**
+```typescript
+// Get current random seed
+const currentSeed = blockchain.random;
+
+// Set random seed
+blockchain.random = crypto.randomBytes(32);
+```
+
+#### `prevBlocks`
+
+```typescript
+get prevBlocks(): PrevBlocksInfo | undefined
+set prevBlocks(value: PrevBlocksInfo | undefined)
+```
+
+Gets or sets the PrevBlocksInfo.
+
+#### `recordStorage`
+
+```typescript
+get recordStorage(): boolean
+set recordStorage(v: boolean)
+```
+
+If set to `true`, BlockchainTransaction will have `oldStorage` and `newStorage` fields. Note that enabling this flag will disable a certain optimization, which will slow down contract emulation.
+
+#### `autoDeployLibraries`
+
+```typescript
+get autoDeployLibraries(): boolean
+set autoDeployLibraries(value: boolean)
+```
+
+Gets or sets whether libraries should be automatically deployed.
+
+#### `debug`
+
+```typescript
+get debug(): boolean
+set debug(value: boolean)
+```
+
+Gets or sets debug mode for the blockchain.
+
+#### `now` (getter/setter)
+
+```typescript
+get now(): number | undefined
+set now(now: number | undefined)
+```
+
+Gets or sets the current time in blockchain.
+
+**Usage example:**
+```typescript
+console.log(blockchain.now); // Current blockchain time
+blockchain.now = Math.floor(Date.now() / 1000); // Set to current Unix time
+blockchain.now = undefined; // Reset to use system time
+```
+
+#### `lt` (getter)
+
+```typescript
+get lt(): bigint
+```
+
+Gets the current logical time in blockchain.
+
+**Returns:** current logical time as bigint
+
+#### `config` (getter)
+
+```typescript
+get config(): Cell
+```
+
+Gets the config used in blockchain.
+
+**Returns:** blockchain configuration as Cell
+
+#### `configBase64` (getter)
+
+```typescript
+get configBase64(): string
+```
+
+Gets the config used in blockchain in base64 format.
+
+**Returns:** blockchain configuration as base64 string
+
+#### `verbosity` (getter/setter)
+
+```typescript
+get verbosity(): LogsVerbosity
+set verbosity(value: LogsVerbosity)
+```
+
+Gets or sets the logs verbosity level.
+
+**Usage example:**
+```typescript
+blockchain.verbosity = {
+    print: true,
+    blockchainLogs: true,
+    vmLogs: 'vm_logs_full',
+    debugLogs: true
+};
+```
+
+#### `libs` (getter/setter)
+
+```typescript
+get libs(): Cell | undefined
+set libs(value: Cell | undefined)
+```
+
+Gets or sets the global blockchain libs.
+
+**Usage example:**
+```typescript
+const code = await compile('Contract');
+const libsDict = Dictionary.empty(Dictionary.Keys.Buffer(32), Dictionary.Values.Cell());
+libsDict.set(code.hash(), code);
+blockchain.libs = beginCell().storeDictDirect(libsDict).endCell();
+```
+
+#### `random` (getter/setter)
+
+```typescript
+get random(): Buffer | undefined
+set random(value: Buffer | undefined)
+```
+
+Gets or sets the current random seed.
+
+**Usage example:**
+```typescript
+blockchain.random = randomBytes(32); // Set custom random seed
+console.log(blockchain.random); // Get current seed
+```
+
+#### `recordStorage` (getter/setter)
+
+```typescript
+get recordStorage(): boolean
+set recordStorage(v: boolean)
+```
+
+If set to `true`, BlockchainTransaction will have `oldStorage` and `newStorage` fields. Note that enabling this flag will disable a certain optimization, which will slow down contract emulation.
+
+#### `autoDeployLibraries` (getter/setter)
+
+```typescript
+get autoDeployLibraries(): boolean
+set autoDeployLibraries(value: boolean)
+```
+
+Gets or sets the auto-deploy libraries flag.
+
+#### `debug` (getter/setter)
+
+```typescript
+get debug(): boolean
+set debug(value: boolean)
+```
+
+Gets or sets the debug flag for detailed execution information.
+
+#### `prevBlocks` (getter/setter)
+
+```typescript
+get prevBlocks(): PrevBlocksInfo | undefined
+set prevBlocks(value: PrevBlocksInfo | undefined)
+```
+
+Gets or sets the PrevBlocksInfo for the blockchain.
+
+#### `executor` (readonly property)
+
+```typescript
+readonly executor: IExecutor
+```
+
+The blockchain executor instance used for low-level operations.
+
+### `SandboxContract`
+
+Enhanced contract wrapper that transforms contract methods for sandbox testing. SandboxContract automatically wraps get methods and send methods to work with the sandbox environment.
+
+```typescript
+export type SandboxContract<F> = {
+    [P in keyof F]: P extends `${'get' | 'is'}${string}` 
+        ? F[P] extends (x: infer CP, ...args: infer P) => infer R 
+            ? ExtendsContractProvider<CP> extends true 
+                ? (...args: P) => R 
+                : never 
+            : never 
+        : P extends `send${string}` 
+            ? F[P] extends (x: infer CP, ...args: infer P) => infer R 
+                ? ExtendsContractProvider<CP> extends true 
+                    ? (...args: P) => Promise<SendMessageResult & {
+                        result: R extends Promise<infer PR> ? PR : R;
+                    }> 
+                    : never 
+                : never 
+            : F[P];
+};
+```
+
+**Key transformations:**
+- **Get methods** (`get*`, `is*`) — Remove the ContractProvider parameter, return the same result
+- **Send methods** (`send*`) — Remove ContractProvider parameter, return `Promise<SendMessageResult & { result: R }>`
+- **Other properties** — Remain unchanged
+
+**Usage example:**
+```typescript
+// Open a contract in sandbox
+const myContract = blockchain.openContract(MyContract.createFromConfig(config, code));
+
+// Deploy the contract - returns SendMessageResult
+const deployResult = await myContract.sendDeploy(deployer.getSender(), toNano('0.05'));
+expect(deployResult.transactions).toHaveTransaction({
+    from: deployer.address,
+    to: myContract.address,
+    success: true
+});
+
+// Send methods return SendMessageResult with transaction info
+const incrementResult = await myContract.sendIncrement(user.getSender(), toNano('0.1'));
+expect(incrementResult.transactions).toHaveTransaction({
+    from: user.address,
+    to: myContract.address,
+    success: true
+});
+
+// Get methods work the same as production
+const counter = await myContract.getCounter();
+expect(counter).toBe(1n);
+```
+
+### `Treasury`
+
+Test treasury wallet for sending transactions and managing test funds. Treasury is created by `blockchain.treasury()` and provides a convenient wallet interface for testing.
+
+```typescript
+// Treasury is a SandboxContract<TreasuryContract>
+// TreasuryContract extends standard wallet functionality
+```
+
+#### `getSender()`
+
+```typescript
+getSender(): Sender
+```
+
+Returns a sender interface for this treasury that automatically handles seqno and signing.
+
+**Returns:** sender object for transaction signing
+
+**Usage example:**
+```typescript
+const deployer = await blockchain.treasury('deployer');
+const sender = deployer.getSender();
+
+// Sender automatically handles seqno and signing
+await contract.sendDeploy(sender, toNano('0.05'));
+```
+
+#### Treasury usage
+
+Treasury contracts are pre-funded wallets that work like regular wallet contracts:
+
+**Usage example:**
+```typescript
+// Create treasury with default 1M TON balance
+const treasury = await blockchain.treasury('user');
+
+// Create treasury with custom balance
+const richTreasury = await blockchain.treasury('rich', { 
+    balance: toNano('1000000') 
+});
+
+// Use treasury sender for transactions
+const sender = treasury.getSender();
+await contract.sendMessage(sender, toNano('1'), messageBody);
+
+// Treasury handles all wallet operations automatically
+```
+
+## Test Utilities
+
+### `Matchers`
+
+Jest matchers for testing TON blockchain transactions and state. Import from `@ton/test-utils` to use these matchers.
+
+```typescript
+import '@ton/test-utils';
+```
+
+#### `toHaveTransaction`
+
+```typescript
+expect(transactions).toHaveTransaction(params: {
+    from?: Address;
+    to?: Address;
+    success?: boolean;
+    aborted?: boolean;
+    destroyed?: boolean;
+    exitCode?: number;
+    value?: bigint | ((value: bigint) => boolean);
+    body?: Cell | ((body: Cell) => boolean);
+    op?: number | ((op: number) => boolean);
+})
+```
+
+Asserts that a transaction matching the specified parameters exists in the transaction list.
+
+**Usage example:**
+```typescript
+// Using contract methods (recommended)
+const result = await contract.sendIncrement(deployer.getSender(), toNano('0.1'));
+
+expect(result.transactions).toHaveTransaction({
+    from: deployer.address,
+    to: contract.address,
+    success: true,
+});
+
+// Check for specific operation code
+expect(result.transactions).toHaveTransaction({
+    to: contract.address,
+    success: true,
+    op: 0x12345678
+});
+
+// Using blockchain.sendMessage directly
+const directResult = await blockchain.sendMessage(internal({
+    from: deployer.address,
+    to: contract.address,
+    value: toNano('0.1'),
+    body: beginCell().storeUint(1, 32).endCell()
+}));
+
+expect(directResult.transactions).toHaveTransaction({
+    success: true,
+    value: (value) => value > toNano('0.05')
+});
+```
+
+#### `toEqualCell`
+
+```typescript
+expect(cell).toEqualCell(expectedCell: Cell)
+```
+
+Asserts that two cells have identical content.
+
+**Usage example:**
+```typescript
+const actualCell = beginCell().storeUint(123, 32).endCell();
+const expectedCell = beginCell().storeUint(123, 32).endCell();
+expect(actualCell).toEqualCell(expectedCell);
+```
+
+#### `toEqualAddress`
+
+```typescript
+expect(address).toEqualAddress(expectedAddress: Address)
+```
+
+Asserts that two addresses are equal, handling different address formats.
+
+**Usage example:**
+```typescript
+const contractOwner = await contract.getOwner();
+expect(contractOwner).toEqualAddress(deployer.address);
+```
+
+### Message Builders
+
+Utilities for building transaction messages.
+
+#### `internal()`
+
+```typescript
+function internal(params: MessageParams): MessageRelaxed
+```
+
+Creates an internal message.
+
+**Parameters:**
+- `from` — sender address
+- `to` — recipient address
+- `value` — message value in nanoTON
+- `body` — message body cell
+- `bounce` — bounce flag (default: true)
+
+**Usage example:**
+```typescript
+const message = internal({
+    from: sender.address,
+    to: contract.address,
+    value: toNano('1'),
+    body: beginCell().storeUint(1, 32).endCell()
+});
+```
+
+#### `external()`
+
+```typescript
+function external(params: ExternalMessageParams): Message
+```
+
+Creates an external message.
+
+**Parameters:**
+- `to` — recipient address
+- `body` — message body cell
+- `init` — optional state init
+
+**Usage example:**
+```typescript
+const message = external({
+    to: contract.address,
+    body: deployBody,
+    init: stateInit
+});
+```
+
+### Time Helpers
+
+Utilities for manipulating blockchain time in tests.
+
+#### Setting blockchain time
+
+```typescript
+blockchain.now = Math.floor(Date.now() / 1000) + 3600; // 1 hour in future
+```
+
+**Usage example:**
+```typescript
+// Test time-dependent functionality
+const initialTime = Math.floor(Date.now() / 1000);
+blockchain.now = initialTime;
+
+// ... perform operations
+
+// Advance time by 1 hour
+blockchain.now = initialTime + 3600;
+
+// Test behavior after time passage
+const result = await contract.checkTimelock();
+expect(result).toBe(true);
+```
+
+## Storage and Network
+
+### `RemoteBlockchainStorage`
+
+Storage implementation that fetches contract states from a real TON network.
+
+```typescript
+class RemoteBlockchainStorage implements BlockchainStorage {
+    constructor(client: TonClient4Wrapper, blockSeqno?: number)
+}
+```
+
+**Parameters:**
+- `client` — wrapped TON client for network access
+- `blockSeqno` — optional block number to fetch state from
+
+**Usage example:**
+```typescript
+import { TonClient4 } from '@ton/ton';
+import { RemoteBlockchainStorage, wrapTonClient4ForRemote } from '@ton/sandbox';
+
+const blockchain = await Blockchain.create({
+    storage: new RemoteBlockchainStorage(
+        wrapTonClient4ForRemote(
+            new TonClient4({
+                endpoint: 'https://mainnet-v4.tonhubapi.com'
+            })
+        )
+    )
+});
+```
+
+### `BlockchainSnapshot`
+
+Utilities for serializing and deserializing blockchain snapshots.
+
+#### `snapshotToSerializable()`
+
+```typescript
+function snapshotToSerializable(snapshot: BlockchainSnapshot): SerializableSnapshot
+```
+
+Converts a blockchain snapshot to a JSON-serializable format.
+
+**Parameters:**
+- `snapshot` — blockchain snapshot
+
+**Returns:** serializable snapshot object
+
+#### `snapshotFromSerializable()`
+
+```typescript
+function snapshotFromSerializable(serializable: SerializableSnapshot): BlockchainSnapshot
+```
+
+Restores a blockchain snapshot from serialized format.
+
+**Parameters:**
+- `serializable` — serialized snapshot object
+
+**Returns:** blockchain snapshot
+
+**Usage example:**
+```typescript
+import { snapshotToSerializable, snapshotFromSerializable } from '@ton/sandbox';
+import fs from 'fs';
+
+// Save snapshot to file
+const snapshot = blockchain.snapshot();
+const serializable = snapshotToSerializable(snapshot);
+fs.writeFileSync('snapshot.json', JSON.stringify(serializable));
+
+// Load snapshot from file
+const loaded = JSON.parse(fs.readFileSync('snapshot.json', 'utf8'));
+const restored = snapshotFromSerializable(loaded);
+await blockchain.loadFrom(restored);
+```
+
+## Network configuration
+
+### Custom network configuration
+
+```typescript
+import { loadConfig, updateConfig } from '@ton/sandbox';
+
+const oldConfig = loadConfig(blockchain.config);
+const updatedConfig = updateConfig(oldConfig, {
+    ...oldConfig[8],
+    anon0: {
+        ...oldConfig[8].anon0,
+        version: 99,
+    },
+});
+blockchain.setConfig(updatedConfig);
+```
+
+### Gas configuration
+
+```typescript
+// Set custom gas prices
+const config = updateConfig(loadConfig(blockchain.config), {
+    ...oldConfig[20],
+    gas_price: 1000n, // Custom gas price
+});
+blockchain.setConfig(config);
+```
+
+## Logging configuration
+
+### Global verbosity settings
+
+```typescript
+blockchain.verbosity = {
+    print: true,
+    blockchainLogs: true,
+    vmLogs: 'vm_logs_full',
+    debugLogs: true
+};
+```
+
+### Contract-specific logging
+
+```typescript
+await blockchain.setVerbosityForAddress(contract.address, {
+    blockchainLogs: true,
+    vmLogs: 'vm_logs',
+    debugLogs: false
+});
+```
+
+### Log levels
+
+- `'none'` — no VM logs
+- `'vm_logs'` — basic VM instruction logs
+- `'vm_logs_full'` — detailed VM logs with stack and cell information
+
+## Type definitions
+
+### `BlockchainParams`
+
+Configuration parameters for blockchain creation.
+
+```typescript
+type BlockchainParams = {
+    executor?: Executor;
+    config?: Cell;
+    storage?: BlockchainStorage;
+    libs?: Dictionary<bigint, Cell>;
+};
+```
+
+**Properties:**
+- `executor` — blockchain executor instance for low-level operations
+- `config` — network configuration cell
+- `storage` — blockchain storage implementation
+- `libs` — shared libraries dictionary
+
+### `LogsVerbosity`
+
+Logging configuration for blockchain and contracts.
+
+```typescript
+type LogsVerbosity = {
+    print: boolean;
+    blockchainLogs: boolean;
+    vmLogs: 'none' | 'vm_logs' | 'vm_logs_full';
+    debugLogs: boolean;
+};
+```
+
+### `TransactionMatcher`
+
+Parameters for transaction matching in tests using the `toHaveTransaction` matcher.
+
+```typescript
+type TransactionMatcher = {
+    from?: Address;
+    to?: Address;
+    success?: boolean;
+    aborted?: boolean;
+    destroyed?: boolean;
+    exitCode?: number;
+    value?: bigint | ((value: bigint) => boolean);
+    body?: Cell | ((body: Cell) => boolean);
+    op?: number | ((op: number) => boolean);
+};
+```
+
+**Properties:**
+- `from` — sender address
+- `to` — recipient address
+- `success` — transaction success status
+- `aborted` — transaction aborted status
+- `destroyed` — account destroyed status
+- `exitCode` — transaction exit code
+- `value` — transaction value or value predicate function
+- `body` — message body cell or body predicate function
+- `op` — operation code or operation predicate function
+
+### `SendMessageResult`
+
+Result of sending a message to the blockchain.
+
+```typescript
+export type SendMessageResult = {
+    transactions: BlockchainTransaction[];
+    events: Event[];
+    externals: ExternalOut[];
+};
+```
+
+**Properties:**
+- `transactions` — array of blockchain transactions that resulted from the message
+- `events` — array of blockchain events emitted during execution
+- `externals` — array of external messages generated during execution
+
+### `TreasuryParams`
+
+Parameters for configuring a treasury contract.
+
+```typescript
+type TreasuryParams = Partial<{
+    workchain: number;
+    predeploy: boolean;
+    balance: bigint;
+    resetBalanceIfZero: boolean;
+}>;
+```
+
+**Properties:**
+- `workchain` — the workchain ID of the treasury
+- `predeploy` — if set the treasury will be deployed on the moment of creation
+- `balance` — initial balance of the treasury (default: 1_000_000 TON if omitted)
+- `resetBalanceIfZero` — if set and treasury balance is zero on moment of calling method it reset balance to `balance`
+
+## Best practices
+
+### Test isolation
+
+```typescript
+describe('MyContract', () => {
+    let blockchain: Blockchain;
+    let contract: SandboxContract<MyContract>;
+
+    beforeEach(async () => {
+        // Create fresh blockchain for each test
+        blockchain = await Blockchain.create();
+        // ... setup contract
+    });
+
+    // Each test runs in isolation
+});
+```
+
+### Gas usage testing
+
+```typescript
+it('should use reasonable gas', async () => {
+    // Use contract method for gas testing
+    const result = await contract.sendOperation(sender.getSender(), toNano('1'));
+    
+    const gasUsed = result.transactions[0].totalFees.coins;
+    expect(gasUsed).toBeLessThan(toNano('0.01')); // Less than 0.01 TON
+});
+```
+
+### State verification
+
+```typescript
+it('should update state correctly', async () => {
+    // Send increment using contract method
+    await contract.sendIncrement(sender.getSender(), toNano('0.1'));
+    
+    // Check state using get method
+    const counter = await contract.getCounter();
+    expect(counter).toBe(1n);
+});
+```
+
+### Error handling
+
+```typescript
+it('should reject invalid operations', async () => {
+    // Send invalid operation using contract method
+    const result = await contract.sendInvalidOperation(sender.getSender(), toNano('1'));
+    
+    expect(result.transactions).toHaveTransaction({
+        from: sender.address,
+        to: contract.address,
+        success: false,
+        exitCode: 100 // Expected error code
+    });
+});
+```
