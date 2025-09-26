@@ -31,6 +31,10 @@ DOCS_JSON_PATH = REPO_ROOT / 'docs.json'
 STATS_DIR = REPO_ROOT / 'stats'
 CHART_DIR = STATS_DIR / 'charts'
 HISTORY_CSV = STATS_DIR / 'history.csv'
+EXCLUDE_UTC_DAYS = {
+    # Exclude anomalous spike introduced by temporary nav on Sep 2, 2025
+    '2025-09-02',
+}
 
 
 # ----------------- helpers -----------------
@@ -538,6 +542,9 @@ def run_history() -> None:
     csv_path.write_text('date,commit,pages,words,images,min,p25,median,p75,max,avg\n', encoding='utf-8')
 
     for day, hash_, _iso in day_commits:
+        if day in EXCLUDE_UTC_DAYS:
+            print(f"Skipped anomalous day {day} {hash_}")
+            continue
         docs_content = git_show(hash_, 'docs.json')
         if docs_content is None:
             continue
