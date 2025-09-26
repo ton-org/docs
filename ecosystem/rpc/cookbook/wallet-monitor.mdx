@@ -1,0 +1,132 @@
+---
+title: Monitor a Wallet
+description: Learn how to continuously watch a wallet for new transactions and balance updates using Ton Center APIs.
+---
+
+This guide shows how to create a **wallet monitor** using the Ton Center API.  
+It continuously polls the blockchain for the latest transaction and balance of a given wallet address, and alerts when new transactions are detected.
+
+This recipe is useful for:
+- Building bots that notify users of incoming/outgoing payments
+- Tracking balances for custodial or exchange wallets
+- Exploring and debugging account activity in real time
+
+<Info>
+The examples use the public Ton Center endpoint:
+
+```
+https://toncenter.com/api/v2/jsonRPC
+```
+
+For production, you should request your own API key and use a dedicated endpoint for higher rate limits and stability.
+</Info>
+
+---
+
+## 1. Fetching transactions
+
+Transactions for an account can be retrieved via the `getTransactions` method.
+
+Example request:
+
+```bash
+curl -X POST https://toncenter.com/api/v2/jsonRPC \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "getTransactions",
+    "params": [{ "address": "EQDtFpEwcFAEcRe5mLVh2N6C0x-_hJEM7W61_JLnSF74p4q2", "limit": 1 }]
+  }'
+```
+
+---
+
+## 2. Checking balance
+
+To query the balance of an account, use the `getAddressBalance` method.
+
+Example request:
+
+```bash
+curl -X POST https://toncenter.com/api/v2/jsonRPC \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": 1,
+    "jsonrpc": "2.0",
+    "method": "getAddressBalance",
+    "params": ["EQDtFpEwcFAEcRe5mLVh2N6C0x-_hJEM7W61_JLnSF74p4q2"]
+  }'
+```
+
+---
+
+## 3. Code Implementation
+The script polls every 5 seconds and prints balance updates and new transactions.
+
+<Tabs>
+  <Tab title="JavaScript (@ton/core)">
+
+  Install dependencies:
+  ```bash
+  yarn add ton ton-crypto ton-core buffer
+  ```
+
+  Code:
+  ```js
+  import { TonClient, Address } from "ton";
+
+  const client = new TonClient({
+    endpoint: "https://toncenter.com/api/v2/jsonRPC",
+  });
+
+  const address = Address.parse(
+    "EQDtFpEwcFAEcRe5mLVh2N6C0x-_hJEM7W61_JLnSF74p4q2"
+  );
+
+  let lastSeenLt = null;
+
+  async function checkTransactions() {
+    try {
+      const txs = await client.getTransactions(address, { limit: 1 });
+      const latest = txs[0];
+
+      if (latest) {
+        if (lastSeenLt && latest.lt !== lastSeenLt) {
+          console.log("  New transaction detected!");
+          console.log("  lt:", latest.lt, "hash:", latest.hash().toString("base64"));
+        }
+        lastSeenLt = latest.lt;
+      }
+
+      const balance = await client.getBalance(address);
+      console.log("Current balance:", balance.toString(), "nanotons");
+    } catch (err) {
+      console.error("Error:", err.message);
+    }
+  }
+
+  setInterval(checkTransactions, 5000);
+
+  console.log("Monitoring transactions for", address.toString());
+  ```
+
+  Output example:
+  ```bash
+  Monitoring transactions for EQDtFpEwcFAEcRe5mLVh2N6C0x-_hJEM7W61_JLnSF74p4q2
+  Current balance: 1317379090350631577 nanotons
+    New transaction detected!
+    lt: 61948272000003n
+  hash: LrWzfCoHKUSHK9RqgznOuZ841KG3eyEeo3uZbcy/Hzs=
+  Current balance: 1317379090350537050 nanotons
+   ```
+  </Tab>
+</Tabs>
+
+---
+
+## 4. Use Cases
+
+- **Notification bots** – Send Telegram/Discord alerts when a user’s wallet receives or spends TON.  
+- **Custodial wallets** – Exchanges or custodians can track balances in real time for hot wallets.  
+- **Developer debugging** – Easily follow transaction activity while testing dApps or smart contracts.  
