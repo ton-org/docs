@@ -4,29 +4,35 @@ sidebarTitle: "Statements"
 noindex: "true"
 ---
 
-This section briefly overviews FunC statements, which form the core of function bodies.
+This section describes FunC statements, which can occur anywhere inside function bodies.
 
 ## Expression statements
 The most common type of statement is the expression statement—an expression followed by `;`. As a rule, all sub-expressions are evaluated from left to right,
 except in cases where [asm stack rearrangement](/language/func/functions#rearranging-stack-entries) explicitly defines the order.
 
 ### Variable declaration
-Local variables must be initialized at the time of declaration. Here are some examples:
+Local variables must be initialized at the time of declaration. Here are some examples (each line is independent from the other ones):
 
 ```func
 int x = 2;
-var x = 2;
+var x = 2;               ;; Equivalent to previous, but with type inference
 (int, int) p = (1, 2);
-(int, var) p = (1, 2);
-(int, int, int) (x, y, z) = (1, 2, 3);
-(int x, int y, int z) = (1, 2, 3);
-var (x, y, z) = (1, 2, 3);
-(int x = 1, int y = 2, int z = 3);
-[int, int, int] [x, y, z] = [1, 2, 3];
-[int x, int y, int z] = [1, 2, 3];
-var [x, y, z] = [1, 2, 3];
+(int, var) p = (1, 2);   ;; Equivalent to previous, but with type inference
+[int, var, int] t = [1, 2, 3];
 ```
 
+In the previous examples, `p` and `t` store the entire tensor and tuple, respectively. 
+But it is possible to deconstruct tensors and tuples and assign each component to different variables. 
+Here are some examples that showcase different ways of deconstructing tensors and tuples: 
+```
+(int x, int y, int z) = (1, 2, 3);       ;; Assign each tensor component to x, y, and z.
+(int, int, int) (x, y, z) = (1, 2, 3);   ;; Equivalent to previous
+var (x, y, z) = (1, 2, 3);               ;; Equivalent to previous, but with type inference 
+(int x = 1, int y = 2, int z = 3);       ;; Assigning each component directly
+[int x, int y, int z] = [1, 2, 3];       ;; Assign each tuple component to x, y, and z
+[int, int, int] [x, y, z] = [1, 2, 3];   ;; Equivalent to previous
+var [x, y, z] = [1, 2, 3];               ;; Equivalent to previous, but with type inference 
+```
 
 A variable can be redeclared in the same scope. For example, the following code is valid:
 
@@ -36,9 +42,17 @@ int y = x + 1;
 int x = 3;
 ```
 
-In this case,
+In this example,
 the second occurrence of `int x` is not a new declaration but a compile-time check ensuring that `x` has type `int`. The third line is equivalent to `x = 3;`.
 
+The following example, which redeclares `x` with type `(int, int)` at the third line, is also valid:
+
+```func
+int x = 2;
+int y = x + 1;
+(int, int) x = (y, y + 1);
+```
+After the third line, variable `x` has type `(int, int)`.
 
 **Variable redeclaration in nested scopes**
 
@@ -60,9 +74,16 @@ global variables **cannot** be redeclared.
 
 
 Since variable declarations are **expression statements**, constructs like `int x = 2;` are valid expressions.
+When used as an expression, the result of evaluating a declaration like:
+```
+type identifier = expression
+```
+is the same as evaluating `expression`.
+
 For instance:
 `int y = (int x = 3) + 1;`
-Here, `x` is declared and assigned `3`, and `y` is assigned `4`.
+declares `x` and assigns to it the value `3`. The result of the expression `(int x = 3)` is therefore `3`, which means that 
+`(int x = 3) + 1` evaluates to `4`.
 
 
 #### Underscore
@@ -80,69 +101,52 @@ you can retrieve only the first return value while ignoring the rest:
 
 A function call in FunC follows a conventional syntax:
 the function name is followed by its arguments, separated by commas.
+However, unlike many conventional languages, FunC also treats functions as taking a single tensor argument.
 
+For example, suppose `foo` is a function of type `(int, int, int) -> int`. The following two lines are equivalent ways of calling `foo`:
 ```func
-;; Suppose foo has type (int, int, int) -> int
-int x = foo(1, 2, 3);
+int x = foo(1, 2, 3);    ;; Three arguments separated by ,
+int x = foo((1, 2, 3));  ;; The tensor (1, 2, 3) passed as a single argument
 ```
 
-However, unlike many conventional languages, FunC treats functions as taking a single argument.
-In the example above, `foo` is a function that takes one tuple argument of type `(int, int, int)`.
+Equivalently, we could also assign tensor `(1, 2, 3)` to a variable, and then call `foo`:
+```func
+(int, int, int) t = (1, 2, 3);
+int x = foo(t);    ;; Pass the tensor as a single argument
+```
 
 **Function composition**
 
-To illustrate how function arguments work in FunC, consider a function `bar` of type `int -> (int, int, int)`. Since `foo` expects a single tuple argument, you can pass the entire result of `bar(42)` directly into `foo`:
+To illustrate how function composition works in FunC, suppose that together with the previous `foo` function, there is also a `bar` function of type `int -> (int, int, int)`. 
+Since `foo` expects a single tensor argument, you can pass the entire result of `bar(42)` directly into `foo`:
 
 ```func
 int x = foo(bar(42));
 ```
 
-This is equivalent to the longer form:
+This is equivalent to the longer form, which decomposes the result tensor of `bar(42)` and then calls `foo` by passing all arguments separated by commas:
 
 ```func
 (int a, int b, int c) = bar(42);
 int x = foo(a, b, c);
 ```
 
-
-
-Also Haskell-style calls are possible, but not always (to be fixed later):
-
-FunC also supports **Haskell-style** function application, but with some limitations:
-
-```func
-;; Suppose foo has type int -> int -> int -> int
-;; i.e., it is curried
-(int a, int b, int c) = (1, 2, 3);
-int x = foo a b c; ;; Valid syntax
-```
-However, direct application with literals does not compile:
-
-```func
-;; int y = foo 1 2 3; ERROR: won't compile
-```
-
-Instead, parentheses are required:
-
-```func
-int y = foo (1) (2) (3); ;; Valid syntax
-```
 ### Lambda expressions
 Lambda expressions are not yet supported in FunC.
 
 ### Methods calls
 
-#### Non-modifying methods
+#### Non-modifying notation
 
-In FunC, a function with at least one argument can be called a non-modifying method using the dot `.` syntax.
+In FunC, a function with at least one argument can be called using the dot `.` notation, also called *non-modifying notation*.
 
-For example, the function `store_uint` has the type `(builder, int, int)  → builder`, where:
-- The first argument is a builder object.
+For example, the function `store_uint`, which stores an unsigned integer into a cell builder and returns the modified builder, 
+has type `(builder, int, int) -> builder`, where:
+- The first argument is the builder object.
 - The second argument is the value to store.
-- The third argument is the bit length.
+- The third argument is the unsigned integer bit length.
 
-The function `begin_cell()` creates a new builder.
-These two ways of calling `store_uint` are equivalent:
+The following two ways of calling `store_uint` are equivalent (here, `begin_cell` creates a new builder and has type `() -> builder`):
 
 ```func
 builder b = begin_cell();
@@ -150,16 +154,21 @@ b = store_uint(b, 239, 8);
 ```
 ```func
 builder b = begin_cell();
-b = b.store_uint(239, 8);
+b = b.store_uint(239, 8);   ;; Equivalent to previous one, but using non-modifying notation
 ```
 
-The dot `.` syntax allows the first argument of a function to be placed before the function name,
+The dot `.` notation allows the first argument of a function to be placed before the function name,
 simplifying the code further:
 
 ```func
 builder b = begin_cell().store_uint(239, 8);
 ```
-Multiple non-modifying methods can be chained together:
+which is equivalent to the standard syntax for calling a function:
+```func
+builder b = store_uint(begin_cell(), 239, 8);
+```
+
+Using the `.` notation it is possible to chain many function calls together:
 
 ```func
 builder b = begin_cell().store_uint(239, 8)
@@ -167,32 +176,77 @@ builder b = begin_cell().store_uint(239, 8)
                         .store_uint(0xff, 10);
 ```
 
-
-
-
-#### Modifying methods
-
-If a function’s first argument is of type `A` and its return value follows the structure `(A, B)`,
-where `B` is an arbitrary type, the function can be used as a modifying method.
-
-A modifying method modifies its first argument by assigning the first component of the returned value to the original variable. These methods may take additional arguments and return extra values, but their primary purpose is to update the first argument.
-
-For example, consider a cell slice `cs` and the function `load_uint`, which has the type: `load_uint(slice, int) → (slice, int)`.
-
-This function takes a cell slice and a number of bits to load, returning the remaining slice and the loaded value. The following three calls are equivalent:
-
+which is equivalent to the longer form:
 
 ```func
-(cs, int x) = load_uint(cs, 8);
-(cs, int x) = cs.load_uint(8);
-int x = cs~load_uint(8);
+builder b = begin_cell();
+b = b.store_uint(239, 8);
+b = b.store_int(-1, 16);
+b = b.store_uint(0xff, 10);
 ```
 
-Without return values
-Sometimes, a function can be used as a modifying method even when it doesn’t return a meaningful value—only modifying its first argument.
-This can be achieved using unit types.
+or to the more difficult to read form, which nests all the calls:
 
-For example, consider an increment function `inc` of type `int -> int`. It should be redefined as a function of type `int -> (int, ())` to use it as a modifying method:
+```func
+builder b = store_uint(
+                store_int(
+                    store_uint(begin_cell(), 239, 8), 
+                    -1, 
+                    16), 
+                0xff, 
+                10
+            );
+```
+
+#### Modifying notation
+
+If a function's first argument is of type `A` and its return type follows the structure `(A, B)`,
+where `B` is an arbitrary type, the function can be called using the `~` notation, also called *modifying notation*.
+
+The primary purpose of the `~` notation is to automatically update the first argument in a function call.
+More concretely, suppose `foo` is a function of type `(builder, int, int) -> (builder, int)`, then 
+the call `v = b~foo(2, 3)`, which uses the `~` notation, is equivalent to the standard call `(b, v) = foo(b, 2, 3)`. 
+The statement `(b, v) = foo(b, 2, 3)` reassigns (or updates) the first argument `b` after the call to `foo` finishes. 
+The `~` notation serves as a shortcut to express this reassignment of the first argument.
+
+One possible application of the `~` notation is for working with cell slices. 
+For example, consider a cell slice `cs` and the function `load_uint`, which has type: `(slice, int) -> (slice, int)`. 
+The function `load_uint` takes a cell slice and a number of bits to load, returning the remaining slice and the loaded unsigned integer value. 
+The following three calls are equivalent:
+
+```func
+(cs, int x) = load_uint(cs, 8);     ;; Standard function call
+(cs, int x) = cs.load_uint(8);      ;; Call using non-modifying notation (i.e., `.`)
+int x = cs~load_uint(8);            ;; Call using modifying notation (i.e., `~`)
+```
+
+#### Adapting functions to use `~`
+
+When a function type is of the form `(A, ....) -> A`, it is possible to adapt the function so that the `~` notation can be used on such function.
+This can be achieved using unit types, by redefining the function type to `(A, ....) -> (A, ())`.
+
+For example, consider an increment function `inc` of type `int -> int`:
+
+```func
+int inc(int x) {
+  return x + 1;
+}
+```
+
+To increment a variable `y` using `inc`, the function should be used as follows:
+
+```func
+y = incr(y);
+```
+
+Attempting to use the `~` notation on `inc` would fail: 
+
+```func
+y~incr();    ;; DOES NOT COMPILE
+```
+because `inc` does not have a return type of the form `(int, B)`, where `B` is some type.
+
+To use the `~` notation on `inc`, first redefine the function so that it now has type `int -> (int, ())` as follows:
 
 ```func
 (int, ()) inc(int x) {
@@ -200,116 +254,50 @@ For example, consider an increment function `inc` of type `int -> int`. It shoul
 }
 ```
 
-Now, the following code increments `x`:
+Now, the following code increments `y`:
 
 ```func
-x~inc();
+y~inc();
 ```
 
 #### `.` and `~` in function names
 
-Suppose we want to use `inc` as a non-modifying method. We can write:
+Previously, we redefined `inc` to have type `int -> (int, ())` so that it was possible to use the `~` notation on it. 
+However, it would be bothersome to use `inc` in cases where we do not want to increment a variable, but we just want to store the increment in a different variable:
 
 ```func
 (int y, _) = inc(x);
 ```
 
-However, we can also define `inc` as a modifying method:
+In other words, we would *also* like to use `inc` as if it was the original function with type `int -> int`:
+```func
+int y = inc(x);
+```
+
+In FunC, it is possible to *also* keep the original `inc` of type `int -> int` so that we can use `inc` in different ways, like:
 
 ```func
-int inc(int x) {
+x~inc(); ;; Increments x, using modifying notation
+int y = inc(x); ;; Doesn't modify x, but stores the increment in y
+int z = x.inc(); ;; Equivalent to previous, but using non-modifying notation
+```
+
+This is achieved by declaring a function `~inc` alongside the original `inc`:
+
+```func
+int inc(int x) {    ;; Original inc function
   return x + 1;
 }
-(int, ()) ~inc(int x) {
+(int, ()) ~inc(int x) {  ;; inc version to be able to use ~ notation
   return (x + 1, ());
 }
 ```
-Now, we can call it in different ways:
-```func
-x~inc(); ;; Modifies x
-int y = inc(x); ;; Doesn't modify x
-int z = x.inc(); ;; Also doesn't modify x
-```
 
+This is possible because of the way FunC resolves function calls:
 
-**How FunC resolves function calls**
 - If a function is called with `.` (e.g., `x.foo()`), the compiler looks for a `.foo` definition.
 - If a function is called with `~` (e.g., `x~foo()`), the compiler looks for a `~foo` definition.
 - If neither `.foo` nor `~foo` is defined, the compiler falls back to the regular `foo` definition.
-
-
-
-### Operators
-Note that all the unary and binary operators are currently integer operators. Logical operators are bitwise integer operators (cf. [absence of boolean type](/language/func/types#no-boolean-type)).
-
-
-#### Unary operators
-
-FunC supports two unary operators:
-- `~` is bitwise not (priority 75)
-- `-` is integer negation (priority 20)
-
-These operators must be separated from the arguments:
-- `- x` - Negates x.
-- `-x` - Interpreted as a single identifier, not an operation.
-
-#### Binary operators
-
-With priority 30 (left-associative):
-
-- `*` is integer multiplication
-- `/` is integer division (floor)
-- `~/` is integer division (round)
-- `^/` is integer division (ceil)
-- `%` is integer reduction by modulo (floor)
-- `~%` is integer reduction by modulo (round)
-- `^%` is integer reduction by modulo (ceil)
-- `/%` returns the quotient and the remainder
-- `&` is bitwise AND
-
-With priority 20 (left-associative):
-- `+` is integer addition
-- `-` is integer subtraction
-- `|` is bitwise OR
-- `^` is bitwise XOR
-
-With priority 17 (left-associative):
-- `<<` is bitwise left shift
-- `>>` is bitwise right shift
-- `~>>` is bitwise right shift (round)
-- `^>>` is bitwise right shift (ceil)
-
-With priority 15 (left-associative):
-- `==` is integer equality check
-- `!=` is integer inequality check
-- `<` is integer comparison
-- `<=` is integer comparison
-- `>` is integer comparison
-- `>=` is integer comparison
-- `<=>` is integer comparison (returns -1, 0 or 1)
-
-They also should be separated from the argument:
-- `x + y` -  Proper spacing between operands.
-- `x+y` - Interpreted as a single identifier, not an operation.
-
-#### Conditional operator
-
-FunC supports the standard conditional (ternary) operator with the following syntax:
-```func
-<condition> ? <consequence> : <alternative>
-```
-For example:
-```func
-x > 0 ? x * fac(x - 1) : 1;
-```
-Priority 13.
-
-#### Assignments
-Priority 10.
-
-Supports simple assignment `=` and compound assignment operators: `+=`, `-=`, `*=`, `/=`, `~/=`, `^/=`, `%=`, `~%=`, `^%=`, `<<=`, `>>=`, `~>>=`, `^>>=`, `&=`, `|=`, `^=`.
-
-
 
 ## Loops
 FunC supports `repeat`, `while`, and `do { ... } until` loops. The `for` loop is not supported.
