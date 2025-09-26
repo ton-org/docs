@@ -67,6 +67,77 @@ export const TvmInstructionTable = () => {
     tuple: "Tuples",
   };
 
+  const CATEGORY_GROUPS = [
+    {
+      key: "stack",
+      label: "Stack",
+      patterns: [/^stack_/],
+    },
+    {
+      key: "continuations",
+      label: "Continuations & Control Flow",
+      patterns: [/^cont_/, /^codepage$/],
+    },
+    {
+      key: "arithmetic",
+      label: "Arithmetic & Logic",
+      patterns: [/^arithm_/, /^compare_/],
+    },
+    {
+      key: "cells",
+      label: "Cells & Tuples",
+      patterns: [/^cell_/, /^tuple$/],
+    },
+    {
+      key: "dictionaries",
+      label: "Dictionaries",
+      patterns: [/^dict_/],
+    },
+    {
+      key: "constants",
+      label: "Constants",
+      patterns: [/^const_/],
+    },
+    {
+      key: "crypto",
+      label: "Crypto",
+      patterns: [/^app_crypto/],
+    },
+    {
+      key: "applications",
+      label: "Blockchain",
+      patterns: [/^app_(?!crypto)/],
+    },
+    {
+      key: "exceptions",
+      label: "Exceptions",
+      patterns: [/^exceptions$/],
+    },
+    {
+      key: "debug",
+      label: "Debugging",
+      patterns: [/^debug$/],
+    }
+  ];
+
+  const CATEGORY_GROUP_KEYS = new Set(
+    CATEGORY_GROUPS.map((group) => group.key)
+  );
+
+  function resolveCategoryGroup(categoryKey) {
+    const normalized = (categoryKey || "").toLowerCase();
+    for (const group of CATEGORY_GROUPS) {
+      if (
+        Array.isArray(group.patterns) &&
+        group.patterns.length > 0 &&
+        group.patterns.some((pattern) => pattern.test(normalized))
+      ) {
+        return group;
+      }
+    }
+    return CATEGORY_GROUPS[CATEGORY_GROUPS.length - 1];
+  }
+
   function humanizeCategoryKey(key) {
     if (!key) return "Uncategorized";
     if (CATEGORY_MAP[key]) return CATEGORY_MAP[key];
@@ -287,10 +358,40 @@ export const TvmInstructionTable = () => {
     }
   }
 
+  function copyPlainText(value) {
+    try {
+      const { navigator, document } = window;
+      if (navigator?.clipboard?.writeText) {
+        return navigator.clipboard.writeText(value);
+      }
+      const ta = document.createElement("textarea");
+      ta.value = value;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "absolute";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      return Promise.resolve();
+    } catch (err) {
+      return Promise.reject(err);
+    }
+  }
+
   function formatAliasOperands(operands) {
     return Object.entries(operands)
       .map(([name, value]) => `${name}=${value}`)
       .join(", ");
+  }
+
+  function cleanAliasDescription(html) {
+    if (typeof html !== "string") return "";
+    let output = html.trim();
+    if (!output) return "";
+    output = output.replace(/^<p>/i, "").replace(/<\/p>$/i, "");
+    output = output.replace(/\.+$/g, "");
+    return output.trim();
   }
 
   function extractImplementationRefs(implementation) {
@@ -332,7 +433,7 @@ export const TvmInstructionTable = () => {
   }
 
   function renderControlFlowSummary(controlFlow) {
-    if (!controlFlow) {
+    if (!controlFlow || typeof controlFlow !== "object") {
       return (
         <p className="tvm-missing-placeholder">
           Control flow details are not available.
@@ -340,34 +441,433 @@ export const TvmInstructionTable = () => {
       );
     }
 
-    const { branches, nobranch } = controlFlow;
+    const branches = Array.isArray(controlFlow.branches)
+      ? controlFlow.branches.filter(Boolean)
+      : [];
+    const nobranch = Boolean(controlFlow.nobranch);
+    const isContinuationObject = (value) =>
+      Boolean(value && typeof value === "object" && typeof value.type === "string");
 
-    if (Array.isArray(branches) && branches.length > 0) {
-      return (
-        <div className="tvm-control-flow">
-          <p className="tvm-detail-muted">
-            {branches.length} possible branch{branches.length > 1 ? "es" : ""}{" "}
-            documented.
-          </p>
-          <pre className="tvm-detail-code">
-            {JSON.stringify(branches, null, 2)}
-          </pre>
-        </div>
-      );
-    }
+    const formatPrimitiveValue = (value) => {
+      if (value === null || value === undefined) return "";
+      if (Array.isArray(value)) {
+        return value
+          .map((item) => formatPrimitiveValue(item))
+          .filter(Boolean)
+          .join(", ");
+      }
+      if (typeof value === "object") {
+        return "";
+      }
+      if (typeof value === "boolean") {
+        return value ? "true" : "false";
+      }
+      return String(value);
+    };
 
-    if (nobranch && branches.length === 0) {
-      return (
-        <p className="tvm-detail-muted">
-          Instruction does not alter control flow.
-        </p>
-      );
-    }
+    const describeContinuation = (node) => {
+      if (!isContinuationObject(node)) {
+        return {
+          typeLabel: "unknown",
+          valueLabel: "?",
+          detailLabel: "",
+          text: "unknown ?",
+        };
+      }
+
+      const type = String(node.type || "").toLowerCase();
+      let typeLabel = "unknown";
+      let valueLabel = "";
+
+      switch (type) {
+        case "variable":
+          typeLabel = "var";
+          valueLabel = typeof node.var_name === "string" ? node.var_name : "?";
+          break;
+        case "register":
+          typeLabel = "register";
+          if (typeof node.index === "number") {
+            valueLabel = `c${node.index}`;
+          } else if (typeof node.var_name === "string") {
+            valueLabel = `c{${node.var_name}}`;
+          } else {
+            valueLabel = "c?";
+          }
+          break;
+        case "cc":
+          typeLabel = "cc";
+          valueLabel = "";
+          break;
+        case "special":
+          typeLabel = "special";
+          valueLabel = typeof node.name === "string" && node.name ? node.name : "?";
+          break;
+        default:
+          typeLabel = node.type ? String(node.type) : "unknown";
+          valueLabel = "";
+          break;
+      }
+
+      const detailParts = [];
+      if (type === "special") {
+        const args = node.args && typeof node.args === "object" ? node.args : {};
+        Object.entries(args).forEach(([argKey, argValue]) => {
+          if (!isContinuationObject(argValue)) {
+            const formatted = formatPrimitiveValue(argValue);
+            if (formatted) {
+              detailParts.push(`${argKey}=${formatted}`);
+            }
+          }
+        });
+      }
+
+      const knownKeys = new Set(["type", "var_name", "index", "name", "args", "save"]);
+      Object.entries(node).forEach(([key, value]) => {
+        if (knownKeys.has(key)) return;
+        const formatted = formatPrimitiveValue(value);
+        if (formatted) {
+          detailParts.push(`${key}=${formatted}`);
+        }
+      });
+
+      const detailLabel = detailParts.length > 0 ? `(${detailParts.join(", ")})` : "";
+      const text = [typeLabel, valueLabel, detailLabel]
+        .filter(Boolean)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      return { typeLabel, valueLabel, detailLabel, text };
+    };
+
+    const gatherChildContinuations = (node) => {
+      if (!isContinuationObject(node)) return [];
+      const type = String(node.type || "").toLowerCase();
+      const children = [];
+
+      const saveEntries =
+        node.save && typeof node.save === "object"
+          ? Object.entries(node.save).filter(([, value]) => isContinuationObject(value))
+          : [];
+      saveEntries
+        .sort(([aKey], [bKey]) => aKey.localeCompare(bKey))
+        .forEach(([slot, value]) => {
+          children.push({
+            label: String(slot),
+            node: value,
+          });
+        });
+
+      if (type === "special") {
+        const args = node.args && typeof node.args === "object" ? node.args : {};
+        Object.entries(args).forEach(([argKey, argValue]) => {
+          if (isContinuationObject(argValue)) {
+            children.push({
+              label: argKey,
+              node: argValue,
+            });
+          }
+        });
+      }
+
+      return children.map((child) => {
+        const raw = child.label ? String(child.label) : "";
+        const cleaned = raw.replace(/^(arg|save)\s+/i, "").trim();
+        return {
+          label: cleaned,
+          node: child.node,
+        };
+      });
+    };
+
+    const buildContinuationTree = (node, path = "root") => {
+      const summary = describeContinuation(node);
+      const children = gatherChildContinuations(node).map((child, idx) => ({
+        label: child.label,
+        tree: buildContinuationTree(child.node, `${path}.${idx}`),
+      }));
+      return { id: path, summary, children };
+    };
+
+    const splitEdgeLabel = (label) => {
+      if (!label) {
+        return { primary: "", secondary: "" };
+      }
+      const text = label.trim();
+      if (!text) {
+        return { primary: "", secondary: "" };
+      }
+      const tokens = text.split(/\s+/);
+      if (tokens.length <= 1) {
+        return { primary: text, secondary: "" };
+      }
+      return {
+        primary: tokens[0],
+        secondary: tokens.slice(1).join(" "),
+      };
+    };
+
+    const computeSpan = (tree) => {
+      if (!tree.children || tree.children.length === 0) {
+        tree.span = 1;
+        return 1;
+      }
+      let total = 0;
+      tree.children.forEach((child) => {
+        total += computeSpan(child.tree);
+      });
+      tree.span = Math.max(total, 1);
+      return tree.span;
+    };
+
+    const H_SPACING = 200;
+    const V_SPACING = 110;
+    const NODE_HEIGHT = 42;
+    const NODE_MIN_WIDTH = 140;
+    const PADDING_X = 60;
+    const PADDING_Y = 60;
+
+    let canvasMeasureCtx = null;
+    const measureNodeWidth = (summary) => {
+      if (typeof document !== "undefined") {
+        if (!canvasMeasureCtx) {
+          const canvas = document.createElement("canvas");
+          canvasMeasureCtx = canvas.getContext("2d");
+        }
+        if (canvasMeasureCtx) {
+          canvasMeasureCtx.font = "600 13px 'JetBrains Mono', 'Menlo', 'Monaco', monospace";
+          const typeText = (summary.typeLabel || "").toUpperCase();
+          const parts = [typeText];
+          if (summary.valueLabel) parts.push(summary.valueLabel);
+          if (summary.detailLabel) parts.push(summary.detailLabel);
+          const text = parts.join(" ").trim();
+          const metrics = canvasMeasureCtx.measureText(text || "node");
+          return Math.max(metrics.width + 48, NODE_MIN_WIDTH);
+        }
+      }
+      const fallbackLength =
+        (summary.typeLabel || "").length +
+        (summary.valueLabel || "").length +
+        (summary.detailLabel || "").length;
+      return Math.max(fallbackLength * 7 + 48, NODE_MIN_WIDTH);
+    };
+
+    const assignPositions = (
+      tree,
+      nodes,
+      nodeMap,
+      edges,
+      depth = 0,
+      offsetSpan = 0
+    ) => {
+      const span = Math.max(tree.span || 1, 1);
+      const spanWidth = span * H_SPACING;
+      const x = PADDING_X + offsetSpan + spanWidth / 2;
+      const y = PADDING_Y + depth * V_SPACING;
+      const width = measureNodeWidth(tree.summary);
+      const nodeEntry = {
+        id: tree.id,
+        summary: tree.summary,
+        x,
+        y,
+        width,
+        height: NODE_HEIGHT,
+      };
+      nodes.push(nodeEntry);
+      nodeMap.set(tree.id, nodeEntry);
+
+      let childOffset = offsetSpan;
+      tree.children.forEach((child) => {
+        assignPositions(child.tree, nodes, nodeMap, edges, depth + 1, childOffset);
+        edges.push({
+          from: tree.id,
+          to: child.tree.id,
+          label: child.label,
+        });
+        childOffset += Math.max(child.tree.span || 1, 1) * H_SPACING;
+      });
+    };
 
     return (
-      <p className="tvm-missing-placeholder">
-        Control flow details are not available.
-      </p>
+      <div>
+        {(branches.length > 0 || !nobranch) ? (<div><b>Falls through: </b>{nobranch ? "Yes" : "No"}</div>) : null}
+        {branches.length > 0 ? (
+          <div className="tvm-control-flow-branches">
+            {branches.map((branch, index) => {
+              const rootSummary = describeContinuation(branch);
+              const branchType = (rootSummary.typeLabel || "").toUpperCase();
+              const branchTitleText = `Branch -> ${branchType}${
+                rootSummary.valueLabel ? ` ${rootSummary.valueLabel}` : ""
+              }`;
+              const tree = buildContinuationTree(branch, `branch-${index}`);
+              computeSpan(tree);
+              const nodes = [];
+              const nodeMap = new Map();
+              const edges = [];
+              assignPositions(tree, nodes, nodeMap, edges);
+
+              let minX = Infinity;
+              let maxX = -Infinity;
+              let minY = Infinity;
+              let maxY = -Infinity;
+              nodes.forEach((node) => {
+                minX = Math.min(minX, node.x - node.width / 2);
+                maxX = Math.max(maxX, node.x + node.width / 2);
+                minY = Math.min(minY, node.y - node.height / 2);
+                maxY = Math.max(maxY, node.y + node.height / 2);
+              });
+
+              const shiftX = Number.isFinite(minX) ? PADDING_X - minX : 0;
+              const shiftY = Number.isFinite(minY) ? PADDING_Y - minY : 0;
+              if (shiftX || shiftY) {
+                nodes.forEach((node) => {
+                  node.x += shiftX;
+                  node.y += shiftY;
+                });
+              }
+
+              const canvasWidth = Math.max(maxX - minX + PADDING_X * 2, 260);
+              const canvasHeight = Math.max(maxY - minY + PADDING_Y * 2, NODE_HEIGHT + PADDING_Y * 2);
+
+              const edgeLayouts = edges
+                .map((edge, edgeIdx) => {
+                  const from = nodeMap.get(edge.from);
+                  const to = nodeMap.get(edge.to);
+                  if (!from || !to) return null;
+                  const fromX = from.x;
+                  const fromY = from.y + from.height / 2;
+                  const toX = to.x;
+                  const toY = to.y - to.height / 2;
+                  const midY = fromY + (toY - fromY) / 2;
+                  const path = `M ${fromX} ${fromY} C ${fromX} ${midY}, ${toX} ${midY}, ${toX} ${toY}`;
+                  const labelX = (fromX + toX) / 2;
+                  const labelY = midY;
+                  const segments = splitEdgeLabel(edge.label);
+                  const hasSecondary = Boolean(segments.secondary);
+                  return {
+                    id: `${edge.from}->${edge.to}-${edgeIdx}`,
+                    path,
+                    labelX,
+                    labelY,
+                    segments,
+                    hasSecondary,
+                  };
+                })
+                .filter(Boolean);
+
+              return (
+                <div key={`branch-${index}`} className="tvm-control-flow-branch">
+                  <div className="tvm-control-flow-branch-header">
+                    <span className="tvm-control-flow-branch-title">
+                      {highlightMatches(branchTitleText, searchTokens)}
+                    </span>
+                  </div>
+                  <div className="tvm-flow-graph-wrapper">
+                    <div
+                      className="tvm-flow-canvas"
+                      style={{
+                        width: `${canvasWidth}px`,
+                        height: `${canvasHeight}px`,
+                      }}
+                    >
+                      <svg
+                        className="tvm-flow-canvas-svg"
+                        width={canvasWidth}
+                        height={canvasHeight}
+                        viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
+                        preserveAspectRatio="xMinYMin meet"
+                      >
+                        <defs>
+                          <marker
+                            id="tvm-flow-arrowhead"
+                            markerWidth="8"
+                            markerHeight="8"
+                            refX="6"
+                            refY="4"
+                            orient="auto"
+                            markerUnits="strokeWidth"
+                          >
+                            <path d="M1 1 L7 4 L1 7 Z" fill="currentColor" />
+                          </marker>
+                        </defs>
+                        {edgeLayouts.map((edge) => (
+                          <path
+                            key={`edge-path-${edge.id}`}
+                            d={edge.path}
+                            className="tvm-flow-graph-line"
+                            markerEnd="url(#tvm-flow-arrowhead)"
+                          />
+                        ))}
+                      </svg>
+                      {edgeLayouts.map((edge) => (
+                        edge.segments.primary ? (
+                      <div
+                        key={`edge-label-${edge.id}`}
+                        className={`tvm-flow-edge-label${
+                          edge.hasSecondary ? ' has-secondary' : ''
+                        }`}
+                        style={{
+                          left: `${edge.labelX}px`,
+                          top: `${edge.labelY}px`,
+                        }}
+                      >
+                        <span className="tvm-flow-edge-label-primary">
+                          {highlightMatches(edge.segments.primary.toUpperCase(), searchTokens)}
+                        </span>
+                        {edge.segments.secondary && (
+                          <span className="tvm-flow-edge-label-secondary">
+                            {highlightMatches(edge.segments.secondary.toUpperCase(), searchTokens)}
+                          </span>
+                        )}
+                      </div>
+                        ) : null
+                      ))}
+                      {nodes.map((node) => (
+                        <div
+                          key={node.id}
+                          className="tvm-flow-node"
+                          style={{
+                            left: `${node.x}px`,
+                            top: `${node.y}px`,
+                          }}
+                        >
+                          <span
+                            className="tvm-control-flow-node-pill"
+                            style={{ minWidth: `${node.width}px` }}
+                          >
+                            <span className="tvm-control-flow-node-type">
+                              {highlightMatches(
+                                (node.summary.typeLabel || "").toUpperCase(),
+                                searchTokens
+                              )}
+                            </span>
+                            {node.summary.valueLabel && (
+                              <span className="tvm-control-flow-node-value">
+                                {highlightMatches(node.summary.valueLabel, searchTokens)}
+                              </span>
+                            )}
+                            {node.summary.detailLabel && (
+                              <span className="tvm-control-flow-node-extra">
+                                {highlightMatches(node.summary.detailLabel, searchTokens)}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="tvm-detail-muted">
+            {nobranch
+              ? "Instruction does not modify the current continuation."
+              : "Control flow branches are not documented in the specification."}
+          </p>
+        )}
+      </div>
     );
   }
 
@@ -538,7 +1038,8 @@ export const TvmInstructionTable = () => {
     );
   }
 
-  function renderInstructionDetail(instruction) {
+  function renderInstructionDetail(instruction, options = {}) {
+    const { isAnchorTarget = false, onOpenRawJson = () => {} } = options;
     const hasAliases =
       Array.isArray(instruction.aliases) && instruction.aliases.length > 0;
     const readsRegisters = Array.isArray(instruction.registers?.inputs)
@@ -645,14 +1146,27 @@ export const TvmInstructionTable = () => {
       }
     }
 
+    const panelClassName = `tvm-detail-panel${
+      isAnchorTarget ? " is-anchor-target" : ""
+    }`;
+
     return (
-      <div className="tvm-detail-panel">
+      <div className={panelClassName}>
         <div className="tvm-detail-header">
-          <div className="tvm-detail-header-main">
-            <h4 className="tvm-detail-title">Description</h4>
-            <span className="tvm-category-pill">{instruction.categoryLabel}</span>
+          <div className="tvm-detail-heading">
+            <div className="tvm-detail-header-main">
+              <h4 className="tvm-detail-title">{instruction.mnemonic}</h4>
+            </div>
           </div>
-          <div className="tvm-detail-badges">{badgeNodes}</div>
+          <div className="tvm-detail-actions">
+            <button
+              type="button"
+              className="tvm-button tvm-button--ghost"
+              onClick={() => onOpenRawJson(instruction)}
+            >
+              Raw JSON
+            </button>
+          </div>
         </div>
 
         <div className="tvm-detail-columns">
@@ -666,7 +1180,9 @@ export const TvmInstructionTable = () => {
               <p className="tvm-missing-placeholder">Description not available.</p>
             )}
 
-            <div className="tvm-detail-fift">
+            <div className="tvm-detail-badges">{badgeNodes}</div>
+
+            <div className="tvm-detail-block">
               <span className="tvm-detail-subtitle">Fift command</span>
               {instruction.fift ? (
                 <code className="tvm-detail-code tvm-detail-code--inline">
@@ -676,6 +1192,119 @@ export const TvmInstructionTable = () => {
                 <span className="tvm-detail-muted">Not documented.</span>
               )}
             </div>
+
+            <div className="tvm-detail-block">
+              <span className="tvm-detail-subtitle">Control flow</span>
+              {renderControlFlowSummary(instruction.controlFlow)}
+            </div>
+
+            {hasImplementation && (
+              <div className="tvm-detail-block">
+                <span className="tvm-detail-subtitle">Implementation</span>
+                <div className="tvm-impl-badges">
+                  {implementationRefs.map((ref, idx) => {
+                    const filename = ref.file || "source";
+                    const linePart =
+                      typeof ref.line === "number" && ref.line > 0
+                        ? `:${ref.line}`
+                        : "";
+                    const href = buildGitHubLineUrl(ref.path, ref.line);
+                    return (
+                      <a
+                        key={`${instruction.mnemonic}-impl-${idx}`}
+                        className="tvm-detail-badge tvm-detail-badge--link"
+                        href={href}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {filename}
+                        {linePart}
+                      </a>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {hasFiftExamples && (
+              <section className="tvm-detail-section tvm-detail-section--wide">
+                <h4 className="tvm-detail-title">Fift examples</h4>
+                <div className="tvm-example-list">
+                  {instruction.fiftExamples.map((example, idx) => {
+                    const description =
+                      typeof example.description === "string" ? example.description : "";
+                    const fiftCode = typeof example.fift === "string" ? example.fift : "";
+                    return (
+                      <div
+                        key={`${instruction.mnemonic}-example-${idx}`}
+                        className="tvm-example-item"
+                      >
+                        {description && (
+                          <p
+                            className="tvm-example-description"
+                            dangerouslySetInnerHTML={{
+                              __html: formatInlineMarkdown(description),
+                            }}
+                          />
+                        )}
+                        {fiftCode && (
+                          <code className="tvm-detail-code tvm-example-code">{fiftCode}</code>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            {hasAliases && (
+              <section className="tvm-detail-section tvm-detail-section--wide">
+                <h4 className="tvm-detail-title">Aliases</h4>
+                <div className="tvm-alias-list">
+                  {instruction.aliases.map((alias) => {
+                    const aliasDescriptionHtml = cleanAliasDescription(
+                      alias.description || ""
+                    );
+                    const hasAliasMeta =
+                      Boolean(alias.doc_fift) ||
+                      (alias.operands && Object.keys(alias.operands).length > 0);
+
+                    return (
+                      <div key={alias.mnemonic} className="tvm-alias-item">
+                        <div className="tvm-alias-headline">
+                          <code>{alias.mnemonic}</code>
+                          <span className="tvm-alias-meta">
+                            alias of <code>{alias.alias_of}</code>
+                          </span>
+                        </div>
+                        {aliasDescriptionHtml && (
+                          <div
+                            className="tvm-alias-description"
+                            dangerouslySetInnerHTML={{
+                              __html: aliasDescriptionHtml,
+                            }}
+                          />
+                        )}
+                        {hasAliasMeta && (
+                          <div className="tvm-alias-meta-row">
+                            {alias.doc_fift && (
+                              <span className="tvm-alias-pill">
+                                Fift <code>{alias.doc_fift}</code>
+                              </span>
+                            )}
+                            {alias.operands && Object.keys(alias.operands).length > 0 && (
+                              <span className="tvm-alias-pill">
+                                Operands {formatAliasOperands(alias.operands)}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
           </div>
 
           <aside className="tvm-detail-side">
@@ -691,42 +1320,39 @@ export const TvmInstructionTable = () => {
             </div>
 
             <div className="tvm-side-block">
+              <span className="tvm-side-title">Category</span>
+              <div className="tvm-side-category-value">
+                {highlightMatches(instruction.rawCategoryLabel, searchTokens)}
+              </div>
+            </div>
+
+            <div className="tvm-side-block">
               <span className="tvm-side-title">Operands</span>
               {Array.isArray(instruction.operands) && instruction.operands.length > 0 ? (
-                <ul className="tvm-operands-list tvm-operands-list--simple">
+                <div className="tvm-operands-list">
                   {instruction.operands.map((operand, idx) => {
                     if (!operand || typeof operand !== "object") return null;
                     const summary = highlightMatches(
                       formatOperandSummary(operand),
                       searchTokens
                     );
-                    const range =
-                      operand.min_value !== undefined || operand.max_value !== undefined
-                        ? [operand.min_value, operand.max_value]
-                        : null;
-                    const hints = Array.isArray(operand.display_hints)
-                      ? operand.display_hints.map((hint) => hint?.type).filter(Boolean)
-                      : [];
+                    const hasRange =
+                      operand.min_value !== undefined || operand.max_value !== undefined;
                     return (
-                      <li key={`operand-${idx}`} className="tvm-operands-item">
+                      <div key={`operand-${idx}`} className="tvm-operands-item">
                         <div className="tvm-operands-line">{summary}</div>
-                        {range && range.some((value) => value !== undefined) && (
+                        {hasRange && (
                           <div className="tvm-operands-detail">
-                            Range {highlightMatches(String(range[0] ?? "?"), searchTokens)} – {highlightMatches(
-                              String(range[1] ?? "?"),
+                            Range {highlightMatches(String(operand.min_value ?? "?"), searchTokens)} – {highlightMatches(
+                              String(operand.max_value ?? "?"),
                               searchTokens
                             )}
                           </div>
                         )}
-                        {hints.length > 0 && (
-                          <div className="tvm-operands-detail">
-                            Hints: {highlightMatches(hints.join(", "), searchTokens)}
-                          </div>
-                        )}
-                      </li>
+                      </div>
                     );
                   })}
-                </ul>
+                </div>
               ) : (
                 <p className="tvm-detail-muted">No operands.</p>
               )}
@@ -743,103 +1369,7 @@ export const TvmInstructionTable = () => {
           </aside>
         </div>
 
-        <section className="tvm-detail-section">
-          <h4 className="tvm-detail-title">Control flow</h4>
-          {renderControlFlowSummary(instruction.controlFlow)}
-        </section>
-
-        {hasFiftExamples && (
-          <section className="tvm-detail-section tvm-detail-section--wide">
-            <h4 className="tvm-detail-title">Fift examples</h4>
-            <ul className="tvm-example-list">
-              {instruction.fiftExamples.map((example, idx) => {
-                const description =
-                  typeof example.description === "string" ? example.description : "";
-                const fiftCode = typeof example.fift === "string" ? example.fift : "";
-                return (
-                  <li
-                    key={`${instruction.mnemonic}-example-${idx}`}
-                    className="tvm-example-item"
-                  >
-                    {description && (
-                      <p
-                        className="tvm-example-description"
-                        dangerouslySetInnerHTML={{
-                          __html: formatInlineMarkdown(description),
-                        }}
-                      />
-                    )}
-                    {fiftCode && (
-                      <code className="tvm-detail-code tvm-example-code">{fiftCode}</code>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        )}
-
-        {hasAliases && (
-          <section className="tvm-detail-section tvm-detail-section--wide">
-            <h4 className="tvm-detail-title">Aliases</h4>
-            <ul className="tvm-alias-list">
-              {instruction.aliases.map((alias) => (
-                <li key={alias.mnemonic} className="tvm-alias-item">
-                  <div className="tvm-alias-headline">
-                    <code>{alias.mnemonic}</code>
-                    <span className="tvm-alias-meta">
-                      alias of <code>{alias.alias_of}</code>
-                    </span>
-                  </div>
-                  {alias.description && (
-                    <p className="tvm-alias-description">{alias.description}</p>
-                  )}
-                  <div className="tvm-alias-meta-row">
-                    {alias.doc_fift && (
-                      <span className="tvm-alias-pill">
-                        Fift <code>{alias.doc_fift}</code>
-                      </span>
-                    )}
-                    {alias.doc_stack && (
-                      <span className="tvm-alias-pill">Stack {alias.doc_stack}</span>
-                    )}
-                    {alias.operands && Object.keys(alias.operands).length > 0 && (
-                      <span className="tvm-alias-pill">
-                        Operands {formatAliasOperands(alias.operands)}
-                      </span>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-
-        {hasImplementation && (
-          <section className="tvm-detail-section tvm-detail-section--wide">
-            <h4 className="tvm-detail-title">Implementation</h4>
-            <div className="tvm-impl-badges">
-              {implementationRefs.map((ref, idx) => {
-                const filename = ref.file || "source";
-                const linePart =
-                  typeof ref.line === "number" && ref.line > 0 ? `:${ref.line}` : "";
-                const href = buildGitHubLineUrl(ref.path, ref.line);
-                return (
-                  <a
-                    key={`${instruction.mnemonic}-impl-${idx}`}
-                    className="tvm-detail-badge tvm-detail-badge--link"
-                    href={href}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {filename}
-                    {linePart}
-                  </a>
-                );
-              })}
-            </div>
-          </section>
-        )}
+        
       </div>
     );
   }
@@ -849,11 +1379,15 @@ export const TvmInstructionTable = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
+  const [subcategory, setSubcategory] = useState("All");
   const [sortMode, setSortMode] = useState("opcode");
   const [expanded, setExpanded] = useState({});
   const [copied, setCopied] = useState({});
   const [activeAnchorId, setActiveAnchorId] = useState(null);
+  const [rawModalInstruction, setRawModalInstruction] = useState(null);
+  const [rawModalCopied, setRawModalCopied] = useState(false);
   const searchInputRef = useRef(null);
+  const rawModalCopyTimeoutRef = useRef(null);
   const tableStyles = useMemo(
     () => `
 .tvm-instruction-app {
@@ -875,7 +1409,7 @@ export const TvmInstructionTable = () => {
   --tvm-stack-simple-text: var(--tvm-accent-subtle);
   --tvm-stack-const-bg: rgb(var(--primary) / 0.2);
   --tvm-stack-const-text: var(--tvm-accent-subtle);
-  --tvm-stack-array-bg: rgb(var(--primary-light) / 0.18);
+  --tvm-stack-array-bg: rgb(var(--primary) / 0.2);
   --tvm-stack-array-text: var(--tvm-text-primary);
   --tvm-stack-conditional-bg: rgb(var(--primary-dark) / 0.22);
   --tvm-stack-conditional-text: var(--tvm-accent-subtle);
@@ -886,6 +1420,7 @@ export const TvmInstructionTable = () => {
   --tvm-row-padding-x: 1rem;
   --tvm-chip-padding-y: 0.2rem;
   --tvm-chip-padding-x: 0.6rem;
+  --tvm-control-height: 2.75rem;
   color: var(--tvm-text-primary);
   background: var(--tvm-surface);
   border: 1px solid var(--tvm-border);
@@ -894,31 +1429,78 @@ export const TvmInstructionTable = () => {
   box-shadow: 0 24px 60px -40px rgb(var(--gray-900) / 0.9);
 }
 
-.tvm-instruction-app.is-density-compact {
-  --tvm-row-padding-y: 0.6rem;
-  --tvm-row-padding-x: 0.75rem;
-  --tvm-chip-padding-y: 0.16rem;
-  --tvm-chip-padding-x: 0.5rem;
-  padding: 1.25rem;
-}
-
 .tvm-instruction-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  align-items: flex-end;
+  flex-direction: column;
+  gap: 1rem;
   margin-bottom: 1.25rem;
+}
+
+.tvm-toolbar-search {
+  display: flex;
+}
+
+.tvm-toolbar-search .tvm-field--search {
+  flex: 1 1 auto;
+}
+
+.tvm-search-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.75rem;
+}
+
+.tvm-search-row .tvm-search-input {
+  flex: 1 1 auto;
+}
+
+.tvm-search-row .tvm-toolbar-utilities {
+  position: static;
+  width: auto;
+  align-self: stretch;
+  align-items: stretch;
+}
+
+.tvm-search-row .tvm-toolbar-utilities .tvm-button {
+  height: 100%;
 }
 
 .tvm-toolbar-utilities {
   display: flex;
-  flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
   justify-content: flex-end;
-  margin-left: auto;
-  flex: 1 1 240px;
+  justify-self: end;
+  align-self: end;
+  width: max-content;
 }
+
+.tvm-toolbar-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, max-content));
+  gap: 0.75rem;
+  align-items: end;
+  justify-content: flex-start;
+}
+
+.tvm-toolbar-filters .tvm-field {
+  min-width: 0;
+  width: min(280px, 100%);
+}
+
+.tvm-field--sort {
+  width: min(240px, 100%);
+}
+
+.tvm-field--category {
+  width: min(280px, 100%);
+}
+
+.tvm-field--subcategory {
+  width: min(300px, 100%);
+}
+
+
 
 .tvm-field {
   display: flex;
@@ -945,6 +1527,7 @@ export const TvmInstructionTable = () => {
   background: var(--tvm-surface-secondary);
   color: var(--tvm-text-primary);
   font-size: 0.95rem;
+  min-height: var(--tvm-control-height);
 }
 
 .tvm-field--search {
@@ -1009,7 +1592,8 @@ export const TvmInstructionTable = () => {
   background: var(--tvm-surface-secondary);
   color: var(--tvm-text-primary);
   font-size: 0.82rem;
-  padding: 0.45rem 0.75rem;
+  padding: 0 0.95rem;
+  min-height: var(--tvm-control-height);
   font-weight: 500;
   cursor: pointer;
   transition: background 0.2s ease-in-out, border-color 0.2s ease-in-out, color 0.2s ease-in-out;
@@ -1117,11 +1701,10 @@ export const TvmInstructionTable = () => {
 
 .tvm-highlight {
   display: inline;
-  background: rgb(var(--primary) / 0.18);
-  color: var(--tvm-accent-subtle);
+  background: rgb(var(--primary) / 0.22);
+  color: inherit;
   border-radius: 4px;
-  padding: 0.05em 0.12em;
-  margin: 0 -0.04em;
+  padding: 0 0.08em;
   line-height: inherit;
   box-decoration-break: clone;
 }
@@ -1182,6 +1765,15 @@ export const TvmInstructionTable = () => {
   background: rgb(var(--primary) / 0.12);
 }
 
+.tvm-spec-row.is-anchor-target {
+  background: rgb(var(--primary) / 0.16);
+  box-shadow: inset 0 0 0 1px var(--tvm-accent-strong);
+}
+
+.tvm-spec-row--detail.is-anchor-target {
+  background: rgb(var(--primary) / 0.1);
+}
+
 .tvm-spec-row--detail {
   cursor: default;
   background: var(--tvm-surface-secondary);
@@ -1215,32 +1807,6 @@ export const TvmInstructionTable = () => {
 
 .tvm-spec-cell--name {
   gap: 0.4rem;
-}
-
-.tvm-instruction-app.is-density-compact .tvm-spec-row {
-  border-top-width: 0.5px;
-}
-
-.tvm-instruction-app.is-density-compact .tvm-mnemonic {
-  font-size: 0.92rem;
-}
-
-.tvm-instruction-app.is-density-compact .tvm-spec-cell--opcode {
-  font-size: 0.78rem;
-}
-
-.tvm-instruction-app.is-density-compact .tvm-operand-chip {
-  font-size: 0.7rem;
-  padding: 0.14rem 0.38rem;
-}
-
-.tvm-instruction-app.is-density-compact .tvm-inline-badge {
-  font-size: 0.68rem;
-  padding: 0.14rem 0.45rem;
-}
-
-.tvm-instruction-app.is-density-compact .tvm-spec-cell--description {
-  gap: 0.2rem;
 }
 
 .tvm-name-line {
@@ -1305,6 +1871,10 @@ export const TvmInstructionTable = () => {
   color: var(--tvm-text-secondary);
 }
 
+.tvm-spec-row.is-anchor-target .tvm-row-indicator {
+  color: var(--tvm-accent-strong);
+}
+
 .tvm-row-indicator.is-expanded {
   transform: rotate(180deg);
   color: var(--tvm-accent-strong);
@@ -1326,6 +1896,10 @@ export const TvmInstructionTable = () => {
 }
 
 .tvm-spec-cell--description p {
+  margin: 0;
+}
+
+.tvm-description p {
   margin: 0;
 }
 
@@ -1552,6 +2126,11 @@ export const TvmInstructionTable = () => {
   box-shadow: 0 18px 40px -30px rgb(var(--gray-900) / 0.7);
 }
 
+.tvm-detail-panel.is-anchor-target {
+  border-color: var(--tvm-accent-strong);
+  box-shadow: 0 0 0 2px var(--tvm-accent-soft), 0 18px 40px -30px rgb(var(--gray-900) / 0.7);
+}
+
 .tvm-detail-header {
   display: flex;
   justify-content: space-between;
@@ -1566,6 +2145,22 @@ export const TvmInstructionTable = () => {
   align-items: baseline;
   gap: 0.45rem;
   flex-wrap: wrap;
+}
+
+.tvm-detail-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  align-items: flex-start;
+  flex: 1 1 auto;
+}
+
+.tvm-detail-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .tvm-detail-title {
@@ -1642,9 +2237,20 @@ export const TvmInstructionTable = () => {
 
 .tvm-detail-main {
   flex: 1 1 320px;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 0.8rem;
+}
+
+.tvm-detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  background: var(--tvm-surface-secondary);
+  border: 1px solid var(--tvm-border);
+  border-radius: 12px;
+  padding: 0.85rem 0.95rem;
 }
 
 .tvm-detail-main .tvm-description {
@@ -1679,11 +2285,14 @@ export const TvmInstructionTable = () => {
   border-radius: 8px;
   padding: 0.6rem 0.65rem;
   color: var(--tvm-text-primary);
+  overflow-x: auto;
+  max-width: 100%;
 }
 
 .tvm-detail-code--inline {
-  display: inline-flex;
-  padding: 0.35rem 0.5rem;
+  display: block;
+  padding: 0.5rem 0.6rem;
+  word-break: break-word;
 }
 
 .tvm-detail-muted {
@@ -1709,6 +2318,19 @@ export const TvmInstructionTable = () => {
   padding: 0.85rem 0.95rem;
 }
 
+.tvm-side-category-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--tvm-text-primary);
+}
+
+.tvm-side-category-raw {
+  font-size: 0.82rem;
+  font-weight: 400;
+  color: var(--tvm-text-secondary);
+  margin-left: 0.3rem;
+}
+
 .tvm-side-title {
   font-size: 0.7rem;
   letter-spacing: 0.04em;
@@ -1732,15 +2354,12 @@ export const TvmInstructionTable = () => {
 }
 
 .tvm-operands-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
 }
 
-.tvm-operands-list--simple .tvm-operands-item {
+.tvm-operands-item {
   background: var(--tvm-surface);
   border: 1px solid rgb(var(--gray-400) / 0.25);
   border-radius: 10px;
@@ -1778,6 +2397,145 @@ export const TvmInstructionTable = () => {
   color: var(--tvm-accent);
 }
 
+.tvm-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 1rem;
+}
+
+.tvm-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgb(var(--gray-900) / 0.45);
+  backdrop-filter: blur(1px);
+}
+
+.tvm-modal-dialog {
+  position: relative;
+  background: var(--tvm-surface);
+  border: 1px solid var(--tvm-border);
+  border-radius: 14px;
+  box-shadow: 0 32px 90px -40px rgb(var(--gray-900) / 0.9);
+  width: min(720px, 100%);
+  max-height: calc(100% - 2rem);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1.1rem 1.2rem 1.3rem;
+  color: var(--tvm-text-primary);
+}
+
+.tvm-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.tvm-modal-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.tvm-modal-header-text h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--tvm-text-primary);
+}
+
+.tvm-modal-subtitle {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--tvm-text-secondary);
+}
+
+.tvm-modal-subtitle code {
+  font-family: 'JetBrains Mono', 'Menlo', 'Monaco', monospace;
+  font-size: 0.82rem;
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.4rem;
+  background: var(--tvm-pill-muted-bg);
+  color: var(--tvm-text-primary);
+}
+
+.tvm-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
+}
+
+.tvm-modal-code {
+  flex: 1 1 auto;
+  margin: 0;
+  border: 1px solid var(--tvm-border-strong);
+  border-radius: 10px;
+  padding: 0.85rem 0.95rem;
+  background: rgb(var(--gray-200) / 0.16);
+  font-family: 'JetBrains Mono', 'Menlo', 'Monaco', monospace;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  overflow: auto;
+  white-space: pre;
+  color: var(--tvm-text-primary);
+  tab-size: 2;
+}
+
+@media (max-width: 1040px) {
+  .tvm-instruction-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tvm-toolbar-utilities {
+    justify-content: flex-start;
+    width: 100%;
+  }
+}
+
+@media (max-width: 900px) {
+  .tvm-spec-grid-scroll {
+    overflow-x: visible;
+  }
+
+  .tvm-spec-header {
+    display: none;
+  }
+
+  .tvm-spec-row,
+  .tvm-spec-row--detail {
+    --tvm-grid-template: 48px minmax(0, 1fr);
+    grid-template-columns: var(--tvm-grid-template);
+    min-width: 0;
+    align-items: start;
+  }
+
+  .tvm-spec-row .tvm-spec-cell--anchor {
+    grid-row: span 2;
+  }
+
+  .tvm-spec-row .tvm-spec-cell--opcode {
+    grid-row: 1;
+    grid-column: 2 / -1;
+    justify-content: flex-start;
+    align-items: baseline;
+  }
+
+  .tvm-spec-row .tvm-spec-cell--name {
+    grid-column: 2 / -1;
+  }
+
+  .tvm-spec-row .tvm-spec-cell--description {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (max-width: 960px) {
   .tvm-detail-header {
     align-items: stretch;
@@ -1801,12 +2559,207 @@ export const TvmInstructionTable = () => {
   .tvm-detail-section {
     padding: 0.85rem 0.9rem;
   }
+
+  .tvm-detail-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .tvm-detail-actions .tvm-button {
+    flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .tvm-modal {
+    padding: 0.75rem;
+  }
+
+  .tvm-modal-dialog {
+    width: 100%;
+    max-height: calc(100% - 1.5rem);
+    padding: 1rem;
+  }
+
+  .tvm-modal-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .tvm-modal-actions .tvm-button {
+    flex: 1 1 auto;
+  }
 }
 
 .tvm-control-flow {
   display: flex;
   flex-direction: column;
+  gap: 0.65rem;
+  padding: 0.75rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid var(--tvm-border);
+  background: var(--tvm-surface-secondary);
+}
+
+.tvm-control-flow-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--tvm-text-secondary);
+}
+
+.tvm-control-flow-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.tvm-control-flow-value {
+  font-family: 'JetBrains Mono', 'Menlo', 'Monaco', monospace;
+  font-size: 0.85rem;
+  color: var(--tvm-text-primary);
+}
+
+.tvm-control-flow-branches {
+  list-style: none;
+  margin: 0;
+  margin-top: 0.5rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
   gap: 0.55rem;
+}
+
+.tvm-control-flow-branch {
+  background: var(--tvm-surface);
+  border: 1px solid rgb(var(--gray-400) / 0.35);
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.tvm-control-flow-branch-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.tvm-control-flow-branch-title {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--tvm-text-primary);
+}
+
+.tvm-control-flow-branch-condition {
+  font-size: 0.76rem;
+  color: var(--tvm-text-secondary);
+}
+
+
+.tvm-flow-graph-wrapper {
+  position: relative;
+  width: 100%;
+  overflow-x: auto;
+  padding: 0.35rem 0;
+}
+
+.tvm-flow-canvas {
+  position: relative;
+  display: inline-block;
+  min-height: 120px;
+  min-width: 100%;
+}
+
+.tvm-flow-canvas-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.tvm-flow-graph-line {
+  fill: none;
+  stroke: rgb(var(--primary) / 0.45);
+  stroke-width: 1.6;
+}
+
+
+.tvm-flow-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+
+.tvm-flow-edge-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-family: 'JetBrains Mono', 'Menlo', 'Monaco', monospace;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.08rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgb(var(--primary) / 0.2);
+  background: var(--tvm-surface);
+}
+
+.tvm-flow-edge-label.has-secondary {
+  background: linear-gradient(
+    90deg,
+    rgb(var(--primary) / 0.08) 0%,
+    rgb(var(--primary) / 0.08) 50%,
+    rgb(var(--primary) / 0.04) 50%,
+    rgb(var(--primary) / 0.04) 100%
+  );
+}
+
+.tvm-flow-edge-label-primary {
+  color: rgb(var(--primary));
+}
+
+.tvm-flow-edge-label-secondary {
+  color: rgb(var(--primary) / 0.55);
+}
+
+.tvm-control-flow-node-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid rgb(var(--primary) / 0.25);
+  border-radius: 999px;
+  padding: 0.18rem 0.65rem;
+  background: rgb(var(--primary) / 0.05);
+  white-space: nowrap;
+}
+
+.tvm-control-flow-node-type {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: rgb(var(--primary) / 0.9);
+}
+
+.tvm-control-flow-node-value {
+  font-family: 'JetBrains Mono', 'Menlo', 'Monaco', monospace;
+  font-size: 0.66rem;
+  color: var(--tvm-text-primary);
+}
+
+.tvm-control-flow-node-extra {
+  font-size: 0.72rem;
+  color: var(--tvm-text-secondary);
 }
 
 .tvm-missing-placeholder {
@@ -1869,6 +2822,7 @@ export const TvmInstructionTable = () => {
 }
 
 .tvm-alias-item {
+  list-style: none;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
@@ -1949,19 +2903,17 @@ export const TvmInstructionTable = () => {
 }
 
 @media (max-width: 768px) {
-  .tvm-instruction-toolbar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
   .tvm-field {
     width: 100%;
     min-width: 0;
   }
 
+  .tvm-toolbar-filters {
+    grid-template-columns: 1fr;
+  }
+
   .tvm-toolbar-utilities {
-    width: 100%;
-    margin-left: 0;
+    justify-self: stretch;
     justify-content: flex-start;
   }
 
@@ -2031,7 +2983,15 @@ export const TvmInstructionTable = () => {
       const prefs = JSON.parse(raw);
       if (prefs && typeof prefs === "object") {
         if (typeof prefs.search === "string") setSearch(prefs.search);
-        if (typeof prefs.category === "string") setCategory(prefs.category);
+        if (
+          typeof prefs.category === "string" &&
+          (prefs.category === "All" || CATEGORY_GROUP_KEYS.has(prefs.category))
+        ) {
+          setCategory(prefs.category);
+        }
+        if (typeof prefs.subcategory === "string") {
+          setSubcategory(prefs.subcategory);
+        }
         if (
           typeof prefs.sortMode === "string" &&
           ["opcode", "name", "category", "since"].includes(prefs.sortMode)
@@ -2050,13 +3010,14 @@ export const TvmInstructionTable = () => {
       const payload = JSON.stringify({
         search,
         category,
+        subcategory,
         sortMode,
       });
       window.localStorage.setItem(PERSIST_KEY, payload);
     } catch (err) {
       // ignore persistence failures (private mode, etc.)
     }
-  }, [search, category, sortMode]);
+  }, [search, category, subcategory, sortMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2081,6 +3042,25 @@ export const TvmInstructionTable = () => {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const syncHash = () => {
+      const hash = window.location.hash ? window.location.hash.slice(1) : "";
+      if (!hash) {
+        setActiveAnchorId(null);
+        return;
+      }
+      try {
+        setActiveAnchorId(decodeURIComponent(hash));
+      } catch (_err) {
+        setActiveAnchorId(hash);
+      }
+    };
+    syncHash();
+    window.addEventListener("hashchange", syncHash);
+    return () => window.removeEventListener("hashchange", syncHash);
   }, []);
 
   const instructions = useMemo(() => {
@@ -2115,7 +3095,11 @@ export const TvmInstructionTable = () => {
           ? valueFlow.outputs.registers
           : [];
 
-        const categoryKey = doc.category || "uncategorized";
+        const categoryKeyRaw = doc.category || "uncategorized";
+        const categoryGroup = resolveCategoryGroup(categoryKeyRaw);
+        const categoryGroupKey = categoryGroup.key;
+        const categoryGroupLabel = categoryGroup.label;
+        const rawCategoryLabel = humanizeCategoryKey(categoryKeyRaw);
         const descriptionMissing = !doc.description;
         const stackDocMissing = !doc.stack;
         const gasMissing = !doc.gas;
@@ -2128,13 +3112,17 @@ export const TvmInstructionTable = () => {
           !raw.control_flow || !Array.isArray(raw.control_flow.branches);
 
         const opcode = bytecode.prefix || "";
+        const anchorId = buildAnchorId({ opcode, mnemonic: raw.mnemonic });
 
         return {
           uid: `${raw.mnemonic}__${opcode || 'nop'}__${idx}`,
           mnemonic: raw.mnemonic,
           since: typeof raw.since_version === "number" ? raw.since_version : 0,
-          categoryKey,
-          categoryLabel: humanizeCategoryKey(categoryKey),
+          anchorId,
+          categoryKey: categoryGroupKey,
+          categoryLabel: categoryGroupLabel,
+          rawCategoryKey: categoryKeyRaw,
+          rawCategoryLabel,
           description: doc.description || "",
           descriptionHtml: typeof doc.description_html === "string"
             ? doc.description_html
@@ -2174,6 +3162,7 @@ export const TvmInstructionTable = () => {
           },
           controlFlow: raw.control_flow || null,
           implementationRefs,
+          rawSpec: raw,
           aliases: aliasByMnemonic.get(raw.mnemonic) || [],
           missing: {
             description: descriptionMissing,
@@ -2190,28 +3179,142 @@ export const TvmInstructionTable = () => {
     );
   }, [spec]);
 
-  const categoryOptions = useMemo(() => {
-    const entries = new Map();
-    instructions.forEach((item) => {
-      if (!entries.has(item.categoryKey)) {
-        entries.set(item.categoryKey, item.categoryLabel);
+  const anchorInstruction = useMemo(() => {
+    if (!activeAnchorId) return null;
+    return instructions.find((item) => item.anchorId === activeAnchorId) || null;
+  }, [instructions, activeAnchorId]);
+
+  useEffect(() => {
+    if (!anchorInstruction) return;
+    setExpanded((prev) => {
+      if (prev[anchorInstruction.uid]) return prev;
+      return {
+        ...prev,
+        [anchorInstruction.uid]: true,
+      };
+    });
+  }, [anchorInstruction]);
+
+  useEffect(() => {
+    if (!anchorInstruction) return;
+    if (typeof document === "undefined" || typeof window === "undefined") return;
+    if (!anchorInstruction.anchorId) return;
+    const frame =
+      typeof window.requestAnimationFrame === "function"
+        ? window.requestAnimationFrame.bind(window)
+        : (cb) => setTimeout(cb, 0);
+    frame(() => {
+      const element = document.getElementById(anchorInstruction.anchorId);
+      if (element && typeof element.scrollIntoView === "function") {
+        element.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     });
-    const sortedEntries = Array.from(entries.entries()).sort((a, b) =>
-      a[1].localeCompare(b[1])
+  }, [anchorInstruction]);
+
+  const subcategoryMap = useMemo(() => {
+    const groups = new Map();
+    instructions.forEach((item) => {
+      if (!item || !item.categoryKey) return;
+      const groupKey = item.categoryKey;
+      const rawKey = item.rawCategoryKey || "uncategorized";
+      const label = item.rawCategoryLabel || humanizeCategoryKey(rawKey);
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, new Map());
+      }
+      const entries = groups.get(groupKey);
+      if (!entries.has(rawKey)) {
+        entries.set(rawKey, {
+          value: rawKey,
+          label,
+          count: 0,
+        });
+      }
+      const record = entries.get(rawKey);
+      record.count += 1;
+      if (!record.label && label) {
+        record.label = label;
+      }
+    });
+    const normalized = new Map();
+    groups.forEach((entries, key) => {
+      const list = Array.from(entries.values()).sort((a, b) =>
+        a.label.localeCompare(b.label)
+      );
+      normalized.set(key, list);
+    });
+    return normalized;
+  }, [instructions]);
+
+  const categoryOptions = useMemo(() => {
+    const present = new Set(subcategoryMap.keys());
+    const ordered = CATEGORY_GROUPS.filter((group) => present.has(group.key)).map(
+      (group) => ({ value: group.key, label: group.label })
     );
     return [
       { value: "All", label: "All categories" },
-      ...sortedEntries.map(([value, label]) => ({ value, label })),
+      ...ordered,
     ];
-  }, [instructions]);
+  }, [subcategoryMap]);
+
+  const currentSubcategoryOptions = useMemo(() => {
+    if (category === "All") return [];
+    return subcategoryMap.get(category) || [];
+  }, [subcategoryMap, category]);
+
+  const showSubcategorySelect =
+    category !== "All" && currentSubcategoryOptions.length > 1;
+
+  useEffect(() => {
+    if (category === "All") return;
+    const hasSelection = categoryOptions.some(
+      (option) => option.value === category
+    );
+    if (!hasSelection) {
+      setCategory("All");
+    }
+  }, [categoryOptions, category]);
+
+  useEffect(() => {
+    if (category === "All") {
+      if (subcategory !== "All") {
+        setSubcategory("All");
+      }
+      return;
+    }
+    const options = currentSubcategoryOptions;
+    if (!options || options.length <= 1) {
+      if (subcategory !== "All") {
+        setSubcategory("All");
+      }
+      return;
+    }
+    const hasSubcategory = options.some((option) => option.value === subcategory);
+    if (!hasSubcategory) {
+      setSubcategory("All");
+    }
+  }, [category, subcategory, currentSubcategoryOptions]);
 
   const filtered = useMemo(() => {
+    const forcedUid = anchorInstruction?.uid ?? null;
     return instructions.filter((item) => {
+      if (forcedUid && item.uid === forcedUid) return true;
       if (category !== "All" && item.categoryKey !== category) return false;
+      if (
+        category !== "All" &&
+        subcategory !== "All" &&
+        item.rawCategoryKey !== subcategory
+      ) {
+        return false;
+      }
       return itemRelevanceScore(item, searchTokens) !== Infinity;
     });
-  }, [instructions, category, searchTokens]);
+  }, [
+    instructions,
+    category,
+    subcategory,
+    searchTokens,
+    anchorInstruction,
+  ]);
 
   const sorted = useMemo(() => {
     const copy = filtered.slice();
@@ -2228,84 +3331,59 @@ export const TvmInstructionTable = () => {
           compareOpcodes(a.opcode, b.opcode)
         );
       });
-      return copy;
+    } else if (sortMode !== "opcode") {
+      copy.sort((a, b) => {
+        switch (sortMode) {
+          case "name":
+            return a.mnemonic.localeCompare(b.mnemonic);
+          case "category":
+            return (
+              a.categoryLabel.localeCompare(b.categoryLabel) ||
+              a.opcode.localeCompare(b.opcode)
+            );
+          case "since":
+            return (b.since == 9999 ? -1 : b.since) -  (a.since == 9999 ? -1 : a.since);
+          default:
+            return (
+              compareOpcodes(a.opcode, b.opcode) ||
+              a.mnemonic.localeCompare(b.mnemonic)
+            );
+        }
+      });
     }
-    // no query: use selected sort mode
-    if (sortMode === "opcode") {
-      // Preserve original array order (as provided by the spec)
-      return copy;
-    }
-    copy.sort((a, b) => {
-      switch (sortMode) {
-        case "name":
-          return a.mnemonic.localeCompare(b.mnemonic);
-        case "category":
-          return (
-            a.categoryLabel.localeCompare(b.categoryLabel) ||
-            a.opcode.localeCompare(b.opcode)
-          );
-        case "since":
-          return a.since - b.since || a.opcode.localeCompare(b.opcode);
-        default:
-          return (
-            compareOpcodes(a.opcode, b.opcode) ||
-            a.mnemonic.localeCompare(b.mnemonic)
-          );
+
+    const forcedUid = anchorInstruction?.uid ?? null;
+    if (forcedUid) {
+      let forcedItem = null;
+      const forcedIndex = copy.findIndex((item) => item.uid === forcedUid);
+      if (forcedIndex >= 0) {
+        [forcedItem] = copy.splice(forcedIndex, 1);
+      } else if (anchorInstruction) {
+        forcedItem = anchorInstruction;
       }
-    });
+      if (forcedItem) {
+        copy.unshift(forcedItem);
+      }
+    }
+
     return copy;
-  }, [filtered, sortMode, searchTokens]);
-
-  const visibleIds = useMemo(() => sorted.map((item) => item.uid), [sorted]);
-
-  const hasExpandedRows = useMemo(
-    () => visibleIds.some((id) => expanded[id]),
-    [visibleIds, expanded]
-  );
+  }, [filtered, sortMode, searchTokens, anchorInstruction]);
 
   const hasActiveFilters = useMemo(
     () =>
       searchTokens.length > 0 ||
       category !== "All" ||
+      subcategory !== "All" ||
       sortMode !== "opcode",
-    [searchTokens, category, sortMode]
+    [searchTokens, category, subcategory, sortMode]
   );
 
   const handleResetFilters = useCallback(() => {
     setSearch("");
     setCategory("All");
+    setSubcategory("All");
     setSortMode("opcode");
   }, []);
-
-  const handleExpandAll = useCallback(() => {
-    if (visibleIds.length === 0) return;
-    setExpanded((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      visibleIds.forEach((id) => {
-        if (!next[id]) {
-          next[id] = true;
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [visibleIds]);
-
-  const handleCollapseAll = useCallback(() => {
-    if (visibleIds.length === 0) return;
-    setExpanded((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      visibleIds.forEach((id) => {
-        if (next[id]) {
-          changed = true;
-          delete next[id];
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [visibleIds]);
 
   const activeFilters = useMemo(() => {
     const chips = [];
@@ -2328,11 +3406,21 @@ export const TvmInstructionTable = () => {
         onRemove: () => setCategory("All"),
       });
     }
+    if (category !== "All" && subcategory !== "All") {
+      const match = currentSubcategoryOptions.find(
+        (option) => option.value === subcategory
+      );
+      const label = match ? match.label : humanizeCategoryKey(subcategory);
+      chips.push({
+        key: "subcategory",
+        label: `Subcategory: ${label}`,
+        ariaLabel: `Remove subcategory filter ${label}`,
+        onRemove: () => setSubcategory("All"),
+      });
+    }
     if (sortMode !== "opcode") {
       const sortLabels = {
-        name: "Mnemonic",
-        category: "Category",
-        since: "Since version",
+        since: "Newest",
       };
       const label = sortLabels[sortMode] || "Opcode";
       chips.push({
@@ -2347,10 +3435,13 @@ export const TvmInstructionTable = () => {
     searchTokens,
     search,
     category,
+    subcategory,
     categoryOptions,
+    currentSubcategoryOptions,
     sortMode,
     setSearch,
     setCategory,
+    setSubcategory,
     setSortMode,
   ]);
 
@@ -2361,111 +3452,209 @@ export const TvmInstructionTable = () => {
     }));
   }, []);
 
+  const openRawJsonModal = useCallback(
+    (instruction) => {
+      if (!instruction) return;
+      const payload = {
+        mnemonic: instruction.mnemonic,
+        opcode: instruction.opcode,
+        anchorId: instruction.anchorId,
+        raw: instruction.rawSpec || instruction,
+      };
+      setRawModalInstruction(payload);
+      setRawModalCopied(false);
+      if (rawModalCopyTimeoutRef.current) {
+        clearTimeout(rawModalCopyTimeoutRef.current);
+        rawModalCopyTimeoutRef.current = null;
+      }
+    },
+    []
+  );
+
+  const closeRawJsonModal = useCallback(() => {
+    setRawModalInstruction(null);
+    setRawModalCopied(false);
+    if (rawModalCopyTimeoutRef.current) {
+      clearTimeout(rawModalCopyTimeoutRef.current);
+      rawModalCopyTimeoutRef.current = null;
+    }
+  }, []);
+
+  const handleCopyRawJson = useCallback((jsonText) => {
+    copyPlainText(jsonText)
+      .then(() => {
+        setRawModalCopied(true);
+        if (rawModalCopyTimeoutRef.current) {
+          clearTimeout(rawModalCopyTimeoutRef.current);
+        }
+        rawModalCopyTimeoutRef.current = setTimeout(() => {
+          setRawModalCopied(false);
+          rawModalCopyTimeoutRef.current = null;
+        }, 1500);
+      })
+      .catch(() => {
+        // ignore clipboard failures
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!rawModalInstruction) return;
+    if (typeof window === "undefined") return;
+    const handleKeyDown = (event) => {
+      if (event.defaultPrevented) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRawJsonModal();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [rawModalInstruction, closeRawJsonModal]);
+
+  const rawModalJson = useMemo(() => {
+    if (!rawModalInstruction) return "";
+    try {
+      return JSON.stringify(rawModalInstruction.raw ?? null, null, 2);
+    } catch (err) {
+      return "// Failed to serialize instruction";
+    }
+  }, [rawModalInstruction]);
+
+  useEffect(() => {
+    return () => {
+      if (rawModalCopyTimeoutRef.current) {
+        clearTimeout(rawModalCopyTimeoutRef.current);
+        rawModalCopyTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   return (
-    <div className="tvm-instruction-app is-density-cozy">
+    <div className="tvm-instruction-app">
       <style>{tableStyles}</style>
 
       <div className="tvm-instruction-toolbar">
-        <div className="tvm-field tvm-field--search" style={{ flex: 2 }}>
-          <label htmlFor="tvm-search">Search</label>
-          <div className="tvm-search-input">
-            <span className="tvm-search-icon" aria-hidden="true">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <circle
-                  cx="11"
-                  cy="11"
-                  r="6"
-                  stroke="currentColor"
-                  strokeWidth="2"
+        <div className="tvm-toolbar-search">
+          <div className="tvm-field tvm-field--search">
+            <label htmlFor="tvm-search">Search</label>
+            <div className="tvm-search-row">
+              <div className="tvm-search-input">
+                <span className="tvm-search-icon" aria-hidden="true">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <circle
+                      cx="11"
+                      cy="11"
+                      r="6"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    />
+                    <path
+                      d="M20 20l-3.5-3.5"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </span>
+                <input
+                  id="tvm-search"
+                  type="search"
+                  placeholder="Find by mnemonic, opcode, description…"
+                  value={search}
+                  onChange={(event) => setSearch(event.currentTarget.value)}
+                  ref={searchInputRef}
                 />
-                <path
-                  d="M20 20l-3.5-3.5"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </span>
-            <input
-              id="tvm-search"
-              type="search"
-              placeholder="Find by mnemonic, opcode, description…"
-              value={search}
-              onChange={(event) => setSearch(event.currentTarget.value)}
-              ref={searchInputRef}
-            />
-            {search && (
-              <button
-                type="button"
-                className="tvm-clear-search"
-                onClick={() => setSearch("")}
-                aria-label="Clear search"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
+                {search && (
+                  <button
+                    type="button"
+                    className="tvm-clear-search"
+                    onClick={() => setSearch("")}
+                    aria-label="Clear search"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path
+                        d="M15 9l-6 6"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                      />
+                      <path
+                        d="M9 9l6 6"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </button>
+                )}
+              </div>
+              <div className="tvm-toolbar-utilities">
+                <button
+                  type="button"
+                  className="tvm-button tvm-button--ghost"
+                  onClick={handleResetFilters}
+                  disabled={!hasActiveFilters}
                 >
-                  <path
-                    d="M15 9l-6 6"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                  />
-                  <path
-                    d="M9 9l6 6"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </button>
-            )}
+                  Reset filters
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="tvm-field" style={{ maxWidth: 210 }}>
-          <label htmlFor="tvm-sort">Sort</label>
-          <select
-            id="tvm-sort"
-            value={sortMode}
-            onChange={(event) => setSortMode(event.currentTarget.value)}
-          >
-            <option value="opcode">Opcode</option>
-            <option value="name">Mnemonic</option>
-            <option value="category">Category</option>
-            <option value="since">Since version</option>
-          </select>
-        </div>
+        <div className="tvm-toolbar-filters">
+          <div className="tvm-field tvm-field--sort">
+            <label htmlFor="tvm-sort">Sort</label>
+            <select
+              id="tvm-sort"
+              value={sortMode}
+              onChange={(event) => setSortMode(event.currentTarget.value)}
+            >
+              <option value="opcode">Opcode</option>
+              <option value="since">Newest</option>
+            </select>
+          </div>
 
-        <div className="tvm-field" style={{ maxWidth: 240 }}>
-          <label htmlFor="tvm-category">Category</label>
-          <select
-            id="tvm-category"
-            value={category}
-            onChange={(event) => setCategory(event.currentTarget.value)}
-          >
-            {categoryOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </div>
+          <div className="tvm-field tvm-field--category">
+            <label htmlFor="tvm-category">Category</label>
+            <select
+              id="tvm-category"
+              value={category}
+              onChange={(event) => setCategory(event.currentTarget.value)}
+            >
+              {categoryOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div className="tvm-toolbar-utilities">
-          <button
-            type="button"
-            className="tvm-button tvm-button--ghost"
-            onClick={handleResetFilters}
-            disabled={!hasActiveFilters}
-          >
-            Reset filters
-          </button>
+          {showSubcategorySelect && (
+            <div className="tvm-field tvm-field--subcategory">
+              <label htmlFor="tvm-subcategory">Subcategory</label>
+              <select
+                id="tvm-subcategory"
+                value={subcategory}
+                onChange={(event) => setSubcategory(event.currentTarget.value)}
+              >
+                <option value="All">All subcategories</option>
+                {currentSubcategoryOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       </div>
 
@@ -2530,7 +3719,16 @@ export const TvmInstructionTable = () => {
                     ? instruction.aliases.length
                     : 0;
                   const detailId = `tvm-detail-${instruction.uid}`;
-                  const anchorId = buildAnchorId(instruction);
+                  const anchorId = instruction.anchorId || buildAnchorId(instruction);
+                  const isAnchorTarget =
+                    anchorInstruction && anchorInstruction.uid === instruction.uid;
+                  const rowClassName = [
+                    "tvm-spec-row",
+                    isExpanded ? "is-expanded" : "",
+                    isAnchorTarget ? "is-anchor-target" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ");
                   const descriptionHtml = highlightHtmlContent(
                     instruction.descriptionHtml || instruction.description || "",
                     searchTokens
@@ -2540,9 +3738,7 @@ export const TvmInstructionTable = () => {
                     <div
                       key={instruction.uid}
                       id={anchorId}
-                      className={`tvm-spec-row ${
-                        isExpanded ? "is-expanded" : ""
-                      }`}
+                      className={rowClassName}
                       role="button"
                       tabIndex={0}
                       aria-expanded={isExpanded}
@@ -2608,7 +3804,7 @@ export const TvmInstructionTable = () => {
                           </span>
                           {instruction.since > 0 && (
                             <span className="tvm-inline-badge">
-                              since v{instruction.since}
+                              {instruction.since != 9999 ? `since v${instruction.since}` : 'unimplemented yet' }
                             </span>
                           )}
                           {aliasCount > 0 && (
@@ -2670,13 +3866,18 @@ export const TvmInstructionTable = () => {
                     nodes.push(
                       <div
                         key={`${instruction.uid}-detail`}
-                        className="tvm-spec-row tvm-spec-row--detail"
+                        className={`tvm-spec-row tvm-spec-row--detail ${
+                          isAnchorTarget ? "is-anchor-target" : ""
+                        }`}
                       >
                         <div
                           className="tvm-spec-cell tvm-spec-cell--full"
                           id={detailId}
                         >
-                          {renderInstructionDetail(instruction)}
+                          {renderInstructionDetail(instruction, {
+                            isAnchorTarget,
+                            onOpenRawJson: openRawJsonModal,
+                          })}
                         </div>
                       </div>
                     );
@@ -2686,8 +3887,56 @@ export const TvmInstructionTable = () => {
                 })}
             </>
           )}
-        </div>
       </div>
+    </div>
+
+      {rawModalInstruction && (
+        <div
+          className="tvm-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="tvm-raw-json-title"
+        >
+          <div className="tvm-modal-backdrop" onClick={closeRawJsonModal} />
+          <div
+            className="tvm-modal-dialog"
+            role="document"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="tvm-modal-header">
+              <div className="tvm-modal-header-text">
+                <h3 id="tvm-raw-json-title">Raw instruction JSON</h3>
+                <p className="tvm-modal-subtitle">
+                  {rawModalInstruction.opcode ? (
+                    <>
+                      <code>{rawModalInstruction.opcode}</code>
+                      {" "}
+                    </>
+                  ) : null}
+                  {rawModalInstruction.mnemonic}
+                </p>
+              </div>
+              <div className="tvm-modal-actions">
+                <button
+                  type="button"
+                  className="tvm-button tvm-button--ghost"
+                  onClick={() => handleCopyRawJson(rawModalJson)}
+                >
+                  {rawModalCopied ? "Copied" : "Copy JSON"}
+                </button>
+                <button
+                  type="button"
+                  className="tvm-button"
+                  onClick={closeRawJsonModal}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <pre className="tvm-modal-code">{rawModalJson}</pre>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
