@@ -1,0 +1,487 @@
+---
+title: "How to initialize the TON Connect's WalletKit on the Web platform"
+sidebarTitle: "Initialize the kit"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Before initializing the TON Connect's WalletKit, install it in your web project:
+
+```shell
+npm i @ton/walletkit
+```
+
+Alternatively, explore the complete demo wallet with WalletKit integration:
+
+<Columns cols={2}>
+  <Card
+    title="Demo wallet, deployed"
+    icon="link"
+    arrow="true"
+    href="https://walletkit-demo-wallet.vercel.app"
+  />
+  <Card
+    title="Demo wallet, GitHub repository"
+    icon="github"
+    arrow="true"
+    href="https://github.com/ton-connect/kit/tree/main/apps/demo-wallet"
+  />
+</Columns>
+
+## Initialization
+
+The basic kit initialization consists of creating a corresponding object by passing it a minimal set of necessary arguments. One needs to pick a TON network to operate on, provide necessary device and wallet manifest configurations.
+
+```ts
+import {
+  TonWalletKit,
+  CHAIN,
+  createDeviceInfo,
+  createWalletManifest,
+} from '@ton/walletkit';
+
+// 0. Create a kit object
+const kit = new TonWalletKit({
+  // 1. Pick a network
+  network: CHAIN.MAINNET,
+
+  // 2. Specify core information and constraints of the given wallet.
+  deviceInfo: createDeviceInfo({
+    appName: 'Name of your wallet',
+    appVersion: 'Version of your wallet, say, 1.0.0',
+    // The rest of the params will have default values set for you,
+    // including the features your wallet should support,
+    // maximum supported TON Connect protocol version,
+    // and a current platform ('browser').
+  }),
+
+  // 3. Specify the TON Connect's wallet manifest.
+  //    The following function provides initial defaults,
+  //    but you may want to specify some custom values,
+  //    such as the human-readable name of your wallet or its icon image url.
+  walletManifest: createWalletManifest(),
+});
+```
+
+See also: [TON Connect's wallet manifest](/ecosystem/ton-connect/manifest#wallet-manifest).
+
+<Aside type="caution" title="Web only">
+
+  The given example must be invoked in **browser environments only**. Running it locally with Node.js or other JS runtimes would require providing a dedicated [`storage` adapter](#param-storage) implementation due to lack of `localStorage`.
+
+</Aside>
+
+## TON wallet initialization
+
+The [configuration before](#initialization) is enough to outline necessary wallet information and initialize the WalletKit, but it isn't enough for deeper interactions with the blockchain. For that, you need at least one TON wallet contract to be set up.
+
+You may load or create a new TON wallet using one of these options:
+
+<Columns cols={1}>
+  <Card
+    title="Init a TON wallet from a mnemonic"
+    href="#from-mnemonic"
+  />
+  <Card
+    title="Init a TON wallet from a private key"
+    href="#from-private-key"
+  />
+  <Card
+    title="Init a TON wallet from a signer"
+    href="#from-signer"
+  />
+</Columns>
+
+Note that you can provide multiple TON wallets to WalletKit and switch between them as needed.
+
+```ts
+await kit.addWallet(tonWalletConfig1);
+await kit.addWallet(tonWalletConfig2);
+// ...
+await kit.addWallet(tonWalletConfigN);
+```
+
+### From mnemonic
+
+To initialize a TON wallet from an existing BIP-39 or TON-specific mnemonic seed phrase, use the `createWalletInitConfigMnemonic()` function of WalletKit.
+
+If you don't yet have a mnemonic for an existing wallet or you want to create a new TON wallet, you can generate a TON-specific one with the `CreateTonMnemonic()` function.
+
+```ts
+import {
+  CHAIN,
+  createWalletInitConfigMnemonic,
+  CreateTonMnemonic,
+} from '@ton/walletkit';
+
+// 12 or 24 word seed phrase obtained with general BIP-39 or TON-specific derivation.
+const mnemonic: string[] = [
+  'abandon', 'abandon', 'abandon', 'abandon', 'abandon', 'abandon',
+  'abandon', 'abandon', 'abandon', 'abandon', 'abandon', 'about',
+];
+
+const walletConfig = createWalletInitConfigMnemonic({
+  // (REQUIRED)
+  mnemonic: mnemonic, // or: await CreateTonMnemonic()
+
+  // Type of derivation used to produce a mnemonic.
+  // If you've used a pure BIP-39 derivation, specify 'bip-39'.
+  // Otherwise, specify 'ton'.
+  // Defaults to: 'ton'
+  mnemonicType: 'ton',
+
+  // Specify an ID for this wallet when you plan
+  // on adding more than one wallet to the kit.
+  walletId: 0,
+
+  // Wallet contract version
+  // Defaults to: v5r1
+  version: 'v5r1',
+
+  // TON Blockchain network.
+  // Defaults to: CHAIN.MAINNET
+  network: CHAIN.MAINNET,
+});
+
+// Extend the kit with a wallet
+await kit.addWallet(walletConfig);
+
+// Note that .addWallet() method returns an initialized TON wallet
+// that can be re-used elsewhere:
+// const wallet = await kit.addWallet(walletConfig);
+```
+
+### From private key
+
+To initialize a TON wallet from an existing private key, use the `createWalletInitConfigPrivateKey()` function of WalletKit.
+
+If there is a [mnemonic](#from-mnemonic), one can convert it to an Ed25519 key pair with public and private key by using the `MnemonicToKeyPair()`.
+
+```ts
+import {
+  CHAIN,
+  createWalletInitConfigPrivateKey,
+  MnemonicToKeyPair,
+} from '@ton/walletkit';
+
+// Pass either a TON-specific ('ton') or general BIP-39 ('bip-39')
+// 12 or 24-word seed phrase to obtain a key pair.
+const keyPair = await MnemonicToKeyPair([/* 12 or 24-word mnemonic array */], 'ton');
+
+const walletConfig = createWalletInitConfigPrivateKey({
+  // (REQUIRED) Private key as a hex-encoded string or Uint8Array of bytes
+  privateKey: keyPair.secretKey,
+
+  // Specify an ID for this wallet when you plan
+  // on adding more than one wallet to the kit.
+  walletId: 0,
+
+  // Wallet contract version
+  // Defaults to: v5r1
+  version: 'v5r1',
+
+  // TON Blockchain network.
+  // Defaults to: CHAIN.MAINNET
+  network: CHAIN.MAINNET,
+});
+
+// Extend the kit with a wallet
+await kit.addWallet(walletConfig);
+
+// Note that .addWallet() method returns an initialized TON wallet
+// that can be re-used elsewhere:
+// const wallet = await kit.addWallet(walletConfig);
+```
+
+### From signer
+
+To provide a custom signing mechanism as an alternative to using a [mnemonic phrase](#from-mnemonic) or a [private key](#from-private-key), use the `createWalletInitConfigSigner()` function of WalletKit.
+
+In that case, apart from a public key, you would also need to pass your custom signing function of type `WalletSigner`. It should take the `Uint8Array` of data bytes and then asynchronously produce an `Uint8Array` signature.
+
+```ts
+import {
+  CHAIN,
+  createWalletInitConfigSigner,
+  type Hash,
+} from '@ton/walletkit';
+
+const walletConfig = createWalletInitConfigSigner({
+  // (REQUIRED) Public key as a hex-encoded string (Hash) or Uint8Array of bytes
+  publicKey: "..." as Hash,
+
+  // (REQUIRED) Custom signing function.
+  //            The following is a simple demo of such function.
+  sign: async (data: Uint8Array): Promise<Uint8Array> => data,
+
+  // Specify an ID for this wallet when you plan
+  // on adding more than one wallet to the kit.
+  walletId: 0,
+
+  // Wallet contract version
+  // Defaults to: v5r1
+  version: 'v5r1',
+
+  // TON Blockchain network.
+  // Defaults to: CHAIN.MAINNET
+  network: CHAIN.MAINNET,
+});
+
+// Extend the kit with a wallet
+await kit.addWallet(walletConfig);
+
+// Note that .addWallet() method returns an initialized TON wallet
+// that can be re-used elsewhere:
+// const wallet = await kit.addWallet(walletConfig);
+```
+
+## Configuration parameters
+
+### Required
+
+<ParamField path="network" type="CHAIN.TESTNET | CHAIN.MAINNET" required>
+
+  The TON network to use.
+
+  ```ts
+  import { CHAIN } from '@ton/walletkit';
+
+  // Testing network of TON Blockchain. For experiments, beta tests and feature previews.
+  CHAIN.TESTNET; // "-3"
+
+  // Production network of TON Blockchain. All contracts and funds are real.
+  CHAIN.MAINNET; // "-239"
+  ```
+
+</ParamField>
+
+<ParamField path="deviceInfo" type="DeviceInfo" required>
+
+  Core information and constraints of the given wallet.
+
+  ```ts
+  interface DeviceInfo {
+    // Name of the wallet.
+    appName: string;
+
+    // The platform it works on. Select 'browser' for the web wallets.
+    platform: 'iphone' | 'ipad' | 'android' | 'windows' | 'mac' | 'linux' | 'browser';
+
+    // The current wallet version.
+    appVersion: string;
+
+    // Latest protocol version to use.
+    maxProtocolVersion: number;
+
+    // Which features are supported in the wallet.
+    features: Feature[];
+  }
+  ```
+
+</ParamField>
+
+<ParamField path="walletManifest" type="WalletInfo" required>
+
+  How your wallet interacts with the TON Connect. This field is closely related to the [corresponding JSON manifest file](/ecosystem/ton-connect/manifest#wallet-manifest).
+
+  ```ts expandable
+  interface WalletInfo {
+    /**
+     * Human-readable name of the wallet.
+     */
+    name: string;
+
+    /**
+     * ID of the wallet, equals to the `appName` property of the `deviceInfo`.
+     */
+    appName: string;
+
+    /**
+     * Url to the icon of the wallet. Resolution 288×288px. On non-transparent background, without rounded corners. PNG format.
+     */
+    imageUrl: string;
+
+    /**
+     * Will be used in the protocol later.
+     */
+    tondns?: string;
+
+    /**
+     * Info or landing page of your wallet. May be useful for TON newcomers.
+     */
+    aboutUrl: string;
+
+    /**
+     * List of features supported by the wallet.
+     */
+    features?: Feature[];
+
+    /**
+     * OS and browsers where the wallet could be installed
+     */
+    platforms: ('ios' | 'android' | 'macos' | 'windows' | 'linux' | 'chrome' | 'firefox' | 'safari')[];
+
+    /**
+     * Base part of the wallet universal url. The link should support TON Connect parameters: https://github.com/ton-connect/docs/blob/main/bridge.md#universal-link.
+     */
+    universalLink: string;
+
+    /**
+     * Native wallet app deep link. The link should support TON Connect parameters: https://github.com/ton-connect/docs/blob/main/bridge.md#universal-link.
+     */
+    deepLink?: string;
+
+    /**
+     * Url of the wallet's implementation of the HTTP bridge: https://github.com/ton-connect/docs/blob/main/bridge.md#http-bridge.
+     */
+    bridgeUrl: string;
+
+    // JS-injectable wallet information
+
+    /**
+     * If the wallet handles JS Bridge connection, specifies the binding for the bridge object accessible through window. Example: the key "tonkeeper" means the bridge can be accessed as window.tonkeeper.
+     */
+    jsBridgeKey: string;
+    /**
+     * Indicates if the wallet currently is injected to the webpage.
+     */
+    injected: boolean;
+    /**
+     * Indicates if the dapp is opened inside this wallet's browser.
+     */
+    embedded: boolean;
+  }
+  ```
+
+</ParamField>
+
+### Optional
+
+<ParamField path="apiClient" type="object | ApiClient">
+
+  Which API or RPC provider to use to interact with TON Blockchain.
+
+  ```ts
+  // Either a small object:
+  {
+    // Defaults to "https://toncenter.com"
+    url?: string,
+
+    // A key for offsetting RPS limits
+    key?: string,
+  }
+  // Or a complete ApiClient interface implementation.
+  ```
+
+</ParamField>
+
+<ParamField path="wallets" type="WalletInitConfig[]">
+
+  Initialization configuration of TON wallet contracts. See the [TON wallet initialization section](#ton-wallet-initialization) for usage.
+
+</ParamField>
+
+<ParamField path="bridge" type="BridgeConfig">
+
+  Connectivity options: either an HTTP or JavaScript bridge setup. The former's `bridgeUrl` points to the publicly exposed bridge URL, while the latter's `jsBridgeKey` points to the property name within the `window` object on the same web page.
+
+  ```ts
+  interface BridgeConfig {
+    // Defaults to `walletInfo`'s `bridgeUrl`, if it exists
+    bridgeUrl?: string;
+
+    // Defaults to true if `walletInfo`'s `jsBridgeKey` exists
+    enableJsBridge?: boolean;
+
+    // Defaults to `walletInfo`'s `jsBridgeKey`, if it exists
+    jsBridgeKey?: string;
+
+    // settings for bridge-sdk
+    heartbeatInterval?: number;
+    reconnectInterval?: number;
+    maxReconnectAttempts?: number;
+  }
+  ```
+
+</ParamField>
+
+<ParamField path="storage" type="object | StorageAdapter">
+
+  How to store intermediate events.
+
+  ```ts
+  // Either a small object:
+  {
+    prefix?: string,
+    cacheTimeout?: number,
+    maxCacheSize?: number,
+    allowMemory?: boolean,
+  }
+  // Or a complete StorageAdapter interface implementation.
+  ```
+
+</ParamField>
+
+<ParamField path="validation" type="object">
+
+  Strictness and wallet checks.
+
+  ```ts
+  {
+    strictMode?: boolean,
+    allowUnknownWalletVersions?: boolean,
+  }
+  ```
+
+</ParamField>
+
+<ParamField path="eventProcessor" type="EventProcessorConfig">
+
+  How TON Connect events are processed.
+
+  ```ts
+  interface EventProcessorConfig {
+    disableEvents?: boolean;
+  }
+  ```
+
+</ParamField>
+
+<ParamField path="analytics" type="AnalyticsConfig">
+
+  Collect and gather analytical data.
+
+  ```ts
+  interface AnalyticsConfig {
+    enabled?: boolean;
+
+    // A web URL to send analytics data to.
+    endpoint?: string;
+  }
+  ```
+
+</ParamField>
+
+## Next steps
+
+<Card
+  title="Handle connection requests"
+  href="/ecosystem/ton-connect/walletkit/web/connection"
+/>
+
+## See also
+
+<Columns cols={2}>
+  <Card
+    title="WalletKit overview"
+    href="/ecosystem/ton-connect/walletkit"
+  />
+  <Card
+    title="TON Connect's wallet manifest"
+    href="/ecosystem/ton-connect/manifest#wallet-manifest"
+  />
+  <Card
+    title="TON Connect overview"
+    href="/ecosystem/ton-connect"
+  />
+ </Columns>
