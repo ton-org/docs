@@ -185,36 +185,30 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
         run: |
-          REPO_URL="https://github.com/${{ github.repository }}"
           HEAD_SHA="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
-          BLOB_BASE="$REPO_URL/blob/$HEAD_SHA/"
+          echo "PR_HEAD_SHA=$HEAD_SHA" >> "$GITHUB_ENV"
 
-          REVIEW_INSTRUCTIONS=$(cat <<TXT
-          Context: This repository contains the TON Blockchain documentation. Follow our style rules in contribute/style-guide-extended.mdx.
-          You are reviewing documentation-only changes in this pull request.
-          - If there are no .md/.mdx content changes compared to the base branch, stop.
-          - For each finding, include exactly ONE link to the relevant rule in our style guide as a full GitHub URL with a ?plain=1#L.. anchor (single line or range). Example:
-            https://github.com/tact-lang/mintlify-ton-docs/blob/main/contribute/style-guide-extended.mdx?plain=1#L26-L30
-          - Do NOT speculate about TON Docs rendering/build behavior. Examples of out‑of‑scope speculation:
-            Mermaid/diagram rendering, Mintlify theme/plugin internals, MDX component bundling, search indexing, or external CI/CD. Only report issues observable in repo content (e.g., broken anchors/links, wrong examples, grammar/style rule violations).
-          - If you cannot validate a claim from the files in this PR and repository configuration, do not include it.
-          - You may read entire files (and supporting pages) for context, but only report findings caused by lines changed in this PR. If an issue exists solely in unchanged content, skip it.
-          - For every finding, format the Location link as a full GitHub blob URL using the PR head commit.
-            Template: ${BLOB_BASE}<relative-path>?plain=1#L<start>-L<end>
-            Example: ${BLOB_BASE}ecosystem/ide/jetbrains.mdx?plain=1#L2-L2
-          - Validate the line range against file content before output (use read-only git commands).
-          - Keep language simple and clear.
+          REVIEW_INSTRUCTIONS=$(python3 "$GITHUB_WORKSPACE/.github/scripts/build_review_instructions.py")
+
+          COMPOSER_INSTRUCTIONS=$(cat <<'TXT'
+          Your job is to turn the reviewers’ findings into a single clear comment.
+          - Start with a short, friendly thank-you and include one sentence about whether fixes are needed.
+          - Treat every finding as already validated; only rewrite wording for clarity if needed. Do not change the meaning or drop details.
+          - All links must remain repo-relative (e.g., pending/discover/...#L10-L12). Only edit a link to fix formatting issues (such as an https:// prefix or missing `?plain=1`); keep the same path and line numbers.
+          - If the reviewer provided a suggested change, include it exactly; otherwise do not fabricate one.
           TXT
           )
 
 
           uv run pitaya "Review this pull request" \
             --repo "$GITHUB_WORKSPACE" \
-            --base-branch "$BASE_REF" \
+            --base-branch pr_head \
             --strategy pr-review \
-            -S reviewers=2 \
+            -S reviewers=4 \
             -S ci_fail_policy=never \
+            -S include_branches="$BASE_REF" \
             -S review_instructions="$REVIEW_INSTRUCTIONS" \
+            -S composer_instructions="$COMPOSER_INSTRUCTIONS" \
             --plugin codex \
             --model "openai/gpt-5" \
             --no-tui
@@ -245,6 +239,10 @@ jobs:
             exit 1
           fi
 
+          if [ -n "${PR_HEAD_SHA:-}" ]; then
+            BODY=$(printf '%s\n' "$BODY" | python3 "$GITHUB_WORKSPACE/.github/scripts/rewrite_review_links.py")
+          fi
+
           # Prepare issue comment body (composer already produces a friendly intro; no verdict line)
           COMMENT_BODY="$BODY"
           API="https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments"
@@ -270,6 +268,29 @@ jobs:
             echo "Failed to submit comment (HTTP $HTTP_CODE). See response above." >&2
             exit 1
           fi
+
+      - name: Collect Pitaya logs
+        if: env.DOCS_CHANGED == 'true'
+        id: pitaya_artifacts
+        working-directory: pitaya-src
+        run: |
+          set -euo pipefail
+          if compgen -G "logs/run_*" >/dev/null || compgen -G "results/run_*" >/dev/null; then
+            tar -czf pitaya-artifacts.tar.gz logs/run_* results/run_* 2>/dev/null || true
+            echo "has_artifacts=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No Pitaya logs or results to archive." >&2
+            echo "has_artifacts=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload Pitaya artifact bundle
+        if: env.DOCS_CHANGED == 'true' && steps.pitaya_artifacts.outputs.has_artifacts == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pitaya-logs-${{ github.run_id }}
+          path: pitaya-src/pitaya-artifacts.tar.gz
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Swap reaction based on outcome
         if: always() && github.event_name == 'issue_comment'
