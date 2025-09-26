@@ -1,5 +1,225 @@
 ---
-title: "Consensus"
+title: Consensus in TON
+description: Deep technical overview of the consensus protocols in the TON Blockchain, including Catchain, Block Consensus Protocol, validator elections, incentives, and fault tolerance.
 ---
 
-Stub
+## Introduction
+
+The TON Blockchain achieves consensus through a layered Byzantine Fault Tolerant (BFT) protocol designed for **high throughput, low latency, and security against up to one-third malicious validators**.
+
+The system combines two protocols:
+
+- **Catchain Protocol** – a reliable broadcast mechanism that ensures consistent message delivery and fork detection.  
+- **Block Consensus Protocol (BCP)** – a three-phase commit protocol built on top of Catchain that finalizes blocks.  
+
+This separation allows TON to finalize blocks in **3–6 seconds** with **hundreds of validators** across the globe.
+
+---
+
+## Consensus Model
+
+### Byzantine Fault Tolerance
+Let:  
+- `n` = number of validators,  
+- `f` = number of faulty or malicious validators,  
+- `q` = quorum size.  
+
+Conditions for TON consensus:  
+
+```
+f < n/3
+q ≥ 2n/3
+```
+
+These conditions guarantee:  
+- **Safety** – no two conflicting blocks can both be finalized.  
+- **Liveness** – as long as ≥ `2n/3` validators are responsive, some block is always finalized.  
+
+---
+
+## Catchain Protocol
+
+Catchain provides the secure communication foundation for BCP.
+
+### Validator messages
+Each validator `v` generates a sequence of signed messages:
+
+```
+m(v, h) = (id = v, height = h, deps[], payload, sig)
+```
+
+- `height`: strictly increasing local counter.  
+- `deps[]`: references to previous messages (DAG edges).  
+- `sig`: cryptographic signature binding the message.  
+
+### DAG structure
+The global state of Catchain is a **Directed Acyclic Graph (DAG)** where:  
+- Vertices are messages.  
+- Edges represent dependencies.  
+- Every message must reference known predecessors.  
+
+This enforces causal ordering: a message can only be processed when its entire dependency cone is available.
+
+### Fork detection
+Forking occurs when:
+
+```
+∃ m1, m2 : m1.id = m2.id, m1.height = m2.height, m1 ≠ m2
+```
+
+This is undeniable evidence of equivocation.  
+A **fork proof** = `{m1, m2}` can be submitted to the Elector contract, leading to validator slashing.
+
+### Guarantees
+- **Consistency** – all honest validators eventually converge on the same DAG.  
+- **Integrity** – equivocation is always detectable.  
+- **Foundation** – BCP builds on this consistent DAG to safely finalize blocks.
+
+---
+
+## Block Consensus Protocol (BCP)
+
+With Catchain providing reliable messaging, BCP ensures validators agree on block finalization.
+
+### Phases
+BCP is structured as a **three-phase commit**:
+
+1. **Proposal** – a leader proposes a block candidate.  
+2. **Validation** – validators verify correctness (transaction validity, state consistency).  
+3. **Voting** – validators vote for approved candidates.  
+4. **PreCommit** – once ≥ `q` votes are collected, validators broadcast PreCommit.  
+5. **Commit** – once ≥ `q` PreCommits are observed, validators issue CommitSign and the block is finalized.  
+
+If no block reaches quorum, a **null block** is finalized, guaranteeing progress.
+
+### Safety proof
+Suppose two conflicting blocks `B1` and `B2` are both finalized.  
+- Each requires ≥ `q ≥ 2n/3` signatures.  
+- Their signer sets intersect in ≥ `2q – n ≥ n/3` validators.  
+- Since `f < n/3`, at least one honest validator signed both, which is impossible.  
+
+Therefore, conflicting blocks cannot both be finalized.
+
+### Liveness
+As long as ≥ `2n/3` validators are online and responsive, some block or null block always gathers enough signatures, ensuring bounded progress.
+
+---
+
+## Rounds and Attempts
+
+Consensus is organized into **rounds** and **attempts**:
+
+- Each round lasts one election cycle (~18h on mainnet, ~2h on testnet).  
+- Each round is subdivided into attempts of fixed duration (`K ≈ 8s`).  
+- **Fast attempts** – optimistic, finalize quickly if leader is honest and network healthy.  
+- **Slow attempts** – coordinator-driven, ensure progress under failures.  
+
+Block latency is typically **3–6s**, bounded by attempt timers.
+
+---
+
+## Validator Elections
+
+Validators are selected by the **Elector contract** using an on-chain election.
+
+### Process
+1. Validators submit stake transactions.  
+2. Elector sorts candidates by stake.  
+3. Up to `maxValidators` are selected.  
+4. Effective stake is capped to ensure fairness.
+
+### Effective stake formula
+```
+effectiveStake(v) = min(stake(v), minStake × stakeFactor)
+```
+
+Where:  
+- `minStake` = minimum stake among selected validators,  
+- `stakeFactor` ≈ 3.  
+
+This prevents one validator from dominating with excessive stake.
+
+### Example
+If the smallest validator stakes 100k TON, then:  
+- The largest counted stake = 300k TON.  
+- A validator staking 1M TON still only contributes 300k TON effectively.
+
+### Set sizes
+- **Masterchain** – ~100 validators.  
+- **Shardchains** – ~23 validators each.
+
+---
+
+## Incentives and Penalties
+
+### Rewards
+Validators are compensated with:  
+- **Transaction fees** (gas costs).  
+- **Block subsidies**:  
+  - ~1.7 TON per masterchain block.  
+  - ~1 TON per shardchain block.  
+
+Average income: ~120 TON per validator per round (varies with network load).  
+
+### Inflation and burn
+- Inflation rate: ~0.3–0.6% annually.  
+- Since June 2023, part of the subsidy is burned, introducing deflationary pressure as usage grows.
+
+### Penalties
+Validators may be fined for:  
+- **Inactivity** – not producing or signing enough blocks (lower than 90% efficiency).  
+- **Malicious behavior** – forks, equivocation, invalid approvals.  
+- **Standard fine** – ~101 TON per round of misbehavior.  
+
+### Slashing mechanism
+- Evidence is submitted as fork proofs or efficiency complaints.  
+- Validators verify collectively; ≥ `2n/3` agreement required.  
+- Elector contract enforces slashing automatically.  
+
+This ensures accountability while preventing abuse by a small minority.
+
+---
+
+## Validator Guidelines
+
+Operating a validator reliably is critical. Recommended practices:  
+- Run on high-performance, redundant servers.  
+- Ensure stable, low-latency network connections.  
+- Use monitoring systems (Prometheus, Grafana, Datadog) to track CPU, memory, disk, and validator efficiency.  
+- Keep validator software updated to the latest stable release.  
+- React quickly to alerts about downtime or forks.  
+
+Validators unable to meet these requirements may prefer to delegate stake via staking services.
+
+---
+
+## Extended Fault Tolerance Analysis
+
+- **Fault tolerance:**  
+  - With `n` validators, up to `f < n/3` may behave arbitrarily (Byzantine).  
+  - Finalization requires ≥ `2n/3` CommitSigns.  
+
+- **Intersection property:**  
+  - Any two quorums of size ≥ `2n/3` intersect in at least `n/3`.  
+  - Since `f < n/3`, intersection always includes an honest validator.  
+  - This guarantees that conflicting blocks cannot both finalize.  
+
+- **Efficiency requirement:**  
+  - A validator’s efficiency = `signedBlocks / expectedBlocks`.  
+  - If efficiency is lower than 90% in a round, fines are applied.  
+
+- **Liveness bound:**  
+  - Consensus always finalizes within a bounded number of attempts.  
+  - Null blocks prevent deadlock even under heavy network partitions.
+
+---
+
+## Summary
+
+- **Catchain Protocol** – consistent broadcast of validator messages with DAG structure and fork proofs.  
+- **Block Consensus Protocol** – three-phase commit finalizing blocks with ≥ `2n/3` quorum.  
+- **Elections** – validator selection via the Elector contract, with fairness enforced by stake caps.  
+- **Rewards and penalties** – align incentives with network security.  
+- **Fault tolerance** – safety holds with `f < n/3`, liveness guaranteed with ≥ `2n/3` honest validators.  
+
+This architecture enables TON to deliver **fast finality, decentralization, and strong BFT guarantees** at global scale.
