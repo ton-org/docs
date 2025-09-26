@@ -2,4 +2,67 @@
 title: "Bag of cells"
 ---
 
-Stub
+Arbitrary data are represented in the TON Blockchain by trees of cells. Such a tree of cells is transformed into a
+[DAG](https://en.wikipedia.org/wiki/Directed_acyclic_graph) of cells, by identifying identical cells in the
+tree. After that, each of the references of each cell might be replaced by the
+32-byte [representation hash](/tvm/serialization/cells) of the cell referred to. Thus a _bag of cells (Boc)_ is obtained.
+By convention, the root of the original tree of cells is a marked element of the
+resulting bag of cells, so that anybody receiving this bag of cells and knowing
+the marked element can reconstruct the original DAG of cells, hence also the
+original tree of cells. However, this Boc needs to be serialized into a file, suitable for disk storage or network transfer.
+
+There may be many different ways to serialize such a data structure, each of which has its own goals and is convenient for specific cases.
+This page first provides a general serialization scheme, followed by the specific implementation used in the TON Blockchain.
+
+## General scheme
+
+### Internal references and complete Bocs
+
+Let's fix an arbitrary cell `c` in a given Boc. A reference of `c` is called _internal_ if 
+the cell corresponding to the reference is also represented in Boc. Otherwise, the reference is called `external`. 
+A Boc is called _complete_ if it does not contain any external references.
+
+Although most real-world cases only deal with complete Bocs, in general, the serialization of external references in Boc 
+differs from the serialization of internal. Therefore, it is very important to be able to identify the type of references.
+
+### Assigning indices to the cells from a bag of cells.
+
+In the process of Boc serialization, the assignment of indexes of its cells plays an important role.
+Let `c1, ..., cn` be the `n` distinct cells belonging to a bag of cells B.
+The most used options are:
+- Order cells by their representation hash. Thus `Hash(ci) < Hash(cj)` whenever `i < j`.
+- [Topological order](https://en.wikipedia.org/wiki/Topological_sorting).
+
+### Outline of serialization process
+
+The serialization process of a Boc `B` consisting of `n` cells can be outlined as follows.
+-  List the cells from B in a chosen order: `c1, ..., cn` with `c1` being the root cell.
+-  Choose an integer number `s`, such that `n ≤ 2s`. Represent each cell `ci` by an integral number of bytes
+as in standard representation cell algorithm, but using unsigned big-endian 
+s-bit integer `j` instead of hash `Hash(cj )` to represent internal references to cell `cj`. More precisely, each
+individual cell `c` serialized as follows, provided `s` is a multiple of eight.
+    - Two descriptor bytes `d1` and `d2` are computed by
+      setting `d1 = r + 8s + 16h + 32l` and $d2 = \lfloor \frac{b}{8} \rfloor + \lceil \frac{b}{8}\rceil$, where:
+      - `0 ≤ r ≤ 4` is the number of cell references present in cell `c`; if `c `is
+        absent from the bag of cells being serialized and is represented by
+        its hashes only, then `r` is set to `7`;
+      - `0 ≤ b ≤ 1023` is the number of data bits in cell `c`;
+      - `0 ≤ l ≤ 3 `is the level of cell `c`;
+      - `s = 1` for exotic cells and `s = 0` for ordinary cells;
+      - `h = 1` if the cell’s hashes are explicitly included into the serialization; otherwise, `h = 0` (when `r = 7`, we must be `h = 1`).
+
+    
+- Concatenate the representations of cells `ci` thus obtained in the increasing order of `i`.
+- Optionally, an index can be constructed that consists of `n + 1` t-bit integer entries `L1, ..., Ln,` where `Li`
+is the total length (in bytes) of the representations of cells `cj` with `j ≤ i`, and integer `t ≥ 0` is chosen so
+that `Ln ≤ 2^t`. If the indexes are included, any cell `ci` the serialized bag of cells may be easily
+accessed by its index `i` without deserializing all other cells, or even without
+loading the entire serialized bag of cells in memory.
+- The serialization of the bag of cells now consists of a magic number
+indicating the precise format of the serialization, followed by integers
+`s ≥ 0`, `t ≥ 0`, `n ≤ 2^s`, an optional index consisting of $\lceil\frac{(n+1)*t}{8}\rceil$ bytes,
+and `Ln` bytes with the cell representations.
+- An optional `CRC32` may be appended to the serialization for integrity
+verification purposes.
+
+### 
