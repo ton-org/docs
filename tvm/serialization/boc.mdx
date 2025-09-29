@@ -6,26 +6,27 @@ Arbitrary data are represented in the TON Blockchain by trees of cells. Such a t
 [DAG](https://en.wikipedia.org/wiki/Directed_acyclic_graph) of cells, by identifying identical cells in the
 tree. After that, each of the references of each cell might be replaced by the
 32-byte [representation hash](/tvm/serialization/cells) of the cell referred to. Thus a _bag of cells (Boc)_ is obtained.
-By convention, the root of the original tree of cells is a marked element of the
-resulting bag of cells, so that anybody receiving this bag of cells and knowing
-the marked element can reconstruct the original DAG of cells, hence also the
-original tree of cells. However, this Boc needs to be serialized into a file, suitable for disk storage or network transfer.
+In general, a Boc can be obtained from several trees of cells, thus forming a forest. By convention, the root of the original tree of 
+cells is a marked element of the resulting bag of cells, so that anybody receiving this bag of cells and knowing
+the marked element can reconstruct the original DAG of cells, hence also the original tree of cells. 
+However, this Boc needs to be serialized into a file, suitable for disk storage or network transfer.
 
 There may be many different ways to serialize such a data structure, each of which has its own goals and is convenient for specific cases.
-This page first provides a general serialization scheme, followed by the specific implementation used in the TON Blockchain.
+This page provides a general serialization algorithm and specification of corresponding TL-B schemes, 
+followed by the specific implementation used in the TON Blockchain.
 
 ## General scheme
 
-### Internal references and complete Bocs
+### Internal references, adsent cells, and complete Bocs
 
 Let's fix an arbitrary cell `c` in a given Boc. A reference of `c` is called _internal_ if 
-the cell corresponding to the reference is also represented in Boc. Otherwise, the reference is called `external`. 
-A Boc is called _complete_ if it does not contain any external references.
+the cell corresponding to the reference is also represented in Boc. Otherwise, the reference is called _external_ and the corresponding 
+cell is called _absent_ from that Boc. In turn, a Boc is called _complete_ if it does not contain any external references.
 
-Although most real-world cases only deal with complete Bocs, in general, the serialization of external references in Boc 
-differs from the serialization of internal. Therefore, it is very important to be able to identify the type of references.
+Although most real-world cases only deal with complete Bocs, in general, the serialization of adsent cells in Boc 
+differs from the serialization of included cells. Therefore, it is very important to be able to identify the type of references.
 
-### Assigning indices to the cells from a bag of cells.
+### Assigning indices to the cells from a bag of cells
 
 In the process of Boc serialization, the assignment of indexes of its cells plays an important role.
 Let `c1, ..., cn` be the `n` distinct cells belonging to a bag of cells B.
@@ -37,21 +38,26 @@ The most used options are:
 
 The serialization process of a Boc `B` consisting of `n` cells can be outlined as follows.
 -  List the cells from B in a chosen order: `c1, ..., cn` with `c1` being the root cell.
--  Choose an integer number `s`, such that `n ≤ 2s`. Represent each cell `ci` by an integral number of bytes
+-  Choose an integer number `s`, such that `n ≤ 2^s`. Represent each cell `ci` by an integral number of bytes
 as in standard representation cell algorithm, but using unsigned big-endian 
-s-bit integer `j` instead of hash `Hash(cj )` to represent internal references to cell `cj`. More precisely, each
+s-bit integer `j` instead of hash `Hash(cj)` to represent internal references to cell `cj`. More precisely, each
 individual cell `c` serialized as follows, provided `s` is a multiple of eight.
     - Two descriptor bytes `d1` and `d2` are computed by
-      setting `d1 = r + 8s + 16h + 32l` and $d2 = \lfloor \frac{b}{8} \rfloor + \lceil \frac{b}{8}\rceil$, where:
-      - `0 ≤ r ≤ 4` is the number of cell references present in cell `c`; if `c `is
+      setting `d1 = r + 8s + 16h + 32l` and $d2 = \lfloor \frac{b}{8} \rfloor + \lceil \frac{b}{8}\rceil$ (for absent cells, 
+      only `d1` is present, always equals to `7 + 16 + 32l`), where:
+      - `0 ≤ r ≤ 4` is the number of cell references present in cell `c`, if `c `is
         absent from the bag of cells being serialized and is represented by
         its hashes only, then `r` is set to `7`;
       - `0 ≤ b ≤ 1023` is the number of data bits in cell `c`;
       - `0 ≤ l ≤ 3 `is the level of cell `c`;
       - `s = 1` for exotic cells and `s = 0` for ordinary cells;
       - `h = 1` if the cell’s hashes are explicitly included into the serialization; otherwise, `h = 0` (when `r = 7`, we must be `h = 1`).
-
-    
+    - Two bytes `d1` and `d2` (if `r < 7`) or one byte `d1` (if `r = 7`) begin the serialization of `c`.
+    - If `h = 1`, the serialization is continued by `l + 1` 32-byte higher hashes of `c`: $Hash_{1}(c), \ldots, Hash_{l+1}(c) = RepHash(c)$.
+    - After that, $\lceil\frac{b}{8}\rceil$ data bytes are serialized, by splitting `b` data bits into 8-bit groups and interpreting each group 
+      as a big-endian integer in the range `0 ... 255`. If `b` is not divisible by `8`, then the data bits are first
+      augmented by one binary `1` and up to six binary `0`, so as to make the number of data bits divisible by eight.
+    - Finally, `r` cell references to cells $c_{j_1}, \ldots, c_{j_r}$ are encoded by means of `r` s-bit big-endian integers $j_1, \ldots, j_r$.
 - Concatenate the representations of cells `ci` thus obtained in the increasing order of `i`.
 - Optionally, an index can be constructed that consists of `n + 1` t-bit integer entries `L1, ..., Ln,` where `Li`
 is the total length (in bytes) of the representations of cells `cj` with `j ≤ i`, and integer `t ≥ 0` is chosen so
@@ -65,4 +71,54 @@ and `Ln` bytes with the cell representations.
 - An optional `CRC32` may be appended to the serialization for integrity
 verification purposes.
 
-### 
+### A classification of serialization schemes for bags of cells
+
+Each TL-B scheme for a bag of cells must specify the following parameters.
+- The 4-byte magic number (name of TL-B constructor) prepended to the serialization.
+- The number of bits `s` used to represent cell indices. Usually s is a multiple of eight.
+- The number of bits `t` used to represent _offsets_ of cell serializations. Usually `t` is also a multiple of eight.
+- A flag indicating whether an index with offsets `L1, ..., Ln` of cell serializations is present. This flag may be combined 
+with `t` by setting `t = 0` when the index is absent.
+- A flag indicating whether the `CRC32` of the whole serialization is appended to it for integrity verification purposes.
+- The total number of cells `n` present in the serialization.
+- The number of root cells `k ≤ n` present in the serialization. The root
+cells themselves are $c_1, \ldots, c_{k−1}$. All other cells present in the bag of
+cells are expected to be reachable by chains of references starting from
+the root cells.
+- The number of absent cells `l ≤ n − k`, which represent cells that are
+actually absent from this bag of cells, but are referred to from it. The
+absent cells themselves are represented by $c_{n−l}, \ldots, c_{n−1}$, and only
+these cells may (and also must) have `r = 7`. Complete bags of cells
+have `l = 0`.
+- The total length in bytes `Ln` of the serialization of all cells. If the index
+is present, `Ln` might not be stored explicitly since it can be recovered as the last entry of the index.
+
+## A TL-B scheme
+
+Only one [serialization scheme of Bocs](https://github.com/ton-blockchain/ton/blob/24dc184a2ea67f9c47042b4104bbb4d82289fac1/crypto/tl/boc.tlb#L25) 
+is used in Ton Blockchain:
+```tlb
+serialized_boc#b5ee9c72 has_idx:(## 1) has_crc32c:(## 1) 
+  has_cache_bits:(## 1) flags:(## 2) { flags = 0 }
+  size:(## 3) { size <= 4 }
+  off_bytes:(## 8) { off_bytes <= 8 } 
+  cells:(##(size * 8)) 
+  roots:(##(size * 8)) { roots >= 1 }
+  absent:(##(size * 8)) { roots + absent <= cells }
+  tot_cells_size:(##(off_bytes * 8))
+  root_list:(roots * ##(size * 8))
+  index:has_idx?(cells * ##(off_bytes * 8))
+  cell_data:(tot_cells_size * [ uint8 ])
+  crc32c:has_crc32c?uint32
+  = BagOfCells;
+```
+Field cells is `n`, roots is `k`, absent is `l`, and `tot_cells_size` is `Ln` (the total
+size of the serialization of all cells in bytes). If an index is present, parameters
+`s/8` and `t/8` are serialized separately as `size` and `off_bytes`, respectively,
+and the flag `has_idx` is set. The index itself is contained in `index`, present
+only if `has_idx` is set. The field `root_list` contains the (zero-based) indices
+of the root nodes of the bag of cells.
+
+There are also two outdated Boc serialization schemes in the same file.
+
+## Examples
