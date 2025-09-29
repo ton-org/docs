@@ -1,0 +1,93 @@
+---
+title: "TEP examples"
+---
+
+The purpose of this article is to explain common TL-B examples that you encounter when reading our standards.
+
+## NFT
+
+The [NFT collection and each NFT item](/standard/tokens/nft/overview) are separate smart contracts in TON Blockchain. Each specific implementation must 
+comply with the [TEP 0062](https://github.com/ton-blockchain/TEPs/blob/master/text/0062-nft-standard.md) standard.
+
+When reading this TEP, you encounter a TL-B schema that describes the serialization of a 
+message that transfers the rights of a given NFT item to another user.
+```tlb
+transfer#5fcc3d14 query_id:uint64 new_owner:MsgAddress 
+response_destination:MsgAddress custom_payload:(Maybe ^Cell) 
+forward_amount:(VarUInteger 16) forward_payload:(Either Cell ^Cell) 
+= InternalMsgBody;
+```
+Thus, a binary string corresponds to this TL-B scheme if it sequentially contains.
+- A binary representation of the hexadecimal number `0x5fcc3d14`.
+- An arbitrary request number that is an unsigned 64-bit integer in binary form.
+- An address of the new owner of the NFT item that is a sequence of bits corresponding to the 
+`MsgAddress` TL-B scheme (see the [address](/ton/addresses/addresses-general-info) page for details).
+- An address where to send a response with confirmation of a successful transfer and the rest of the incoming message coins. It is 
+serialized as the previous field.
+- Optional custom data which must starts with one bit. If it starts with `0`, then the field is not serialized. Otherwise, 
+this data are serialized in a separate cell and the reference to that cell is indicated in the current cell.
+- The amount of nanotons to be sent to the new owner. 
+
+This field has an illustrative TL-B scheme that should be analyzed separately.
+```tlb
+var_uint$_ {n:#} len:(#< n) value:(uint (len * 8)) = VarUInteger n;
+```
+This combinator is parameterized by a natural number `n`, represented in curly brackets. For a given `n`, `VarUInteger n` 
+describes the serialization of a natural number `m`, which in its binary representation contains no more than `n * 8` bits.
+
+First, the number of bytes required for writing `m`, that is called `len`, is serialized on `LenBits(n-1)` bits. Then `m`
+itself is serialized as a `uint` on `len*8` bits. Thus, the size of the serialization of a particular `m` through the
+combinator `VarUInteger n` depends on `m`.
+- The last `forward_payload` field is optional custom data that should be sent to the new owner. It must starts with one bit. If it 
+starts with `0`, then the remaining bits and references stored in the current cell. Otherwise, they are stored in a separate cell.
+
+**The knowledge gained from analyzing the TL-B schemes above is sufficient to understand all the schemes that 
+you will encounter when analyzing the [Jetton](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md#summary), 
+[NFT Royalty](https://github.com/ton-blockchain/TEPs/blob/master/text/0066-nft-royalty-standard.md), 
+[SBT](https://github.com/ton-blockchain/TEPs/blob/master/text/0085-sbt-standard.md),
+[Jetton wallet](https://github.com/ton-blockchain/TEPs/blob/master/text/0089-jetton-wallet-discovery.md) standards**.
+
+## DNS
+
+_TON DNS_ is a service for translating human-readable domain names (such as test.ton or mysite.temp.ton) into TON smart contract addresses.
+It is specified in [TEP 0081](https://github.com/ton-blockchain/TEPs/blob/master/text/0081-dns-standard.md).
+
+Let's consider TL-B schemes of _DNS Records_ values:
+```tlb
+proto_http#4854 = Protocol;
+
+proto_list_nil$0 = ProtoList;
+proto_list_next$1 head:Protocol tail:ProtoList = ProtoList;
+
+
+cap_is_wallet#2177 = SmcCapability;
+
+cap_list_nil$0 = SmcCapList;
+cap_list_next$1 head:SmcCapability tail:SmcCapList = SmcCapList;
+
+dns_smc_address#9fd3 smc_addr:MsgAddressInt flags:(## 8) { flags <= 1 }
+  cap_list:flags . 0?SmcCapList = DNSRecord;
+dns_next_resolver#ba93 resolver:MsgAddressInt = DNSRecord;
+dns_adnl_address#ad01 adnl_addr:bits256 flags:(## 8) { flags <= 1 }
+  proto_list:flags . 0?ProtoList = DNSRecord;
+dns_storage_address#7473 bag_id:bits256 = DNSRecord;
+
+_ (HashmapE 256 ^DNSRecord) = DNS_RecordSet;
+```
+The first thing you need to pay attention to: how lists of arbitrary length are formed.
+For instance, `ProtoList` combinator consists of two constructors: `proto_list_nil` that indicates the end of a list and 
+`proto_list_next` that indicates that there are a record of protocol followed by the next record or the end of a list.
+
+When deserializing data of the `ProtoList` type, the prefix `1` or `0` is read first. If the prefix is `0`, then we have reached the end 
+of the list and there is nothing more to read. Otherwise, the protocol entry is read, followed by a prefix 
+indicating whether the next protocol entry will be followed or the end of the list. The same applies to the `SmcCapList` type.
+
+Next, pay attention to the `DNSRecord` type. The contructors `dns_next_resolver` and `dns_storage_address` are simple. 
+Let's deal with the `dns_adnl_address`constructor:
+- first comes the `0xad01` prefix;
+- then 256-bits representing ADNL address;
+- next, the 8-bits flag which is currently bounced by `1`;
+- finally, if the first bit of the flag is `1`, the serialization continued with `ProtoList` type;
+- if the first bit of the flag is `0`, then serialization is completed.
+
+The serialization of `dns_smc_address` follows the same logic.
