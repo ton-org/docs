@@ -2,6 +2,8 @@
 title: "Smart contract development"
 ---
 
+import { Aside } from "/snippets/aside.jsx";
+
 Ensure your current directory is the root of the project initialized with `npm create ton@latest`.
 
 ## Contract creation
@@ -87,6 +89,237 @@ Compiled outputs are stored in the `build/` directory.
 
 - `build/<CONTRACT>/<CONTRACT>.fif` — Fift code derived from the contract.
 
+## Wrappers
+
+Wrappers are TypeScript classes that **you write** to interact with your smart contracts. They act as a bridge between your application code and the blockchain, encapsulating contract deployment, message sending, and data retrieval logic. Each wrapper implements the `Contract` interface from [`@ton/core`](https://github.com/ton-org/ton-core).
+
+When you create a new contract with Blueprint, you need to write your own wrapper class in the `wrappers/` folder to define how your application will interact with the contract.
+
+<Aside type="tip" title="Naming Convention">
+Methods that send messages should start with `send` (e.g., `sendDeploy`, `sendIncrement`), and methods that read data should start with `get` (e.g., `getCounter`).
+
+This convention works seamlessly with `open()` method, which automatically provides the `ContractProvider` as the first argument to your wrapper methods.
+</Aside>
+
+### Static creating methods
+
+Wrappers typically include two main static methods for creating contract instances:
+
+#### `createFromAddress(address: Address)`
+
+Creates a wrapper instance for an **already deployed** contract using its address. This method is used when you want to interact with an existing contract on the blockchain.
+
+```typescript title="./wrappers/Counter.ts"
+import { Address, Cell, Contract } from '@ton/core';
+
+export class Counter implements Contract {
+    constructor(readonly address: Address, readonly init?: { code: Cell; data: Cell }) {}
+
+    static createFromAddress(address: Address) {
+        return new Counter(address);
+    }
+}
+```
+
+#### `createFromConfig(config, code, workchain)`
+
+Creates a wrapper instance for a **new contract** that hasn't been deployed yet. This method calculates the contract's future address based on its initial state and code.
+
+```typescript title="./wrappers/Counter.ts"
+import { Address, beginCell, Cell, Contract, contractAddress } from '@ton/core';
+
+export type CounterConfig = {
+    id: number;
+    counter: number;
+};
+
+export function counterConfigToCell(config: CounterConfig): Cell {
+    return beginCell().storeUint(config.id, 32).storeUint(config.counter, 32).endCell();
+}
+
+export class Counter implements Contract {
+    constructor(readonly address: Address, readonly init?: { code: Cell; data: Cell }) {}
+
+    static createFromConfig(config: CounterConfig, code: Cell, workchain = 0) {
+        const data = counterConfigToCell(config);
+        const init = { code, data };
+        return new Counter(contractAddress(workchain, init), init);
+    }
+}
+```
+
+**Parameters:**
+- `config` - Initial configuration data for your contract
+- `code` - Compiled contract code (usually loaded from build artifacts)
+- `workchain` - workchain ID (0 for basechain, -1 for masterchain)
+
+<Aside type="tip">
+Contracts created with `createFromAddress()` cannot be deployed since they lack the `init` data required for deployment. Use `createFromConfig()` for new contracts that need to be deployed.
+</Aside>
+
+### Sending messages
+
+Message sending methods allow your application to trigger contract execution by sending [internal or external messages](/ton/transaction). These methods handle the construction of message bodies and transaction parameters.
+
+All sending methods follow a similar pattern and should start with `send`:
+
+```typescript title="./wrappers/Counter.ts"
+import { ContractProvider, Sender, SendMode, beginCell, Cell } from '@ton/core';
+
+export class Counter implements Contract {
+    async sendDeploy(provider: ContractProvider, via: Sender, value: bigint) {
+        await provider.internal(via, {
+            value,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: beginCell().endCell(), // empty body for deployment
+        });
+    }
+
+    async sendIncrement(provider: ContractProvider, via: Sender, opts: { value: bigint; queryId?: number }) {
+        await provider.internal(via, {
+            value: opts.value,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: beginCell()
+                .storeUint(0x7e8764ef, 32) // opcode for increment
+                .storeUint(opts.queryId ?? 0, 64) // queryId
+                .endCell(),
+        });
+    }
+
+    async sendExternal(provider: ContractProvider, body: Cell) {
+        await provider.external(body);
+    }
+}
+```
+
+**Parameters:**
+- `provider` - `ContractProvider` instance that handles blockchain communication
+- `via` - `Sender` object representing the transaction sender
+- `opts` - Options object containing transaction value and method-specific parameters
+
+### Calling get methods
+
+Get methods allow you to read data from smart contracts without creating transactions. These methods are read-only operations that query the contract's current state.
+
+All get methods should start with `get` and return a Promise:
+
+```typescript title="./wrappers/Counter.ts"
+import { Contract, ContractProvider } from '@ton/core';
+
+export class Counter implements Contract {
+
+    async getCounter(provider: ContractProvider): Promise<number> {
+        const result = await provider.get('currentCounter', []);
+        return result.stack.readNumber();
+    }
+
+    async getItemById(provider: ContractProvider, id: number): Promise<number> {
+        const result = await provider.get('itemById', [
+            { type: 'int', value: BigInt(id) }
+        ]);
+        return result.stack.readNumber();
+    }
+
+    async getContractData(provider: ContractProvider): Promise<{ counter: number; id: number }> {
+        const result = await provider.get('contractData', []);
+        return {
+            counter: result.stack.readNumber(),
+            id: result.stack.readNumber(),
+        };
+    }
+}
+```
+
+### Complete example
+
+```typescript title="./wrappers/Counter.ts" expandable
+import { Address, beginCell, Cell, Contract, contractAddress, ContractProvider, Sender, SendMode } from '@ton/core';
+
+export type NewContractConfig = {
+    id: number;
+    counter: number;
+};
+
+export function newContractConfigToCell(config: NewContractConfig): Cell {
+    return beginCell().storeUint(config.id, 32).storeUint(config.counter, 32).endCell();
+}
+
+export const Opcodes = {
+    OP_INCREASE: 0x7e8764ef,
+    OP_RESET: 0x3a752f06,
+};
+
+export class NewContract implements Contract {
+    constructor(readonly address: Address, readonly init?: { code: Cell; data: Cell }) {}
+
+    static createFromAddress(address: Address) {
+        return new NewContract(address);
+    }
+
+    static createFromConfig(config: NewContractConfig, code: Cell, workchain = 0) {
+        const data = newContractConfigToCell(config);
+        const init = { code, data };
+        return new NewContract(contractAddress(workchain, init), init);
+    }
+
+    async sendDeploy(provider: ContractProvider, via: Sender, value: bigint) {
+        await provider.internal(via, {
+            value,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: beginCell().endCell(),
+        });
+    }
+
+    async sendIncrease(
+        provider: ContractProvider,
+        via: Sender,
+        opts: {
+            increaseBy: number;
+            value: bigint;
+            queryID?: number;
+        }
+    ) {
+        await provider.internal(via, {
+            value: opts.value,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: beginCell()
+                .storeUint(Opcodes.OP_INCREASE, 32)
+                .storeUint(opts.queryID ?? 0, 64)
+                .storeUint(opts.increaseBy, 32)
+                .endCell(),
+        });
+    }
+
+    async sendReset(
+        provider: ContractProvider,
+        via: Sender,
+        opts: {
+            value: bigint;
+            queryID?: number;
+        }
+    ) {
+        await provider.internal(via, {
+            value: opts.value,
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: beginCell()
+                .storeUint(Opcodes.OP_RESET, 32)
+                .storeUint(opts.queryID ?? 0, 64)
+                .endCell(),
+        });
+    }
+
+    async getCounter(provider: ContractProvider) {
+        const result = await provider.get('currentCounter', []);
+        return result.stack.readNumber();
+    }
+
+    async getID(provider: ContractProvider) {
+        const result = await provider.get('initialId', []);
+        return result.stack.readNumber();
+    }
+}
+```
+
 ## Testing
 
 TODO: Fix the link (link should directly lead to test section of the article)
@@ -94,6 +327,5 @@ To test contracts, follow the [Smart contract testing](/ecosystem/blueprint/test
 
 ## Deployment
 
-TODO: Fix the link (link should directly lead to deploying section of the article)
-To deploy contracts, follow the [Deployment and interaction](/ecosystem/blueprint/deploy).
+To deploy contracts, follow the [Deployment and interaction](/ecosystem/blueprint/deploy#deploying-contracts) section.
 

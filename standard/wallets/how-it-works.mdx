@@ -1,0 +1,40 @@
+---
+title: "How TON wallets work"
+sidebarTitle: "How they work"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Wallets are often the entry point of transactions in TON. See [external messages](/ton/ton#2-4-6-external-messages%2C-or-messages-from-nowhere).
+
+### General principle
+A wallet smart contract stores two critical variables — the public key and the sequence number (`seqno`). Together they secure the wallet.
+
+Using the public key, the contract verifies that the request comes from the wallet owner; using `seqno`, it protects against replayed transactions (see [How replay protection works](#how-replay-protection-works)).
+
+## Why wallet contracts don't store a `balance` field
+
+In TON, an account's balance is not stored inside the smart contract's persistent data. It is a part of the protocol-level account state, maintained by validators and updated automatically when value is received/sent and when fees are paid.
+
+Therefore, a wallet contract does not and should not keep a separate `balance` variable in storage. Doing so would be redundant and could drift out of sync with the actual account state.
+
+From outside, the balance is exposed via RPC and blockchain explorers as part of the public account state.
+
+## How ownership verification works
+
+Wallet contracts use the Ed25519 signature scheme.
+You generate a private key (keep it safe) and a public key (stored in the contract; readable by anyone).
+
+<Aside type="caution" title="Important">
+The public key is not the wallet address. The address is derived from the contract’s `StateInit` and other parameters. See [address formats](/ton/addresses/address-formats).
+</Aside>
+
+An external message is sent to the contract (containing a 512‑bit signature and the desired payload). Ed25519 verifies that the provided signature matches the hash of the message.
+
+## How replay protection works
+
+<Aside type="note" title="Why do we need replay protection?">
+Imagine Alice has 100 TON. Alice sends 10 TON to Bob as a gift. Bob, being sneaky, forwards the exact same message to Alice's wallet and would receive another 10 TON — unless the wallet prevents replays.
+</Aside>
+
+Each transaction carries a counter value (in our case, `seqno`) that must be unique and strictly increasing for every outgoing transaction. Because `seqno` changes, the message hash changes as well, making it impossible to reuse a previous signature.
