@@ -2,4 +2,177 @@
 title: "Hands-on debugging"
 ---
 
-Stub
+import {Aside} from "/snippets/aside.jsx";
+
+<Aside>
+    This article presumes that you are using [blueprint](/ecosystem/blueprint/overview) with `@ton/sandbox`. These are the most popular instruments for debuging smart contracts.
+</Aside>
+
+## console.log()
+
+It's a very straightforward way, that still may be very effective. The most popular things you probably want to pritg are transactions and get-metods results.
+
+There are some functions that help to inspect transactions in a more developer-friendly way.
+
+```ts
+import { toNano } from "@ton/core";
+import { Blockchain } from "@ton/sandbox";
+import "@ton/test-utils";
+import { Test } from "./output/sample_Test";
+import { findTransaction, flattenTransaction } from "@ton/test-utils";
+
+describe("contract", () => {
+    it("should work correctly", async () => {
+        const blockchain = await Blockchain.create();
+        const owner = await blockchain.treasury("deployer");
+        const contract = blockchain.openContract(await Test.fromInit());
+        const deployRes = await contract.send(owner.getSender(), { value: toNano(0.5), bounce: true }, null);
+        const txToInspect = findTransaction(deployRes.transactions, {
+            to: contract.address,
+            deploy: true,
+        })
+        if(txToInspect == undefined) {
+            throw new Error("Requested tx was not found.");
+        }
+        // User-friendly output
+        console.log(flattenTransaction(txToInspect))
+        // Verbose output
+        console.log(txToInspect)
+    });
+});
+```
+
+
+## DUMP values from contract
+
+In general, 3 debug TVM instructions exist:
+
+[DEBUG in TVM](/tvm/instructions#fe-debug)
+
+This method heavily depends on exact language you use. In particular, in [Tolk](/language/tolk) you can use this functions from globally available object named `debug`. In FunC all this methods are available globally in `stdlib.fc`. In [Tact](/language/tact) `DUMPSTK` is available with `dumpStack` and two other are available with [dump function](https://docs.tact-lang.org/ref/core-debug/#dump). Also, tact outputs the exact line where `dump` is called, so you can easily find it in your code.
+
+<Aside type="caution">
+    Be careful, as debug instructions also consume gas, so the consumed gas will differ from the one you pay for the contract execution.
+</Aside>
+
+## Exploring TVM logs 
+
+```ts
+describe("contract", () => {
+    it("should work correctly", async () => {
+        const blockchain = await Blockchain.create();
+        blockchain.verbosity.vmLogs = "vm_logs";
+    });
+});
+```
+
+There are multiple levels of verbosity, but two on them is the most convenient.
+
+- `vm_logs` - outputs the VM logs for each transaction, consists only of executed instructions and occured exceptions.
+- `vm_logs_full` - outputs the full VM logs for each transaction, consists of executed instructions with corresponding place in binary, currect stack for each instruction and the amount of gas used in each instruction.
+
+Typical output for `vm_logs` looks like this:
+
+```text
+...
+execute LDI 1
+execute SWAP
+execute PUSHCONT xD31F
+execute PUSHCONT x6D01
+execute IFELSE
+execute LDU 32
+execute implicit RET
+execute SWAP
+execute NIP
+execute DROP
+execute SWAP
+execute PUSHCONT x30
+execute IFJMP
+execute LDU 64
+handling exception code 9: cell underflow
+default exception handler, terminating vm with exit code 9
+```
+
+Here we can see, that the contract tried to load uint54 from the slice, but there was not enough data in the slice, so [exit code 9](/tvm/exit-codes#9%3A-cell-underflow) occured.
+
+Let's inspect the same code but with `vm_logs_full` verbosity level. (output is heavily truncated from the top)
+```text
+...
+execute PUSHCONT x30
+gas remaining: 999018
+stack: [ 500000000 CS{Cell{02b168008d0d4580cd8f09522be7c0390a7a632bda4a99291c435b767c95367ebe78e9af0023d36bc5f97853f4c898f868f95b035ae8f555a321d0ffce8d9f6165e2252d7a9077359400060e9fc800000000003d0902d1b85b3919} bits: 711..711; refs: 2..2} 0 Cont{vmc_std} ] 
+code cell hash: F9EAC82B7999AEEF696D592FE2469B9069FB05ED35C92213D7EE516F45AB97CA offset: 344
+execute IFJMP
+gas remaining: 999000
+stack: [ 500000000 CS{Cell{02b168008d0d4580cd8f09522be7c0390a7a632bda4a99291c435b767c95367ebe78e9af0023d36bc5f97853f4c898f868f95b035ae8f555a321d0ffce8d9f6165e2252d7a9077359400060e9fc800000000003d0902d1b85b3919} bits: 711..725; refs: 2..2} ] 
+code cell hash: F9EAC82B7999AEEF696D592FE2469B9069FB05ED35C92213D7EE516F45AB97CA offset: 352
+execute LDU 64
+handling exception code 9: cell underflow
+default exception handler, terminating vm with exit code 9
+```
+
+Stack is written as `[ bottom , ..., top ]`, where `top` is the top of the stack.
+
+Here, we can clearly see, that stack had 2 values:
+
+- Slice we are trying to read
+- Integer (500000000)
+
+However, the slice has only 725 bits, and 711 bits was already read, as the both of the refs. So, the contract tried to read 64 bits, but there was not enough data in the slice.
+
+So, the developer should seek for `load_uint(64)` function call, that is causing the issue.
+
+## Exploring transaction tree
+
+If the transaction tree is simple and straightforward, one can simply print all transactions to manually inspect those.
+
+```ts not runnable
+const deployRes = await contract.send(owner.getSender(), { value: toNano(0.5), bounce: true }, null);
+for(const tx of deployRes.transactions) {
+    console.log(flattenTransaction(tx))
+}
+```
+
+However, if the transaction tree is complex, it's more convenient to see that tree in UI.
+
+For now there are two main instruments for this. 
+
+- [TxTracer sandbox](https://txtracer.ton.org/sandbox/) - requires custom `@ton/sandbox` package, works directly in your browser.
+- [TonDevWallet trace view](/ecosystem/wallet-apps/dev) - requires TonDevWallet application installed. Does not require custom `@ton/sandbox` package. Requires `@tondevwallet/traces` package.
+
+You can read more on each of this tools on a dedicated page.
+
+## Get-methods
+
+Add more getters to your contract. It is not a binary-size-efficient approach, but it is more convenient to have multiple getters, each of them returning a single value.
+
+```tolk
+struct Storage {
+    publicKey: bytes32;
+    seqno: uint32;
+    lastTxUnixtime: uint32;
+}
+
+fun Storage.load(): Storage {
+    return Storage.fromCell(contract.getData());
+}
+
+fun onInternalMessage(in: InMessage) {
+    // ...
+}
+
+get fun public_key() : bytes32 {
+    val storage = Storage.load();
+    return storage.publicKey;
+}
+
+get fun seqno() : uint32 {
+    val storage = Storage.load();
+    return storage.seqno;
+}
+
+get fun last_tx_unixtime() : uint32 {
+    val storage = Storage.load();
+    return storage.lastTxUnixtime;
+}
+```
