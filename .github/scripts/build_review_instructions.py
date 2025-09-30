@@ -37,6 +37,11 @@ Review protocol:
 - Keep findings direct, professional, and concise. Suggestions must describe the required fix.
 - Do not speculate about Mintlify runtime behavior or external systems; rely solely on repository content.
 
+Severity policy:
+- Report only HIGH‑severity violations.
+- Ignore MEDIUM and LOW entirely: do not mention, score, or suggest fixes.
+- Treat HIGH as rules tagged [HIGH] or listed under “Global overrides (always [HIGH])” in contribute/style-guide-extended.mdx.
+
 Goal: deliver exhaustive, high-confidence feedback that brings these TON Docs changes into full style-guide compliance and factual correctness.
 """
     )
