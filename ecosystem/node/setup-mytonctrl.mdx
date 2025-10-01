@@ -1,28 +1,17 @@
 ---
-title: "Setting up a node using MyTonCtrl"
-description: "Provision hardware, install MyTonCtrl, and follow tailored checklists for validator, liteserver, or archive roles."
+title: "Set up full node (validator/liteserver) with MyTonCtrl"
+description: "Step-by-step checklists for bringing a validator, liteserver, or archive liteserver online once MyTonCtrl is installed."
 ---
 
-MyTonCtrl wraps the TON validator toolchain (`lite-client`, `validator-engine-console`, installer utilities) into a single console. The steps below are grouped by operator goal so you can jump straight to the workflow you need.
+<Warning>**Handle validator keys like production secrets.** Keep recovery phrases offline, restrict shell access, and test new procedures on testnet before touching wallets that hold real stake.</Warning>
 
-<Warning>**Protect funds and keys.** Installation and configuration expose validator wallets and secrets. Record seed phrases offline, keep terminals private, and rehearse new steps on testnet before running them on mainnet funds.</Warning>
+These runbooks assume you already reviewed hardware sizing and installer options in the [MyTonCtrl overview](./mytonctrl/overview). Follow the quick steps below to get a baseline node online, then jump to the role you need.
 
-## Set up a node (baseline for every role)
+## Baseline setup (install and sync)
 
-### Plan the environment
+### 1. Install MyTonCtrl
 
-- **Choose your network.** Mainnet uses `https://ton.org/global-config.json`; testnet uses `https://ton.org/testnet-global.config.json`. Keep offline copies so you can verify integrity before updates.
-- **Size hardware conservatively.** Follow the [official node sizing guidance](https://docs.ton.org/guidelines/nodes-guidelines) and treat 16 dedicated vCPUs, 128 GB RAM, and 1–2 TB of NVMe as a typical starting point. Scale CPU, RAM, and storage based on your validator load, telemetry, and archive goals.
-- **Harden the OS.** Install Ubuntu 22.04 LTS or Debian 12, create a non-root operator with `sudo`, disable direct root SSH login, enforce security updates, and configure NTP.
-- **Expose the ADNL UDP port.** Allow SSH (22/TCP) plus the single ADNL UDP port your node uses (MyTonCtrl defaults to `30303`). After installation, run `about validator` or `about liteserver` inside MyTonCtrl to confirm the `adnlPort` value before updating firewalls and NAT rules.
-- **Safeguard keys.** Generate validator wallet secrets offline and reserve at least 500 Toncoin to fund stake, elections, and gas fees.
-- **Plan archive retention.** `--archive-ttl 0` or other long-term retention settings routinely consume 10–12 TB of NVMe storage; budget for the growth and replicate snapshots offsite.
-
-### Install MyTonCtrl
-
-Create or log in as the non-root operator account you will use every day (see the [Full node guide](https://docs.ton.org/v3/guidelines/nodes/running-nodes/full-node) for detailed steps). If you still need to create that account, run `sudo adduser <LINUX_USER>`, grant admin rights with `sudo usermod -aG sudo <LINUX_USER>`, then reconnect via `ssh <LINUX_USER>@<SERVER_IP>` before continuing. Replace `<LINUX_USER>` with your operator username and `<SERVER_IP>` with the node's public IP address.
-
-Run the installer **from that account** with `sudo` so it can create system users and services:
+Log in as the non-root operator that will manage the node, then install dependencies and run the official installer:
 
 ```bash
 sudo apt update
@@ -31,149 +20,55 @@ wget https://raw.githubusercontent.com/ton-blockchain/mytonctrl/master/scripts/i
 sudo bash install.sh -d
 ```
 
-Installer flags you are likely to use:
+The `install.sh` script opens an interactive menu—follow the prompts to choose the network, enable modes, and confirm telemetry policies. Refer to the [MyTonCtrl overview](./mytonctrl/overview#install-mytonctrl) if you need a full flag reference for automated setups.
 
-| Flag | Purpose |
-| --- | --- |
-| `-d` | Download a blockchain dump to speed up the initial sync. |
-| `-n <NETWORK>` | Select `mainnet` or `testnet` presets by setting `<NETWORK>` to the desired environment (updates config URL and hardware checks). |
-| `-c <URL>` | Override the global config URL manually; set `<URL>` to a trusted HTTPS mirror. |
-| `-m <MODE>` | Pre-enable `validator` or `liteserver` during installation by specifying the `<MODE>` you want active on first launch. |
-| `-t` | Disable telemetry reporting. |
-| `-i` | Skip hardware checks (only for labs or CI environments). |
+### 2. Confirm readiness before role-specific steps
 
-Run `bash install.sh -h` to review the full flag list before tailoring your install.
+- Use `status fast` command to check synchronization status. On synchronized node, `timeDiff` is near zero and `Local validator out of sync` stays below 20.
+- Ensure validator wallets are funded and backed up.
+- Capture `/var/ton-work/keys` and recent configs with `create_backup` so you can roll back if needed.
 
-<Warning>**Use a dedicated operator account.** Install MyTonCtrl with `sudo`, then operate it as the non-root user the installer provisions (default `mytonctrl`). Mixing users leads to permission issues under `/var/ton-work` and breaks systemd service ownership.</Warning>
+---
 
-### Validate the baseline
+## Validator quickstart
 
-Log in as the operator and confirm everything came up:
+**You need:** a synced node and funded validator wallet.
 
-```bash
-mytonctrl
-MyTonCtrl> status fast
-MyTonCtrl> mode_status
-```
+### Prepare the validator wallet (run once)
 
-Inside the console, open the installer to review service health:
+- Check whether a suitable wallet already exists with `wl`. Copy the address if you plan to reuse it.
+- To create a new wallet for staking, generate one with `nw 0 validator_wallet v3 1001` (replace the name if you prefer another label). MyTonCtrl prints the fresh address so you can fund it.
+- Deploy the wallet contract after funding by running `aw validator_wallet`. Repeat this command whenever you add new wallets that need activation.
+- Point the validator module to the wallet so election tasks use it: `set validatorWalletName "validator_wallet"` and verify with `get validatorWalletName`.
+- Back up the private key with `ew validator_wallet` and store it offline. See the [wallet command reference](./mytonctrl/wallet) for additional import/export options.
 
-```bash
-MyTonCtrl> installer
-Installer> status
-Installer> exit
-```
+### 1. Switch the node into validator mode
 
-Run `status fast` to check validator, liteserver, and overlay health without slow remote calls. `mode_status` lists enabled modes so you know which role the installer configured. The installer `status` output surfaces systemd states, log locations, disk usage, and node arguments. Expect `Local validator out of sync` to start around 250k and drop below 20 as synchronization completes; the counter may take a few hours to trend downward after the first launch. Investigate logs immediately if the console reports missing or red statuses, and double-check firewall/UDP reachability if the value stays at `n/a`. Exit MyTonCtrl with `exit` once the checks look healthy.
-
-
-### Manage global config and services
-
-If you need to switch networks or refresh the global config:
+Inside the MyTonCtrl console, enable the validator workflow:
 
 ```bash
-sudo wget -O /usr/bin/ton/global.config.json https://ton.org/global-config.json
-```
-
-Inside MyTonCtrl, update services that depend on the config and confirm status:
-
-```bash
-MyTonCtrl> installer
-Installer> update VC
-Installer> update LS
-Installer> exit
-MyTonCtrl> status
-```
-
-Restart systemd units if the installer reports pending restarts:
-
-```bash
-sudo systemctl restart validator
-sudo systemctl restart mytoncore
-```
-
-Run `status fast` afterward to ensure the node rejoins the network without errors.
-
-<Warning>**Service changes restart components.** Refreshing the global config or restarting systemd units interrupts validator duties. Schedule these changes during maintenance windows, snapshot the node first, and validate them on testnet whenever possible.</Warning>
-
-### Wallet essentials for validators and pool operators
-
-Inside MyTonCtrl, wallet operators rely on a small set of commands:
-
-```bash
-MyTonCtrl> wl
-MyTonCtrl> nw <WORKCHAIN_ID> <WALLET_NAME>
-MyTonCtrl> iw <WALLET_ADDRESS> <SECRET_KEY_B64>
-MyTonCtrl> aw <WALLET_NAME>
-MyTonCtrl> ew <WALLET_NAME>
-MyTonCtrl> mg <WALLET_NAME> <DESTINATION_ADDRESS> <TON_AMOUNT>
-MyTonCtrl> mgtp <WALLET_NAME> <DESTINATION_ADDRESS> <TON_AMOUNT>
-```
-
-Set `<WORKCHAIN_ID>` to the target workchain (mainnet defaults to `0`) and choose `<WALLET_NAME>` aliases you will recognize later. When importing, provide the user-friendly `<WALLET_ADDRESS>` together with the Base64 `<SECRET_KEY_B64>`. For transfers, pair `<DESTINATION_ADDRESS>` with the Toncoin amount in `<TON_AMOUNT>` so MyTonCtrl formats the message correctly.
-
-- `wl` lists wallets with balance, status, version, and address.
-- `nw` creates a new wallet for the given workchain. Name it descriptively (`validator_wallet`, `pool_hot`, etc.).
-- `iw` imports an existing wallet using its address and Base64 secret key.
-- `aw` activates a wallet after you fund it.
-- `mg` and `mgtp` send Toncoin (use `-C "Comment"`, `-n`, or `-b` for optional flags).
-
-<Warning>**Wallet exports expose private keys.** `ew` prints the Base64 secret key. Run it only on secure terminals, store the output offline, and practice with testnet wallets before exposing production keys.</Warning>
-
-Use `help` inside the console to discover additional commands at any time.
-
-### Backups and housekeeping
-
-- Use `create_backup` / `restore_backup` to snapshot configs and keys.
-- Capture `/var/ton-work/keys`, wallet exports, and MyTonCtrl DB copies in encrypted, offline storage.
-- Monitor CPU, RAM, disk I/O, and bandwidth externally. Run `benchmark` after hardware upgrades to confirm throughput.
-
-- Check MyTonCtrl logs in `~/.local/share/mytoncore/mytoncore.log` (or `/usr/local/bin/mytoncore/mytoncore.log` if installed as root) and node logs under `/var/ton-work/log.thread*` during troubleshooting.
-- Remove an installation with `sudo bash /usr/src/mytonctrl/scripts/uninstall.sh` when decommissioning a node.
-- Verify file ownership with `ls -lh /var/ton-work/keys/` to ensure the console runs under the correct user.
-
-### Optional tooling and overlays
-
-- Use `add_custom_overlay <OVERLAY_NAME> <PATH_TO_CONFIG>`, `list_custom_overlays`, and `delete_custom_overlay <OVERLAY_NAME>` to manage custom overlays. Choose `<OVERLAY_NAME>` as a friendly label and point `<PATH_TO_CONFIG>` to the JSON file that lists validator and liteserver ADNL IDs; disable the shipped emergency overlays if you do not need them (see the custom overlay guide for examples).
-- Enable the MyTonCtrl private alert bot to push Telegram notifications about elections, outages, and stake events.
-- Expose Prometheus metrics or deploy the remote controller when you need centralized monitoring or when MyTonCtrl and the node run on separate machines.
-- Provision standby validator infrastructure so you can fail over without penalties; rehearse the switchover using the backup/restore flow.
-- Opt out of telemetry after installation with `set sendTelemetry false` if your policy prohibits exporting validator stats.
-- Enable web and HTTP modules via the installer when needed: run `installer`, then execute `enable JR`, `setwebpass`, `enable THA`, and `enable PT` for a local Toncenter-compatible endpoint before exiting.
-
-Once the baseline is stable, pick the targeted workflow below.
-
-## Enable validator mode
-
-### Requirements
-
-- Baseline node configured (see Set up a node).
-- No conflicting modes (`liteserver` must be disabled first).
-- Funded validator wallet with enough Toncoin for stake and fees.
-
-### Turn on validator mode
-
-Inside MyTonCtrl, disable conflicting modes and enable the validator workflow (skip `disable_mode collator` if you never activated collator mode):
-
-```bash
-MyTonCtrl> disable_mode liteserver
-MyTonCtrl> disable_mode collator
 MyTonCtrl> enable_mode validator
 MyTonCtrl> mode_status
 MyTonCtrl> about validator
 ```
 
-Set your stake target and adjust it as your Toncoin balance changes:
+Confirm that `mode_status` reports `validator` as active and note the `adnlPort` for your firewall rules.
+
+### 2. Set the stake policy
+
+Choose either a fixed Toncoin amount or a percentage of wallet balance:
 
 ```bash
-MyTonCtrl> set stake 5000
+MyTonCtrl> set stake 400000
+# or
+MyTonCtrl> set stakePercent 99
 ```
 
-You can also use `set stakePercent 99` to allocate a percentage of available funds instead of a fixed amount.
+Use `get stake` and `get stakePercent` to review the current configuration before each election.
 
-### Election routine
+### 3. Run the election checklist
 
-Run this before each election window (add a cron job if you prefer automation):
+When an election window opens, work through the following sequence:
 
 ```bash
 MyTonCtrl> status fast
@@ -181,101 +76,56 @@ MyTonCtrl> ve
 MyTonCtrl> check_ef
 ```
 
-- Always wait until `Local validator out of sync` is under 20 before sending the election query. If it stays high, investigate connectivity or sync issues first.
-- `status fast` confirms sync, `ve` updates pools and submits the election query, and `check_ef` reports current and previous round efficiency.
+- Wait until `Local validator out of sync` is below 20 before running `ve`; high values mean the node is not ready.
+- Review `ve` output for submission status and `check_ef` for efficiency of the previous round.
+- Add a cron job that calls `ve` and `check_ef` every 30 minutes during election weeks if you automate.
 
-Optional governance helpers:
+### 4. Monitor and maintain
 
-- `vo <OFFER_HASH>` — vote on proposals by referencing the `<OFFER_HASH>` reported in `status` or `ol` output.
-- `vc <ELECTION_ID> <COMPLAINT_HASH>` — vote on complaints by pairing the `<ELECTION_ID>` with the related `<COMPLAINT_HASH>`.
-- `vl [past] [fast] [--json]` — inspect validator lists and online status.
+- `status` or `status fast` surface sync and performance metrics—trigger alerts if `timeDiff` or `overloaded` values spike.
+- Run `update` followed by `upgrade` during maintenance windows to apply MyTonCtrl and binary updates.
+- Back up `/var/ton-work/keys` and any wallet exports after changes using `create_backup`.
+- Keep a cold standby server ready; restore it with `restore_backup` if you need to fail over quickly.
 
-### Pools and single nominator workflows
+---
 
-Enable `nominator-pool` when accepting delegated stake:
+## Liteserver quickstart
 
-```bash
-MyTonCtrl> enable_mode nominator-pool
-MyTonCtrl> set stake 0
-MyTonCtrl> new_pool <POOL_NAME> <WORKCHAIN_ID> <FEE_PERCENT> <MIN_STAKE_TON> <MAX_STAKE_TON>
-MyTonCtrl> activate_pool <POOL_NAME>
-MyTonCtrl> update_validator_set <POOL_ADDRESS>
-MyTonCtrl> deposit_to_pool <POOL_ADDRESS> <TON_AMOUNT>
-MyTonCtrl> withdraw_from_pool <POOL_ADDRESS> <TON_AMOUNT>
-MyTonCtrl> get_pool_data <POOL_NAME>
-```
+**You need:** a synced node with validator mode disabled.
 
-Set `<POOL_NAME>` to the alias that identifies the pool locally, `<WORKCHAIN_ID>` to the chain you operate on (usually `0`), `<FEE_PERCENT>` to your commission, and `<MIN_STAKE_TON>`/`<MAX_STAKE_TON>` to the Toncoin bounds you accept. `<POOL_ADDRESS>` is the pool contract address and `<TON_AMOUNT>` is the Toncoin value you deposit or withdraw.
-
-For single delegators, switch to `single-nominator`:
+### 1. Enable liteserver services
 
 ```bash
-MyTonCtrl> enable_mode single-nominator
-MyTonCtrl> new_single_pool <POOL_NAME> <POOL_ADDRESS>
-MyTonCtrl> activate_single_pool <POOL_NAME>
-MyTonCtrl> withdraw_from_single_pool <POOL_ADDRESS> <TON_AMOUNT>
-```
-
-Here `<POOL_NAME>` labels the single-nominator configuration, `<POOL_ADDRESS>` is the contract address, and `<TON_AMOUNT>` is the Toncoin amount you withdraw on behalf of the delegator.
-
-Use `pools_list`, `get_pool_data <POOL_NAME>`, and `import_pool <POOL_NAME> <POOL_ADDRESS>` to audit existing pools. Follow the [nominator pool guide](https://docs.ton.org/v3/guidelines/smart-contracts/howto/nominator-pool) for policy, staking, and safety recommendations.
-
-### Collator and BTC Teleport extras
-
-If you collate shards:
-
-- `add_collator <ADNL_ID> <SHARD_ID> [--self-collate true|false] [--select-mode random|ordered|round_robin]` — register a collator by providing its `<ADNL_ID>` and the target `<SHARD_ID>` (hex or decimal).
-- `delete_collator [<SHARD_ID>] <ADNL_ID>` — remove the collator identified by `<ADNL_ID>`; scope the change to `<SHARD_ID>` when needed.
-- `print_collators [--json]`
-- `reset_collators`
-
-BTC Teleport helpers:
-
-- `remove_btc_teleport [--force]`
-- `vote_offer_btc_teleport <OFFER_HASH>` — vote for the teleport offer identified by `<OFFER_HASH>`.
-- `print_offers_btc_teleport_list [--json]`
-
-## Enable liteserver mode
-
-### When to choose it
-
-Liteserver mode runs light-client endpoints without validator duties—ideal for explorers, API hubs, or infrastructure serving remote clients. It cannot run alongside validator mode on the same node.
-
-### Switch into liteserver mode
-
-```bash
-MyTonCtrl> disable_mode validator
-MyTonCtrl> disable_mode nominator-pool
-MyTonCtrl> disable_mode single-nominator
 MyTonCtrl> enable_mode liteserver
 MyTonCtrl> mode_status
 ```
 
-Use the installer to (re)configure services:
+`mode_status` should now list `liteserver` as active.
+
+### 2. Configure with the installer
 
 ```bash
 MyTonCtrl> installer
 Installer> enable LS
-Installer> enable LSP
 Installer> plsc
 Installer> exit
 ```
 
-`LS` deploys the liteserver service and `LSP` enables the optional ls-proxy. `plsc` prints the config you distribute to clients. Share `/var/ton-work/keys/liteserver.pub` with the generated config, confirm health with `status fast`, and monitor `netLoadAvg` to scale hardware before saturation.
+`LS` starts the liteserver daemon, and `plsc` prints the client configuration bundle. Use the generated `global-config.json` to connect lite clients over ADNL.
 
-### Hardening tips
+### 3. Lock down access and verify
 
-- Restrict liteserver access with firewalls or proxies.
-- Back up configs after any change with `create_backup`.
-- Keep the node patched using `update` and `upgrade` on a maintenance schedule.
+- Restrict inbound access to the liteserver port with firewalls or a reverse proxy.
+- Run `status fast` and watch CPU, RAM, and bandwidth metrics.
+- Export fresh backups after configuration changes with `create_backup`.
 
-## Enable archive node mode
+---
 
-### Purpose
+## Archive liteserver quickstart
 
-Archive nodes keep every historical block and state instead of pruning. They underpin explorers, analytics, and forensic workloads. Retention is controlled through node arguments such as `--archive-ttl` and `--state-ttl`.
+**You need:** liteserver mode enabled, enough NVMe storage (10–12 TB for long-term retention), and monitoring for disk growth.
 
-### Configure retention
+### 1. Set archive retention arguments
 
 ```bash
 MyTonCtrl> installer
@@ -284,23 +134,24 @@ Installer> set_node_argument --state-ttl 0
 Installer> exit
 ```
 
-Adjust the TTL values if you prefer a finite retention window (values are in seconds). Restart services when prompted:
+`0` keeps data indefinitely. Use large but finite values (seconds) if you only need a rolling window.
+
+### 2. Restart services when prompted
 
 ```bash
 sudo systemctl restart validator
 sudo systemctl restart mytoncore
 ```
 
-Check health afterward:
+### 3. Validate the setup
 
 ```bash
 MyTonCtrl> status fast
 MyTonCtrl> settings_status
 ```
 
-Plan for rapid disk growth and watch `/var/ton-work/db` closely. Persistent states are published roughly every 2^17 seconds (~1.5 days) and longer-lived checkpoints appear as the network progresses. Choose TTLs that align with how many of those states you want to retain locally.
+- Confirm the archive arguments appear in `settings_status`.
+- Monitor `/var/ton-work/db` consumption; plan for rapid growth and replicate snapshots offsite.
+- Periodically run `create_backup` and test restores on a secondary machine to ensure recoverability.
 
----
-
-With the baseline set and role-specific steps complete, refer to the [MyTonCtrl reference](./mytonctrl) whenever you configure your node.
-If you run into issues you cannot resolve with the troubleshooting guide, contact the regular node support channel at [@ton_node_help](https://t.me/ton_node_help) and validator support at [@validators_help_bot](https://t.me/ton_node_help).
+Once these runbooks are complete, use the [MyTonCtrl core reference](./mytonctrl/core) for deeper configuration tasks.
