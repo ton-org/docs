@@ -6,26 +6,25 @@ noindex: "true"
 
 import { Aside } from '/snippets/aside.jsx';
 
-This article explains how expressions are constructed in FunC. 
-An expression is a combination of literals, variables, operators, and function calls that produce a value when evaluated. 
+Expressions in FunC combine literals, variables, operators, and function calls to produce a value when evaluated.
 
 An expression in FunC can be:
-- An [number literal](literals#number-literals), 
-- An [identifier](literals#identifiers), 
-- A [compile-time builtin](literals#compile-time-built-ins), 
-- An [operator](operators), 
-- A [variable declaration](#variable-declaration),
-- A [function call](#function-call). 
+- An [number literal](literals#number-literals)
+- An [identifier](literals#identifiers)
+- A [compile-time builtin](literals#compile-time-built-ins)
+- An [operator](operators)
+- A [variable declaration](#variable-declaration)
+- A [function call](#function-call)
 
-This article focuses on variable declarations and function calls, since the other ones are 
+We focus on variable declarations and function calls, since the other kind of expressions are 
 explained in their respective articles.
 
-As a general rule, all sub-expressions inside an expressions are evaluated from left to right,
+As a general rule, all sub-expressions inside an expression are evaluated from left to right,
 except in cases where [asm stack rearrangement](/language/func/functions#rearranging-stack-entries) explicitly defines the order.
 
 ## Variable declaration
 Local variables must be initialized at the time of declaration. Since variable declarations are expressions, the result of evaluating a declaration like:
-```
+```func
 type iden = expr
 ```
 returns the value produced by `expr`, in addition to defining variable `iden` with value `expr`.
@@ -94,8 +93,7 @@ while (i < 10) {
 ;; Here, x refers to the original variable of type int declared above
 ```
 
-However, as mentioned in the [Global variables](/language/func/global-variables/) section,
-global variables **cannot** be redeclared.
+However, global variables **cannot** be redeclared. See [Global variables](/language/func/global-variables/).
 
 ### Underscore
 
@@ -140,13 +138,58 @@ This is equivalent to the longer form, which decomposes the result tensor of `ba
 int x = foo(a, b, c);
 ```
 
-### Lambda expressions
-Lambda expressions are not yet supported in FunC.
+### Functions as first-class objects
 
-### Function call notation
+In FunC, functions are first-class objects: they can be assigned to variables, passed as arguments to other functions, and returned from functions.
+
+For example, the following function `apply`, receives a function `f` of type `int -> int`, and a value `v` of type `int` as arguments. Function `apply` invokes `f` 
+with argument `v` and returns the result of the application, i.e., `apply` computes the expression `f(v)`.
+
+```func 
+int apply(int -> int f, int v) {
+  return f(v);
+}
+```
+
+Let us suppose we have an increment function:
+
+```func 
+int inc(int x) {
+  return x + 1;
+}
+```
+
+We can then invoke `apply` by passing the increment function:
+
+```func 
+apply(inc, 2);   ;; produces 3, or equivalently, inc(2)
+```
+
+It is also possible to assign the increment function to variables:
+
+```func
+var f = inc;
+```
+
+or return it from functions:
+
+```func 
+int -> int return_inc() {
+  return inc;
+}
+```
+
+<Aside>
+
+FunC does not support lambda expressions. 
+This means that it is not possible to create [anonymous functions](https://en.wikipedia.org/wiki/Anonymous_function).
+
+</Aside>
+
+### Special function call notation
 
 In addition to the standard syntax for calling a function, FunC supports two function call notations for specific situations, 
-the [non-modifying notation](#non-modifying-notation), and the [modifying](#modifying-notation) one, which are explained next.
+the [non-modifying notation](#non-modifying-notation), and the [modifying notation](#modifying-notation), which are explained next.
 
 #### Non-modifying notation
 
@@ -207,7 +250,10 @@ or to the more difficult to read form, which nests all the calls:
 ```func
 builder b = store_uint(
                 store_int(
-                    store_uint(begin_cell(), 239, 8), 
+                    store_uint(
+                         begin_cell(), 
+                         239, 
+                         8), 
                     -1, 
                     16), 
                 0xff, 
@@ -239,8 +285,8 @@ int x = cs~load_uint(8);            ;; Call using modifying notation (i.e., `~`)
 
 #### Adapting functions to use `~`
 
-When a function type is of the form `(A, ....) -> A`, it is possible to adapt the function so that the `~` notation can be used on such function.
-This can be achieved using unit types, by redefining the function type to `(A, ....) -> (A, ())`.
+When a function type is of the form `(A, ...) -> A`, it is possible to adapt the function so that the `~` notation can be used on such a function.
+This can be achieved using unit types, by redefining the function type to `(A, ...) -> (A, ())`.
 
 For example, consider an increment function `inc` of type `int -> int`:
 
@@ -253,13 +299,13 @@ int inc(int x) {
 To increment a variable `y` using `inc`, the function should be used as follows:
 
 ```func
-y = incr(y);
+y = inc(y);
 ```
 
 Attempting to use the `~` notation on `inc` would fail: 
 
 ```func
-y~incr();    ;; DOES NOT COMPILE
+y~inc();    ;; DOES NOT COMPILE
 ```
 because `inc` does not have a return type of the form `(int, B)`, where `B` is some type.
 
