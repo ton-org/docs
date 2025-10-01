@@ -4,7 +4,7 @@ title: "Complex and non-trivial examples"
 
 ## Unary
 
-The **unary** functional type is commonly used for dynamic sizing in structures such as [hml_short](https://github.com/ton-blockchain/ton/blob/master/crypto/block/block.tlb#L29).
+The **unary** functional type is commonly used for dynamic sizing in structures such as [hml\_short](https://github.com/ton-blockchain/ton/blob/master/crypto/block/block.tlb#L29).
 
 Unary supports two main options:
 
@@ -28,40 +28,40 @@ Once `unary_zero` is reached, the value is returned up the call stack, similar t
 
 To better visualize the result, let's trace the return path:
 
-```0 -> ~(0 + 1) -> ~(1 + 1) -> 2```
+`0 -> ~(0 + 1) -> ~(1 + 1) -> 2`
 
 This shows that the bitstring `110` corresponds to `Unary 2`.
 
 {/*## Snake
 
-The **Snake** functional type is used to store sequences of bits with a length that is not predetermined. It is often employed in transactions with long comment in them.
+  The **Snake** functional type is used to store sequences of bits with a length that is not predetermined. It is often employed in transactions with long comment in them.
 
-```tlb
-empty#_ b:bits = Snake ~0;
-cons#_ {n:#} b:bits next:^(Snake ~n) = Snake ~(n + 1);
-```
+  ```tlb
+  empty#_ b:bits = Snake ~0;
+  cons#_ {n:#} b:bits next:^(Snake ~n) = Snake ~(n + 1);
+  ```
 
-In this scenario, serialization continues until all links are assembled.
+  In this scenario, serialization continues until all links are assembled.
 
-The `empty` variation it just deserializes a string of bits and end the process if there is no any references to other cells.
+  The `empty` variation it just deserializes a string of bits and end the process if there is no any references to other cells.
 
-The `cons` variation deserializes a string of bits and then follows a reference to another cell, continuing the process until it reaches the `empty` variation. 
-The number of such recursive calls determines the final size of `n`.
+  The `cons` variation deserializes a string of bits and then follows a reference to another cell, continuing the process until it reaches the `empty` variation. 
+  The number of such recursive calls determines the final size of `n`.
 
-Consider the following tree of cells:
-```
-1[1] -> {
+  Consider the following tree of cells:
+  ```
+  1[1] -> {
   2[00] -> {
     7[1001000] -> {
       25[1010000010000001100001001]
     }
   }
-}
-```
+  }
+  ```
 
-In this example, the first cell contains a reference. So, `1` is read and then the reference is opened according to `cons` constructor.
-Next, the `00` is read and then the next reference is opened. This process continues until there are no links in the next cell. The next two bits, `00`, are part of the `b:bits` field. The remaining bits in this cell are used for the reference to the next cell.
-*/}
+  In this example, the first cell contains a reference. So, `1` is read and then the reference is opened according to `cons` constructor.
+  Next, the `00` is read and then the next reference is opened. This process continues until there are no links in the next cell. The next two bits, `00`, are part of the `b:bits` field. The remaining bits in this cell are used for the reference to the next cell.
+  */}
 
 ## Hashmap
 
@@ -129,6 +129,7 @@ Next, we can populate the structure variables with known values. The initial res
 `hme_root$1 {n:#} {X:Type} root:^(Hashmap 8 uint16) = HashmapE 8 uint16;`
 
 Here, the one-bit prefix is already read. The curly braces `{}` indicate conditions that need not be read. Specifically:
+
 - `{n:#}` indicates that `n` is any `uint32` number.
 - `{X:Type}` means that `X` can be any type.
 
@@ -157,7 +158,6 @@ As shown above, conditional variables `{l:#}` and `{m:#}` have appeared, but bot
 
 To determine the value of `l`, we need to load the `label:(HmLabel ~l uint16)` sequence. Below, we outline the 3 basic structural options for `HmLabel`:
 
-
 ```tlb
 hml_short$0 {m:#} {n:#} len:(Unary ~n) {n <= m} s:(n * Bit) = HmLabel ~n m;
 hml_long$10 {m:#} n:(#<= m) s:(n * Bit) = HmLabel ~n m;
@@ -183,6 +183,7 @@ Now, we can complete the `hml_short` structure by using the calculated `n` value
 ```tlb
 hml_short$0 {m:#} {n:#} len:0 {n <= 8} s:(0 * Bit) = HmLabel 0 8
 ```
+
 We have an empty `HmLabel`, denoted by `s = 0`, which means there is nothing to load.
 
 Next, we complete our structure by incorporating the calculated value of `l`, as follows:
@@ -240,7 +241,9 @@ Next, the `HmLabel` response is loaded using the `HmLabel` variation, as the pre
 ```tlb
 hml_long$10 {m:#} n:(#<= m) s:(n * Bit) = HmLabel ~n m;
 ```
+
 Now, let's fill in the sequence:
+
 ```tlb
 hml_long$10 {m:#} n:(#<= 7) s:(n * Bit) = HmLabel ~n 7;
 ```
@@ -251,6 +254,7 @@ In binary, the number 7 is written as `111`, which means 3 bits are needed. Ther
 ```tlb
 hml_long$10 {m:#} n:(## 3) s:(n * Bit) = HmLabel ~n 7;
 ```
+
 Next, we load `n` into the sequence, which results in `111`. As noted earlier, this coincidentally equals 7. Then, we load `s` into the sequence, which consists of 7 bits: `0000000`. Remember, `s` is part of the key.
 
 Afterwards, we return to the top of the sequence and fill in the resulting `l`:
@@ -263,7 +267,6 @@ hm_edge#_ {n:#} {X:Type} {l:#} {m:#} label:(HmLabel 7 7)
 Then we calculate the value of `m`: `m = 7 - 7`, which gives us `m = 0`.
 Since `m = 0`, the structure is ideally suited for use with a `HashmapNode`:
 
-
 ```tlb
 hmn_leaf#_ {X:Type} value:X = HashmapNode 0 X;
 ```
@@ -274,11 +277,9 @@ Now, let's restore the key. We need to combine all the parts of the key that wer
 
 In this specific case, 7 bits are taken from the `HmLabel 0000000`, and a `1` bit is added before the sequence of zeros because the value was obtained from the right branch. The final result is 8 bits, or `10000000`, which means the key value equals `128`.
 
-
 ## Other hashmap types
 
 Now that we have discussed Hashmaps and how to load the standardized Hashmap type, let's explain how the additional Hashmap types function.
-
 
 ### HashmapAugE
 
@@ -316,6 +317,7 @@ phme_empty$0 {n:#} {X:Type} = PfxHashmapE n X;
 phme_root$1 {n:#} {X:Type} root:^(PfxHashmap n X)
             = PfxHashmapE n X;
 ```
+
 The key difference between the `PfxHashmap` and the regular `Hashmap` lies in its ability to store keys of varying lengths due to the inclusion of the `phmn_leaf$0` and `phmn_fork$1` nodes.
 
 ### VarHashmap
@@ -362,11 +364,12 @@ vm_tuple_tcons$_ {n:#} head:(VmTupleRef n) tail:^VmStackValue = VmTuple (n + 1);
 vm_stk_tuple#07 len:(## 16) data:(VmTuple len) = VmStackValue;
 ```
 
-Tuple is an _actual_ tuple of elements that is written in FunC as `[a, b, c]`. VmTuple is used internally in [VmStack](https://github.com/ton-blockchain/ton/blob/05bea13375448a401d8e07c6132b7f709f5e3a32/crypto/block/block.tlb#L862) 
+Tuple is an _actual_ tuple of elements that is written in FunC as `[a, b, c]`. VmTuple is used internally in [VmStack](https://github.com/ton-blockchain/ton/blob/05bea13375448a401d8e07c6132b7f709f5e3a32/crypto/block/block.tlb#L862)
 for tuple serialization, which is outputted from a contract's methods.
 
-Let's us consider a serialization of the following tuple: [44, `Cell{00B5BD3EB0}`, -1]. 
+Let's us consider a serialization of the following tuple: \[44, `Cell{00B5BD3EB0}`, -1].
 When disassembled, it looks as follows:
+
 ```
 [070003] -> {
    [] -> {
@@ -381,7 +384,7 @@ When disassembled, it looks as follows:
 
 The root cell will be parsed using the constructor `vm_stk_tuple`, since its prefix is `0x07`. The next 2 bytes are `len:(## 16)` that equals `0003 == 3`.
 
-Next comes `data:(VmTuple 3)`. There are two variants of parsing of `VmTuple`: `VmTuple (n + 1)` and  `VmTuple 0`. Since `n > 0`, `VmTuple (n + 1)` is used. 
+Next comes `data:(VmTuple 3)`. There are two variants of parsing of `VmTuple`: `VmTuple (n + 1)` and  `VmTuple 0`. Since `n > 0`, `VmTuple (n + 1)` is used.
 
 The first field is `head:(VmTupleRef 2=(3-1))`. There are three variant of parsing: `0`, `1`, and `n+2`. Our `n` equals `2`, so the third variant is used.
 
@@ -390,7 +393,7 @@ The only field is `ref:^(VmTuple (n + 2))`, i.e. `ref:^(VmTuple 2)`.
 Our `n` equals `2`, so the variant `(n + 1)` is chosen. Next read `head:(VmTupleRef n)` -> `head:(VmTupleRef 1=(2-1))`. In `VmTupleRef 1` there is only one field: `entry:^VmStackValue`.
 Essentially, this field is the value,`01 000000000000002C`.
 
-We read the `head` and reached the end, now we go in the opposite direction and read the `tail:^VmStackValue`. Going up, the first tail is `03` with a link to the cell. 
+We read the `head` and reached the end, now we go in the opposite direction and read the `tail:^VmStackValue`. Going up, the first tail is `03` with a link to the cell.
 `0x03` on the stack means a cell, we just read this link and save it as the value,`00B5BD3EB0`. Then go up a level and read another `tail`, this is `01 FFFFFFFFFFFFFFFF`, i.e. int equal to `-1`.
 
 After we have reached the end, the parsing is completed, we add all the received elements into the array in the order in which we received them.
