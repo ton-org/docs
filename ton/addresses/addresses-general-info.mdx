@@ -1,0 +1,89 @@
+---
+title: "General information"
+---
+
+TON implements **Actor model**, where all entities, including wallets, are smart contracts. Each actor:
+
+- processes incoming messages;
+- updates its internal state;
+- generates outgoing messages.
+
+As a result, every actor must have a unique address to ensure the correct message routing. This section explains how these addresses are structured and why they are fundamental to the TON architecture.
+
+There are several types of addresses used in the TON blockchain. Here, we will focus on the two most important ones for developers: **internal** and **external**.
+Every account in the TON blockchain has an internal address. External addresses are intended to be used by off-chain software.
+
+For the so called **Intermediate** and **DNS** addresses see the [Hypercube Routing](/ton/hypercube-routing) and [DNS: .ton domains](/services/dns) pages respectively. 
+
+## Internal addresses
+
+Each smart contract deployed on TON blockchain has this type of the address. Let's look at the corresponding TL-B schemes:
+```
+addr_std$10 anycast:(Maybe Anycast) 
+   workchain_id:int8 address:bits256 = MsgAddressInt;
+addr_var$11 anycast:(Maybe Anycast) addr_len:(## 9) 
+   workchain_id:int32 address:(bits addr_len) = MsgAddressInt.
+```
+As we can see, there are two constructors:
+- `addr_std`: standardized addresses with a fixed length that are suitable for [SHA256 encryption](https://en.wikipedia.org/wiki/SHA-2). Must be used whenever possible.
+- `addr_var`: represents addresses in workchains with a _large_ `workchain_id`, or addresses with a length not equal to 256. Currently is not used and intended for future extensions. 
+
+And four components:
+
+- `workchain_id`: the WorkChain id (signed 8- or 32-bit integer). 
+- `address`: an address of the account (64-512 bits, depending on the WorkChain). In order not to confuse this field with a whole address, it is usually called `account_id`.
+- `addr_len`: a length of the non-standardized address.
+- `anycast`: not currently used in the blockchain and is always replaced with a zero bit. It was designed to implement [Shard splitting](https://docs.ton.org/v3/documentation/smart-contracts/shards/shards-intro/) of _global_ (or _large_) accounts, but then was deprecated since [TVM 10](https://github.com/ton-blockchain/ton/blob/master/doc/GlobalVersions.md#anycast-addresses-and-address-rewrite).
+
+### WorkChain id
+
+TON Blockchain is actually a collection of blockchains, with WorkChain being one of them. TON supports up to `2^32` unique WorkChains, each with its own rules and even virtual machines. The 32-bit `workchain_id` prefix in smart contract addresses ensures interoperability, allowing contracts to send and receive messages across different WorkChains.
+
+Currently, two WorkChains are active:
+- **MasterChain** (`workchain_id = -1`): contains general information about the TON blockchain protocol and the current values of its parameters, the set of validators and their stakes, the set of currently active workchains and their shards, and, most importantly, the set of hashes of the most recent blocks of all workchains and shard chains.
+- **BaseChain** (`workchain_id = 0`): the default WorkChain for most operations.
+
+Both use **256-bit addresses** for accounts.
+
+### Account id
+
+In currently used WorkChains an account id is defined as the result of applying a hash function to a `state_init` structure that stores initial code and data of a smart contract.
+```
+account_id = hash(initial_code, initial_data)
+```
+So, for each pair (`initial_code`, `initial_data`), there exists a unique account id to which a smart contract with such code and data can be deployed (this logic may become more complex when [TVM 11](https://github.com/ton-blockchain/ton/blob/master/doc/GlobalVersions.md#version-11) is deployed on the main network.).
+
+**Nota bene: although the deployed smart contract code and data may change during its lifetime, the address where it's deployed does not change.** 
+
+Additionally, a 64-bit prefix of an account id is crucial for sharding process and delivering messages from one shard to another during [Hypercube Routing](/ton/hypercube-routing).
+
+## External addresses
+
+External addresses are closely related to [External messages](http://localhost:3000/ton/transaction): ones that originates outside the blockchain or is intended for actors outside it. These messages enable interaction between smart contracts and the external world.
+
+Actually, external addresses are ignored by the TON Blockchain software altogether, but may be used by external software for its own purposes. 
+
+The corresponding Tl-B schemes are as follows:
+```tlb
+addr_none$00 = MsgAddressExt;
+addr_extern$01 len:(## 9) external_address:(bits len) 
+             = MsgAddressExt.
+```
+- `addr_none`: it is used as a stub for the source or destination field in incoming and outgoing external messages when there is no need to put any explanatory information for off-chain actors. It is also used as a stub for the source address of internal messages, since this field is always overwritten to the correct one by the validators.
+- `addr_extern`: contains up to nine bits of additional information. For example, a special external service may inspect the destination address of all outbound external messages found in all blocks of the blockchain, and, if a special magic number is present in the `external_address` field, parse the remainder as an IP address and UDP port or a (TON Network) ADNL address, and send a datagram with a copy of the message to the network address thus obtained.
+
+
+## Summary
+
+- **Every actor is a smart contract**, each with a unique address for message routing.
+- **Main internal address fields**:  
+  - `workchain_id` (32-bit): identifies the WorkChain.
+  - `account_id` (256-bit): a hash of the contract’s initial code and data.
+- **Active WorkChains**: MasterChain and BaseChain, both using 256-bit ids.
+- **Flexibility**: TON supports up to `2^32` WorkChains, allowing future chains to customize address lengths (64–512 bits).
+- **External addresses**: may be used by external software for its own purposes but are ignored by the TON Blockchain software. 
+
+## Next steps
+For more technical details, refer to:
+- [Internal address formats](/ton/addresses/address-formats): encoding rules and practical examples.
+- [Account statuses](/ton/statuses): how addresses evolve (active, frozen, etc.).
