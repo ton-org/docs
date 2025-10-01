@@ -4,407 +4,269 @@ sidebarTitle: "Statements"
 noindex: "true"
 ---
 
+import { Aside } from '/snippets/aside.jsx';
+
 This section describes FunC statements, which can occur anywhere inside function bodies.
 
 ## Expression statements
-The most common type of statement is the expression statement—an expression followed by `;`. As a rule, all sub-expressions are evaluated from left to right,
-except in cases where [asm stack rearrangement](/language/func/functions#rearranging-stack-entries) explicitly defines the order.
+The most common type of statement is the expression statement—an expression followed by `;`.
+See the [FunC expressions]() article for details on the allowed expressions.
 
-### Variable declaration
-Local variables must be initialized at the time of declaration. Here are some examples (each line is independent from the other ones):
+## Block statement
 
+Block statements are supported as well, creating a new nested scope:
 ```func
-int x = 2;
-var x = 2;               ;; Equivalent to previous, but with type inference
-(int, int) p = (1, 2);
-(int, var) p = (1, 2);   ;; Equivalent to previous, but with type inference
-[int, var, int] t = [1, 2, 3];
-```
-
-In the previous examples, `p` and `t` store the entire tensor and tuple, respectively. 
-But it is possible to deconstruct tensors and tuples and assign each component to different variables. 
-Here are some examples that showcase different ways of deconstructing tensors and tuples: 
-```
-(int x, int y, int z) = (1, 2, 3);       ;; Assign each tensor component to x, y, and z.
-(int, int, int) (x, y, z) = (1, 2, 3);   ;; Equivalent to previous
-var (x, y, z) = (1, 2, 3);               ;; Equivalent to previous, but with type inference 
-(int x = 1, int y = 2, int z = 3);       ;; Assigning each component directly
-[int x, int y, int z] = [1, 2, 3];       ;; Assign each tuple component to x, y, and z
-[int, int, int] [x, y, z] = [1, 2, 3];   ;; Equivalent to previous
-var [x, y, z] = [1, 2, 3];               ;; Equivalent to previous, but with type inference 
-```
-
-A variable can be redeclared in the same scope. For example, the following code is valid:
-
-```func
-int x = 2;
-int y = x + 1;
-int x = 3;
-```
-
-In this example,
-the second occurrence of `int x` is not a new declaration but a compile-time check ensuring that `x` has type `int`. The third line is equivalent to `x = 3;`.
-
-The following example, which redeclares `x` with type `(int, int)` at the third line, is also valid:
-
-```func
-int x = 2;
-int y = x + 1;
-(int, int) x = (y, y + 1);
-```
-After the third line, variable `x` has type `(int, int)`.
-
-**Variable redeclaration in nested scopes**
-
-In nested scopes, a new variable with the same name can be declared, just like in C:
-
-```func
-int x = 0;
-int i = 0;
-while (i < 10) {
-  (int, int) x = (i, i + 1);
-  ;; Here x is a variable of type (int, int)
-  i += 1;
-}
-;; Here, x refers to the original variable of type int declared above
-```
-
-However, as mentioned in the [Global variables](/language/func/global-variables/) section,
-global variables **cannot** be redeclared.
-
-
-Since variable declarations are **expression statements**, constructs like `int x = 2;` are valid expressions.
-When used as an expression, the result of evaluating a declaration like:
-```
-type identifier = expression
-```
-is the same as evaluating `expression`.
-
-For instance:
-`int y = (int x = 3) + 1;`
-declares `x` and assigns to it the value `3`. The result of the expression `(int x = 3)` is therefore `3`, which means that 
-`(int x = 3) + 1` evaluates to `4`.
-
-
-#### Underscore
-
-The underscore `_` is used when a value is not needed.
-For example, if `foo` is a function of type `int -> (int, int, int)`,
-you can retrieve only the first return value while ignoring the rest:
-```func
-(int fst, _, _) = foo(42);
-```
-
-
-
-### Function application
-
-A function call in FunC follows a conventional syntax:
-the function name is followed by its arguments, separated by commas.
-However, unlike many conventional languages, FunC also treats functions as taking a single tensor argument.
-
-For example, suppose `foo` is a function of type `(int, int, int) -> int`. The following two lines are equivalent ways of calling `foo`:
-```func
-int x = foo(1, 2, 3);    ;; Three arguments separated by ,
-int x = foo((1, 2, 3));  ;; The tensor (1, 2, 3) passed as a single argument
-```
-
-Equivalently, we could also assign tensor `(1, 2, 3)` to a variable, and then call `foo`:
-```func
-(int, int, int) t = (1, 2, 3);
-int x = foo(t);    ;; Pass the tensor as a single argument
-```
-
-**Function composition**
-
-To illustrate how function composition works in FunC, suppose that together with the previous `foo` function, there is also a `bar` function of type `int -> (int, int, int)`. 
-Since `foo` expects a single tensor argument, you can pass the entire result of `bar(42)` directly into `foo`:
-
-```func
-int x = foo(bar(42));
-```
-
-This is equivalent to the longer form, which decomposes the result tensor of `bar(42)` and then calls `foo` by passing all arguments separated by commas:
-
-```func
-(int a, int b, int c) = bar(42);
-int x = foo(a, b, c);
-```
-
-### Lambda expressions
-Lambda expressions are not yet supported in FunC.
-
-### Methods calls
-
-#### Non-modifying notation
-
-In FunC, a function with at least one argument can be called using the dot `.` notation, also called *non-modifying notation*.
-
-For example, the function `store_uint`, which stores an unsigned integer into a cell builder and returns the modified builder, 
-has type `(builder, int, int) -> builder`, where:
-- The first argument is the builder object.
-- The second argument is the value to store.
-- The third argument is the unsigned integer bit length.
-
-The following two ways of calling `store_uint` are equivalent (here, `begin_cell` creates a new builder and has type `() -> builder`):
-
-```func
+int x = 1;
 builder b = begin_cell();
-b = store_uint(b, 239, 8);
-```
-```func
-builder b = begin_cell();
-b = b.store_uint(239, 8);   ;; Equivalent to previous one, but using non-modifying notation
-```
-
-The dot `.` notation allows the first argument of a function to be placed before the function name,
-simplifying the code further:
-
-```func
-builder b = begin_cell().store_uint(239, 8);
-```
-which is equivalent to the standard syntax for calling a function:
-```func
-builder b = store_uint(begin_cell(), 239, 8);
+{
+  builder x = begin_cell().store_uint(0, 8);
+  b = x;
+}
+x += 1;
 ```
 
-Using the `.` notation it is possible to chain many function calls together:
+In this example, the inner block introduces a new `builder` variable named `x`, which exists only within that scope.
+The outer `x` remains unchanged and can be used after the block ends.
+
+## Conditional statements
+
+These statements control the flow of the code based on a condition.
+
+### `if...else` statement
+
+When executing an `if...else statement`, first, the specified condition is evaluated. 
+If the condition evaluates to an integer different from `0` (see [absence of boolean type](types#no-boolean-type)), the block after the condition is executed. 
+Otherwise, if the condition evaluates to `0`, the optional `else` block is executed. If the `else` block is missing, nothing happens, and execution continues further.
+
+Examples:
 
 ```func
-builder b = begin_cell().store_uint(239, 8)
-                        .store_int(-1, 16)
-                        .store_uint(0xff, 10);
-```
-
-which is equivalent to the longer form:
-
-```func
-builder b = begin_cell();
-b = b.store_uint(239, 8);
-b = b.store_int(-1, 16);
-b = b.store_uint(0xff, 10);
-```
-
-or to the more difficult to read form, which nests all the calls:
-
-```func
-builder b = store_uint(
-                store_int(
-                    store_uint(begin_cell(), 239, 8), 
-                    -1, 
-                    16), 
-                0xff, 
-                10
-            );
-```
-
-#### Modifying notation
-
-If a function's first argument is of type `A` and its return type follows the structure `(A, B)`,
-where `B` is an arbitrary type, the function can be called using the `~` notation, also called *modifying notation*.
-
-The primary purpose of the `~` notation is to automatically update the first argument in a function call.
-More concretely, suppose `foo` is a function of type `(builder, int, int) -> (builder, int)`, then 
-the call `v = b~foo(2, 3)`, which uses the `~` notation, is equivalent to the standard call `(b, v) = foo(b, 2, 3)`. 
-The statement `(b, v) = foo(b, 2, 3)` reassigns (or updates) the first argument `b` after the call to `foo` finishes. 
-The `~` notation serves as a shortcut to express this reassignment of the first argument.
-
-One possible application of the `~` notation is for working with cell slices. 
-For example, consider a cell slice `cs` and the function `load_uint`, which has type: `(slice, int) -> (slice, int)`. 
-The function `load_uint` takes a cell slice and a number of bits to load, returning the remaining slice and the loaded unsigned integer value. 
-The following three calls are equivalent:
-
-```func
-(cs, int x) = load_uint(cs, 8);     ;; Standard function call
-(cs, int x) = cs.load_uint(8);      ;; Call using non-modifying notation (i.e., `.`)
-int x = cs~load_uint(8);            ;; Call using modifying notation (i.e., `~`)
-```
-
-#### Adapting functions to use `~`
-
-When a function type is of the form `(A, ....) -> A`, it is possible to adapt the function so that the `~` notation can be used on such function.
-This can be achieved using unit types, by redefining the function type to `(A, ....) -> (A, ())`.
-
-For example, consider an increment function `inc` of type `int -> int`:
-
-```func
-int inc(int x) {
-  return x + 1;
+if (1 < 10) {   ;; The condition evaluates to -1, so the block executes
+  do_something();
 }
 ```
 
-To increment a variable `y` using `inc`, the function should be used as follows:
-
 ```func
-y = incr(y);
+if (11 < 10) {   ;; The condition evaluates to 0, so the block does not execute
+  do_something();
+} 
+;; No else is provided. So, execution continues here, after the block.
 ```
 
-Attempting to use the `~` notation on `inc` would fail: 
-
 ```func
-y~incr();    ;; DOES NOT COMPILE
+if (11 < 10) {   ;; The condition evaluates to 0, so the block does not execute
+  do_something();
+} else {         ;; else is provided. So, the else block executes.
+  handle_else();
+} 
 ```
-because `inc` does not have a return type of the form `(int, B)`, where `B` is some type.
 
-To use the `~` notation on `inc`, first redefine the function so that it now has type `int -> (int, ())` as follows:
+Curly brackets `{}` are required in each block of a `if...else` statement.
+For example, the following code will not compile:
 
 ```func
-(int, ()) inc(int x) {
-  return (x + 1, ());
+if (1 < 10) {
+  do_something();
+} else if (2 > 1) {   ;; else block must have curly brackets
+  do_something2();
+}
+```
+because the `else` block must have curly brackets:
+```func
+if (1 < 10) {
+  do_something();
+} else {    ;; else block now has curly brackets
+  if (2 > 1) { 
+    do_something2();
+  }
 }
 ```
 
-Now, the following code increments `y`:
-
+The above example can be written in a simpler form by using the `elseif` keyword, to avoid the need to write 
+several nested curly brackets in the `else` case:
 ```func
-y~inc();
-```
-
-#### `.` and `~` in function names
-
-Previously, we redefined `inc` to have type `int -> (int, ())` so that it was possible to use the `~` notation on it. 
-However, it would be bothersome to use `inc` in cases where we do not want to increment a variable, but we just want to store the increment in a different variable:
-
-```func
-(int y, _) = inc(x);
-```
-
-In other words, we would *also* like to use `inc` as if it was the original function with type `int -> int`:
-```func
-int y = inc(x);
-```
-
-In FunC, it is possible to *also* keep the original `inc` of type `int -> int` so that we can use `inc` in different ways, like:
-
-```func
-x~inc(); ;; Increments x, using modifying notation
-int y = inc(x); ;; Doesn't modify x, but stores the increment in y
-int z = x.inc(); ;; Equivalent to previous, but using non-modifying notation
-```
-
-This is achieved by declaring a function `~inc` alongside the original `inc`:
-
-```func
-int inc(int x) {    ;; Original inc function
-  return x + 1;
-}
-(int, ()) ~inc(int x) {  ;; inc version to be able to use ~ notation
-  return (x + 1, ());
+if (1 < 10) {
+  do_something();
+} elseif (2 > 1) { 
+  do_something2();
 }
 ```
 
-This is possible because of the way FunC resolves function calls:
+In general, the `elseif` keyword is useful for stating several alternative cases:
+```func 
+if (cond) {
+  do_1();
+} elseif (cond2) {
+  do_2();
+} elseif (cond23) {
+  do_3();
+} else {
+  do_4();
+}
+```
 
-- If a function is called with `.` (e.g., `x.foo()`), the compiler looks for a `.foo` definition.
-- If a function is called with `~` (e.g., `x~foo()`), the compiler looks for a `~foo` definition.
-- If neither `.foo` nor `~foo` is defined, the compiler falls back to the regular `foo` definition.
+The alternative cases can also include the `elseifnot` keyword, which allows the inclusion of [`ifnot` statements](#ifnot-else-statement) in the alternatives:
+
+```func 
+if (cond) {
+  do_1();
+} elseif (cond2) {  ;; if in else case
+  do_2();
+} elseifnot (cond23) {  ;; ifnot in else case
+  do_3();
+} else {
+  do_4();
+}
+```
+
+
+### `ifnot...else` statement
+
+The `ifnot...else` statement is equivalent to the [`if..else` statement](#if-else-statement) but with the condition negated using the [bitwise `~` operator]().
+
+<Aside type="danger">
+   Missing link to bitwise not operator
+</Aside>
+
+More specifically:
+```func 
+ifnot (cond) {
+  do_something();
+} else {
+  handle_else();
+}
+```
+is equivalent to:
+```func 
+if (~ cond) {  ;; Standard if..else, with condition negated using ~
+  do_something();
+} else {
+  handle_else();
+}
+```
+
+In other words, if the condition in the `ifnot` evaluates to `0` (see [absence of boolean type](types#no-boolean-type)), the block after the condition is executed. 
+Otherwise, if the condition evaluates to an integer different from `0`, the optional `else` block is executed. 
+If the `else` block is missing, nothing happens, and execution continues further.
+
+Examples:
+
+```func
+ifnot (1 > 10) {   ;; The condition evaluates to 0, the block executes
+  do_something();
+}
+```
+
+```func
+ifnot (11 > 10) {   ;; The condition evaluates to -1, the block does not execute
+  do_something();
+} 
+;; No else is provided. Execution continues here, after the block.
+```
+
+```func
+ifnot (11 > 10) {   ;; The condition evaluates to -1, the block does not execute
+  do_something();
+} else {         ;; else is provided. The else block executes.
+  handle_else();
+} 
+```
+
+Similarly to the `if...else`, it is possible to use the keyword `elseifnot` to add several alternative cases:
+```func 
+ifnot (cond) {
+  do_1();
+} elseifnot (cond2) {
+  do_2();
+} elseifnot (cond23) {
+  do_3();
+} else {
+  do_4();
+}
+```
+
+The alternative cases can also include the `elseif` keyword, which allows the inclusion of standard [`if` statements](#if-else-statement) in the alternatives:
+
+```func 
+ifnot (cond) {      ;; ifnot
+  do_1();
+} elseif (cond2) {  ;; if in else case
+  do_2();
+} elseifnot (cond23) {  ;; ifnot in else case
+  do_3();
+} else {
+  do_4();
+}
+```
 
 ## Loops
 FunC supports `repeat`, `while`, and `do { ... } until` loops. The `for` loop is not supported.
 
-### Repeat loop
-The `repeat` loop uses the `repeat` keyword followed by an `int`  expression. It executes the code a specified number of times.
+### `repeat` loop
 
-**Examples:**
+The `repeat` loop executes a block of code a specified number of times. 
+The number of repetitions should be given as a positive 32-bit integer in the inclusive range from 
+`1` to `2^31 - 1` (i.e., `2147483647`). If the value is greater, an error with [exit code 5](), `Integer out of expected range`, will be thrown.
+
 ```func
 int x = 1;
-repeat(10) { ;;Repeats the block 10 times
-  x *= 2;
+repeat(10) { ;; Repeats the block 10 times.
+  x *= 2;    ;; Each iteration multiplies x by 2.
 }
-;; x = 1024
-```
-```func
-int x = 1, y = 10;
-repeat(y + 6) { ;;Repeats the block 16 times
-  x *= 2;
-}
-;; x = 65536
+;; x has value 1024
 ```
 
-If the repetition count is negative, the loop does not execute:
 ```func
 int x = 1;
-repeat(-1) {
-  x *= 2;
+int y = 10;
+repeat(y + 6) {  ;; Repeats the block 16 times.
+  x *= 2;        ;; Each iteration multiplies x by 2.
 }
-;; x = 1
+;; x has value 65536
 ```
 
-A range check exception is thrown if the repetition count is less than `-2³¹` or greater than `2³¹ - 1`.
-
-### While loop
-
-The `while` loop follows standard syntax:
+If the specified number of repetitions is equal to `0` or any negative number in the inclusive range from `-2^256` to `-1`, it is ignored, 
+and the code block is not executed at all.
 
 ```func
-int x = 2;
-while (x < 100) {
-  x = x * x;
+int x = 1;
+repeat(-1) {  ;; Block does not execute.
+  x *= 2;
 }
-;; x = 256
+;; x has value 1
 ```
-Note that the truth value of condition `x < 100` is of type `int` (cf. [absence of boolean type](/language/func/types#no-boolean-type)).
 
+### `while` loop
 
-### Until loop
+The `while` loop continues executing the block of code as long as the given condition evaluates to an integer different from `0`. 
+See [absence of boolean type](types#no-boolean-type).
 
-The `do { ... } until` loop has the following syntax:
+```func
+int x = 5; 
+while (x < 10) {  ;; Executes the block 5 times.
+                  ;; Each iteration increases x by 1.
+                  ;; The loop stops when x becomes 10.
+  x += 1;
+}
+;; x has value 10
+```
+
+### `until` loop
+
+The `do...until` loop is a post-test loop that executes the block of code at least once and then continues to execute it until the 
+given condition evaluates to an integer different from `0`. See [absence of boolean type](types#no-boolean-type).
 
 ```func
 int x = 0;
-do {
+do {      ;; The block always executes at least once
   x += 3;
-} until (x % 17 == 0);
-;; x = 51
+} until (x % 9 == 0);  ;; Executes the block 3 times.
+                       ;; Each iteration increases x by 3.
+                       ;; The loop stops when x becomes divisible by 9.
+;; x has value 9
 ```
 
-
-
-
-## If statements
-
-**Examples**
-
-Standard `if` statement:
-```func
-if (flag) {
-  do_something();
-}
-```
-
-Negated condition, which is equivalent to `if` (`~flag`):
-```func
-
-ifnot (flag) {
-  do_something();
-}
-```
-
-`If-else` statement:
-```func
-if (flag) {
-  do_something();
-} else {
-  do_alternative();
-}
-```
-
-```func
-;; Some specific features
-if (flag1) {
-  do_something1();
-} else {
-  do_alternative4();
-}
-```
-
-Curly brackets `{}` are required for `if` statements. The following code will not compile:
-```func
-if (flag1)
-  do_something();
-```
-
-## Try-catch statements
+## `try-catch` statement
 *Available in FunC since v0.4.0*
 
 The `try` block executes a section of code.
@@ -461,19 +323,3 @@ try {
 ```
 
 In this last example, although `x` is incremented inside the `try` block, the modification is **rolled back** due to the exception, so `x` remains `0`.
-
-## Block statements
-
-Block statements are supported as well, creating a new nested scope:
-```func
-int x = 1;
-builder b = begin_cell();
-{
-  builder x = begin_cell().store_uint(0, 8);
-  b = x;
-}
-x += 1;
-```
-
-In this example, the inner block introduces a new `builder` variable named `x`, which exists only within that scope.
-The outer `x` remains unchanged and can be used after the block ends.
