@@ -13,7 +13,7 @@ However, this BoC needs to be serialized into a file, suitable for disk storage 
 
 There may be many different ways to serialize such a data structure, each of which has its own goals and is convenient for specific cases.
 This page provides a general serialization algorithm and specification of corresponding TL-B schemes, 
-followed by the specific implementation used in the TON Blockchain.
+followed by the example and specific implementation used in the TON Blockchain.
 
 ## General scheme
 
@@ -29,7 +29,7 @@ differs from the serialization of included cells. Therefore, it is very importan
 ### Assigning indices to the cells from a bag of cells
 
 In the process of BoC serialization, the assignment of indices of its cells plays an important role.
-Let `c1, ..., cn` be the `n` distinct cells belonging to a bag of cells B.
+Let `c1, ..., cn` be the `n` distinct cells belonging to a bag of cells `B`.
 The most used options are:
 - Order cells by their representation hash. Thus `Hash(ci) < Hash(cj)` whenever `i < j`.
 - [Topological order](https://en.wikipedia.org/wiki/Topological_sorting).
@@ -37,27 +37,10 @@ The most used options are:
 ### Outline of serialization process
 
 The serialization process of a BoC `B` consisting of `n` cells can be outlined as follows.
--  List the cells from B in a chosen order: `c1, ..., cn`(with `c1, ..., c_k` as root cells).
+-  List the cells from B in a chosen order: `c1, ..., cn`(with `c1, ..., c_k` as root cells, if `B` is a forest).
 -  Choose an integer number `s`, such that `n ≤ 2^s`. Represent each cell `ci` by an integral number of bytes
 as in standard representation cell algorithm, but using unsigned big-endian 
-s-bit integer `j` instead of hash `Hash(cj)` to represent internal references to cell `cj`. More precisely, each
-individual cell `c` is serialized as follows, provided `s` is a multiple of eight.
-    - Two descriptor bytes `d1` and `d2` are computed by
-      setting `d1 = r + 8x + 16h + 32l` and $d2 = \lfloor \frac{b}{8} \rfloor + \lceil \frac{b}{8}\rceil$ (for absent cells, 
-      only `d1` is present, always equals to `7 + 16 + 32l`), where:
-      - `0 ≤ r ≤ 4` is the number of cell references present in cell `c`, if `c` is
-        absent from the bag of cells being serialized and is represented by
-        its hashes only, then `r` is set to `7`;
-      - `0 ≤ b ≤ 1023` is the number of data bits in cell `c`;
-      - `0 ≤ l ≤ 3` is the level of cell `c`;
-      - `x = 1` for exotic cells and `x = 0` for ordinary cells;
-      - `h = 1` if the cell’s hashes are explicitly included into the serialization; otherwise, `h = 0` (when `r = 7`, `h` must be `1`).
-    - Two bytes `d1` and `d2` (if `r < 7`) or one byte `d1` (if `r = 7`) begin the serialization of `c`.
-    - If `h = 1`, the serialization is continued by `l + 1` 32-byte higher hashes of `c`: $Hash_{1}(c), \ldots, Hash_{l+1}(c) = RepHash(c)$.
-    - After that, $\lceil\frac{b}{8}\rceil$ data bytes are serialized, by splitting `b` data bits into 8-bit groups and interpreting each group 
-      as a big-endian integer in the range `0 ... 255`. If `b` is not divisible by `8`, then the data bits are first
-      augmented by one binary `1` and up to six binary `0`, so as to make the number of data bits divisible by eight.
-    - Finally, `r` cell references to cells $c_{j_1}, \ldots, c_{j_r}$ are encoded by means of `r` s-bit big-endian integers $j_1, \ldots, j_r$.
+s-bit integer `j` instead of hash `Hash(cj)` to represent internal references to cell `cj`. This algorithm is listed in [cells serialization page](/tvm/serialization/cells#standard-cell-representation-and-its-hash).
 - Concatenate the representations of cells `ci` thus obtained in the increasing order of `i`.
 - Optionally, an index can be constructed that consists of `n + 1` t-bit integer entries `L1, ..., Ln`, where `Li`
 is the total length (in bytes) of the representations of cells `cj` with `j ≤ i`, and integer `t ≥ 0` is chosen so
@@ -120,6 +103,105 @@ only if `has_idx` is set. The field `root_list` contains the (zero-based) indice
 of the root nodes of the bag of cells.
 
 There are also two outdated BoC serialization schemes in the same file.
+
+## An example of manual serialization
+
+Let's consider the following example of a tree of cells:
+
+```json
+01
+  0AAAAA
+  FE
+    0AAAAA
+```
+
+So, there is a 2-bit root cell that references two other cells:
+
+- The first is a 24-bit cell.
+- The second is a 8-bit cell that itself references a 24-bit cell.
+
+After identifying of unique cells, we have the following:
+
+```json
+01
+0AAAAA
+FE
+```
+
+Next, the unique cells are arranged in a topological order:
+
+```json
+01     -> index 0 (root cell)
+FE     -> index 1
+0AAAAA -> index 2
+```
+
+Now, let’s calculate the descriptor bytes `b1` and `b2` for each of the three unique cells according to the [cells serialization page](/tvm/serialization/cells#standard-cell-representation-and-its-hash). 
+
+So, we obtain:
+
+```json
+01     -> 0201
+FE     -> 0102
+0AAAAA -> 0006
+```
+
+Then the data bits are serialized as $\lceil\frac{b}{8}\rceil$ bytes. Remember, if `b` is not a multiple of eight, a binary `1` 
+and up to six binary `0s` are appended to the data bits. After that, the data is split into $\lceil\frac{b}{8}\rceil$ 8-bit groups.
+```json
+01     -> 01100000 = 0x60
+FE     -> do not change (full groups)
+0AAAAA -> do not change (full groups)
+```
+
+Next come the depths for the refs in two bytes:
+```json
+01     -> 0002
+FE     -> 0001
+0AAAAA -> 0000
+```
+
+Now specify which cells each one references:
+```json
+0: 01     -> 0201: refers to 2 cells with such indexes
+1: FE     -> 02: refers to cells with index 2
+2: 0AAAAA -> no refs
+```
+0201600002
+
+For each cell we have its hexadecimal representation:
+```json
+01     -> 02016000020201
+FE     -> 0102FE000102
+0AAAAA -> 00060AAAAA0000
+```
+
+Finally, we concatenate all parts into a single-byte array:
+`020160000202010102FE00010200060AAAAA0000`.
+
+Now that we've serialized our cells into a flat 20-byte array, it's time to pack them into a complete BoC format.
+
+```
+0xb5ee9c72                   -> id tl-b of the BoC structure
+0b0                          -> does not have indexes
+0b0                          -> does not have CRC32C
+0b0                          -> does not cache bits
+0b00                         -> flags are 0
+0b001                        -> the number of bytes needed to store the number of cells is 1
+0b00000000                   -> we does not inclide indexes, so the off_set is 0
+0b00000011                   -> the number of cells is 3
+0b00000001                   -> the number of roots is 1
+0b00000000                   -> the number of absent cells is 0
+_                            -> tot_cells_size is not serialized since off_set is 0  
+0b00000000                   -> the root list; we have one root with number 0 after the topological sort
+0e                           -> size of serialized cells, 1 byte (size defined above), equal to 14
+00                           -> root cell index, size 1 (determined by 3 size:(## 3) bits from header),
+                                 always 0
+0201c002010101ff0200060aaaaa -> serialized cells
+```
+
+We now concatenate the header and the serialized cell content:
+`b5ee9c7201010301000e000201c002010101ff0200060aaaaa`
 
 ## SDK from @ton/core
 
