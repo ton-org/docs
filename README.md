@@ -47,7 +47,7 @@ npm run fmt
 To check and fix formatting of some **selected** files, run:
 
 ```shell
-npm run fmt:some <FILE_1> <FILE_2>
+npm run fmt:some <FILES...>
 ```
 
 ## Publishing changes
