@@ -1,0 +1,53 @@
+name: Linter checks
+
+env:
+  HUSKY: 0
+
+on:
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  linter:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          corepack enable
+          npm ci
+
+      - name: Get changed files since last remote commit
+        id: changed-files
+        uses: tj-actions/changed-files@24d32ffd492484c1d75e0c0b894501ddb9d30d62 # v47
+        with:
+          since_last_remote_commit: true
+
+      - name: Check formatting of MDX and Markdown files
+        env:
+          ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
+        run: |
+          echo -e 'Checking formatting on the following files affected by this PR:\n'
+          for file in ${ALL_CHANGED_FILES}; do
+            echo "- $file"
+          done
+          npx remark --no-stdout --quiet --frail $(echo -e "${ALL_CHANGED_FILES[@]}" | tr '\n' ' ')
