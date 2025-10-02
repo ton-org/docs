@@ -39,7 +39,7 @@ Review protocol:
 
 Severity policy:
 - Report only HIGH‑severity violations.
-- Ignore MEDIUM and LOW entirely: do not mention, score, or suggest fixes.
+- Do not report MEDIUM or LOW items.
 - Treat HIGH as rules tagged [HIGH] or listed under “Global overrides (always [HIGH])” in contribute/style-guide-extended.mdx.
 
 Goal: deliver exhaustive, high-confidence feedback that brings these TON Docs changes into full style-guide compliance and factual correctness.
