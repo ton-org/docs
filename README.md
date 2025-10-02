@@ -30,6 +30,26 @@ The dictionaries (_vocabularies_) for custom words is placed under `.vale/config
 
 See more info on dictionaries here: [Vale vocabularies docs](https://vale.sh/docs/keys/vocab).
 
+### Format checks
+
+To check formatting of **all** files, run:
+
+```shell
+npm run check:fmt
+```
+
+To fix formatting of **all** files, run:
+
+```shell
+npm run fmt
+```
+
+To check and fix formatting of some **selected** files, run:
+
+```shell
+npm run fmt:some <FILES...>
+```
+
 ## Publishing changes
 
 [Mintlify's GitHub app](https://dashboard.mintlify.com/settings/organization/github-app) is connected to this repository. Thus, changes are deployed to production automatically after pushing to the default branch (`main`).
