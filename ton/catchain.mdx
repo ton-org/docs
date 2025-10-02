@@ -3,17 +3,12 @@ title: "Catchain consensus: an outline"
 sidebarTitle: "Catchain Consensus"
 ---
 
-
 **Nikolai Durov**
 *February 19, 2020*
- 
-# Abstract
+
+## Abstract
 
 The aim of this text is to provide an outline of the Catchain Consensus Protocol, a Byzantine Fault Tolerant (BFT) protocol specifically crafted for block generation and validation in the TON Blockchain [[3]](#ref-3). This protocol can potentially be used for purposes other than block generation in a proof-of-stake (PoS) blockchain; however, the current implementation uses some optimizations valid only for this specific problem.
-
----
-
-## 1 Overview
 
 The Catchain Consensus protocol builds upon the overlay network construction protocol and the overlay network broadcast protocol of TON Network ([[3]](#ref-3)). The Catchain Consensus protocol itself can be decomposed into two separate protocols, one more low-level and general-purpose (the Catchain protocol[¹](#footnote-1)), and the other the high-level Block Consensus Protocol (BCP), which makes use of the Catchain protocol. Higher levels in the TON protocol stack are occupied by the block generation and validation levels; however, all of them are executed essentially locally on one (logical) machine, with the problem of achieving consensus on the newly-generated block delegated to the Catchain protocol level.
 
@@ -36,8 +31,6 @@ This text aims to describe only the second and the third protocol in this suite,
 We would like to point out here that the author of this text, while providing the general guidelines of how this protocol should be designed (on the lines of "let's create a BFT-hardened group broadcast message system, and run a suitably adapted simple two-phase or three-phase commit protocol on top of this system") and participating in several discussions during the development and implementation of the protocol, is definitely not the only designer of this protocol and especially of its current implementation. This is the work of several people.
 
 A few words on the efficiency of the combined Catchain Consensus protocol. Firstly, it is a true Byzantine Fault Tolerant (BFT) protocol, in the sense that it eventually achieves consensus on a valid next block of the blockchain even if some participants (validators) exhibit arbitrarily malicious behavior, provided these malicious participants are less than one third of the total number of the validators. It is well-known that achieving BFT consensus is impossible if at least one third of participants are malicious (cf. [[5]](#ref-5)), so the Catchain Consensus protocol is as good as theoretically possible in this respect. Secondly, when the Catchain Consensus was first implemented (in December 2018) and tested on up to 300 nodes distributed all over the world, it achieved consensus on a new block in 6 seconds for 300 nodes and in 4–5 seconds for 100 nodes (and in 3 seconds for 10 nodes), even if some of these nodes fail to participate or exhibit incorrect behavior.[²](#footnote-2) Since the TON Blockchain task groups are not expected to consist of more than a hundred validators (even if a total of a thousand or ten thousand validators are running, only a hundred of them with the largest stakes will generate new masterchain blocks, and the others will participate only in the creation of new shardchain blocks, each shardchain block generated and validated by 10–30 validators; of course, all numbers given here are configuration parameters (cf. [[3]](#ref-3) and [[4]](#ref-4)) and can be adjusted later by a consensus vote of validators if necessary), this means that the TON Blockchain is able to generate new blocks once every 4–5 seconds, as originally planned. This promise has been further tested and found out to be fulfilled with the launch of the Test Network of the TON Blockchain a couple of months later (in March 2019). Therefore, we see that the Catchain Consensus protocol is a new member of the ever-growing family of practical BFT protocols (cf. [[2]](#ref-2)), even though it is based on slightly different principles.
-
----
 
 ## 2 Catchain Protocol
 
@@ -167,9 +160,9 @@ Notice that even if the encryption had been absent, this would not violate the B
 
 #### 2.5.6. Alternative perspective: a catchain as a multi-blockchain
 
-Note that all messages created by the same sender $i$ in a catchain turn out to have a simple "blockchain structure", because the header of $m_{i,s+1}$ contains the hash $\text{sha256}(m_{i,s})$ among other hashes of messages from Max(D<sub>m<sub>(i,s+1)</sub></sub>) of the previous message of sender $i$. 
+Note that all messages created by the same sender $i$ in a catchain turn out to have a simple "blockchain structure", because the header of $m_{i,s+1}$ contains the hash $\text{sha256}(m_{i,s})$ among other hashes of messages from Max(D<sub>m<sub>(i,s+1)</sub></sub>) of the previous message of sender $i$.
 
-In this way each process $i$ generates a simple blockchain consisting of its messages, with each "block" of this blockchain corresponding to one message and referring to the previous block by its hash, and sometimes includes references to blocks (i.e., messages) of other processes by mentioning the hashes of these blocks in its blocks. 
+In this way each process $i$ generates a simple blockchain consisting of its messages, with each "block" of this blockchain corresponding to one message and referring to the previous block by its hash, and sometimes includes references to blocks (i.e., messages) of other processes by mentioning the hashes of these blocks in its blocks.
 
 Each block is signed by its creator. The resulting structure is very similar to that of an "asynchronous payment channel" considered in [[3]](#ref-3), but with $N$ participants instead of 2.
 
@@ -224,8 +217,6 @@ Furthermore, if process $i$ learns about a fork created by process $j$, then $i$
 #### 2.7.6. The set of "bad" group members is a part of the intrinsic state
 
 Each process $i$ keeps its own copy of the set of known "bad" processes in the group, i.e., those processes that have created at least one fork or have violated [2.7.5](#2-7-5-accepting-messages-from-a-bad-process-is-bad). This set is updated by adding $j$ into it as soon as $i$ learns about a fork created by $j$ (or about a violation of [2.7.5](#2-7-5-accepting-messages-from-a-bad-process-is-bad) by $j$); after that, a callback provided by the higher-level protocol is invoked. This set is used when a new broadcast message arrives: if the sender is bad, then the message is ignored and discarded.
-
----
 
 
 ## 3 Block Consensus Protocol
@@ -368,8 +359,6 @@ Every message $m$ contains a (Merkle) hash of (the abstract representation of) t
 
 The purpose of this field in messages is to provide a sanity check for the computations of $\sigma_{D_m^+}$ performed by different processes (and possibly by different implementations of the state update algorithm): once $\sigma_{D_m^+}$ is computed for a newly-delivered message $m$, the hash of computed $\sigma_{D_m^+}$ is compared to the value stored in the header of $m$. If these values are not equal, an error message is output into an error log (and no further actions are taken by the software). These error logs can be examined to detect bugs or incompatibilities between different versions of BCP.
 
----
-
 ### 3.3. State recovery after restart or crashes
 
 A catchain is typically used by the BCP for several minutes; during this period, the program (the validator software) running the Catchain protocol may be terminated and restarted, either deliberately (e.g., because of a scheduled software update) or unintentionally (the program might crash because of a bug in this or some other subsystem, and be restarted afterwards). One way of dealing with this situation would be to ignore all catchains not created after the last restart. However, this would lead to some validators not participating in creating any blocks for several minutes (until the next catchain instances are created), which is undesirable. Therefore, a catchain state recovery protocol is run instead after every restart, so that the validator can continue participating in the same catchain.
@@ -385,8 +374,6 @@ We have already explained in [2.6](#2-6-message-propagation-in-a-catchain) that 
 #### 3.3.3. Avoiding the recomputation of states $\sigma_{D_m^+}$
 
 An implementation might use an append-only file containing all previously computed states as described in [3.2.3](#3-2-3-the-internal-state-of-a-catchain-is-flushed-to-an-append-only-file) to avoid recomputing all states after restart, trading off disk space for computational power. However, the current implementation does not use this optimization.
-
----
 
 ### 3.4. High-level description of Block Consensus Protocol
 
@@ -516,8 +503,6 @@ The "null candidate" is considered to have the least priority. It also requires 
 
 A `VoteFor` event is created at the beginning of a slow attempt by the coordinator — the process with index `attempt mod N` in the ordered list of all processes participating in the catchain (as usual, this means that a `VoteFor` created by another process will be ignored by all "good" processes). This `VoteFor` event refers to one of the block candidates (including the null candidate) that have collected `Approves` from more than 2/3 of all processes, usually randomly chosen among all such candidates. Essentially, this is a suggestion to vote for this block candidate directed to all other processes that do not have an active `PreCommit`.
 
----
-
 ### 3.5. Validity of BCP
 
 Now we present a sketch of the proof of validity of TON Block Consensus Protocol (BCP) described above in [3.4](#3-4-high-level-description-of-block-consensus-protocol), assuming that less than one third of all processes exhibit byzantine (arbitrarily malicious, possibly protocol-violating) behavior, as it is customary for Byzantine Fault Tolerant protocols. During this subsection, we consider only one round of BCP, subdivided into several attempts.
@@ -612,8 +597,6 @@ Now we claim that (each round of) the BCP protocol as described above terminates
 
 • Since there are infinitely many "very good" attempts, and the probability of successful termination during each such attempt is $\geq p > 0$ for some fixed value of $p$, the protocol will terminate successfully with probability one.
 
-----
-
 ## References
 
 <a name="ref-1"></a>
@@ -636,8 +619,6 @@ Now we claim that (each round of) the BCP protocol as described above terminates
 
 <a name="ref-7"></a>
 [7] M. van Steen, A. Tanenbaum, Distributed Systems, 3rd ed., 2017.
-
----
 
 ## Footnotes
 
