@@ -1,0 +1,71 @@
+## MyTonCtrl BTC Teleport commands
+
+The BTC Teleport module manages the optional Bitcoin bridge (Teleport) client shipped with MyTonCtrl. Use these commands to inspect proposals, vote on them, or remove the Teleport installation when no longer needed.
+
+## Operational notes
+- Teleport installation happens automatically when validator mode is enabled unless `btcTeleportDisabled` is set. Use these commands to check governance participation or clean up.
+- Voting attaches 1.5 TON from the validator wallet. Ensure the wallet has sufficient balance before sending votes.
+- The module caches proposals it has voted on (`saveOffersBtcTeleport`) to avoid duplicate submissions.
+
+## print_offers_btc_teleport_list
+**Purpose:** Show the current Teleport governance proposals and voting status.
+
+**Syntax**
+```mytonctrl
+print_offers_btc_teleport_list [--json] [hash]
+```
+
+**Behavior**
+- Queries the Teleport configurator contract and lists each proposal hash, the number of validators who have voted, approval percentage, and whether the proposal has passed.
+- By default, hashes are trimmed (use the `hash` literal to see full values). Add `--json` to print the raw proposal dictionary.
+
+**Examples**
+```mytonctrl
+print_offers_btc_teleport_list
+print_offers_btc_teleport_list --json
+print_offers_btc_teleport_list hash
+```
+
+## vote_offer_btc_teleport
+**Purpose:** Vote on one or more Teleport proposals using the validator wallet.
+
+**Syntax**
+```mytonctrl
+vote_offer_btc_teleport <offer-hash> [additional_offer_hashes...]
+```
+
+**Behavior**
+- Requires the node to be an active masterchain validator (validator index < `mainValidators`). Non-masterchain validators are skipped.
+- For each offer hash:
+  - Verifies that the proposal still exists and hasn’t already been voted on by this validator.
+  - Saves the offer locally, builds the vote request, signs it with the validator key, wraps it in a wallet transaction (1.5 TON attach), and submits it to the Teleport configurator.
+- Outputs warnings for missing or already-voted offers and continues processing the rest.
+
+**Example**
+```mytonctrl
+vote_offer_btc_teleport 0xabc123... 0xdef456...
+```
+
+## remove_btc_teleport
+**Purpose:** Uninstall the Teleport binaries, keystore, and system service.
+
+**Syntax**
+```mytonctrl
+remove_btc_teleport [--force]
+```
+
+<Caution>`--force` removes Teleport binaries and service configuration.
+Risk: loss of Teleport state; service downtime.
+Scope: this node’s Teleport installation (binaries, keystore, systemd unit).
+Rollback/Mitigation: reinstall Teleport or restore from a backup of `/usr/src/ton-teleport-btc-periphery` and related configs.
+Environment: applies on both TON Testnet and TON Mainnet nodes.</Caution>
+
+**Behavior**
+- Runs `scripts/remove_btc_teleport.sh` to delete the Teleport repository (`/usr/src/ton-teleport-btc-periphery`), keystore, and systemd service.
+- By default, refuses to run if the validator is currently a masterchain participant. Use `--force` only when the node is not producing masterchain blocks or after exiting the validator set.
+- Prints an error if the removal script fails.
+
+**Example**
+```mytonctrl
+remove_btc_teleport --force
+```

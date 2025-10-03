@@ -1,0 +1,170 @@
+## MyTonCtrl wallet commands
+
+Wallet mode provides convenience utilities for generating, activating, importing, exporting, and moving funds between TON wallets managed by MyTonCtrl. The commands below explain required arguments, accepted shortcuts (such as `all`/`alld` amounts), and safety prompts.
+
+## Operational notes
+- MyTonCtrl stores wallets under `/var/ton-work/wallets`. Back up `.pk` files securely before deleting or migrating wallets.
+- Generated wallet names follow the `wallet_###` pattern. Use `wl` to find the correct name before funding or exporting.
+- Bookmark support depends on entries configured via other modules (for example, utility commands that register shortcuts).
+- Transfers rely on the validator console and may require the wallet to be active with sufficient rent balance (>0.1 TON).
+
+## Wallet lifecycle
+
+### `nw`
+**Purpose:** Create a new local wallet definition and show its deployment address.
+
+**Syntax**
+```mytonctrl
+nw [<workchain-id> <wallet-name> [<version> <subwallet>]]
+```
+
+**Behavior**
+- With no arguments, autogenerates a name (`wallet_XXX`), uses workchain `0`, selects version `v1`, and derives subwallet `698983191 + workchain`.
+- When arguments are provided, you must supply the workchain and name; optional `version` (`v1`, `v2`, `v3`) and `subwallet` override defaults.
+- Writes `.addr`/`.pk` files under the wallets directory and prints a table with the new wallet address (state-init form).
+
+**Examples**
+```mytonctrl
+nw
+nw 0 treasury v3 1001
+```
+
+### `aw`
+**Purpose:** Deploy one wallet or all wallets that have unsigned deployment BoCs.
+
+**Syntax**
+```mytonctrl
+aw [<wallet-name>|all]
+```
+
+**Behavior**
+- Without arguments, treats the request as `all` and scans every wallet for pending deployment BoCs, sending them if the target address still has a positive balance.
+- With a wallet name, activates that specific wallet using the stored deployment message.
+
+**Examples**
+```mytonctrl
+aw
+aw wallet_005
+```
+
+### `wl`
+**Purpose:** List every wallet known to MyTonCtrl along with its on-chain status.
+
+**Syntax**
+```mytonctrl
+wl
+```
+
+**Behavior**
+- Prints Name, Status, Balance, Version, Workchain, and Address (current or init address if inactive).
+- Useful for auditing balances before elections or sweeping idle funds.
+
+
+### `dw`
+**Purpose:** Delete a wallet’s local files after operator confirmation.
+
+**Syntax**
+```mytonctrl
+dw <wallet-name>
+```
+
+**Behavior**
+- Prompts `Are you sure you want to delete this wallet (yes/no):` and only proceeds on `yes`.
+- Removes the `.addr`, `.pk`, and cached query files for `<wallet-name>` but does not touch on-chain accounts.
+
+**Example**
+```mytonctrl
+dw treasury
+```
+
+## Importing, exporting, and metadata
+
+### `iw`
+**Purpose:** Import an existing wallet by address and secret key.
+
+**Syntax**
+```mytonctrl
+iw <wallet-addr> <wallet-secret-key-base64>
+```
+
+**Behavior**
+- Writes the provided address bytes and base64-encoded private key into a new local wallet (name auto-generated).
+- Prints the assigned wallet name for subsequent commands.
+
+**Example**
+```mytonctrl
+iw EQDk...cQ KJ4Q...
+```
+
+### `ew`
+**Purpose:** Export a wallet’s address and secret key.
+
+**Syntax**
+```mytonctrl
+ew <wallet-name>
+```
+
+**Behavior**
+- Reads the `.pk` file, base64-encodes it, and prints the address/key pair along with the wallet name.
+- Useful for backups or migration to hardware wallets.
+
+**Example**
+```mytonctrl
+ew treasury
+```
+
+### `swv`
+**Purpose:** Update the recorded wallet version (v1/v2/v3) for an imported wallet.
+
+**Syntax**
+```mytonctrl
+swv <wallet-addr> <wallet-version>
+```
+
+**Behavior**
+- Updates metadata so MyTonCtrl selects the correct Fift script when sending transactions.
+- Supply the wallet address exactly as stored (base64 or workchain:hex) and the version string.
+
+**Example**
+```mytonctrl
+swv EQC0...FQ v3
+```
+
+## Fund transfers
+
+### `mg`
+**Purpose:** Send Toncoin from a local wallet to a destination address or bookmark.
+
+**Syntax**
+```mytonctrl
+mg <wallet-name> <account-addr|bookmark> <amount> [additional-flags...]
+```
+
+**Behavior**
+- `<amount>` accepts numeric TON values or the shortcuts `all` (sends balance minus fees) and `alld` (sends entire balance, including fees).
+- Automatically checks the source balance, destination bounceability, and wallet version. Add `-n` to force non-bounceable mode or other validator-console flags as needed.
+- Submits the signed transfer via the validator console; prints `MoveCoins - OK` on success.
+
+**Examples**
+```mytonctrl
+mg treasury EQDv...Qw 1500
+mg treasury bookmark_main all -n
+```
+
+### `mgtp`
+**Purpose:** Relay a payment through two temporary proxy wallets before reaching the destination.
+
+**Syntax**
+```mytonctrl
+mgtp <wallet-name> <account-addr|bookmark> <amount>
+```
+
+**Behavior**
+- Creates two temporary wallets, hops the transfer through them (`wallet -> proxy1 -> proxy2 -> destination`) and cleans up afterwards.
+- Ensures the final leg includes `-n` (non-bounceable) to safely reach inactive recipients.
+- Handy when the destination cannot accept a direct bounceable transfer.
+
+**Example**
+```mytonctrl
+mgtp treasury EQC6...rA alld
+```
