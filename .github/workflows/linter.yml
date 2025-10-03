@@ -1,0 +1,123 @@
+name: 💅 Linting suite
+
+env:
+  HUSKY: 0
+
+on:
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  format-check:
+    name: "Formatting"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          corepack enable
+          npm ci
+
+      - name: Get changed MDX and Markdown files
+        id: changed-files
+        uses: tj-actions/changed-files@24d32ffd492484c1d75e0c0b894501ddb9d30d62 # v47
+        with:
+          files: |
+            **.md
+            **.mdx
+
+      - name: Check formatting of MDX and Markdown files
+        id: check-fmt
+        env:
+          ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
+        run: |
+          if [ -z $(echo -e "${ALL_CHANGED_FILES[@]}" | tr -d '[:space:]') ]; then
+            echo -e '\nNo such files affected!'
+            exit 0
+          fi
+          echo -e '\nChecking formatting on the following MDX and Markdown files affected by this PR:\n'
+          for file in ${ALL_CHANGED_FILES}; do
+            echo "- $file"
+          done
+          echo
+          npx remark --no-stdout --quiet --frail --silently-ignore $(echo -e "${ALL_CHANGED_FILES[@]}" | tr '\n' ' ')
+
+      - name: ${{ steps.check-fmt.conclusion == 'failure' && '👀' }} How to fix the formatting? See these suggestions!
+        env:
+          ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
+        if: failure()
+        run: |
+          # Preparations
+          FILES="$(echo -e "${ALL_CHANGED_FILES[@]}" | tr '\n' ' ')"
+          BODY="{\"body\":\"To fix the **formatting** issues:\n\n1. Install necessary dependencies: \`npm ci\`\n2. Then, run this command:\n\`\`\`shell\nnpx remark -o --quiet --silently-ignore ${FILES}\n\`\`\`\"}"
+          # Comment on the PR
+          curl -s -o /dev/null -L -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -d "$BODY" \
+            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.number }}/comments
+          # Comment right in the actions output
+          echo -e "\nInstall necessary dependencies: \033[31mnpm ci\033[0m"
+          echo -e "Then, run this to fix formatting: \033[31mnpx remark -o --quiet --silently-ignore ${FILES}\033[0m"
+
+  spell-check:
+    name: "Spelling"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          corepack enable
+          npm ci
+          npm install -g mdx2vast
+
+      - name: Get changed MDX and Markdown files
+        id: changed-files
+        uses: tj-actions/changed-files@24d32ffd492484c1d75e0c0b894501ddb9d30d62 # v47
+        with:
+          files: |
+            **.md
+            **.mdx
+          separator: ","
+
+      - name: Run Vale to spellcheck changed files
+        id: check-spell
+        uses: errata-ai/vale-action@v2.1.1
+        with:
+          version: "3.12.0"
+          files: '${{ steps.changed-files.outputs.all_changed_files }}'
+          separator: ","
+          fail_on_error: true
+          filter_mode: "nofilter"
+          reporter: "github-pr-check"
