@@ -39,8 +39,10 @@ The most used options are:
 The serialization process of a BoC `B` consisting of `n` cells can be outlined as follows.
 -  List the cells from B in a chosen order: `c1, ..., cn`(with `c1, ..., c_k` as root cells, if `B` is a forest).
 -  Choose an integer number `s`, such that `n ≤ 2^s`. Represent each cell `ci` by an integral number of bytes
-as in standard representation cell algorithm, but using unsigned big-endian 
-s-bit integer `j` instead of hash `Hash(cj)` to represent internal references to cell `cj`. This algorithm is listed in [cells serialization page](/tvm/serialization/cells#standard-cell-representation-and-its-hash).
+as in [standard representation cell algorithm](/tvm/serialization/cells#standard-cell-representation-and-its-hash), but:
+    - `d1 = r + 8s + 16h + 32l` where `h = 1` if the cell’s hashes are explicitly included into the serialization; otherwise, `h = 0` (when `r = 7`, `h` must be `1`);
+    - if `h = 1`, after bytes `b1` and `b2` the serialization is continued by `l + 1` 32-byte higher hashes of `c`;
+    - unsigned big-endian s-bit integer `j` used instead of hash `Hash(cj)` to represent internal references to cell `cj`. 
 - Concatenate the representations of cells `ci` thus obtained in the increasing order of `i`.
 - Optionally, an index can be constructed that consists of `n + 1` t-bit integer entries `L1, ..., Ln`, where `Li`
 is the total length (in bytes) of the representations of cells `cj` with `j ≤ i`, and integer `t ≥ 0` is chosen so
@@ -194,6 +196,7 @@ Now that we've serialized our cells into a flat 20-byte array, it's time to pack
 0b00000000                   -> the number of absent cells is 0
 _                            -> tot_cells_size is not serialized since off_set is 0  
 0b00000000                   -> the root list; we have one root with number 0 after the topological sort
+_                            -> the index is not serialized since corresponding flag is 0
 0e                           -> size of serialized cells, 1 byte (size defined above), equal to 14
 00                           -> root cell index, size 1 (determined by 3 size:(## 3) bits from header),
                                  always 0
@@ -210,10 +213,11 @@ for serialization and parsing BoC.
 
 Only serialization of BoCs with one root and no absent cells is supported.
 ```typescript
-import { beginCell, serializeBoc } from "@ton/core";
+import { beginCell, serializeBoc, deserializeBoc} from "@ton/core";
 // serializeBoc has two arguments:
 // root: Cell. A root cell of a given tree of cells
 // opt: { idx: boolean, crc32: boolean }. Two flags indicating whether indexes and CRC32C will be included in serialization
+// the output is a Buffer with serialization
 
 const innerCell = beginCell().storeUint(456, 16).endCell();
 
@@ -222,4 +226,11 @@ const rootCell = beginCell().storeUint(0, 64).storeRef(innerCell).endCell();
 const serialized_boc = serializeBoc(rootCell, { idx: false, crc32: false });
 
 const serialized_boc_with_indexes_and_crc32 = serializeBoc(rootCell, { idx: true, crc32: true });
+
+// deserializeBoc has one argument, src: a Buffer that contains a serialized BoC
+// the output is roots list of a given BoC
+
+const roots_of_first_boc = deserializeBoc(serialized_boc);
+
+const roots_of_second_boc = deserializeBoc(serialized_boc_with_indexes_and_crc32);
 ```
