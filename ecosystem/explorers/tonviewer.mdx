@@ -189,4 +189,73 @@ All transactions along the trace completed their phases without error, no warnin
 
 No failure point — the operation completed successfully.
 
+## Debugging with retracer
+
+Sometimes, reading messages and transaction phases is not enough.
+A transaction may show successful compute and action phases, exit codes of `0`, and no errors in messages —
+yet still produce no effect on-chain.
+In such cases, you need to trace the **TVM execution path**.
+
+[Retracer](https://retracer.ton.org/) provides this by replaying the transaction and exposing what happened inside the virtual machine.
+
+### Steps to debug
+1. **Read the logs section**
+2. **Check the Actions cell (C5)**
+
+### TON transfer
+
+Read a [TON transfer](https://testnet.tonviewer.com/transaction/d149392f77214e2f4af7c516777d168e6c3e71f8666f76fb743eb85d57922d0d) attempt.
+
+![Skipped action](/resources/images/tonviewer/skipped_action.png)
+
+1. **Determine the operation**
+
+At point **A**, an external-in message arrives at the user's wallet, initiating _a TON transfer_.
+
+2. **Clarify accounts' roles**
+- A — user's wallet contract, attempts to send 0.2 TON to another account.
+
+3. **Read messages**
+
+- External-in → A: a message created by the wallet, instructing the transfer.
+
+4. **Check transaction phases**
+
+All transactions along the trace completed their phases without error, no warning markers; exit codes are `0`. There are no bounces or failed compute or action phases reported in the nodes.
+However, one action was skipped.
+
+5. **Find the failure point**
+
+From the explorer’s perspective, the phases completed successfully with exit code = `0`,
+and no errors or bounces are reported in the messages.
+
+However, the transfer was **not executed**. The operation did not leave the wallet — the intended TON transfer never reached the destination account.
+
+To understand the reason behind this, **a retracer** will be used in the next step.
+
+6. **Read with a retracer**
+
+Using [retracer](https://retracer.ton.org/?tx=d149392f77214e2f4af7c516777d168e6c3e71f8666f76fb743eb85d57922d0d&testnet=true), we can inspect the wallet's execution in detail.
+
+i. **Read the logs section**
+
+The [logs](https://retracer.ton.org/?tx=d149392f77214e2f4af7c516777d168e6c3e71f8666f76fb743eb85d57922d0d&testnet=true) show:
+
+- The VM in wallet **A** executed successfully (exit code = `0`).
+- Gas and storage fees were paid correctly.
+- However, when attempting to forward the transfer, the wallet's **remaining balance (194.519994 TON)** was **less than the required total (200.4 TON)**, including forwarding fees:
+
+```text
+not enough grams to transfer with the message : remaining balance is 194519994ng, need 200400000 (including forwarding fees)
+```
+
+ii. **Check the Actions cell (C5)**
+
+In [Actions cell (C5)](https://retracer.ton.org/?tx=d149392f77214e2f4af7c516777d168e6c3e71f8666f76fb743eb85d57922d0d&testnet=true), we see `message mode = 3`, where mode `3` combines two flags:
+- Pay transfer fees separately from the message value
+- Suppresses specific errors during message processing
+
+Because of mode `3`, the action was **skipped** rather than failing.
+This explains why the transfer never left the wallet, despite all compute and action phases completing successfully.
+
 
