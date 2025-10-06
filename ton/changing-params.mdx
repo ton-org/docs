@@ -102,8 +102,13 @@ _ GlobalVersion = ConfigParam 8;
 
 We can check its current value by running the Lite Client and typing `getconfig 8`:
 
-```console
-> getconfig 8
+```bash
+getconfig 8
+```
+
+Expected output:
+
+```text
 ...
 ConfigParam(8) = (
   (capabilities version:1 capabilities:6))
@@ -175,8 +180,11 @@ To create a configuration proposal, we first need a file containing the desired 
 
 ```bash
 crypto/create-state -s create-config-proposal.fif 8 config-param8.boc -x 1100000
+```
 
+Expected output:
 
+```text
 Loading new value of configuration parameter 8 from file config-param8.boc
 x{C400000001000000000000000E}
 
@@ -191,19 +199,40 @@ B5EE9C7241010301002C0001216E5650525E838CB0000000085E9455904001010BF300000008A002
 (Saved to file config-msg-body.boc)
 ```
 
-We have acquired the content of an internal message intended for the configuration smart contract, and we will send it from a MasterChain wallet smart contract with an appropriate amount of Toncoin. To find the address of the configuration smart contract, enter the `getconfig 0` command in the Lite Client:
+We have acquired the content of an internal message intended for the configuration smart contract, and we will send it from a MasterChain wallet smart contract with an appropriate amount of Toncoin.
 
+<Aside type="caution">
+**Caution — network/consensus changes**
+
+These steps propose or vote on configuration parameters that affect validators and consensus.
+
+- **Scope**: validator/elector configuration and related smart contracts.
+- **Rollback**: not trivial; reversing requires a new proposal and validator votes.
+- **Do first (testnet)**: validate procedures on TON Testnet before mainnet.
+</Aside>
+
+To find the address of the configuration smart contract, enter the `getconfig 0` command in the Lite Client:
+
+```bash
+getconfig 0
 ```
-> getconfig 0
+
+Expected output:
+
+```text
 ConfigParam(0) = ( config_addr:x5555555555555555555555555555555555555555555555555555555555555555)
 x{5555555555555555555555555555555555555555555555555555555555555555}
 ```
 
 We have the address of the configuration smart contract as `-1:5555...5555`. By using appropriate getter methods of this smart contract, we can determine the required payment for creating this configuration proposal:
 
+```bash
+runmethod -1:5555555555555555555555555555555555555555555555555555555555555555 proposal_storage_price 0 1100000 104 0
 ```
-> runmethod -1:5555555555555555555555555555555555555555555555555555555555555555 proposal_storage_price 0 1100000 104 0
 
+Expected output:
+
+```text
 arguments:  [ 0 1100000 104 0 75077 ]
 result:  [ 2340800000 ]
 remote result (not to be trusted):  [ 2340800000 ]
@@ -211,11 +240,25 @@ remote result (not to be trusted):  [ 2340800000 ]
 
 The parameters for the `proposal_storage_price` get-method include the following: a critical flag set to 0, a time interval of 1.1 megaseconds during which the proposal will remain active, a total of 104 bits, and 0 cell references in the data. The latter two quantities can be found in the output of `create-config-proposal.fif`.
 
+<Aside type="warning">
+**Warning — funds at risk**
+
+Running the following commands can transfer funds on mainnet and alter validator/network behavior.
+
+- **Scope**: configuration smart contract and validator consensus parameters.
+- **Rollback**: on-chain transfers are final; reversing configuration changes requires a new, accepted proposal.
+- **Do first (testnet)**: verify addresses and amounts on TON Testnet.
+</Aside>
+
 To create this proposal, we need to pay 2.3408 Toncoins. It's advisable to add at least 1.5 Toncoins to cover the processing fees. Therefore, we will send a total of 4 Toncoins with the request (any excess Toncoins will be returned). We will then use [`wallet.fif`](https://github.com/ton-blockchain/ton/blob/05bea13375448a401d8e07c6132b7f709f5e3a32/crypto/smartcont/wallet.fif) (or the appropriate Fift script for our wallet) to execute a transfer from our wallet to the configuration smart contract, including the 4 Toncoins and the body from `config-msg-body.boc`. This process typically looks like:
 
 ```bash
 fift -s wallet.fif my-wallet -1:5555555555555555555555555555555555555555555555555555555555555555 31 4. -B config-msg-body.boc
+```
 
+Expected output:
+
+```text
 Transferring GR$4. to account kf9VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQft = -1:5555555555555555555555555555555555555555555555555555555555555555 seqno=0x1c bounce=-1
 Body of transfer message is x{6E5650525E835154000000085E9293944_}
  x{F300000008A_}
@@ -237,14 +280,26 @@ B5EE9C724101040100CB0001CF89FE00000000000000000000000000000000000000000000000000
 
 We will now send the external message `wallet-query.boc` to the blockchain using the Lite Client.
 
-    > sendfile wallet-query.boc
-    ....
-    external message status is 1
+```bash
+sendfile wallet-query.boc
+```
+
+Expected output:
+
+```text
+...
+external message status is 1
+```
 
 After waiting for a brief period, we can check the incoming messages in our wallet to look for response messages from the configuration smart contract. Alternatively, if we are feeling lucky, we can directly inspect the list of all active configuration proposals by using the `list_proposals` method of the configuration smart contract.
 
-```console
-> runmethod -1:5555555555555555555555555555555555555555555555555555555555555555 list_proposals
+```bash
+runmethod -1:5555555555555555555555555555555555555555555555555555555555555555 list_proposals
+```
+
+Expected output:
+
+```text
 ...
 arguments:  [ 107394 ]
 result:  [ ([64654898543692093106630260209820256598623953458404398631153796624848083036321 [1586779536 0 [8 C{FDCD887EAF7ACB51DA592348E322BBC0BD3F40F9A801CB6792EFF655A7F43BBC} -1] 112474791597373109254579258586921297140142226044620228506108869216416853782998 () 864691128455135209 3 0 0]]) ]
@@ -268,16 +323,26 @@ Lastly, we see three numbers: `3 0 0`. These represent `rounds_remaining` (the p
 
 To inspect the proposed value for configuration parameter `#8`, you can ask the Lite Client to expand cell `C{FDCD...}` using its hash `FDCD...` or a sufficiently long prefix of this hash to uniquely identify the specific cell in question:
 
-```console
-> dumpcell FDC
+```bash
+dumpcell FDC
+```
+
+Expected output:
+
+```text
 C{FDCD887EAF7ACB51DA592348E322BBC0BD3F40F9A801CB6792EFF655A7F43BBC} =
   x{C400000001000000000000000E}
 ```
 
 We observe that the value is `x{C400000001000000000000000E}`, which is the value we have incorporated into our configuration proposal. Additionally, we can ask the Lite Client to present this Cell as a TL-B type value (`ConfigParam 8`).
 
-```console
-> dumpcellas ConfigParam8 FDC
+```bash
+dumpcellas ConfigParam8 FDC
+```
+
+Expected output:
+
+```text
 dumping cells as values of TLB type (ConfigParam 8)
 C{FDCD887EAF7ACB51DA592348E322BBC0BD3F40F9A801CB6792EFF655A7F43BBC} =
   x{C400000001000000000000000E}
@@ -287,10 +352,15 @@ C{FDCD887EAF7ACB51DA592348E322BBC0BD3F40F9A801CB6792EFF655A7F43BBC} =
 
 This is particularly useful when we evaluate configuration proposals created by others.
 
-Each configuration proposal is identified by its unique 256-bit hash, represented by the large decimal number `6465...6321`. To check the current status of a specific configuration proposal, you can use the `get_proposal` method, providing the identifier of the configuration proposal as the only argument:
+Each configuration proposal is identified by its unique 256-bit hash, represented by the large decimal number `64654898543692093106630260209820256598623953458404398631153796624848083036321`. To check the current status of a specific configuration proposal, you can use the `get_proposal` method, providing the identifier of the configuration proposal as the only argument:
 
-```console
-> runmethod -1:5555555555555555555555555555555555555555555555555555555555555555 get_proposal 64654898543692093106630260209820256598623953458404398631153796624848083036321
+```bash
+runmethod -1:5555555555555555555555555555555555555555555555555555555555555555 get_proposal 64654898543692093106630260209820256598623953458404398631153796624848083036321
+```
+
+Expected output:
+
+```text
 ...
 arguments:  [ 64654898543692093106630260209820256598623953458404398631153796624848083036321 94347 ]
 result:  [ [1586779536 0 [8 C{FDCD887EAF7ACB51DA592348E322BBC0BD3F40F9A801CB6792EFF655A7F43BBC} -1] 112474791597373109254579258586921297140142226044620228506108869216416853782998 () 864691128455135209 3 0 0] ]
@@ -330,18 +400,24 @@ Voting for a configuration proposal is limited to the current validators listed 
 
   (if a simple wallet controls the validator), followed by sending the resulting file `wallet-query.boc` from the Lite Client:
 
-    ```
-    > sendfile wallet-query.boc
-    ```
+  ```bash
+  sendfile wallet-query.boc
+  ```
 
 - You can monitor the response messages from the configuration smart contract to the controlling smart contract to check the status of your voting queries. Alternatively, you can inspect the status of the configuration proposal by using the get-method `get_proposal` of the configuration smart contract:
 
+  ```bash
+  runmethod -1:5555555555555555555555555555555555555555555555555555555555555555 get_proposal 64654898543692093106630260209820256598623953458404398631153796624848083036321
   ```
-  > runmethod -1:5555555555555555555555555555555555555555555555555555555555555555 get_proposal 64654898543692093106630260209820256598623953458404398631153796624848083036321
+
+  Expected output:
+
+  ```text
   ...
   arguments:  [ 64654898543692093106630260209820256598623953458404398631153796624848083036321 94347 ]
   result:  [ [1586779536 0 [8 C{FDCD887EAF7ACB51DA592348E322BBC0BD3F40F9A801CB6792EFF655A7F43BBC} -1] 112474791597373109254579258586921297140142226044620228506108869216416853782998 (0) 864691128455135209 3 0 0] ]
   ```
+
   In this output, the list of indices for validators that voted for this configuration proposal should not be empty and must include the index of your validator. For example, if the list contains (`0`), it indicates that only the validator with index `0` in configuration parameter `#34` has voted. If this list grows, the second-to-last integer (the first zero in `3 0 0`) in the proposal status will increase, reflecting another win for this proposal. If the number of wins reaches or exceeds the value indicated in configuration parameter `#11`, the configuration proposal is automatically accepted, and the proposed changes take effect immediately.
 
   Conversely, when the validator set changes, the list of validators that have already voted will become empty, the `rounds_remaining` value (currently three in `3 0 0`) will decrease by one, and if it becomes negative, the configuration proposal will be destroyed. If the proposal is not destroyed and has not won in the current round, the number of losses (the second zero in `3 0 0`) will increase. If this number exceeds the value specified in configuration parameter `#11`, the configuration proposal will be rejected.
@@ -352,8 +428,8 @@ The automation provided by the command `createelectionbid` in `validator-engine-
 
 To use this method, you need to install the Fift scripts [`config-proposal-vote-req.fif`](https://github.com/ton-blockchain/ton/blob/05bea13375448a401d8e07c6132b7f709f5e3a32/crypto/smartcont/config-proposal-vote-req.fif) and [`config-proposal-vote-signed.fif`](https://github.com/ton-blockchain/ton/blob/05bea13375448a401d8e07c6132b7f709f5e3a32/crypto/smartcont/config-proposal-vote-signed.fif) in the same directory that the validator-engine uses to locate [`validator-elect-req.fif`](https://github.com/ton-blockchain/ton/blob/05bea13375448a401d8e07c6132b7f709f5e3a32/crypto/smartcont/validator-elect-req.fif) and [`validator-elect-signed.fif`](https://github.com/ton-blockchain/ton/blob/05bea13375448a401d8e07c6132b7f709f5e3a32/crypto/smartcont/validator-elect-signed.fif). Once you have those files set up, you can create the `vote-msg-body.boc` by executing the following command in the validator-engine-console:
 
-```console
-    createproposalvote 64654898543692093106630260209820256598623953458404398631153796624848083036321 vote-msg-body.boc
+```bash
+createproposalvote 64654898543692093106630260209820256598623953458404398631153796624848083036321 vote-msg-body.boc
 ```
 
 This command will generate the `vote-msg-body.boc`, which contains the body of the internal message to be sent to the configuration smart contract.
