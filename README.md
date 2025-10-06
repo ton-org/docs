@@ -22,13 +22,41 @@ View your local preview at `http://localhost:3000`.
 
 Mintlify does them in each PR with the help of [Vale](https://vale.sh/). To also use Vale locally and run corresponding "scripts" in `package.json`, see: [Vale installation docs](https://vale.sh/docs/install).
 
-Then, run `vale sync` to synchronize necessary packages and add-ons.
+Then, run the following commands:
+
+```shell
+# Enables MDX support for Vale
+npm install -g mdx2vast
+
+# Syncronizes necessary packages and add-ons
+vale sync
+```
 
 #### Adding new words to the spell checking dictionary
 
 The dictionaries (_vocabularies_) for custom words is placed under `.vale/config/vocabularies/Custom`: the `accept.txt` file describes all allowed entries, while `reject.txt` file states all invalid entries that must be rejected.
 
 See more info on dictionaries here: [Vale vocabularies docs](https://vale.sh/docs/keys/vocab).
+
+### Format checks
+
+To check formatting of **all** files, run:
+
+```shell
+npm run check:fmt
+```
+
+To fix formatting of **all** files, run:
+
+```shell
+npm run fmt
+```
+
+To check and fix formatting of some **selected** files, run:
+
+```shell
+npm run fmt:some <FILES...>
+```
 
 ## Publishing changes
 
