@@ -1,0 +1,289 @@
+## MyTonCtrl core commands
+
+The following commands are available in every MyTonCtrl installation and cover the workflows you need most often: inspecting node health, managing modes and settings, maintaining the software stack, and running diagnostics. Each section below explains what the command accomplishes, the accepted syntax, and practical examples.
+
+## about
+**Purpose:** Show a mode's description, whether it is currently enabled, and the settings that belong to the mode.
+
+**Syntax**
+```mytonctrl
+about <mode_name>
+```
+
+**Behavior**
+- Accepts exactly one mode name from: `validator`, `nominator-pool`, `single-nominator`, `liquid-staking`, `liteserver`, `collator`, `alert-bot`, `prometheus`.
+- Fails with a clear message if the mode name is unknown.
+- Prints a header, the human-readable mode description, and the current enablement status.
+- Lists every setting attached to the mode, including a short description and the default value. When a mode has no dedicated settings the command states that explicitly.
+
+**Available modes**
+
+| Mode | Description |
+| --- | --- |
+| `validator` | Validator functions. Activates participating in elections and staking. If pools and l/s modes are disabled stakes from validator wallet. |
+| `nominator-pool` | Standard nominator pools. |
+| `single-nominator` | Orbs' single nominator pools. |
+| `liquid-staking` | Liquid staking controllers. |
+| `liteserver` | For liteserver usage only without validator. |
+| `collator` | Blocks collator-only module. |
+| `alert-bot` | Telegram bot alerts |
+| `prometheus` | Prometheus format data exporter |
+
+**Example**
+```mytonctrl
+about validator
+```
+
+## benchmark
+**Purpose:** Measure local disk performance to verify the node meets TON validator requirements.
+
+**Syntax**
+```mytonctrl
+benchmark
+```
+
+**Behavior**
+- Runs a bundled benchmark script with elevated privileges. The script executes two FIO scenarios (random 4K with queue depths 64 and 1) and a RocksDB stress test.
+- The run takes up to ~200 seconds; the console blocks until completion.
+- Results are printed as a table with read/write throughput, IOPS, and RocksDB random operations. On failure the command prints the captured error log.
+
+
+## disable_mode
+**Purpose:** Deactivate one of the pluggable modes (validator, nominator-pool, single-nominator, liquid-staking, liteserver, collator, alert-bot, prometheus).
+
+**Syntax**
+```mytonctrl
+disable_mode <mode_name>
+```
+
+**Behavior**
+- Turns the selected mode off and persists the change immediately. Valid mode names: `validator`, `nominator-pool`, `single-nominator`, `liquid-staking`, `liteserver`, `collator`, `alert-bot`, `prometheus`.
+- Refuses to run when the mode name is unknown or when the mode’s own safety checks disallow disabling it (for example, modules may prevent leaving the validator network while critical processes are active).
+- After a successful change the console session exits so that dependent services can restart with the new configuration.
+
+**Example**
+```mytonctrl
+disable_mode liteserver
+```
+
+## enable_mode
+**Purpose:** Activate a mode that is currently disabled.
+
+**Syntax**
+```mytonctrl
+enable_mode <mode_name>
+```
+
+**Behavior**
+- Validates the requested mode, enforces dependency rules, and enables supplementary components when required. Valid mode names: `validator`, `nominator-pool`, `single-nominator`, `liquid-staking`, `liteserver`, `collator`, `alert-bot`, `prometheus`. Examples: enabling `validator` forces `liteserver` to be disabled first; enabling `liquid-staking` makes sure the TON HTTP API is configured; enabling `validator` automatically installs BTC Teleport unless you disabled it via settings.
+- Persists the change right away and terminates the console session once the command finishes.
+
+**Example**
+```mytonctrl
+enable_mode validator
+```
+
+## Settings commands
+**Purpose:** Manage MyTonCtrl configuration values and review their current state.
+
+### `get`
+
+**Syntax**
+```mytonctrl
+get <setting-name>
+```
+
+**Behavior**
+- Reads the requested setting from the local database and prints it as pretty-printed JSON.
+- Accepts any supported setting key (see list below); unknown keys return `null`.
+- Strings, numbers, booleans, and objects are displayed exactly as stored.
+
+**Example**
+```mytonctrl
+get sendTelemetry
+```
+
+### `set`
+
+**Syntax**
+```mytonctrl
+set <setting-name> <setting-value> [--force]
+```
+
+**Behavior**
+- Updates a stored setting. Values are parsed as JSON when possible; otherwise the raw string is saved.
+- Validates that the key exists and that its parent mode is enabled. Use `--force` to bypass these checks when preparing configuration ahead of enabling a mode or when intentionally writing custom keys.
+- Rejects deprecated aliases such as `usePool` and `useController` and points you to `enable_mode` instead.
+- Saves immediately and backs up the database on each change.
+
+**Examples**
+```mytonctrl
+set auto_backup true
+set liquid_pool_addr "0:abc123..."
+set auto_backup_path /mnt/backups --force
+```
+
+### `status_settings`
+
+**Syntax**
+```mytonctrl
+status_settings
+```
+
+**Behavior**
+- Prints a table listing every supported setting alongside its description, owning mode, default value, and the active value stored in the local database.
+- Useful for auditing overrides before upgrades or for verifying configuration after scripted changes.
+
+
+### Supported settings
+- **`stake`** (mode `validator`, default `null`) — Stake amount submitted during elections when defined.
+- **`stakePercent`** (mode `validator`, default `99`) — Percentage of the validator wallet to stake when `stake` is not provided.
+- **`isSlashing`** (mode `validator`, default `null`) — Enables automatic complaint submission against misbehaving validators.
+- **`validatorWalletName`** (mode `validator`, default `wallet_001`) — Local wallet identifier used for validator operations.
+- **`maxFactor`** (mode `validator`, default `null`) — Overrides the `maxFactor` sent to the Elector; falls back to config 17 when unset.
+- **`participateBeforeEnd`** (mode `validator`, default `null`) — Seconds before the round end when the validator should join elections.
+- **`liquid_pool_addr`** (mode `liquid-staking`, default `null`) — Address of the liquid staking pool used for controller operations.
+- **`min_loan`** (mode `liquid-staking`, default `41000`) — Minimum loan size in nanoTON for liquid staking borrowing.
+- **`max_loan`** (mode `liquid-staking`, default `43000`) — Maximum loan size in nanoTON for liquid staking borrowing.
+- **`max_interest_percent`** (mode `liquid-staking`, default `10`) — Interest ceiling (percent) applied to liquid staking loans.
+- **`duplicateSendfile`** (mode `null`, default `true`) — Duplicates external messages to public lite servers for redundancy.
+- **`sendTelemetry`** (mode `null`, default `true`) — Enables periodic telemetry submission to TON community services.
+- **`telemetryLiteUrl`** (mode `null`, default `https://telemetry.toncenter.com/report_status`) — Endpoint used when telemetry is enabled.
+- **`overlayTelemetryUrl`** (mode `null`, default `https://telemetry.toncenter.com/report_overlays`) — Endpoint for overlay network telemetry reports.
+- **`duplicateApi`** (mode `null`, default `sendTelemetry`) — Controls whether to forward external messages via Toncenter; default follows the `sendTelemetry` flag.
+- **`duplicateApiUrl`** (mode `null`, default `https://[testnet.]toncenter.com/api/v2/sendBoc`) — API endpoint used when `duplicateApi` is active.
+- **`checkAdnl`** (mode `null`, default `sendTelemetry`) — Checks local UDP port and ADNL connectivity; default follows the `sendTelemetry` flag.
+- **`liteclient_timeout`** (mode `null`, default `3`) — Default timeout, in seconds, for lite-client calls.
+- **`console_timeout`** (mode `null`, default `3`) — Default timeout, in seconds, for validator console interactions.
+- **`fift_timeout`** (mode `null`, default `3`) — Default timeout, in seconds, for Fift executions.
+- **`useDefaultCustomOverlays`** (mode `null`, default `true`) — Joins the predefined custom overlays when the node is eligible.
+- **`defaultCustomOverlaysUrl`** (mode `null`, default `https://ton-blockchain.github.io/fallback_custom_overlays.json`) — Source for the fallback custom overlay configuration.
+- **`debug`** (mode `null`, default `false`) — Enables verbose console debugging with Python tracebacks.
+- **`subscribe_tg_channel`** (mode `validator`, default `false`) — Suppresses reminders about subscribing to the TON STATUS Telegram channel.
+- **`auto_backup`** (mode `validator`, default `null`) — Enables automatic validator backups every election when set truthy.
+- **`auto_backup_path`** (mode `validator`, default `/tmp/mytoncore/auto_backups/`) — Destination folder for automatic backups.
+- **`prometheus_url`** (mode `prometheus`, default `null`) — Pushgateway URL for Prometheus metrics.
+- **`onlyNode`** (mode `null`, default `null`) — When true, restricts MyTonCtrl to telemetry collection without elections.
+- **`importGc`** (mode `null`, default `null`) — When enabled, removes imported archive block files after use; requires MyTonCtrl restart.
+- **`btcTeleportDisabled`** (mode `validator`, default `false`) — Prevents automatic BTC Teleport installation during validator setup.
+
+
+## installer
+**Purpose:** Launch the MyTonInstaller utility from inside MyTonCtrl.
+
+**Syntax**
+```mytonctrl
+installer
+installer <installer_command> [installer_args...]
+```
+
+**Behavior**
+- With no arguments, opens the interactive MyTonInstaller console so you can walk through node provisioning tasks.
+- When you pass arguments, MyTonCtrl forwards them to MyTonInstaller’s `-c` command mode. This lets you trigger individual installer actions without entering the interactive shell. Arguments are concatenated into a single command string and executed exactly as if you had typed them into MyTonInstaller.
+- Common quick commands include `installer clcf` (create a local config file), `installer status`, or `installer enable JR` (enable JSON-RPC support).
+
+**Examples**
+```mytonctrl
+installer
+installer clcf
+installer enable THA
+```
+
+## rollback
+**Purpose:** Revert MyTonCtrl to the legacy “MTC1” configuration format.
+
+**Syntax**
+```mytonctrl
+rollback
+```
+
+**Behavior**
+- Prompts for confirmation before running because the operation is destructive and intended for recovery scenarios only.
+- Restores the old `usePool`/`useController` flags in the local database, removes the new `modes` map, and runs the bundled rollback migration script.
+- On success the console exits so you can restart MyTonCtrl with the downgraded layout.
+
+
+## status
+**Purpose:** Display a full health report for the node.
+
+**Syntax**
+```mytonctrl
+status
+status fast
+```
+
+**Behavior**
+- Without arguments the command aggregates live data from the validator, lite-client, system metrics, and Git repositories. It prints:
+  - Network overview: network name, validator participation counts, shard count, outstanding offers/complaints, current election status.
+  - Local node metrics: validator index and efficiency, ADNL addresses, wallet balances, CPU/memory/swap/disk utilization, network throughput, service uptimes (mytoncore, validator, btc_teleport when applicable), virtualization detection, version information for MyTonCtrl, TON binaries, and optional BTC Teleport.
+  - Additional election metadata for validator nodes, including config parameters and the expected validation/election timeline.
+- `status fast` skips remote calls that enumerate validators and offers, which is useful on constrained connections or when you only need the local section.
+- If the node is out of sync the report focuses on local health and prints warnings instead of global network data.
+
+**Examples**
+```mytonctrl
+status
+status fast
+```
+
+## status_modes
+**Purpose:** Review the enablement state of every mode.
+
+**Syntax**
+```mytonctrl
+status_modes
+```
+
+**Behavior**
+- Prints a table with mode names, whether each is enabled, and a one-line description. Modes reported: `validator`, `nominator-pool`, `single-nominator`, `liquid-staking`, `liteserver`, `collator`, `alert-bot`, `prometheus`.
+- Covers core modes (validator, liteserver, nominator-pool, single-nominator) and optional services (alert-bot, prometheus, collator, liquid-staking) so you can review the full stack at once.
+- Handy for auditing which modules are active before enabling or disabling more features.
+
+
+## update
+**Purpose:** Update the MyTonCtrl codebase.
+
+**Syntax**
+```mytonctrl
+update
+update <branch>
+update https://github.com/<author>/<repo>/tree/<branch>
+update https://github.com/<author>/<repo>/tree/<branch> <branch>
+```
+
+**Behavior**
+- With no arguments, pulls the latest commits for the repository and branch currently checked out under `/usr/src/mytonctrl`.
+- Supplying a branch name switches the update target to that branch on the existing remote.
+- Supplying a full GitHub URL lets you update from a different fork or repository. You can add a trailing branch argument to override the branch parsed from the URL.
+- The command validates that the requested branch exists remotely before running. If you are already tracking a non-standard origin or branch, MyTonCtrl asks you to specify the remote explicitly.
+- Runs the bundled `update.sh` script with root privileges and exits the console when it completes. Success and failure are clearly reported.
+
+**Examples**
+```mytonctrl
+update
+update develop
+update https://github.com/example/mytonctrl/tree/feature-x feature-x
+```
+
+## upgrade
+**Purpose:** Update TON node binaries and supporting components.
+
+**Syntax**
+```mytonctrl
+upgrade [<branch>]
+upgrade --btc-teleport [<branch>] [-u <user>]
+```
+
+**Behavior**
+- By default upgrades the TON sources located in `/usr/src/ton` to the specified branch (or the currently checked-out branch when none is provided). The command fixes legacy file paths, updates lite-client and validator-console settings, checks your installed Clang version, and warns if it is older than 16 before continuing.
+- After the TON build completes, validator nodes automatically refresh the BTC Teleport service unless you disabled it through settings.
+- The `--btc-teleport` variant reinstalls or updates only the BTC Teleport service. You can optionally provide a branch to fetch (defaults to `master`) and `-u <user>` to control which system user owns the service.
+- All operations run through the `upgrade.sh` helper with elevated privileges. The command prints `Upgrade - OK` or `Upgrade - Error` based on the exit status.
+
+**Examples**
+```mytonctrl
+upgrade
+upgrade develop
+upgrade --btc-teleport
+upgrade --btc-teleport release-2024-05 -u teleport
+```
