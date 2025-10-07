@@ -1,0 +1,70 @@
+---
+title: "Fee management"
+---
+import { FeePlayground } from '/snippets/feePlayground.jsx';
+
+## Fee calculator
+
+<FeePlayground />
+
+The calculator above works as follows under the hood:
+
+```jsx title="Fee calculation example" expandable
+// Variable names below mirror fields of config param 25 (fees).
+// See: https://tonviewer.com/config#25
+const lump_price = 400000;
+const bit_price = 26214400;
+const cell_price = 2621440000;
+const first_frac = 21845;
+const nano = 10 ** -9;
+const bit16 = 2 ** 16;
+
+// Calculations
+let total_fwd_fees =
+  lump_price + Math.ceil((bit_price * 0 + cell_price * 0) / bit16);
+
+let gas_fees = 0.0011976; // Gas fees are out of scope here
+let storage_fees = 0.000000003; // Storage fees as well
+let total_action_fees = +((total_fwd_fees * first_frac) / bit16).toFixed(9);
+let import_fee =
+  lump_price + Math.ceil((bit_price * 528 + cell_price * 1) / bit16);
+let total_fee =
+  gas_fees +
+  storage_fees +
+  // total_action_fees * nano + <- already included in total_fwd_fees
+  import_fee * nano +
+  total_fwd_fees * nano; // <- not included in explorer's total fee
+
+// Results
+console.log("Total fee:", total_fee.toFixed(9), "Toncoin");
+console.log("Action fee:", (total_action_fees * nano).toFixed(9), "Toncoin");
+console.log("Forwarding fee:", (total_fwd_fees * nano).toFixed(9), "Toncoin");
+console.log("Import fee:", (import_fee * nano).toFixed(9), "Toncoin");
+
+```
+
+
+## Accept message effects
+
+The `accept_message` and `set_gas_limit` TVM primitives control gas limits and indicate readiness to pay fees.
+
+### External messages
+
+- Initial gas limit is a small credit (`gas_credit` = 10,000 gas units from config `20/21`).
+- During Compute, call `accept_message` to raise the gas limit to the maximum allowed (`gm`), or use `set_gas_limit(limit)` to set it to `min(limit, gm)`.
+- If `gas_credit` is exhausted or you never call `accept_message`, the external message is not included in a block and no transaction is created.
+- After processing, full computation fees are deducted from the contract balance (the credit is not free gas).
+
+If an error occurs after `accept_message`:
+
+- A transaction is recorded and fees are paid from the contract balance.
+- State changes are reverted unless you committed state explicitly.
+- Actions are not applied.
+
+Security note: accepting an invalid external message and then throwing makes the contract pay and can allow replay until funds are depleted. Validate before accepting.
+
+### Internal messages
+
+- Default gas limit equals `message_value / gas_price`; the incoming value covers its processing.
+- You may still adjust limits with `accept_message`/`set_gas_limit`.
+- Bounce semantics are unaffected: a bounceable message will bounce if there is enough value to pay processing and bounce creation.

@@ -1,0 +1,105 @@
+---
+title: "Transaction fees"
+---
+
+# Transaction fees
+
+Fees on TON are calculated using this formula:
+
+```cpp title="FORMULAS"
+transaction_fee = storage_fees
+                + in_fwd_fees // also called import fee
+                + computation_fees
+                + action_fees
+                + out_fwd_fees
+```
+
+All fees are denominated in nanotons (often scaled by `2^16` for precision) and come from network configuration:
+
+- `storage_fees`: param [18](https://tonviewer.com/config#18)
+- `in_fwd_fees`: params [24](https://tonviewer.com/config#24) and [25](https://tonviewer.com/config#25)
+- `computation_fees`: params [20](https://tonviewer.com/config#20) and [21](https://tonviewer.com/config#21)
+- `action_fees`: params [24](https://tonviewer.com/config#24) and [25](https://tonviewer.com/config#25)
+- `out_fwd_fees`: params [24](https://tonviewer.com/config#24) and [25](https://tonviewer.com/config#25)
+
+
+- `storage_fees` is the amount you pay for storing a smart contract on the blockchain. In fact, you pay for every second the smart contract is stored on the blockchain.
+  - _Example_: your TON wallet is also a smart contract, and it pays a storage fee every time you receive or send a transaction.
+- `in_fwd_fees` is a charge for importing messages only from outside the blockchain, for example, `external` messages. Every time you make a transaction, it must be delivered to the validators who will process it. For ordinary messages from contract to contract, this fee does not apply. Read [the TON Blockchain paper](/resources/pdfs/tblkch.pdf) to learn more about inbound messages.
+  - _Example_: each transaction you make with your wallet app (like Tonkeeper) must first be distributed among validators.
+- `computation_fees` is the amount you pay for executing code in the virtual machine. Computation fees depend on executed operations (gas used), not code size.
+  - _Example_: each time you send a transaction with your wallet (which is a smart contract), you execute the code of your wallet contract and pay for it.
+- `action_fees` is a charge for sending outgoing messages made by a smart contract, updating the smart contract code, updating libraries, etc.
+- `out_fwd_fees` is a charge for forwarding outgoing internal messages within TON between shardchains; it depends on message size.
+
+## Storage fee
+
+Storage fee for smart contracts is calculated using the following formula, values are defined in network config param [`18`](https://tonviewer.com/config#18):
+
+```cpp title="FORMULAS"
+storage_fee = ceil(
+                   (account.bits * bit_price
+                   + account.cells * cell_price)
+                * time_delta / 2^16)
+```
+
+<Aside
+  type="note"
+  title="Deduplication"
+>
+  The system counts only unique hash cells for storage and forward fees. For example, it counts three identical hash cells as one. This mechanism deduplicates data by storing the content of multiple equivalent sub-cells only once, even if they are referenced across different branches. [Read more about deduplication](/tvm/serialization/library).
+</Aside>
+
+## Gas fee
+
+All computation is measured in gas units; each TVM operation has a fixed gas cost. The gas price is defined by network configuration and is not set by users (there is no fee market).
+
+- Basechain: 1 gas = `26214400 / 2^16` nanotons = 0.0000004 TON
+- Masterchain: 1 gas = `655360000 / 2^16` nanotons = 0.00001 TON
+
+See config parameters [`20`](https://tonviewer.com/config#20) and [`21`](https://tonviewer.com/config#21) for current gas prices. The values can change through validator governance.
+
+
+## Action fee
+
+The action fee is charged when processing the action list (after Compute). Practically, you pay it for `SENDRAWMSG`; other actions such as `RAWRESERVE` or `SETCODE` do not incur action fees.
+
+```cpp title="FORMULAS"
+action_fee = floor((msg_fwd_fees * first_frac)/ 2^16);  // internal
+
+action_fee = msg_fwd_fees;  // external
+```
+
+`first_frac` is defined in config params [`24`](https://tonviewer.com/config#24) and [`25`](https://tonviewer.com/config#25) and is approximately one third of `msg_fwd_fees`.
+
+Action fine (failed send): starting from Global Version 4, if a "send message" action fails, the account pays a fine proportional to the attempted message size:
+
+```cpp title="FORMULAS"
+fine_per_cell = floor((cell_price >> 16) / 4)
+max_cells = floor(remaining_balance / fine_per_cell)
+action_fine = fine_per_cell * min(max_cells, cells_in_msg);
+```
+
+## Forward fee
+
+Forwarding fees for a message of size `msg.bits` and `msg.cells` are computed using config params [`24`](https://tonviewer.com/config#24) and [`25`](https://tonviewer.com/config#25):
+
+```cpp title="FORMULAS"
+// bits in the root cell of a message are not included in msg.bits (lump_price pays for them)
+msg_fwd_fees = (lump_price
+             + ceil(
+                (bit_price * msg.bits + cell_price * msg.cells) / 2^16)
+             );
+
+```
+
+<Aside
+  type="info"
+  title="Action fee relation"
+>
+  `msg_fwd_fees` already includes the action fee for the corresponding `SENDRAWMSG`. For a basic internal message with `lump_price = 400000` and `first_frac = 21845`, `action_fee ≈ 133331` nanotons and `fwd_fee ≈ 266669` nanotons.
+</Aside>
+
+### Import fee
+
+Import fee is the same as forward fee for inbound external messages.
