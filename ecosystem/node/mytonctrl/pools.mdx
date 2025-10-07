@@ -1,0 +1,211 @@
+## MyTonCtrl pool commands
+
+Pool-focused commands help you manage validator-run nominator pools and Orbs single-nominator pools. The console exposes utilities that create local pool descriptors, deploy the contracts on-chain, and move stake in or out. The sections below group commands by workflow and outline the required arguments, expected formats, and common usage patterns.
+
+## Shared pool utilities
+
+### `pools_list`
+**Purpose:** Display every pool tracked locally along with its status on-chain.
+
+**Syntax**
+```mytonctrl
+pools_list
+```
+
+**Behavior**
+- Queries the MyTonCtrl database for all pool descriptors stored under `/var/ton-work/pools`.
+- Resolves each pool’s smart-contract account status and balance; if an account is inactive it falls back to the deployment (init) address.
+- Prints a table with columns `Name`, `Status`, `Balance`, `Version`, and `Address` so you can quickly audit which pools are deployed and funded.
+
+
+### `import_pool`
+**Purpose:** Register an existing pool by saving its address inside the local pools directory.
+
+**Syntax**
+```mytonctrl
+import_pool <pool-name> <pool-addr>
+```
+
+**Behavior**
+- Accepts a local alias (`<pool-name>`) and the pool’s base64 (bounceable) smart-contract address.
+- Creates `<pool-name>.addr` in the pools directory so other commands (activation, deposits, withdrawals) can reference it.
+- Downloads the pool contract scripts on demand if they are not present yet.
+
+**Example**
+```mytonctrl
+import_pool my-pool EQC02...fa8
+```
+
+### `delete_pool`
+**Purpose:** Remove the local metadata for a pool you no longer manage.
+
+**Syntax**
+```mytonctrl
+delete_pool <pool-name>
+```
+
+**Behavior**
+- Deletes the BOC/address files created for `<pool-name>` from the pools directory; on-chain contracts remain untouched.
+- Useful when you migrate a pool to another host or retire a test deployment.
+
+**Example**
+```mytonctrl
+delete_pool my-pool
+```
+
+## Nominator pool operations (`nominator-pool` mode)
+
+### `new_pool`
+**Purpose:** Generate deployment artifacts for a standard nominator pool before broadcasting it.
+
+**Syntax**
+```mytonctrl
+new_pool <pool-name> <validator-reward-share-percent> <max-nominators-count> <min-validator-stake-ton> <min-nominator-stake-ton>
+```
+
+**Behavior**
+- Creates `<pool-name>.addr` and `<pool-name>-query.boc` using the official nominator pool Fift scripts.
+- `<validator-reward-share-percent>` is the operator commission (e.g., `10.5` for 10.5%).
+- `<max-nominators-count>` is the maximum number of nominators the pool will accept.
+- `<min-validator-stake-ton>` and `<min-nominator-stake-ton>` define the minimum validator self-stake and delegator stake in TON (whole-ton values are expected; convert to nanoTON before use if you need fractional amounts).
+- Validates that no other local pool shares the same derived address.
+- Does not submit anything to the blockchain; run `activate_pool` afterwards.
+
+**Example**
+```mytonctrl
+new_pool mypool 12.5 100 300000 1000
+```
+
+### `activate_pool`
+**Purpose:** Deploy the nominator pool contract created via `new_pool` or `import_pool`.
+
+**Syntax**
+```mytonctrl
+activate_pool <pool-name>
+```
+
+**Behavior**
+- Loads `<pool-name>-query.boc` and ensures the validator wallet is active.
+- If the pool account is still empty, signs and broadcasts the deployment message; if it is already active, logs a warning and exits without changes.
+- Leaves the deployment BOC in place so you can retry if the transaction fails.
+
+**Example**
+```mytonctrl
+activate_pool mypool
+```
+
+### `update_validator_set`
+**Purpose:** Refresh the validator address list stored in the pool contract after elections or operator changes.
+
+**Syntax**
+```mytonctrl
+update_validator_set <pool-addr>
+```
+
+**Behavior**
+- Uses the validator wallet to call the pool’s `update_validator_set` method.
+- `<pool-addr>` must be the pool’s bounceable address as reported by `pools_list` or `status`.
+- Typically run after activating the pool or when the validator ADNL set changes.
+
+**Example**
+```mytonctrl
+update_validator_set EQB1e...6g
+```
+
+### `deposit_to_pool`
+**Purpose:** Stake Toncoin from the validator wallet into the pool contract.
+
+**Syntax**
+```mytonctrl
+deposit_to_pool <pool-addr> <amount-ton>
+```
+
+**Behavior**
+- Builds a validator deposit query, signs it with the validator wallet, and sends it to `<pool-addr>`.
+- `<amount-ton>` is a TON-denominated float or integer. Internally the command converts it to the correct nanoTON amount.
+- Useful for seeding the validator share or topping up the pool’s liquidity.
+
+**Example**
+```mytonctrl
+deposit_to_pool EQB1e...6g 1000
+```
+
+### `withdraw_from_pool`
+**Purpose:** Withdraw Toncoin from a nominator pool back to the validator wallet.
+
+**Syntax**
+```mytonctrl
+withdraw_from_pool <pool-addr> <amount-ton>
+```
+
+**Behavior**
+- Checks the pool state; if withdrawals are currently unlocked it performs an immediate withdrawal, otherwise it submits a pending withdrawal request that will execute once the pool cycle allows it.
+- `<amount-ton>` is specified in TON.
+- Requires that the validator wallet has authority to trigger the withdrawal.
+
+**Example**
+```mytonctrl
+withdraw_from_pool EQB1e...6g 250
+```
+
+## Single nominator pool operations (`single-nominator` mode)
+
+### `new_single_pool`
+**Purpose:** Prepare deployment assets for an Orbs single-nominator pool.
+
+**Syntax**
+```mytonctrl
+new_single_pool <pool-name> <owner-address>
+```
+
+**Behavior**
+- Generates `<pool-name>.addr` and `<pool-name>-query.boc` using the bundled Orbs single-nominator contract templates.
+- `<owner-address>` is the delegator’s smart-contract or wallet address (bounceable base64 or workchain:hex format supported by TON tools).
+- The validator wallet address is embedded automatically as the operator.
+- Ensures no other local pool produces the same address.
+
+**Example**
+```mytonctrl
+new_single_pool vip-client EQCrn...u3
+```
+
+### `activate_single_pool`
+**Purpose:** Broadcast the state-init produced by `new_single_pool` to deploy the contract.
+
+**Syntax**
+```mytonctrl
+activate_single_pool <pool-name>
+```
+
+**Behavior**
+- Checks that `<pool-name>-query.boc` still exists (indicating the pool is not already active).
+- Signs the deploy message with the validator wallet and posts it to the network.
+- Warns and exits without changes if the BOC is missing because the pool was already activated.
+
+**Example**
+```mytonctrl
+activate_single_pool vip-client
+```
+
+### `withdraw_from_single_pool`
+**Purpose:** Withdraw Toncoin from a single-nominator pool back to the validator wallet or owner as configured.
+
+**Syntax**
+```mytonctrl
+withdraw_from_single_pool <pool-addr> <amount-ton>
+```
+
+**Behavior**
+- Issues an immediate withdrawal request against `<pool-addr>` for `<amount-ton>` TON.
+- Uses `WithdrawFromPoolProcess`, which executes in the current cycle without creating a pending queue.
+- Primarily used to return delegated funds or distribute rewards.
+
+**Example**
+```mytonctrl
+withdraw_from_single_pool EQCsd...9k 50
+```
+
+## Activation and funding prerequisites
+- Enable the appropriate mode (`enable_mode nominator-pool` or `enable_mode single-nominator`) before using these commands; each mode mounts its own command set.
+- Ensure your validator wallet is active and funded because deployment, deposits, and withdrawals all originate from it.
+- For new pools, review the generated `.addr` and `-query.boc` files and keep secure backups—deletion removes these local artifacts.
