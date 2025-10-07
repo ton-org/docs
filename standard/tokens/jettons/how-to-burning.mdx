@@ -1,7 +1,69 @@
 ---
-title: "How to burn"
+title: "How to burning"
+sidebarTitle: "Burning Jettons"
 ---
 
-import { Stub } from '/snippets/stub.jsx';
+Jettons burning is primarily intended to get rid of unnecessary jettons (those with low liquidity or a zero price) and
+to influence the market (burning a large number of jettons could increase its liquidity).
 
-<Stub issue="216" />
+It is possible to do it manually via your favorite IDE:
+
+```typescript
+import { Address, beginCell, internal, toNano } from "@ton/core";
+import { TonClient, WalletContractV4 } from "@ton/ton";
+import { mnemonicToPrivateKey } from "@ton/crypto";
+
+async function main() {
+
+    // forming a burning message
+    const jettonWalletAddress = Address
+                                .parse('put your Jetton wallet address');
+    const destinationAddress = Address
+                                .parse('put your regular wallet address');
+
+    const messageBody = beginCell()
+        .storeUint(0x595f07bc, 32) // opcode for jetton burning
+        .storeUint(0, 64) // query id
+        .storeCoins(toNano(5)) // jetton amount, amount * 10^9
+        .storeAddress(destinationAddress) // response destination
+        .storeBit(0) // no custom payload
+        .endCell();
+
+    const burningMessage = internal({
+        to: jettonWalletAddress,
+        value: toNano('0.1'),
+        bounce: true,
+        body: messageBody
+    });
+
+    // connect to your regular wallet
+    const client = new TonClient({
+    endpoint: 'https://toncenter.com/api/v2/jsonRPC',
+    });
+    const provider = client.provider(destinationAddress);
+
+    const your_mnemonic = 'put your mnemonic here, ...';
+    const keyPair = await mnemonicToPrivateKey(your_mnemonic.split(" "));
+    const walletContract = WalletContractV4.create({
+        workchain: 0,
+        publicKey: keyPair.publicKey,
+    });
+
+    // send the burning message through a user wallet
+    const seqno = await walletContract.getSeqno(provider);
+    await walletContract.sendTransfer(provider, {
+        seqno: seqno,
+        secretKey: keyPair.secretKey,
+        messages: [
+            burningMessage,
+        ],
+        });
+
+}
+
+void main();
+```
+
+Or via web services as [TON MINTER](https://minter.ton.org/). Connect your wallet via Ton connect.
+Insert the Jetton master contract address in the `Jetton address` field. Next, click the `Burn` button in the balance field of your wallet
+and enter the amount to burn.
