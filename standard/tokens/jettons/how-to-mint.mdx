@@ -1,0 +1,124 @@
+---
+title: "How to mint new jettons"
+sidebarTitle: "Minting jettons"
+---
+
+In order to mint new jettons, that particular Jetton must be mintable. Otherwise it's impossible.
+Next, only mintable Jettons are considered.
+
+Minting is not a specified operation in any of the existing TEPs.
+Its implementation is left to developer's choice.
+The following `typescript` code example is based on minting implementaion in
+[Notcoin jetton minter contract](https://github.com/OpenBuilders/notcoin-contract/blob/main/contracts/jetton-minter.fc).
+This example contains a manual assembly of all the necessary messages and is useful for studying their possible structure.
+
+```typescript
+import { Address, beginCell, internal, toNano } from "@ton/core";
+import { TonClient, WalletContractV4 } from "@ton/ton";
+import { mnemonicToPrivateKey } from "@ton/crypto";
+
+async function main() {
+    const jettonMasterAddress = Address
+                                .parse('put Jetton master address');
+    const receiverAddress = Address
+                                .parse("put receiver's address")
+    const destinationAddress = Address
+                                .parse('put your regualer wallet address');
+
+    // let's add some forward_payload
+    const forwardPayload = beginCell()
+        .storeUint(0, 32) // 0 opcode means we have a comment
+        .storeStringTail('Mint')
+        .endCell();
+
+    // Forming the master message
+    // internal transfer is also unspecified by standard, but there is suggested format in TEP 0074
+    const masterMessage = beginCell()
+        .storeUint(0x178d4519, 32) // opcode for jetton transfer-internal
+        .storeUint(0, 64) // query id
+        .storeCoins(toNano(5)) // jetton amount, amount * 10^9. That is an amount we want to mint
+        .storeAddress(jettonMasterAddress) // from_address. For minting could be any. Jetton wallet will check from context that sender is the Jetton master contract and accept the transfer.
+        .storeAddress(destinationAddress) // response destination
+        .storeCoins(toNano('0.02')) // forward_ton_amount - if >0, will send notification message
+        .storeBit(1) // either forward_payload
+        .storeRef(forwardPayload) // we have forward_payload, store it as a reference
+        .endCell();
+
+    // forming the mint message
+    const mintMessageBody = beginCell()
+        .storeUint(0x642b7d07, 32) // opcode for mint
+        .storeUint(0, 64) // query id
+        .storeAddress(receiverAddress) // the user's regular wallet address
+        .storeCoins(toNano(0.1)) // toncoins intended to user's Jetton wallet
+        .storeRef(masterMessage) // internal transfer message
+        .endCell();
+
+    const mintMessage = internal({
+        to: jettonMasterAddress,
+        value: toNano('0.1'),
+        bounce: true,
+        body: mintMessageBody
+    });
+
+    // connect to your regular wallet
+    const client = new TonClient({
+    endpoint: 'https://toncenter.com/api/v2/jsonRPC',
+    });
+    const provider = client.provider(destinationAddress);
+
+    const your_mnemonic = 'put your mnemonic here, ...';
+    const keyPair = await mnemonicToPrivateKey(your_mnemonic.split(" "));
+    const walletContract = WalletContractV4.create({
+        workchain: 0,
+        publicKey: keyPair.publicKey,
+    });
+
+    // send the mint message through your wallet
+    const seqno = await walletContract.getSeqno(provider);
+    await walletContract.sendTransfer(provider, {
+        seqno: seqno,
+        secretKey: keyPair.secretKey,
+        messages: [
+            mintMessage,
+        ],
+        });
+}
+```
+
+However, there is an [SDK](https://github.com/ton-community/assets-sdk) that allows you to avoid manually creating all the necessary messages.
+An example of how it can be used to send the mint message is provided below:
+
+```typescript
+import { Address } from '@ton/core';
+
+import { AssetsSDK, PinataStorageParams, createApi, createSender, importKey } from "@ton-community/assets-sdk";
+
+async function main() {
+    const NETWORK = 'mainnet';
+    const api = await createApi(NETWORK);
+
+    const keyPair = await importKey(process.env.MNEMONIC!);
+    const sender = await createSender('highload-v2', keyPair, api);
+
+    const storage: PinataStorageParams = {
+        pinataApiKey: process.env.PINATA_API_KEY!,
+        pinataSecretKey: process.env.PINATA_SECRET!,
+    };
+
+    const sdk = AssetsSDK.create({
+        api: api,
+        storage: storage,
+        sender: sender,
+    });
+
+    const JETTON_ADDRESS = Address.parse('MY_JETTON_ADDRESS');
+    const jetton = sdk.openJetton(JETTON_ADDRESS);
+
+    const RECEIVER_ADDRESS = Address.parse('RECEIVER_ADDRESS');
+    await jetton.sendMint(sender, RECEIVER_ADDRESS, 1200000n);
+}
+
+void main();
+```
+
+Finally, you can use web services as [TON MINTER](https://minter.ton.org/) and avoid writing code, just follow the guides.
