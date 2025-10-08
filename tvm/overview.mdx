@@ -1,7 +1,163 @@
 ---
 title: "Overview"
+description: "TON Virtual Machine (TVM) is a stack-based virtual machine which executes smart contracts on TON blockchain"
 ---
 
-import { Stub } from '/snippets/stub.jsx';
+## Key properties
 
-<Stub issue="108" />
+* **No linear, addressable RAM** and no raw pointers. Data lives in a tree of **Cells** with read/write cursors (**Slice/Builder**).
+* **Every instruction consumes gas**, paid by the smart contract when executed on‑chain. Gas exhaustion raises an exception and aborts effects.
+* **Code and data are stored in Cells.** Code is executed from bitcode inside continuations; structured data is serialized and stored as cells.
+* **Deterministic execution:** same inputs and prior state ⇒ same outputs on any validator.
+
+---
+
+## When TVM runs
+
+TVM is invoked in three common scenarios:
+
+1. **On‑chain message handling by an account (contract):**
+   * **External** message (from outside the blockchain),
+   * **Internal** message (from another on‑chain account).
+     In both cases, execution happens **on‑chain**, **gas is paid**, and effects may **modify persistent state** and **enqueue outbound actions/messages**.
+
+2. **Off‑chain get‑methods:**
+   * Run outside the blockchain (locally by a node/client). **Gas is free**, but the state is **read‑only**: you **cannot** write persistent state and **cannot** produce real outbound messages. Get-methods used as an API to access contract storage.
+
+---
+
+## TVM data types
+
+Values you’ll see on the stack and inside registers:
+
+* **Integer** — signed up to **257 bits** (with a special NaN for arithmetic faults).
+* **Cell** — piece of data: up to **1023 bits** + up to **4 references** to other Cells.
+* **Slice** — read cursor over a Cell.
+* **Builder** — write cursor to construct a new Cell.
+* **Tuple** — list of up to 255 elements of arbitrary types.
+* **Continuation** — executable Slice consisting of instructions bitcode; callable like a function.
+* **Null** — empty value.
+
+> The most important types: **Slice** (to read incoming messages and storage), **Builder** (to write outcoming messages and to update storage), **Cell** (store/transport).
+
+---
+
+## TVM state
+
+### Data Stack
+
+LIFO stack; the vast majority of instructions pop operands from the top and push results back.
+
+### Control registers (c0…c7)
+
+A small fixed set of special registers. Most relevant:
+
+* **c0, c1** — Return continuations.  Similar to return address in traditional architectures.
+* **c2** — Exception handler. A continuation invoked when exception occurred.
+* **c3** - Function selector. A continuation invoked to find the next function to execute during CALL.
+* **c4** — Persistent storage. Contract data which is persistent across TVM invocations.
+* **c5** — Outbound actions accumulator. List of actions to perform in action phase after TVM execution: send message, reserve funds, update code, install libraries.
+* **c7** — Call/context tuple. System information: block time, contract address, balance, blockchain configuration.
+
+> Only **c4** (new state) and **c5** (final actions) represent durable effects of a successful on‑chain run. Everything else is transient.
+
+### Current continuation (cc)
+
+Special register which stores a list of the next instructions to execute. Similar to instruction pointer in traditional architectures.
+
+### Gas counter
+
+Tracks remaining computation budget. Each instruction decrements gas; on zero/negative, an exception is raised and the run aborts.
+
+---
+
+## Example of a smart contract: counter
+
+Here is a simple contract, written in Fift-ASM (TVM assembler). It accepts an internal message with a 32-bit number, checks that it equal to 32-bit number stored in c4, increments it and saves back to c4.
+
+TVM stack initialized with values describing the event occurred (e.g. receiving a message) and current balance of the contract:
+1. **s0** (top of stack) - function selector. It is the id of a function to call. Transaction executor passes 0 when we received internal message, -1 in case of external message, and -2 in case of tick-tock event. Ids greater than 0x10000 are for get methods.
+2. **s1** - message body. This is an arbitrary payload of a message, which can be used for text comments (when sending TONs from one wallet to another) or for smart contract commands (that is our case).
+3. **s2** - message cell. Cell containing message metadata (sender, receiver, amount) as well as message body.
+4. **s3** - message value. Amount of TONs we received. Both message body and value are provided for convenience, so we do not need to parse message cell every time.
+5. **s5** - contract balance.
+
+In this contract, we will use only two top values (message body and function selector), other three we will not take into account. In comments, we will represent stack values from the bottom to the top (e.g. `s2 s1 s0`, where s0 is the top of stack) to understand current stack layout.
+
+```fift
+<{
+    // initial stack: msg_body selector
+
+    // use codepage 0 (just peek the single instruction set available now)
+    // this instruction does not affect stack
+    SETCP0
+
+    // consume `selector` from the top of stack
+    // stop execution if `selector != 0`
+    IFRET
+    // => continue execution if we received an internal message
+
+    // current stack: msg_body
+
+    // load (LD) unsigned (U) 32-bit integer from a slice
+    // this instruction consumes a slice from stack, pushes an integer and then pushes a new slice
+    32 LDU
+    // current stack: msg_counter msg_body'
+    // msg_body' is a slice which read cursor was moved by 32 bits when we loaded 32-bit integer
+    // for example: if we had slice x{00000001} on stack and then invoked 32 LDU, there will be integer `1` and `x{}` (empty slice) on the stack
+
+    // assert the END of a slice (S)
+    // this instructions consumes a slice and checks that it is empty (no more data to read)
+    // otherwise it throws an exception, because there was more data than we expected
+    ENDS
+    // current stack: msg_counter
+
+    // push c4 (persistent storage) on the stack, `storage` is a cell
+    c4 PUSH
+    // current stack: msg_counter storage
+
+    // convert cell to a slice (make it readable)
+    CTOS
+    // current stack: msg_counter storage_slice
+
+    // read 32-bit unsigned integer from the storage
+    32 LDU
+    // current stack: msg_counter storage_counter storage_slice'
+
+    // assert there is no more data in the storage
+    ENDS
+    // current stack: msg_counter storage_counter
+
+    // duplicate s0 (top of stack) under two top values
+    TUCK
+    // current stack: storage_counter msg_counter storage_counter
+
+    // check counters are equal
+    EQUAL
+    // current stack: storage_counter msg_counter==storage_counter?
+
+    // throw an exception with code 33 if it is not equal
+    33 THROWIFNOT
+    // current stack: storage_counter
+
+    // increase counter
+    INC
+    // current stack: storage_counter+1
+
+    // create an empty builder
+    NEWC
+    // current stack: storage_counter+1 builder
+
+    // store (ST) unsigned (U) 32-bit integer `storage_counter+1` to a builder
+    32 STU
+    // current stack: builder'
+
+    // finalize builder to a cell
+    ENDC
+    // current stack: new_storage
+
+    // save `new_storage` to c4 (persistent storage)
+    c4 POP
+    // current stack: (no values)
+}>
+```
