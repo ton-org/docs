@@ -10,24 +10,39 @@ import { FeePlayground } from '/snippets/feePlayground.jsx';
 
 ### Example with @ton/core
 
-```ts title="TypeScript example"
+```ts title="TypeScript example" expandable
 // Prices
 const msgPrices = getMsgPrices(configCell, 0);
 const gasPrices = getGasPrices(configCell, 0);
 
 // Forwarding for an example message (1 cell, 528 bits)
-const { total: msgFwdFees, res: actionFee, remaining: outFwdFees } =
-  computeFwdFeesVerbose(msgPrices, 1n, 528n);
+const SCALE_16 = 65536n; // 2^16
+const msgFwdFees =
+  msgPrices.lumpPrice +
+  shr16ceil(msgPrices.bitPrice * 528n + msgPrices.cellPrice * 1n);
+const actionFee = (msgFwdFees * msgPrices.firstFrac) >> 16n;
+const outFwdFees = msgFwdFees - actionFee;
 
 // Gas (example usage)
 const gasUsed = 299_400n;
-const gasFee = computeGasFee(gasPrices, gasUsed);
+const gasFee =
+  gasUsed <= gasPrices.flat_gas_limit
+    ? gasPrices.flat_gas_price
+    : gasPrices.flat_gas_price +
+      (gasPrices.gas_price * (gasUsed - gasPrices.flat_gas_limit)) /
+        SCALE_16;
 
 // Storage for one day of an example state
 const stateStats = new StorageStats(1323n, 3n);
 const storage = getStoragePrices(configCell);
-const storageFee = calcStorageFee(storage, stateStats, 86_400n);
+const storageFee = shr16ceil(
+  (stateStats.bits * storage.bit_price_ps +
+    stateStats.cells * storage.cell_price_ps) *
+    86_400n
+);
 ```
+
+Full helper implementations: see [Fees → Helper functions appendix](/ton/fees#helper-functions).
 
 <Aside
   type="note"
@@ -35,8 +50,6 @@ const storageFee = calcStorageFee(storage, stateStats, 86_400n);
 >
   Avoid modifying prices with `setGasPrice`, `setMsgPrices`, or `setStoragePrices` — these are controlled by validator governance via config updates. Use read-only getters and fee calculators in app code.
 </Aside>
-
-Full helper implementations: see [Fees → Helper functions appendix](/ton/fees#helper-functions).
 
 ## Accept message effects
 
@@ -59,6 +72,7 @@ Security note: accepting an invalid external message and then throwing makes the
 
 ### Internal messages
 
-- Default gas limit equals `message_value / gas_price`; the incoming value covers its processing.
+- Default gas limit equals `message_value / gas_price`;\
+  the incoming value covers its processing.
 - You may still adjust limits with `accept_message`/`set_gas_limit`.
 - Bounce semantics are unaffected: a bounceable message will bounce if there is enough value to pay processing and bounce creation.

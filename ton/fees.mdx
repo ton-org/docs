@@ -61,7 +61,10 @@ const accountRoot: Cell = /* load from blockchain */;
 const stats = collectCellStats(accountRoot, []);
 
 // Charge for one hour
-const fee = calcStorageFee(storage, stats, 3600n);
+const fee = shr16ceil(
+  (stats.bits * storage.bit_price_ps + stats.cells * storage.cell_price_ps) *
+    3600n
+);
 ```
 
 > See [Helper functions appendix](/ton/fees#helper-functions) for full implementations.
@@ -75,54 +78,30 @@ const fee = calcStorageFee(storage, stats, 3600n);
 
 ## Gas fee
 
-All computation is measured in gas units; each TVM operation has a fixed gas cost. The gas price is defined by network configuration and is not set by users (there is no fee market).
+All computation is measured in gas units; each TVM operation has a fixed gas cost.\
+The gas price is defined by network configuration and **can not be set by users**.
 
 - Basechain: 1 gas = `26214400 / 2^16` nanotons = 0.0000004 TON
 - Masterchain: 1 gas = `655360000 / 2^16` nanotons = 0.00001 TON
 
-See config parameters [`20`](https://tonviewer.com/config#20) and [`21`](https://tonviewer.com/config#21) for current gas prices. The values can change through validator governance.
+See config parameters [`20`](https://tonviewer.com/config#20) and [`21`](https://tonviewer.com/config#21) for current gas prices.\
+The values can change through validator governance.
 
 ```ts title="TypeScript example"
-const gas = 50_000n;
+const gasUsed = 50_000n;
 const prices = getGasPrices(configCell, 0); // 0 = basechain
-const gasFee = computeGasFee(prices, gas);
+const gasFee = 
+  gasUsed <= prices.flat_gas_limit
+    ? prices.flat_gas_price
+    : prices.flat_gas_price + 
+      (prices.gas_price * (gasUsed - prices.flat_gas_limit)) / 65536n;
 ```
 
 > See [Helper functions appendix](/ton/fees#helper-functions) for full implementations.
-
-## Action fee
-
-The action fee is charged when processing the action list (after Compute). Practically, you pay it for `SENDRAWMSG`; other actions such as `RAWRESERVE` or `SETCODE` do not incur action fees.
-
-```cpp title="FORMULAS"
-action_fee = floor((msg_fwd_fees * first_frac)/ 2^16);  // internal
-
-action_fee = msg_fwd_fees;  // external
-```
-
-`first_frac` is defined in config params [`24`](https://tonviewer.com/config#24) and [`25`](https://tonviewer.com/config#25) and is approximately one third of `msg_fwd_fees`.
-
-```ts title="TypeScript example"
-const msgPrices = getMsgPrices(configCell, 0);
-const defaultActionShare =
-  (computeFwdFees(msgPrices, 0n, 0n) * msgPrices.firstFrac) >> 16n;
-// Or directly the default forward fee component for a basic internal message
-const defaultFwd = computeDefaultForwardFee(msgPrices);
-```
-
-> See [Helper functions appendix](/ton/fees#helper-functions) for full implementations.
-
-Action fine (failed send): starting from Global Version 4, if a "send message" action fails, the account pays a fine proportional to the attempted message size:
-
-```cpp title="FORMULAS"
-fine_per_cell = floor((cell_price >> 16) / 4)
-max_cells = floor(remaining_balance / fine_per_cell)
-action_fine = fine_per_cell * min(max_cells, cells_in_msg);
-```
 
 ## Forward fee
 
-Forwarding fees for a message of size `msg.bits` and `msg.cells` are computed using config params [`24`](https://tonviewer.com/config#24) and [`25`](https://tonviewer.com/config#25):
+Forward fee for message size (`msg.bits`, `msg.cells`) per params [`24`](https://tonviewer.com/config#24)/[`25`](https://tonviewer.com/config#25):
 
 ```cpp title="FORMULAS"
 // bits in the root cell of a message are not included in msg.bits (lump_price pays for them)
@@ -135,18 +114,20 @@ msg_fwd_fees = (lump_price
 
 ```ts title="TypeScript example" 
 const msgPrices = getMsgPrices(configCell, 0);
-const { total, res: actionFee, remaining: forwardFee } =
-  computeFwdFeesVerbose(msgPrices, BigInt(cells), BigInt(bits));
+const total =
+  msgPrices.lumpPrice +
+  shr16ceil(
+    msgPrices.bitPrice * BigInt(bits) +
+      msgPrices.cellPrice * BigInt(cells)
+  );
+const actionFee = (total * msgPrices.firstFrac) >> 16n;
+const forwardFee = total - actionFee;
 
 // From a Cell or Message:
 const fwdFromCell = computeCellForwardFees(msgPrices, messageRootCell);
 // For a full internal Message object (validates default lump case, handles init):
 const details = computeMessageForwardFees(msgPrices, internalMessage);
 ```
-
-> `res` approximates the internal action fee;\
-> `remaining` approximates the outgoing forward fee;\
-> `total` equals `msg_fwd_fees`.
 
 <Aside
   type="info"
@@ -162,6 +143,27 @@ Import fee is the same as forward fee for inbound external messages.
 <a
   id="helper-functions"
 />
+
+## Action fee
+
+Action fee is charged in the Action phase and is the sender’s share of the forward fee.\
+You pay it for `SENDRAWMSG`; actions like `RAWRESERVE`, `SETCODE` do not incur the fees.
+
+```cpp title="FORMULAS"
+action_fee = floor((msg_fwd_fees * first_frac)/ 2^16);  // internal
+
+action_fee = msg_fwd_fees;  // external
+```
+
+`first_frac` (params [`24`](https://tonviewer.com/config#24)/[`25`](https://tonviewer.com/config#25)) divided by `2^16` ≈ 1/3 of `msg_fwd_fees`.
+
+Action fine (failed send): Starting with Global Version 4, a failed "send message" action incurs a penalty proportional to the attempted message size. It is calculated as:
+
+```cpp title="FORMULAS"
+fine_per_cell = floor((cell_price >> 16) / 4)
+max_cells = floor(remaining_balance / fine_per_cell)
+action_fine = fine_per_cell * min(max_cells, cells_in_msg);
+```
 
 ## Helper functions (full code)
 

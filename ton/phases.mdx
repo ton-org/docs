@@ -57,40 +57,12 @@ The `AccStatusChange` field indicates whether the account's status changed durin
 - If the debt exceeds **0.1 TON**, the account becomes [frozen](https://github.com/ton-blockchain/ton/blob/72056a2261cbb11f7cf0f20b389bcbffe018b1a8/crypto/block/transaction.cpp#L949C11-L953C12).
 - If the debt exceeds **1 TON**, the account is [deleted](https://github.com/ton-blockchain/ton/blob/72056a2261cbb11f7cf0f20b389bcbffe018b1a8/crypto/block/transaction.cpp#L936C11-L946C12).
 
-```ts title="TypeScript example"
-import { Transaction } from '@ton/core';
-
-function storageGeneric<T extends Transaction>(tx: T) {
-  if (tx.description.type !== 'generic') throw new Error('Expected generic');
-  const s = tx.description.storagePhase;
-  if (!s) throw new Error('Storage phase expected');
-  return s;
-}
-
-const s = storageGeneric(tx);
-console.log(s.storageFeesCollected); // equals the storage fee charged
-```
-
 ## Credit phase
 
 Cannot be skipped.
 
 This phase is relatively small and straightforward.
 If you look at the blockchain source code, you’ll see that the main logic of this phase is to **credit the contract’s balance** with the remaining value from the incoming message.
-
-```cpp
-  credit_phase->credit = msg_balance_remaining;
-  if (!msg_balance_remaining.is_valid()) {
-    LOG(ERROR) << "cannot compute the amount to be credited in the credit phase of transaction";
-    return false;
-  }
-  // NB: msg_balance_remaining may be deducted from balance later during bounce phase
-  balance += msg_balance_remaining;
-  if (!balance.is_valid()) {
-    LOG(ERROR) << "cannot credit currency collection to account";
-    return false;
-  }
-```
 
 The credit phase is serialized in TL-B as follows:
 
@@ -150,20 +122,6 @@ To start, note that the compute phase can be **skipped** entirely. In that case,
   This topic is outside the scope of this guide, but more information is available [here](https://github.com/ton-blockchain/ton/blob/master/doc/GlobalVersions.md#anycast-addresses-and-address-rewrite).
 </Aside>
 
-```ts title="TypeScript example"
-function computedGeneric<T extends Transaction>(tx: T) {
-  if (tx.description.type !== 'generic') throw new Error('Expected generic');
-  if (tx.description.computePhase.type !== 'vm') throw new Error('Compute expected');
-  return tx.description.computePhase;
-}
-
-const c = computedGeneric(tx);
-console.log(c.gasFees, c.gasUsed, c.gasLimit);
-// gasFees ≈ computeGasFee(getGasPrices(cfg,wc), gasUsed)
-```
-
-> See [Fees → Helper functions appendix](/ton/fees#helper-functions) for fee reconstruction helpers.
-
 ### When the compute phase is skipped
 
 The compute phase may be skipped under certain conditions, such as when the account is missing, uninitialized, or frozen, or when the incoming message lacks code or data fields.
@@ -215,19 +173,6 @@ tr_phase_action$_ success:Bool valid:Bool no_funds:Bool
   = TrActionPhase;
 ```
 
-```ts title="TypeScript example"
-// Rebuild msg_fwd_fees from totals and compare
-const msgPrices = getMsgPrices(configCell, 0);
-const size = tx.description.actionPhase?.totMsgSize; // cells/bits
-if (size) {
-  const { total, res, remaining } =
-    computeFwdFeesVerbose(msgPrices, BigInt(size.cells), BigInt(size.bits));
-  // res ~ total_action_fees, remaining ~ total_fwd_fees - total_action_fees
-}
-```
-
-> See [Fees → Helper functions appendix](/ton/fees#helper-functions) for fee reconstruction helpers.
-
 ## Bounce phase
 
 If the **Compute phase** or **Action phase** ends with an error, and the incoming message has the `bounce` flag set, the system triggers the **Bounce phase**.
@@ -259,16 +204,7 @@ In this phase, `msg_fees` and `fwd_fees` are calculated based on the total forwa
 - **One-third** of the fee goes into `msg_fees` and is charged immediately.
 - The remaining **two-thirds** go into `fwd_fees`.
 
-```ts title="TypeScript example"
-// On bounce_ok, split total into msg_fees and fwd_fees per firstFrac
-const { firstFrac } = getMsgPrices(configCell, 0);
-const split = (total: bigint) => ({
-  msgFees: (total * firstFrac) >> 16n,
-  fwdFees: total - ((total * firstFrac) >> 16n),
-});
-```
-
-> See [Fees → Helper functions appendix](/ton/fees#helper-functions) for fee reconstruction helpers.
+> See [Fees → Forward fee](/ton/fees#forward-fee) for more info.
 
 ### Key points
 
