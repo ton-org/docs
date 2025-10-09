@@ -1,0 +1,151 @@
+---
+title: "Deployment and interaction"
+---
+
+Following development and testing, contracts can be deployed and interacted with. This section outlines deployment scripts, provider configuration, and interaction workflows.
+
+## Running scripts
+
+Blueprint allows you to run scripts directly from the project.
+
+1. Place your script in the `scripts/` folder.
+2. Each script file must export a `run` function:
+    ```typescript
+    export async function run(provider: NetworkProvider, args: string[]) {
+      //
+    }
+    ```
+3. Run the script with: `npx blueprint run <SCRIPT> [arg1, arg2, ...]` command.
+
+## Deploying contracts
+
+To deploy a smart contract, create a deployment script in `scripts/deploy<Contract>.ts` with following content.
+
+```typescript title="./scripts/deploy<Contract>.ts" expandable
+import { toNano } from '@ton/core';
+import { MyContract } from '../wrappers/MyContract';
+import { compile, NetworkProvider } from '@ton/blueprint';
+
+export async function run(provider: NetworkProvider) {
+    const myContract = provider.open(MyContract.createFromConfig({}, await compile('MyContract')));
+
+    await myContract.sendDeploy(provider.sender(), toNano('0.05'));
+
+    await provider.waitForDeploy(myContract.address);
+
+    // run methods on `myContract`
+}
+```
+
+### Interactive mode
+
+To launch a guided prompt to create a contract step by step, use:
+
+```bash
+npx blueprint run
+```
+
+### Non-interactive mode
+
+To create a contract without prompts, provide the contract name and template type:
+
+```bash
+npx blueprint run deploy<CONTRACT> --<NETWORK> --<DEPLOY_METHOD>
+```
+
+**Example:**
+
+```bash
+npx blueprint run deployCounter --mainnet --tonconnect
+```
+
+## Deploying methods
+
+### Mnemonic provider
+
+Run scripts with a wallet using mnemonic authentication by configuring environment variables and specifying the `--mnemonic` for a non-interactive method.
+
+**Required variables:**
+
+Set the following variables in the `.env` file:
+- `WALLET_MNEMONIC` — wallet mnemonic phrase (space-separated words).
+- `WALLET_VERSION` — wallet contract version.
+- **Supported versions:** `v1r1`, `v1r2`, `v1r3`, `v2r1`, `v2r2`, `v3r1`, `v3r2`, `v4r1`, `v4r2` (or `v4`), `v5r1`.
+
+```env
+WALLET_MNEMONIC="word1 word2 ... word24"   # Your wallet's mnemonic phrase
+WALLET_VERSION="v4r2"                      # Wallet contract version
+```
+
+**Optional variables:**
+
+- `WALLET_ID` — wallet ID for versions earlier than `v5r1`, excluding `v5r1`.
+- `SUBWALLET_NUMBER` — subwallet number for `v5r1` wallets.
+
+_See the [wallet v5 reference](https://github.com/ton-org/ton/blob/master/src/wallets/v5r1/WalletV5R1WalletId.ts) for `WALLET_ID` construction._
+
+Once your environment is set up, you can use the mnemonic wallet for deployment with the appropriate configuration.
+
+### TON Connect
+
+Run scripts with a wallet using TON Connect by specifying the `--tonconnect` option.
+
+**Steps:**
+
+1. After running the command, select a wallet from the available options.
+2. Scan the generated QR code in your wallet app or open the provided link.
+3. Confirm the transaction in the wallet's interface.
+
+Once confirmed, the contract is deployed.
+
+## Interaction
+
+After deploying your contracts, you can interact with them using Blueprint scripts. These scripts use the [wrappers](/ecosystem/blueprint/develop#wrappers) you've created to send messages and call get methods on your deployed contracts.
+
+To run following scripts refer to [Running scripts](#runningscripts) section.
+
+### Sending messages
+
+To send [messages](/ton/transaction) to your deployed contracts, create a script that calls the `send` methods defined in your wrapper. These methods trigger contract execution and modify the contract's state.
+
+```typescript title="./scripts/sendIncrease.ts"
+import { Address, toNano } from '@ton/core';
+import { MyContract } from '../wrappers/MyContract';
+import { NetworkProvider } from '@ton/blueprint';
+
+const contractAddress = Address.parse('<CONTRACT_ADDRESS>');
+
+export async function run(provider: NetworkProvider) {
+    const myContract = provider.open(MyContract.createFromAddress(contractAddress));
+
+    await myContract.sendIncrease(provider.sender(), {
+        value: toNano('0.05'),
+        increaseBy: 42
+    });
+
+    await provider.waitForLastTransaction();
+    console.log('Message sent successfully!');
+}
+```
+
+### Executing get methods
+
+Get methods allow you to read data from your deployed contracts without creating transactions. These methods are free to call and don't modify the contract's state.
+
+```typescript title="./scripts/getCounter.ts"
+import { Address } from '@ton/core';
+import { MyContract } from '../wrappers/MyContract';
+import { NetworkProvider } from '@ton/blueprint';
+
+const contractAddress = Address.parse('<CONTRACT_ADDRESS>');
+
+export async function run(provider: NetworkProvider) {
+    const myContract = provider.open(MyContract.createFromAddress(contractAddress));
+
+    const counter = await myContract.getCounter();
+    const id = await myContract.getId();
+
+    console.log('Counter:', counter);
+    console.log('ID:', id);
+}
+```

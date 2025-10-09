@@ -1,0 +1,560 @@
+---
+title: Custodian integration for in-wallet browsers and browser extensions
+sidebarTitle: Browser extensions and in-wallet browsers
+documentation: >-
+  TON Connect integration for custodians in browser extensions and in-wallet browsers
+---
+
+This document provides instructions for integrating [TON Connect](/ecosystem/ton-connect/index) into wallets and other custodian services in browser extensions and in-wallet browsers.
+
+TON Connect is the standard wallet connection protocol for The Open Network (TON) blockchain, similar to WalletConnect on Ethereum. It enables secure communication between wallets and decentralized applications, allowing users to authorize transactions while maintaining control of their private keys.
+
+<Columns cols={2}>
+  <Card
+    title="More about TON Connect"
+    arrow="true"
+    href="/ecosystem/ton-connect/index"
+  >
+    overview of the protocol and its role in the TON ecosystem
+  </Card>
+  <Card
+    title="Wallet manifest"
+    arrow="true"
+    href="/ecosystem/ton-connect/manifest#wallet-manifest"
+  >
+    what is the manifest and how to prepare it
+  </Card>
+  <Card
+    title="Bridge"
+    href="#ton-connect-bridge"
+  >
+    what is the JavaScript bridge and how to use it
+  </Card>
+  <Card
+    title="Protocol"
+    href="#ton-connect-protocol"
+  >
+    what is the protocol and how to implement it
+  </Card>
+  <Card
+    title="Signing"
+    href="#ton-connect-signing"
+  >
+    signing processes and reference implementations
+  </Card>
+  <Card
+    title="Support"
+    href="#support-and-assistance"
+  >
+    how to get help and schedule technical consultations
+  </Card>
+  <Card
+    title="FAQ"
+    href="#faq"
+  >
+    frequently asked questions about TON Connect implementation
+  </Card>
+  <Card
+    title="See also"
+    href="#see-also"
+  >
+    additional links and references
+  </Card>
+</Columns>
+
+## TON Connect bridge
+
+A TON Connect bridge acts as a communication layer between decentralized applications (dApps) and wallets.
+
+The wallet extension should expose the bridge using the `window.[custodian].tonconnect` property.
+
+This bridge must implement a defined interface, allowing dApps to call its methods and receive appropriate responses from the wallet.
+
+```ts
+interface TonConnectBridge {
+    deviceInfo: DeviceInfo; // see Requests/Responses spec
+    walletInfo?: WalletInfo;
+    protocolVersion: number; // max supported Ton Connect version (e.g. 2)
+    isWalletBrowser: boolean; // if the page is opened into wallet's browser
+    connect(protocolVersion: number, message: ConnectRequest): Promise<ConnectEvent>;
+    restoreConnection(): Promise<ConnectEvent>;
+    send(message: AppRequest): Promise<WalletResponse>;
+    listen(callback: (event: WalletEvent) => void): () => void;
+}
+```
+
+To read more about the bridge protocol, please refer to the [TON Connect Bridge documentation](https://github.com/ton-blockchain/ton-connect/blob/main/bridge.md).
+
+## TON Connect protocol
+
+TON Connect enables communication between wallets and dApps. For custodian wallets, the integration has these core components:
+1. Managing wallet connections
+1. Listening for messages from connected dApps
+1. Disconnecting from dApps
+
+### Setting up the protocol
+
+We recommend using the `@tonconnect/protocol` package to handle the TON Connect protocol. But you can also implement the protocol manually.
+
+```shell
+npm install @tonconnect/protocol
+```
+
+Refer to the [`@tonconnect/protocol` documentation](https://github.com/ton-connect/sdk/tree/main/packages/protocol) for more details.
+
+### Interacting with the dApp
+
+To interact with dApp wallet implement `TonConnectBridge` interface and inject it to `window.[custodian].tonconnect` property. Below is the sample implementation of protocol:
+
+```ts expandable
+import {
+    AppRequest,
+    CHAIN,
+    CONNECT_EVENT_ERROR_CODES,
+    ConnectEvent,
+    ConnectEventSuccess,
+    ConnectManifest,
+    ConnectRequest,
+    DeviceInfo,
+    RpcMethod,
+    SendTransactionRpcRequest,
+    SendTransactionRpcResponseError,
+    SendTransactionRpcResponseSuccess,
+    TonAddressItem,
+    TonProofItem,
+    WalletEvent,
+    WalletResponse,
+} from '@tonconnect/protocol';
+
+export type TonConnectCallback = (event: WalletEvent | DisconnectEvent) => void;
+
+// https://github.com/ton-connect/sdk/blob/main/packages/sdk/src/provider/injected/models/injected-wallet-api.ts
+export interface TonConnectBridge {
+    deviceInfo: DeviceInfo; // see Requests/Responses spec
+    walletInfo?: WalletInfo;
+    protocolVersion: number; // max supported Ton Connect version (e.g. 2)
+    isWalletBrowser: boolean; // if the page is opened into wallet's browser
+    connect(
+        protocolVersion: number,
+        message: ConnectRequest,
+    ): Promise<ConnectEvent>;
+
+    restoreConnection(): Promise<ConnectEvent>;
+
+    send<T extends RpcMethod>(message: AppRequest<T>): Promise<WalletResponse<T>>;
+
+    listen(callback: TonConnectCallback): () => void;
+}
+
+export interface DisconnectEvent {
+    event: 'disconnect';
+    id: number | string;
+    payload: Record<string, never>;
+}
+
+export interface WalletInfo {
+    name: string;
+    image: string; // <png image url>
+    tondns?: string;
+    about_url: string;
+}
+
+// Instance of this class should be injected in window.[custodian].tonconnect property.
+export class JsBridge implements TonConnectBridge {
+    deviceInfo: DeviceInfo = {
+        platform: 'browser',
+        appName: '[custodian]',     // Must match your manifest app_name
+        appVersion: '1.0.0',        // Your wallet version
+        maxProtocolVersion: 2,      // TON Connect protocol version, currently 2
+        features: [
+            'SendTransaction',        // Keep 'SendTransaction' as string for backward compatibility
+            {                         // And pass the object of 'SendTransaction' feature
+                name: 'SendTransaction',
+                maxMessages: 4,
+                extraCurrencySupported: false
+            }
+        ]
+    };
+
+    isWalletBrowser: boolean = true;
+    protocolVersion: number = 2;
+    walletInfo: WalletInfo = {
+        name: 'walletName',
+        about_url: 'about.com',
+        image: 'image.png',
+    };
+
+    // Refer to https://github.com/ton-blockchain/ton-connect/blob/main/requests-responses.md#initiating-connection documentation for more details.
+    async connect(protocolVersion: number, request: ConnectRequest): Promise<ConnectEvent> {
+        if (protocolVersion > this.protocolVersion) {
+            throw new Error('Invalid TON Connect URL');
+        }
+        // Check if the ton_addr is requested in the connection request, if not, throw an error
+        const tonAddrItemRequest: TonAddressItem | null = request.items.find(p => p.name === 'ton_addr') ?? null;
+        if (!tonAddrItemRequest) {
+            throw new Error("`ton_addr` item is required in the connection request");
+        }
+        // Check if the ton_proof is requested in the connection request, optional
+        const tonProofItemRequest: TonProofItem | null = request.items.find(p => p.name === 'ton_proof') ?? null;
+
+        // Load app manifest
+        const manifestUrl: string = request.manifestUrl; // app manifest url
+        const manifest: ConnectManifest = await fetch(manifestUrl).then(res => res.json());
+        if (!manifest) {
+            throw new Error("Failed to load app manifest");
+        }
+
+        // 2. Show connection approval dialog to the user
+        const userApproved = await confirm(`Allow ${request.manifestUrl} to connect to your wallet?`);
+        if (!userApproved) {
+            // User rejected the connection
+            throw new Error('User rejected connection'); //
+        }
+
+        // 3. Get the user's wallet data from custodian API
+        const walletAddress = '0:9C60B85...57805AC'; // Replace with actual address from custodian API
+        const walletPublicKey = 'ADA60BC...1B56B86'; // Replace with actual wallet's public key from custodian API
+        const walletStateInit = 'te6cckEBBAEA...PsAlxCarA=='; // Replace with actual wallet's state init from custodian API
+
+        // 4. Create the connect event
+        return {
+            event: 'connect',
+            id: 0, // The id field is 0 for connect events
+            payload: {
+                items: [
+                    {
+                        name: 'ton_addr',
+                        address: walletAddress,
+                        network: CHAIN.MAINNET,
+                        publicKey: walletPublicKey,
+                        walletStateInit: walletStateInit
+                    }
+                    // If ton_proof was requested in the connection request, include it here:
+                    // Note: how to get the proof is described in separate section
+                    // {
+                    //   name: 'ton_proof',
+                    //   proof: {
+                    //     // Signed proof data
+                    //   }
+                    // }
+                ],
+                device: this.deviceInfo
+            }
+        };
+    }
+
+    private listeners: TonConnectCallback[] = [];
+
+    listen(callback: TonConnectCallback): () => void {
+        this.listeners.push(callback);
+        return () => {
+            this.listeners = this.listeners.filter(listener => listener !== callback);
+        }
+    }
+
+    // Function to disconnect from a dApp
+    // Refer to the https://github.com/ton-blockchain/ton-connect/blob/main/requests-responses.md#wallet-events documentation for more details.
+    async disconnectFromDApp() {
+        // Create a disconnect event
+        // The id field should be incremented for each sent message
+        const disconnectEvent = {
+            event: 'disconnect',
+            id: nextEventId++,
+            payload: {
+                reason: 'user_disconnected'
+            }
+        } as const;
+
+        this.listeners.map(listener => listener(disconnectEvent));
+    }
+
+
+    async restoreConnection(): Promise<ConnectEvent> {
+        // 1. Get the user's wallet data from custodian API
+        const walletAddress = '0:9C60B85...57805AC'; // Replace with actual address from custodian API
+        const walletPublicKey = 'ADA60BC...1B56B86'; // Replace with actual wallet's public key from custodian API
+        const walletStateInit = 'te6cckEBBAEA...PsAlxCarA=='; // Replace with actual wallet's state init from custodian API
+
+        // 2. Create the connect event
+        return {
+            event: 'connect',
+            id: 0, // The id field is 0 for connect events
+            payload: {
+                items: [
+                    {
+                        name: 'ton_addr',
+                        address: walletAddress,
+                        network: CHAIN.MAINNET,
+                        publicKey: walletPublicKey,
+                        walletStateInit: walletStateInit
+                    }
+                    // If ton_proof was requested in the connection request, include it here:
+                    // Note: how to get the proof is described in separate section
+                    // {
+                    //   name: 'ton_proof',
+                    //   proof: {
+                    //     // Signed proof data
+                    //   }
+                    // }
+                ],
+                device: this.deviceInfo
+            }
+        };
+    }
+
+    // Handle messages from dApps
+    // Refer to the https://github.com/ton-blockchain/ton-connect/blob/main/requests-responses.md#sign-and-send-transaction documentation for more details.
+    // Parameters:
+    // - request: The request from the dApp
+    send<T extends RpcMethod>(request: AppRequest<T>): Promise<WalletResponse<T>> {
+        console.log(`Received message:`, request);
+
+        // Check the message type
+        if (request.method === 'sendTransaction') {
+            // Handle transaction request
+            await handleTransactionRequest(request);
+        } else if (request.method === 'disconnect') {
+            // Handle disconnect request
+            await handleDisconnectRequest(request);
+        } else {
+            console.warn(`Unknown message method: ${request.method}`);
+        }
+    }
+}
+
+// Handle transaction request
+// Parameters:
+// - request: The transaction request object from the dApp
+async function handleTransactionRequest(request: SendTransactionRpcRequest) {
+    // Extract transaction details
+    const {id, params} = request;
+    let [{network, from, valid_until, messages}] = JSON.parse(params[0]);
+
+    // The wallet should check all the parameters of the request, if any of the checks fail, it should send an error response back to the dApp
+
+    // Check if the selected network is valid
+    if (network !== CHAIN.MAINNET) {
+        return {
+            id: request.id,
+            error: {code: 1, message: 'Invalid network ID'},
+        } satisfies SendTransactionRpcResponseError;
+    }
+
+    // Check if the selected wallet address is valid
+    if (!Address.parse(from).equals(Address.parse(sessionData.walletAddress))) {
+        return {
+            id: request.id,
+            error: {
+                code: 1,
+                message: 'Invalid wallet address'
+            },
+        } satisfies SendTransactionRpcResponseError;
+    }
+
+    // Set limit for valid_until
+    const limit = 60 * 5; // 5 minutes
+    const now = Math.round(Date.now() / 1000);
+    valid_until = Math.min(valid_until ?? Number.MAX_SAFE_INTEGER, now + limit);
+
+    // Check if the transaction is still valid
+    if (valid_until < now) {
+        return {
+            id: request.id,
+            error: {
+                code: 1,
+                message: 'Transaction expired'
+            },
+        } satisfies SendTransactionRpcResponseError;
+    }
+
+    // Check if the messages are valid
+    for (const message of messages) {
+        if (!message.to || !Address.isFriendly(message.to)) {
+            return {
+                id: request.id,
+                error: {
+                    code: 1,
+                    message: 'Address is not friendly'
+                },
+            } satisfies SendTransactionRpcResponseError;
+        }
+
+        // Check if the value is a string of digits
+        if (!(typeof message.value === 'string' && /^[0-9]+$/.test(message.value))) {
+            return {
+                id: request.id,
+                error: {
+                    code: 1,
+                    message: 'Value is not a string of digits'
+                },
+            } satisfies SendTransactionRpcResponseError;
+        }
+
+        // Check if the payload is valid boc
+        if (message.payload) {
+            try {
+                const payload = Cell.fromBoc(message.payload)[0];
+            } catch (e) {
+                return {
+                    id: request.id,
+                    error: {
+                        code: 1,
+                        message: 'Payload is not valid boc'
+                    },
+                } satisfies SendTransactionRpcResponseError;
+            }
+        }
+
+        // Check if the stateInit is valid boc
+        if (message.stateInit) {
+            try {
+                const stateInit = Cell.fromBoc(message.stateInit)[0];
+            } catch (e) {
+                return {
+                    id: request.id,
+                    error: {
+                        code: 1,
+                        message: 'StateInit is not valid boc'
+                    },
+                } satisfies SendTransactionRpcResponseError;
+            }
+        }
+    }
+
+    if (messages.length === 0) {
+        return {
+            id: request.id,
+            error: {
+                code: 1,
+                message: 'No messages'
+            },
+        } satisfies SendTransactionRpcResponseError;
+    }
+
+    // Show transaction approval UI to the user
+    const userApproved = await confirm(`Approve transaction from ${dAppName}?`);
+
+    // User rejected the transaction - send error response
+    if (!userApproved) {
+        return {
+            id: request.id,
+            error: {
+                code: 300,
+                message: 'Transaction rejected by user'
+            },
+        } satisfies SendTransactionRpcResponseError;
+    }
+
+    if (messages.length > 4) {
+        return {
+            id: request.id,
+            error: {
+                code: 1,
+                message: 'Too many messages'
+            },
+        } satisfies SendTransactionRpcResponseError;
+    }
+
+    // User approved the transaction - sign it using custodian API, send signed boc to the blockchain and send success response
+    try {
+        // Sign the transaction (implementation would depend on custodian API)
+        const signedBoc = await signTransactionWithMpcApi(sessionData.walletAddress, messages);
+
+        // Send the signed transaction to the blockchain and wait for the result
+        const isSuccess = await sendTransactionToBlockchain(signedBoc);
+        if (!isSuccess) {
+            throw new Error('Transaction send failed');
+        }
+
+        return {
+            id: request.id,
+            result: signedBoc,
+        } satisfies SendTransactionRpcResponseSuccess;
+    } catch (error) {
+        return {
+            id: request.id,
+            error: {
+                code: 100,
+                message: 'Transaction signing failed'
+            },
+        } satisfies SendTransactionRpcResponseError;
+    }
+}
+```
+
+## TON Connect signing
+
+The signing process is a critical component when integrating TON Connect with custodians. Two key cryptographic operations are required: **Transaction Signing** and **TON Proof Signing**.
+
+### Transaction signing
+
+For transaction signing implementation, you can refer to the [`@ton/ton` library](https://github.com/ton-org/ton) where wallet integrations are implemented. Please note that this serves as a reference implementation to understand how to achieve transaction signing:
+- `@ton/crypto`: https://github.com/ton-org/ton-crypto
+- `@ton/core`: https://github.com/ton-org/ton-core
+- `@ton/ton`: https://github.com/ton-org/ton
+
+This library provides examples and utilities for TON blockchain operations, but custodians will need to adapt these patterns to work with their specific signing infrastructure and APIs.
+
+### TON Proof implementation
+
+For implementing the necessary functionality, two key resources are available:
+1. [TON Proof specification](https://github.com/ton-blockchain/ton-connect/blob/main/requests-responses.md#address-proof-signature-ton_proof)
+  - This document provides the complete specification for address proof signatures
+  - Describes the required format and cryptographic requirements
+2. [TON Proof verification example](https://github.com/ton-connect/demo-dapp-with-react-ui/blob/248379d2545f663931151ec9f49e465b748cfc68/src/server/services/ton-proof-service.ts#L25-L116)
+  - This example demonstrates verification of `ton_proof` (not signing)
+  - Useful for understanding the proof structure and validation logic
+
+### Reference implementations
+
+For practical examples of TON Connect signing implementations, you can review these wallet integrations:
+- [Tonkeeper](https://github.com/tonkeeper/wallet)
+- [TonDevWallet](https://github.com/TonDevWallet/TonDevWallet)
+
+These implementations demonstrate how different wallets handle TON Connect signing operations and can serve as reference points for custodian implementations.
+
+## Support and assistance
+
+For questions or clarifications during your integration process:
+- Add comments directly in this document for specific technical clarifications
+- Engage with the TON Foundation team through our technical chat channels
+- Contact the TON Foundation business development team to provide access to technical team for consultations
+
+To schedule a consultation call with our technical team:
+- Request a meeting through our technical chat channels
+- Contact the TON Foundation business development team to arrange technical discussions
+
+The TON Foundation is fully committed to supporting custodians throughout this integration process. This support includes:
+- Providing technical documentation and specifications
+- Sharing reference implementations and code examples
+- Offering consulting and troubleshooting assistance
+- Helping with testing and verification
+
+The TON Foundation is committed to supporting custodians throughout their TON Connect integration journey. Our team is available to address technical implementation questions, provide guidance on best practices, and facilitate business discussions to ensure successful integration outcomes.
+
+## FAQ
+
+### What are the correct network chain IDs for TON Connect?
+
+The TON blockchain uses specific network chain identifiers in the TON Connect protocol:
+- **Mainnet:** `CHAIN.MAINNET` (`-239`)
+- **Testnet:** `CHAIN.TESTNET` (`-3`)
+
+These values are defined in the TON Connect protocol specification as the `CHAIN` enum. When handling TON Connect requests, you'll encounter these network identifiers in transaction requests, address items, and connection payloads to specify which TON network the operation should target.
+
+## See also
+
+- TON Connect specification:
+  - [Bridge API](https://github.com/ton-blockchain/ton-connect/blob/main/bridge.md)
+  - [Requests and Responses](https://github.com/ton-blockchain/ton-connect/blob/main/requests-responses.md)
+  - [Session](https://github.com/ton-blockchain/ton-connect/blob/main/session.md)
+  - [TON Wallet Guidelines](https://github.com/ton-blockchain/ton-connect/blob/main/wallet-guidelines.md)
+  - [Workflows](https://github.com/ton-blockchain/ton-connect/blob/main/workflows.md)
+- Reference implementations:
+  - [`@tonconnect/protocol`](https://github.com/ton-connect/sdk/tree/main/packages/protocol)
+  - [TON Connect Bridge][bridge-repo]
+- Integration examples:
+  - [Tonkeeper](https://github.com/tonkeeper/wallet)
+  - [TonDevWallet](https://github.com/TonDevWallet/TonDevWallet)
+
+[bridge-repo]: https://github.com/ton-connect/bridge

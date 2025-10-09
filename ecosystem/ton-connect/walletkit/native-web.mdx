@@ -1,0 +1,803 @@
+---
+title: Custodian integration for native and web wallets
+sidebarTitle: Native and web wallets
+documentation: >-
+  TON Connect integration for custodians on iOS, Android, macOS, Windows, Linux, and Web platforms.
+---
+
+This document provides instructions for integrating [TON Connect](/ecosystem/ton-connect/index) into wallets and other custodian services for iOS, Android, macOS, Windows, Linux, and Web platforms.
+
+TON Connect is the standard wallet connection protocol for The Open Network (TON) blockchain, similar to WalletConnect on Ethereum. It enables secure communication between wallets and decentralized applications, allowing users to authorize transactions while maintaining control of their private keys.
+
+<Columns cols={2}>
+  <Card
+    title="More about TON Connect"
+    arrow="true"
+    href="/ecosystem/ton-connect/index"
+  >
+    overview of the protocol and its role in the TON ecosystem
+  </Card>
+
+  <Card
+    title="Wallet manifest"
+    arrow="true"
+    href="/ecosystem/ton-connect/manifest#wallet-manifest"
+  >
+    what is the manifest and how to prepare it
+  </Card>
+
+  <Card
+    title="Bridge"
+    href="#ton-connect-bridge"
+  >
+    what is the bridge service and how to set it up
+  </Card>
+
+  <Card
+    title="Protocol"
+    href="#ton-connect-protocol"
+  >
+    what is the protocol and how to implement it
+  </Card>
+
+  <Card
+    title="Signing"
+    href="#ton-connect-signing"
+  >
+    signing processes and reference implementations
+  </Card>
+
+  <Card
+    title="Support"
+    href="#support-and-assistance"
+  >
+    how to get help and schedule technical consultations
+  </Card>
+
+  <Card
+    title="FAQ"
+    href="#faq"
+  >
+    frequently asked questions about TON Connect implementation
+  </Card>
+
+  <Card
+    title="See also"
+    href="#see-also"
+  >
+    additional links and references
+  </Card>
+</Columns>
+
+## TON Connect bridge
+
+The TON Connect bridge serves as a transport mechanism for delivering messages between applications (dApps) and wallets. It enables end-to-end encrypted communication where neither party needs to be online simultaneously.
+
+### Setup options
+
+#### Option 1: On-premise solution
+
+Custodians can run the TON Connect Bridge themselves. This approach provides full control over the infrastructure and data.
+
+For this option, you can deploy the [official TON Connect Bridge implementation][bridge-repo].
+
+You will need to:
+
+1. Set up a dedicated bridge instance following the repository documentation
+1. Create a DNS entry pointing to your bridge
+1. Configure your infrastructure (load balancers, SSL certificates, etc.)
+1. Maintain the bridge and provide updates
+
+#### Option 2: SaaS solution
+
+TON Foundation can provide a Software-as-a-Service (SaaS) solution for custodians who prefer not to maintain on-premise infrastructure.
+
+To request access to the SaaS solution, contact the TON Foundation business development team. This managed service includes:
+
+1. Hosted bridge infrastructure
+1. Maintenance and updates
+1. Technical support
+1. Service level agreements
+
+### Bridge endpoints and protocol
+
+The TON Connect Bridge protocol uses these main endpoints:
+
+- **SSE Events Channel** — For receiving messages:
+
+  ```
+  GET /events?client_id=<to_hex_str(A1)>,<to_hex_str(A2)>,<to_hex_str(A3)>&last_event_id=<lastEventId>
+  Accept: text/event-stream
+  ```
+
+- **Message Sending** — For sending messages:
+
+  ```
+  POST /message?client_id=<sender_id>&to=<recipient_id>&ttl=300
+  body: <base64_encoded_message>
+  ```
+
+There, `client_id` and `sender_id` are the public keys of the wallet's session in hex.
+
+To read more about the bridge protocol, please refer to the [TON Connect Bridge documentation](https://github.com/ton-blockchain/ton-connect/blob/main/bridge.md).
+
+## TON Connect protocol
+
+TON Connect enables communication between wallets and dApps. For custodian wallets, the integration has these core components:
+
+1. Establishing secure sessions with dApps
+1. Handling universal links in the browser
+1. Managing wallet connections
+1. Listening for messages from connected dApps
+1. Disconnecting from dApps
+
+### Setting up the protocol
+
+We recommend using the `@tonconnect/protocol` package to handle the TON Connect protocol. But you can also implement the protocol manually.
+
+```shell
+npm install @tonconnect/protocol
+```
+
+Refer to the [`@tonconnect/protocol` documentation](https://github.com/ton-connect/sdk/tree/main/packages/protocol) for more details.
+
+### Session management and encryption
+
+The foundation of TON Connect is secure communication using the SessionCrypto class:
+
+```ts expandable
+import { SessionCrypto, KeyPair, AppRequest, Base64 } from '@tonconnect/protocol';
+
+// Receive dApp public key from the connection link 'id' parameter
+// This value is decoded from hex to Uint8Array
+const dAppPublicKey: Uint8Array = hexToByteArray(dAppClientId);
+
+// Create a new session - this generates a keypair for the session internally
+const sessionCrypto: SessionCrypto = new SessionCrypto();
+
+// Encrypt a message to send to the dApp
+// Parameters:
+// - message: The string message to encrypt
+// - dAppPublicKey: The dApp's public key as Uint8Array
+const message: string = JSON.stringify({
+  event: 'connect',
+  payload: { /* connection details */ }
+});
+const encryptedMessage: string = sessionCrypto.encrypt(
+  message,
+  dAppPublicKey
+);
+
+// Decrypt a message from the dApp
+// Parameters:
+// - encrypted: The encrypted message string from the dApp
+// - dAppPublicKey: The dApp's public key as Uint8Array
+const encrypted: string = 'encrypted_message_from_dapp';
+const decryptedMessage: string = sessionCrypto.decrypt(
+  Base64.decode(encrypted).toUint8Array(),
+  dAppPublicKey
+);
+const parsedMessage: AppRequest = JSON.parse(decryptedMessage);
+
+// Get session keys for storage
+// Returns an object with `publicKey` and `secretKey` as hex strings
+const keyPair: KeyPair = sessionCrypto.stringifyKeypair();
+
+// Store these securely in your persistent storage
+const storedData = {
+  secretKey: keyPair.secretKey,
+  publicKey: keyPair.publicKey,
+  dAppClientId: dAppClientId
+};
+
+// Later - restore the session using stored keys
+// Parameters:
+// - secretKey: Hex string of the secret key
+// - publicKey: Hex string of the public key
+const restoredSessionCrypto: SessionCrypto = new SessionCrypto({
+  secretKey: storedData.secretKey,
+  publicKey: storedData.publicKey
+});
+```
+
+Refer to the [SessionCrypto implementation](https://github.com/ton-connect/sdk/blob/main/packages/protocol/src/crypto/session-crypto.ts) and [Session documentation](https://github.com/ton-blockchain/ton-connect/blob/main/session.md) for more details.
+
+### Bridge communication
+
+TON Connect uses a bridge service as a relay for messages between dApps and wallets:
+
+```ts expandable
+// Bridge URL for your wallet
+const bridgeUrl = 'https://bridge.[custodian].com/bridge';
+
+// Sending messages to the bridge
+// Parameters:
+// - fromClientId: Your wallet's client ID (public key of the wallet's session in hex)
+// - toClientId: The dApp's client ID (public key of the dApp's session in hex)
+// - encryptedMessage: The encrypted message to send
+// - ttl: Time to live in seconds (optional, default is 300 seconds)
+async function sendToBridge(fromClientId: string, toClientId: string, encryptedMessage: string) {
+  await fetch(`${bridgeUrl}/message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_id: fromClientId,
+      to: toClientId,
+      message: encryptedMessage,
+      ttl: 300
+    })
+  });
+}
+
+// Listening for messages from the bridge
+// Parameters:
+// - clientId: Your wallet's client ID (public key of the wallet's session in hex)
+// - lastEventId: The last event ID received from the bridge (optional, but should be used if you want to resume listening for messages from the same point)
+function listenFromBridge(clientId: string, lastEventId?: string) {
+  const url = lastEventId
+    ? `${bridgeUrl}/events?client_id=${clientId}&last_event_id=${lastEventId}`
+    : `${bridgeUrl}/events?client_id=${clientId}`;
+
+  return new EventSource(url);
+}
+```
+
+Refer to the [bridge API documentation](https://github.com/ton-blockchain/ton-connect/blob/main/bridge.md) for more details.
+
+### Handling TON Connect links for new connections
+
+When a user opens a connection link in your browser wallet, this flow begins:
+
+```ts expandable
+// This code runs when a URL like this is opened:
+// https://wallet.[custodian].com/ton-connect?v=2&id=<client_id>&r=<connect_request>&ret=<return_strategy>
+// Parameters in the URL:
+// - v: Protocol version (2)
+// - id: The dApp's client ID (hex-encoded public key of the dApp's session)
+// - r: URL-encoded connect request object
+// - ret: Return strategy for the dApp (may be ignored for custodian)
+
+import { ConnectRequest, ConnectEventSuccess, SessionCrypto, KeyPair, ConnectManifest, TonAddressItem, TonProofItem, CHAIN, Base64 } from '@tonconnect/protocol';
+
+window.addEventListener('load', async () => {
+  if (window.location.pathname === '/ton-connect') {
+    try {
+      // 1. Parse the connection parameters from the URL
+      const parsedUrl: URL = new URL(window.location.href);
+      const searchParams: URLSearchParams = parsedUrl.searchParams;
+
+      const version: string | null = searchParams.get('v');
+      const dAppClientId: string | null = searchParams.get('id');
+      const requestEncoded: string | null = searchParams.get('r');
+
+      if (!version || !dAppClientId || !requestEncoded) {
+        console.error('Invalid TON Connect URL: missing required parameters');
+        return;
+      }
+
+      // Decode and parse the request
+      const request: ConnectRequest = JSON.parse(decodeURIComponent(requestEncoded));
+
+      // Check if the ton_addr is requested in the connection request, if not, throw an error
+      const tonAddrItemRequest: TonAddressItem | null = request.items.find(p => p.name === 'ton_addr') ?? null;
+      if (!tonAddrItemRequest) {
+        console.error("`ton_addr` item is required in the connection request");
+        return;
+      }
+      // Check if the ton_proof is requested in the connection request, optional
+      const tonProofItemRequest: TonProofItem | null = request.items.find(p => p.name === 'ton_proof') ?? null;
+
+      // Load app manifest
+      const manifestUrl: string = request.manifestUrl; // app manifest url
+      const manifest: ConnectManifest = await fetch(manifestUrl).then(res => res.json());
+      if (!manifest) {
+        console.error("Failed to load app manifest");
+        return;
+      }
+
+      // 2. Show connection approval dialog to the user
+      const userApproved = await confirm(`Allow ${request.manifestUrl} to connect to your wallet?`);
+      if (!userApproved) {
+        return; // User rejected the connection
+      }
+
+      // 3. Create a new session for this connection, this generates a keypair for the session internally
+      const sessionCrypto = new SessionCrypto();
+
+      // 4. Get the user's wallet data from custodian API
+      const walletAddress = '0:9C60B85...57805AC'; // Replace with actual address from custodian API
+      const walletPublicKey = 'ADA60BC...1B56B86'; // Replace with actual wallet's public key from custodian API
+      const walletStateInit = 'te6cckEBBAEA...PsAlxCarA=='; // Replace with actual wallet's state init from custodian API
+
+      // 5. Create the connect event
+      const connectEvent: ConnectEventSuccess = {
+        event: 'connect',
+        id: 0, // The id field is 0 for connect events
+        payload: {
+          items: [
+            {
+              name: 'ton_addr',
+              address: walletAddress,
+              network: CHAIN.MAINNET,
+              publicKey: walletPublicKey,
+              walletStateInit: walletStateInit
+            }
+            // If ton_proof was requested in the connection request, include it here:
+            // Note: how to get the proof is described in separate section
+            // {
+            //   name: 'ton_proof',
+            //   proof: {
+            //     // Signed proof data
+            //   }
+            // }
+          ],
+          device: {
+            platform: 'web',
+            appName: '[custodian]',     // Must match your manifest app_name
+            appVersion: '1.0.0',        // Your wallet version
+            maxProtocolVersion: 2,      // TON Connect protocol version, currently 2
+            features: [
+              'SendTransaction',        // Keep 'SendTransaction' as string for backward compatibility
+              {                         // And pass the object of 'SendTransaction' feature
+                name: 'SendTransaction',
+                maxMessages: 4,
+                extraCurrencySupported: false
+              }
+            ]
+          }
+        }
+      };
+
+      // 6. Encrypt the connect event with the dApp's public key
+      const encryptedConnectEvent: string = sessionCrypto.encrypt(
+        JSON.stringify(connectEvent),
+        hexToByteArray(dAppClientId)
+      );
+
+      // 7. Store the session data for future interactions
+      const keyPair = sessionCrypto.stringifyKeypair();
+      const sessionData = {
+        secretKey: keyPair.secretKey,        // Wallet session secret key (hex)
+        publicKey: keyPair.publicKey,        // Wallet session public key (hex)
+        dAppClientId: dAppClientId,          // dApp session public key (hex) / same as the id parameter in the URL
+        dAppName: manifest.app_name,         // dApp name from manifest
+        dAppUrl: manifest.url,               // dApp URL from manifest
+        walletAddress: walletAddress,        // User's wallet address
+        network: CHAIN.MAINNET,              // Network from manifest
+        lastEventId: undefined,              // Last received event ID from bridge
+        nextEventId: 1,                      // Next ID for events sent from wallet
+      };
+
+      // Generate a session ID and store the session
+      const sessionId = sessionData.publicKey;
+      localStorage.setItem(`tonconnect_session_${sessionId}`, JSON.stringify(sessionData));
+
+      // 8. Send the connect event to the dApp through the bridge
+      const walletClientId = sessionCrypto.publicKey;
+      await sendToBridge(walletClientId, dAppClientId, encryptedConnectEvent);
+
+      // 9. Set up a listener for future messages from this dApp
+      setupDAppMessageListener(sessionId, sessionData);
+
+    } catch (e) {
+      console.error('Failed to handle TON Connect link:', e);
+    }
+  }
+});
+```
+
+Refer to [Universal link](https://github.com/ton-blockchain/ton-connect/blob/main/bridge.md#universal-link) and [`ConnectRequest`](https://github.com/ton-blockchain/ton-connect/blob/main/requests-responses.md#initiating-connection) documentation for more details.
+
+### Listening for messages from connected dApps
+
+After establishing connections, you need to listen for messages from connected dApps:
+
+```ts expandable
+// This function sets up listeners for all active sessions
+// Note: this is a simplified example, in a real wallet there can be multiple sessions per one connection
+function setupAllSessionListeners() {
+  // Get all active sessions
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('tonconnect_session_')) {
+      const sessionId = key.replace('tonconnect_session_', '');
+      const sessionData = JSON.parse(localStorage.getItem(key));
+
+      setupDAppMessageListener(sessionId, sessionData);
+    }
+  }
+}
+
+// Set up a listener for messages from a specific dApp
+// Parameters:
+// - sessionId: The session ID (wallet's session public key)
+// - sessionData: The session data object containing keys and dApp info
+function setupDAppMessageListener(sessionId: string, sessionData) {
+  // Create a session crypto instance from the stored keys
+  const sessionCrypto = new SessionCrypto({
+    secretKey: sessionData.secretKey,
+    publicKey: sessionData.publicKey
+  });
+
+  // Your wallet's client ID is its public key in hex
+  const walletClientId: string = sessionCrypto.publicKey;
+
+  // Start listening for messages, using the last event ID if available
+  const eventSource = listenFromBridge(walletClientId, sessionData.lastEventId);
+
+  eventSource.onmessage = async (event: { lastEventId: string, data: { message: string, from: string } }) => {
+    try {
+      // Update the last event ID for this session
+      sessionData.lastEventId = event.lastEventId;
+      localStorage.setItem(`tonconnect_session_${sessionId}`, JSON.stringify(sessionData));
+
+      // Process the message if it's from the dApp we're connected to
+      if (appRequest.from === sessionData.dAppClientId) {
+        // Decrypt the message using the dApp's public key
+        const decrypted: string = sessionCrypto.decrypt(
+          Base64.decode(appRequest.message).toUint8Array(),
+          hexToByteArray(sessionData.dAppClientId)
+        );
+
+        // Parse and handle the message
+        const request: AppRequest = JSON.parse(decrypted);
+
+        // Handle different types of requests (e.g. transaction requests, disconnect request etc.)
+        await handleDAppMessage(sessionId, sessionData, request);
+      }
+    } catch (e) {
+      console.error('Failed to process message:', e);
+    }
+  };
+}
+
+// Handle messages from dApps
+// Parameters:
+// - sessionId: The session ID (wallet's session public key)
+// - sessionData: The session data object
+// - request: The decrypted request from the dApp
+async function handleDAppMessage(sessionId: string, sessionData, request: AppRequest) {
+  console.log(`Received message from ${sessionData.dAppName}:`, request);
+
+  // Check the message type
+  if (request.method === 'sendTransaction') {
+    // Handle transaction request
+    await handleTransactionRequest(sessionId, sessionData, request);
+  } else if (request.method === 'disconnect') {
+    // Handle disconnect request
+    await handleDisconnectRequest(sessionId, sessionData, request);
+  } else {
+    console.warn(`Unknown message method: ${request.method}`);
+  }
+}
+
+// Handle transaction request
+// Parameters:
+// - sessionId: The session ID (wallet's session public key)
+// - sessionData: The session data object
+// - request: The transaction request object from the dApp
+async function handleTransactionRequest(sessionId: string, sessionData, request: SendTransactionRequest) {
+  // Extract transaction details
+  const { id, params } = request;
+  const [{ network, from, valid_until, messages }] = params;
+
+  // The wallet should check all the parameters of the request, if any of the checks fail, it should send an error response back to the dApp
+
+  // Check if the selected network is valid
+  if (network !== sessionData.network) {
+    return await sendTransactionResponseError(sessionId, sessionData, id, {
+      code: 1,
+      message: 'Invalid network'
+    });
+  }
+
+  // Check if the selected wallet address is valid
+  if (!Address.parse(from).equals(Address.parse(sessionData.walletAddress))) {
+    return await sendTransactionResponseError(sessionId, sessionData, id, {
+      code: 1,
+      message: 'Invalid wallet address'
+    });
+  }
+
+  // Set limit for valid_until
+  const limit = 60 * 5; // 5 minutes
+  const now = Math.round(Date.now() / 1000);
+  valid_until = Math.min(valid_until ?? Number.MAX_SAFE_INTEGER, now + limit);
+
+  // Check if the transaction is still valid
+  if (valid_until < now) {
+    return await sendTransactionResponseError(sessionId, sessionData, id, {
+      code: 1,
+      message: 'Transaction expired'
+    });
+  }
+
+  // Check if the messages are valid
+  for (const message of messages) {
+    if (!message.to || !Address.isFriendly(message.to)) {
+      return await sendTransactionResponseError(sessionId, sessionData, id, {
+        code: 1,
+        message: 'Address is not friendly'
+      });
+    }
+
+    // Check if the value is a string of digits
+    if (!(typeof message.value === 'string' && /^[0-9]+$/.test(message.value))) {
+      return await sendTransactionResponseError(sessionId, sessionData, id, {
+        code: 1,
+        message: 'Value is not a string of digits'
+      });
+    }
+
+    // Check if the payload is valid boc
+    if (message.payload) {
+      try {
+        const payload = Cell.fromBoc(message.payload)[0];
+      } catch (e) {
+        return await sendTransactionResponseError(sessionId, sessionData, id, {
+          code: 1,
+          message: 'Payload is not valid boc'
+        });
+      }
+    }
+
+    // Check if the stateInit is valid boc
+    if (message.stateInit) {
+      try {
+        const stateInit = Cell.fromBoc(message.stateInit)[0];
+      } catch (e) {
+        return await sendTransactionResponseError(sessionId, sessionData, id, {
+          code: 1,
+          message: 'StateInit is not valid boc'
+        });
+      }
+    }
+  }
+
+  // Show transaction approval UI to the user
+  const userApproved = await confirm(`Approve transaction from ${dAppName}?`);
+
+  // User rejected the transaction - send error response
+  if (!userApproved) {
+    return await sendTransactionResponseError(sessionId, sessionData, id, {
+      code: 300,
+      message: 'Transaction rejected by user'
+    });
+  }
+  if (messages.length === 0) {
+    return await sendTransactionResponseError(sessionId, sessionData, id, {
+      code: 1,
+      message: 'No messages'
+    });
+  }
+  if (messages.length > 4) {
+    return await sendTransactionResponseError(sessionId, sessionData, id, {
+      code: 1,
+      message: 'Too many messages'
+    });
+  }
+
+  // User approved the transaction - sign it using custodian API, send signed boc to the blockchain and send success response
+  try {
+    // Sign the transaction (implementation would depend on custodian API)
+    const signedBoc = await signTransactionWithMpcApi(sessionData.walletAddress, messages);
+
+    // Send the signed transaction to the blockchain and wait for the result
+    const isSuccess = await sendTransactionToBlockchain(signedBoc);
+    if (!isSuccess) {
+        throw new Error('Transaction send failed');
+    }
+
+    // Create success response
+    await sendTransactionResponseSuccess(sessionId, sessionData, id, signedBoc);
+  } catch (error) {
+    // Handle signing error
+    await sendTransactionResponseError(sessionId, sessionData, id, {
+        code: 100,
+        message: 'Transaction signing failed'
+    });
+  }
+}
+
+// Send error response for a transaction request
+// Parameters:
+// - sessionId: The session ID (wallet's session public key)
+// - sessionData: The session data object
+// - requestId: The original request ID from the dApp
+// - error: Error object with code and message
+async function sendTransactionResponseError(sessionId, sessionData, requestId, error) {
+  const transactionResponse: SendTransactionResponseError = {
+    id: requestId,
+    error: error
+  };
+  await sendTransactionResponse(sessionId, sessionData, requestId, transactionResponse);
+}
+
+// Send success response for a transaction request
+// Parameters:
+// - sessionId: The session ID (wallet's session public key)
+// - sessionData: The session data object
+// - requestId: The original request ID from the dApp
+// - signedBoc: The signed transaction BOC
+async function sendTransactionResponseSuccess(sessionId, sessionData, requestId, signedBoc) {
+  const transactionResponse: SendTransactionResponseSuccess = {
+    id: requestId,
+    result: signedBoc
+  };
+  await sendTransactionResponse(sessionId, sessionData, requestId, transactionResponse);
+}
+
+// Send response for a transaction request
+// Parameters:
+// - sessionId: The session ID (wallet's session public key)
+// - sessionData: The session data object
+// - requestId: The original request ID from the dApp
+// - response: The response object to send
+async function sendTransactionResponse(sessionId, sessionData, requestId, response) {
+  // Create a session crypto from the stored keys
+  const sessionCrypto = new SessionCrypto({
+    secretKey: sessionData.secretKey,
+    publicKey: sessionData.publicKey
+  });
+
+  // Include response ID - this should match the request ID
+  response.id = requestId;
+
+  // Encrypt the response
+  const encryptedResponse = sessionCrypto.encrypt(
+    JSON.stringify(response),
+    hexToByteArray(sessionData.dAppClientId)
+  );
+
+  // Send through the bridge
+  await sendToBridge(
+    sessionCrypto.publicKey,
+    sessionData.dAppClientId,
+    encryptedResponse
+  );
+}
+```
+
+Refer to the [SendTransactionRequest](https://github.com/ton-blockchain/ton-connect/blob/main/requests-responses.md#sign-and-send-transaction) documentation for more details.
+
+### Disconnecting from dApps
+
+Allow users to disconnect from dApps when needed, this action is initiated by the user on the custodian's side:
+
+```ts expandable
+// Function to disconnect from a dApp
+// Parameters:
+// - sessionId: The session ID (wallet's session public key) to disconnect
+async function disconnectFromDApp(sessionId) {
+  const sessionDataString = localStorage.getItem(`tonconnect_session_${sessionId}`);
+  if (!sessionDataString) return;
+
+  const sessionData = JSON.parse(sessionDataString);
+
+  // Create a session crypto from the stored keys
+  const sessionCrypto = new SessionCrypto({
+    secretKey: sessionData.secretKey,
+    publicKey: sessionData.publicKey
+  });
+
+  // Create a disconnect event
+  // The id field should be incremented for each sent message
+  const disconnectEvent = {
+    event: 'disconnect',
+    id: sessionData.nextEventId++,
+    payload: {
+      reason: 'user_disconnected'
+    }
+  };
+
+  // Encrypt and send to the dApp
+  const encryptedDisconnectEvent = sessionCrypto.encrypt(
+    JSON.stringify(disconnectEvent),
+    hexToByteArray(sessionData.dAppClientId)
+  );
+
+  // Your wallet's client ID is its public key
+  const walletClientId = sessionCrypto.publicKey;
+
+  // Send the disconnect event
+  await sendToBridge(walletClientId, sessionData.dAppClientId, encryptedDisconnectEvent);
+
+  // Close the EventSource
+  const eventSource = document.querySelector(`#event-source-${sessionId}`);
+  if (eventSource) {
+    eventSource.close();
+  }
+
+  // Delete the session
+  localStorage.removeItem(`tonconnect_session_${sessionId}`);
+}
+```
+
+Refer to the [DisconnectEvent](https://github.com/ton-blockchain/ton-connect/blob/main/requests-responses.md#wallet-events) documentation for more details.
+
+## TON Connect signing
+
+The signing process is a critical component when integrating TON Connect with custodians. Two key cryptographic operations are required: [**Transaction signing**](#transaction-signing) and [**TON Proof signing**](#ton-proof-implementation).
+
+### Transaction signing
+
+For transaction signing implementation, you can refer to the [`@ton/ton` library](https://github.com/ton-org/ton) where wallet integrations are implemented. Please note that this serves as a reference implementation to understand how to achieve transaction signing:
+
+- [`@ton/crypto`](https://github.com/ton-org/ton-crypto)
+- [`@ton/core`](https://github.com/ton-org/ton-core)
+- [`@ton/ton`](https://github.com/ton-org/ton)
+
+This library provides examples and utilities for TON blockchain operations, but custodians will need to adapt these patterns to work with their specific signing infrastructure and APIs.
+
+### TON Proof implementation
+
+For implementing the necessary functionality, two key resources are available:
+
+1. [TON Proof specification](https://github.com/ton-blockchain/ton-connect/blob/main/requests-responses.md#address-proof-signature-ton_proof)
+
+- This document provides the complete specification for address proof signatures
+- Describes the required format and cryptographic requirements
+
+2. [TON Proof verification example](https://github.com/ton-connect/demo-dapp-with-react-ui/blob/248379d2545f663931151ec9f49e465b748cfc68/src/server/services/ton-proof-service.ts#L25-L116)
+
+- This example demonstrates verification of `ton_proof` (not signing)
+- Useful for understanding the proof structure and validation logic
+
+### Reference implementations
+
+For practical examples of TON Connect signing implementations, you can review these wallet integrations:
+
+- [Tonkeeper](https://github.com/tonkeeper/wallet)
+- [TonDevWallet](https://github.com/TonDevWallet/TonDevWallet)
+
+These implementations demonstrate how different wallets handle TON Connect signing operations and can serve as reference points for custodian implementations.
+
+## Support and assistance
+
+For questions or clarifications during your integration process:
+
+- Add comments directly in this document for specific technical clarifications
+- Engage with the TON Foundation team through our technical chat channels
+- Contact the TON Foundation business development team to provide access to technical team for consultations
+
+To schedule a consultation call with our technical team:
+
+- Request a meeting through our technical chat channels
+- Contact the TON Foundation business development team to arrange technical discussions
+
+The TON Foundation is fully committed to supporting custodians throughout this integration process. This support includes:
+
+- Providing technical documentation and specifications
+- Sharing reference implementations and code examples
+- Offering consulting and troubleshooting assistance
+- Helping with testing and verification
+
+The TON Foundation is committed to supporting custodians throughout their TON Connect integration journey. Our team is available to address technical implementation questions, provide guidance on best practices, and facilitate business discussions to ensure successful integration outcomes.
+
+## FAQ
+
+### What are the correct network chain IDs for TON Connect?
+
+The TON blockchain uses specific network chain identifiers in the TON Connect protocol:
+
+- **Mainnet:** `CHAIN.MAINNET` (`-239`)
+- **Testnet:** `CHAIN.TESTNET` (`-3`)
+
+These values are defined in the TON Connect protocol specification as the `CHAIN` enum. When handling TON Connect requests, you'll encounter these network identifiers in transaction requests, address items, and connection payloads to specify which TON network the operation should target.
+
+## See also
+
+- TON Connect specification:
+  - [Bridge API](https://github.com/ton-blockchain/ton-connect/blob/main/bridge.md)
+  - [Requests and Responses](https://github.com/ton-blockchain/ton-connect/blob/main/requests-responses.md)
+  - [Session](https://github.com/ton-blockchain/ton-connect/blob/main/session.md)
+  - [TON Wallet Guidelines](https://github.com/ton-blockchain/ton-connect/blob/main/wallet-guidelines.md)
+  - [Workflows](https://github.com/ton-blockchain/ton-connect/blob/main/workflows.md)
+- Reference implementations:
+  - [`@tonconnect/protocol`](https://github.com/ton-connect/sdk/tree/main/packages/protocol)
+  - [TON Connect Bridge][bridge-repo]
+- Integration examples:
+  - [Tonkeeper](https://github.com/tonkeeper/wallet)
+  - [TonDevWallet](https://github.com/TonDevWallet/TonDevWallet)
+
+[bridge-repo]: https://github.com/ton-connect/bridge
