@@ -6,26 +6,24 @@ noindex: "true"
 
 import { Aside } from '/snippets/aside.jsx';
 
-<Aside type="danger">
-    Needs extensive revamp. Maybe use Tact docs as guidance.
-</Aside>
+## Assembler function definition
 
-## Assembler function body definition
-
-In FunC, functions can be defined directly using assembler code. This is done using the `asm` keyword, followed by one or more assembler commands written as strings.
+In FunC, functions can be defined directly using assembler code. This is done by declaring the function body using the `asm` keyword, 
+followed by one or more assembler commands written inside double quotes `"`, and finalizing with the symbol `;`.
 For example, the following function increments an integer and then negates it:
 
 ```func
 int inc_then_negate(int x) asm "INC" "NEGATE";
 ```
-– a function that increments an integer and then negates it. Calls to this function will be translated to 2 assembler commands `INC` and `NEGATE`. An alternative way to define the function is:
 
-When called, this function is directly translated into the two assembler commands, `INC` and `NEGATE`.
+Calls to `inc_then_negate` are translated to 2 assembler commands `INC` and `NEGATE`.
+
 Alternatively, the function can be written as:
 
 ```func
 int inc_then_negate'(int x) asm "INC NEGATE";
 ```
+
 Here, `INC NEGATE` is treated as a single assembler command by FunC, but the Fift assembler correctly interprets it as two separate commands.
 
 <Aside>
@@ -34,17 +32,83 @@ Here, `INC NEGATE` is treated as a single assembler command by FunC, but the Fif
 
 </Aside>
 
-### Rearranging stack entries
+### Multi-line asms
 
-Sometimes, the order in which function arguments are passed may not match the expected order of an assembler command. Similarly, the returned values may need to be arranged differently. While this can be done manually using stack manipulation primitives, FunC automatically handles it.
+Multi-line assembler commands, including Fift code snippets, can be defined using triple-quoted strings `"""`.
+For instance:
+
+```func
+slice hello_world() asm """
+  "Hello"
+  " "
+  "World"
+  $+ $+ $>s
+  PUSHSLICE
+""";
+```
+
+## Stack calling conventions
+
+The syntax for arguments and returns is the same as for standard functions, but there is one caveat - argument values are pushed onto the 
+stack before the function body is executed, and the return type is what is captured from the stack afterward.
+
+### Arguments
+
+When calling an asm function, the first argument is pushed onto the stack first, the second one second, and so on, 
+so that the first parameter is at the bottom of the stack and the last one at the top.
+
+```func
+builder storeCoins(builder b, int value) asm "STVARUINT16"; 
+    ;;                     |        |
+    ;;                     |        Pushed last, sits on top of the stack
+    ;;                     |
+    ;;                     Pushed first, sits at the bottom of the stack
+
+    ;; The instruction "STVARUINT16" stores 
+    ;; integer "value" into builder "b",
+    ;; by taking the builder from the bottom of the stack
+    ;; and the integer from the top of the stack,
+    ;; producing a new builder back
+```
+
+### Returns 
+
+An assembler function's return type attempts to grab relevant values from the resulting stack after the function execution 
+and any [result rearrangements](#rearranging-stack-entries).
+
+Specifying an [atomic type](types#atomic-types), such as an `int` or a `cell`, will make the assembler function 
+capture the top value from the stack. 
+If the run-time type of the captured value doesn't match the specified return type, an exception with [exit code 7]() will be thrown: `Type check error`.
+
+Specifying a [tensor type](types#tensor-types), such as `(int, int)`, will cause the assembler function to take as many elements from the stack as the number of components 
+in the tensor type. If the tensor type has nested tensor types, like `((int, int), int)`, it is interpreted as if it was the flattened tensor type `(int, int, int)`.
+
+For example, this function duplicates its input, so that if the input is `5`, it returns the tensor `(5, 5)`. 
+
+```func 
+(int, int) duplicate(int a) asm "DUP";
+     ;; DUP reads the value at the top of the stack 
+     ;; and pushes a copy.
+     ;; Since the return type is (int, int), 
+     ;; the function takes the first two values in the stack 
+     ;; and returns them.
+```
+
+## Rearranging stack entries
+
+Sometimes, the order in which function arguments are passed may not match the expected order of an assembler command. 
+Similarly, the returned values may need to be arranged differently. 
+While this can be done manually using stack manipulation primitives, FunC automatically handles it.
 
 <Aside>
 
-  When manually rearranging arguments, they are computed in the new order. To overwrite this behavior use [`#pragma compute-asm-ltr`](/language/func/compiler-directives#pragma-compute-asm-ltr).
+  When manually rearranging arguments, they are evaluated in the new order. 
+  To overwrite this behavior use [`#pragma compute-asm-ltr`](/language/func/compiler-directives#pragma-compute-asm-ltr).
 
 </Aside>
 
-For instance, the assembler command `STUXQ` takes an integer, a builder, and another integer as input. It then returns the builder and an integer flag indicating whether the operation succeeded. We can define the corresponding function as follows:
+For instance, the assembler command `STUXQ` takes an integer, a builder, and another integer as input. 
+It then returns the builder and an integer flag indicating whether the operation succeeded. We can define the corresponding function as follows:
 
 ```func
 (builder, int) store_uint_quite(int x, builder b, int len) asm "STUXQ";
@@ -71,16 +135,3 @@ Additionally, we can combine these techniques:
 (int, builder) store_uint_quite(builder b, int x, int len) asm(x b len -> 1 0) "STUXQ";
 ```
 
-### Multi-line asms
-
-Multi-line assembler commands, including Fift code snippets, can be defined using triple-quoted strings `"""`.
-
-```func
-slice hello_world() asm """
-  "Hello"
-  " "
-  "World"
-  $+ $+ $>s
-  PUSHSLICE
-""";
-```
