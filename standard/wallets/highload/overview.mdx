@@ -1,0 +1,69 @@
+---
+title: "Highload Wallets — overview"
+sidebarTitle: "Overview"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Highload Wallets are specialized wallet contracts designed for services that need to send hundreds of transactions per second, such as cryptocurrency exchanges, payment processors, and high-volume trading platforms.
+
+## What makes them different
+
+Unlike standard wallets (v3, v4, v5) that use sequential processing with a `seqno` counter, Highload Wallets (v2 and v3) store processed request identifiers in a dictionary, enabling **parallel transaction submission** without blocking.
+
+**Standard wallet limitation:**  
+Each transaction must wait for the previous one to complete. If you send 100 transactions, they must process sequentially: transaction 2 waits for transaction 1, transaction 3 waits for transaction 2, and so on.
+
+**Highload Wallet advantage:**  
+You can send 100, 1,000, 100,000 transactions simultaneously. Each transaction uses a unique `query_id` instead of a sequential `seqno`, allowing parallel processing without conflicts.
+
+## Version history
+
+### Highload Wallet v1
+
+The first highload wallet, using a simple `seqno` counter:
+
+- **Simple seqno-based:** Sequential processing like standard wallets
+- **Batch support:** Could send up to 255 messages per transaction
+- **Replay protection rollback:** If the action phase failed, replay protection would roll back (same issue as standard wallets v1-v4)
+
+### Highload Wallet v2
+
+Improved version with dictionary-based replay protection:
+
+- **Fund locking risk:** Under certain conditions, the contract could enter a state where funds became inaccessible
+- **High gas costs:** Storage updates and cleanup operations consumed excessive gas
+- **Replay protection rollback:** If the action phase failed, replay protection would roll back (same issue as v1 and standard wallets)
+
+<Aside type="danger">
+**Legacy contracts:** Highload Wallet v1 and v2 are deprecated. Use Highload Wallet v3 for all new deployments.
+</Aside>
+
+### Highload Wallet v3
+
+The current recommended version, redesigned to solve all previous architectural problems:
+
+- **More requests:** Up to 8,380,416 unique query IDs with efficient rotation
+- **Lower gas costs:** Optimized cleanup and storage operations
+- **Maximum safety:** Architectural design prevents fund locking; impossible to break
+- **Guaranteed replay protection:** Unlike v1, v2, and standard wallets v1-v4, replay protection **never rolls back** even if the action phase fails. The two-transaction pattern ensures the `query_id` is always committed before attempting to send messages.
+
+## Version comparison
+
+| Feature                           | v1                    | v2                        | v3                             |
+|-----------------------------------|-----------------------|---------------------------|--------------------------------|
+| **Replay rollback on action failure** | ⚠️ Yes            | ⚠️ Yes                    | ✅ No (two-transaction pattern) |
+| **Fund locking risk**             | ✅ No                 | ⚠️ Yes                    | ✅ No                          |
+| **Gas efficiency**                | Not optimized         | ⚠️ High cleanup costs     | ✅ Optimized                   |
+| **Max batch size**                | 255 messages          | 255 messages              | 254 messages                   |
+| **Replay protection**             | Simple seqno          | Query ID dictionary       | Dual dictionary + timestamp    |
+| **Transaction pattern**           | Single transaction    | Single transaction        | Two-transaction pattern        |
+| **Query ID space**                | Sequential seqno      | ~32,000                   | 8,380,416 unique IDs           |
+| **Parallel submissions**          | ❌ Sequential only    | ✅ Supported              | ✅ Supported                   |
+| **Status**                        | ⚠️ Deprecated         | ⚠️ Deprecated             | ✅ Recommended                 |
+
+## See also
+
+- [Highload Wallet v3](/standard/wallets/highload/v3/specification) — complete technical reference and how-to guides
+- [Highload Wallet v2](/standard/wallets/highload/v2/specification) — legacy version (deprecated)
+- [Highload Wallet v1](https://github.com/ton-blockchain/ton/blob/master/crypto/smartcont/highload-wallet-code.fc) — legacy version (deprecated)

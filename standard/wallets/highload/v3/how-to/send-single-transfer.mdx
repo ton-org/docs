@@ -1,0 +1,118 @@
+---
+title: "How to send a single transfer"
+sidebarTitle: "Send a single transfer"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+This guide shows how to send a single transfer from your Highload Wallet v3.
+
+## Objective
+
+By the end of this guide, you will:
+- Send a single TON transfer from your Highload Wallet v3
+- Understand how `query_id`, `created_at`, and send modes work
+
+## Prerequisites
+
+- Completed [wallet creation](/standard/wallets/highload/v3/how-to/create) with funded balance and saved configuration in `.wallet.json`
+
+## Step 1: Load wallet configuration
+
+Load the wallet data and create the wallet instance:
+
+```typescript
+import { TonClient, internal, toNano } from '@ton/ton';
+import { mnemonicToPrivateKey } from '@ton/crypto';
+import { Cell, SendMode } from '@ton/core';
+import { HighloadWalletV3 } from './wrappers/HighloadWalletV3';
+import { HighloadQueryId } from './wrappers/HighloadQueryId';
+import * as fs from 'fs';
+
+// Load wallet data
+const walletData = JSON.parse(fs.readFileSync('.wallet.json', 'utf-8'));
+const mnemonic = walletData.mnemonic.split(' ');
+const keyPair = await mnemonicToPrivateKey(mnemonic);
+
+const CODE = Cell.fromBoc(Buffer.from('b5ee9c7241021001000228000114ff00f4a413f4bcf2c80b01020120020d02014803040078d020d74bc00101c060b0915be101d0d3030171b0915be0fa4030f828c705b39130e0d31f018210ae42e5a4ba9d8040d721d74cf82a01ed55fb04e030020120050a02027306070011adce76a2686b85ffc00201200809001aabb6ed44d0810122d721d70b3f0018aa3bed44d08307d721d70b1f0201200b0c001bb9a6eed44d0810162d721d70b15800e5b8bf2eda2edfb21ab09028409b0ed44d0810120d721f404f404d33fd315d1058e1bf82325a15210b99f326df82305aa0015a112b992306dde923033e2923033e25230800df40f6fa19ed021d721d70a00955f037fdb31e09130e259800df40f6fa19cd001d721d70a00937fdb31e0915be270801f6f2d48308d718d121f900ed44d0d3ffd31ff404f404d33fd315d1f82321a15220b98e12336df82324aa00a112b9926d32de58f82301de541675f910f2a106d0d31fd4d307d30cd309d33fd315d15168baf2a2515abaf2a6f8232aa15250bcf2a304f823bbf2a35304800df40f6fa199d024d721d70a00f2649130e20e01fe5309800df40f6fa18e13d05004d718d20001f264c858cf16cf8301cf168e1030c824cf40cf8384095005a1a514cf40e2f800c94039800df41704c8cbff13cb1ff40012f40012cb3f12cb15c9ed54f80f21d0d30001f265d3020171b0925f03e0fa4001d70b01c000f2a5fa4031fa0031f401fa0031fa00318060d721d300010f0020f265d2000193d431d19130e272b1fb00b585bf03', 'hex'))[0];
+
+const client = new TonClient({ 
+    endpoint: 'https://testnet.toncenter.com/api/v2/jsonRPC',
+    // apiKey: 'your-api-key' // Optional: get from @tonapibot or @tontestnetapibot
+});
+
+const wallet = client.open(
+    HighloadWalletV3.createFromConfig(
+        {
+            publicKey: keyPair.publicKey,
+            subwalletId: walletData.subwalletId,
+            timeout: walletData.timeout,
+        },
+        CODE
+    )
+);
+```
+
+## Step 2: Prepare the transfer message
+
+Create an internal message with the transfer details:
+
+```typescript
+const internalMessage = internal({
+    to: 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c', // Zero address (for testing)
+    value: toNano('0.01'),
+    bounce: false,
+});
+```
+
+This example uses the zero address for testing. Replace it with your actual destination address.
+
+<Aside type="caution">
+**No state-init support:** Highload Wallet v3 cannot send messages containing `state_init` using this method.
+
+If you need to deploy a contract (send a message with `state_init`), use [batch transfers](/standard/wallets/highload/v3/how-to/send-batch-transfers) with an action list instead. See [Limitations and constraints](/standard/wallets/highload/v3/specification#limitations-and-constraints) in the specification for details.
+</Aside>
+
+## Step 3: Send the transfer
+
+Send the transfer using the `sendExternalMessage` method:
+
+```typescript
+const createdAt = Math.floor(Date.now() / 1000) - 30; // 30 seconds ago
+const queryId = new HighloadQueryId(); // Represents query_id as a seqno
+
+await wallet.sendExternalMessage(keyPair.secretKey, {
+    message: internalMessage,
+    mode: SendMode.PAY_GAS_SEPARATELY,
+    query_id: queryId,
+    createdAt: createdAt,
+    subwalletId: walletData.subwalletId,
+    timeout: walletData.timeout,
+});
+
+console.log('Transfer sent');
+```
+
+<Aside type="note">
+**Automatic deployment:** If your wallet is in `uninit` status (has balance but no code), it will automatically deploy when processing this external message. The wallet transitions to `active` status, and the transfer is executed in the same transaction.
+</Aside>
+
+### Parameter explanation
+
+**`query_id`** — Unique identifier for replay protection:
+- Each `query_id` can only be processed once within the protection window
+- `HighloadQueryId` is a wrapper class that represents the composite `query_id` as a sequential counter
+- Provides `getNext()` method to increment to the next unique ID
+- Total range: 8,380,416 unique IDs
+- See [Query ID structure](/standard/wallets/highload/v3/specification#query-id-structure) for details
+
+**`createdAt`** — Message timestamp for expiration:
+- Set to 30 seconds **before** current time: `Math.floor(Date.now() / 1000) - 30`
+- Compensates for blockchain time lag (lite-servers use last block time, not current time)
+- See [Timestamp validation](/standard/wallets/highload/v3/specification#timestamp-validation) for why this is necessary
+
+## Next steps
+
+Your wallet is fully operational. You can send multiple transfers in parallel or batch multiple messages in one transaction.
+
+To verify that your message, see [How to verify message is processed](/standard/wallets/highload/v3/how-to/verify-is-processed).
