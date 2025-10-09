@@ -1,48 +1,42 @@
 ---
 title: "Fee management"
 ---
+
 import { FeePlayground } from '/snippets/feePlayground.jsx';
 
 ## Fee calculator
 
 <FeePlayground />
 
-The calculator above works as follows under the hood:
+### Example with @ton/core
 
-```jsx title="Fee calculation example" expandable
-// Variable names below mirror fields of config param 25 (fees).
-// See: https://tonviewer.com/config#25
-const lump_price = 400000;
-const bit_price = 26214400;
-const cell_price = 2621440000;
-const first_frac = 21845;
-const nano = 10 ** -9;
-const bit16 = 2 ** 16;
+```ts title="TypeScript example"
+// Prices
+const msgPrices = getMsgPrices(configCell, 0);
+const gasPrices = getGasPrices(configCell, 0);
 
-// Calculations
-let total_fwd_fees =
-  lump_price + Math.ceil((bit_price * 0 + cell_price * 0) / bit16);
+// Forwarding for an example message (1 cell, 528 bits)
+const { total: msgFwdFees, res: actionFee, remaining: outFwdFees } =
+  computeFwdFeesVerbose(msgPrices, 1n, 528n);
 
-let gas_fees = 0.0011976; // Gas fees are out of scope here
-let storage_fees = 0.000000003; // Storage fees as well
-let total_action_fees = +((total_fwd_fees * first_frac) / bit16).toFixed(9);
-let import_fee =
-  lump_price + Math.ceil((bit_price * 528 + cell_price * 1) / bit16);
-let total_fee =
-  gas_fees +
-  storage_fees +
-  // total_action_fees * nano + <- already included in total_fwd_fees
-  import_fee * nano +
-  total_fwd_fees * nano; // <- not included in explorer's total fee
+// Gas (example usage)
+const gasUsed = 299_400n;
+const gasFee = computeGasFee(gasPrices, gasUsed);
 
-// Results
-console.log("Total fee:", total_fee.toFixed(9), "Toncoin");
-console.log("Action fee:", (total_action_fees * nano).toFixed(9), "Toncoin");
-console.log("Forwarding fee:", (total_fwd_fees * nano).toFixed(9), "Toncoin");
-console.log("Import fee:", (import_fee * nano).toFixed(9), "Toncoin");
-
+// Storage for one day of an example state
+const stateStats = new StorageStats(1323n, 3n);
+const storage = getStoragePrices(configCell);
+const storageFee = calcStorageFee(storage, stateStats, 86_400n);
 ```
 
+<Aside
+  type="note"
+  title="Governance-controlled parameters"
+>
+  Avoid modifying prices with `setGasPrice`, `setMsgPrices`, or `setStoragePrices` — these are controlled by validator governance via config updates. Use read-only getters and fee calculators in app code.
+</Aside>
+
+Full helper implementations: see [Fees → Helper functions appendix](/ton/fees#helper-functions).
 
 ## Accept message effects
 
