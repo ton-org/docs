@@ -1,0 +1,106 @@
+---
+title: "API"
+---
+
+This page describes all messages and methods related to Jetton processing that are specified in TEPs.
+
+## [TEP 0074](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md)
+
+### Transfer message layout
+
+| Field                  | Type                | Description                                                                                                               |
+|:-----------------------|:--------------------|:--------------------------------------------------------------------------------------------------------------------------|
+| `transfer`             | `0x0f8a7ea5`        | tag                                                                                                                       |
+| `query_id`             | `uint64`            | arbitrary request number                                                                                                  |
+| `amount`               | `VarUInteger 16`    | amount of transferred jettons in elementary units                                                                         |
+| `destination`          | `MsgAddress`        | address of the new owner of the jettons                                                                                   |
+| `response_destination` | `MsgAddress`        | address where to send a response with confirmation of a successful transfer and the rest of the incoming message Toncoins |
+| `custom_payload`       | `Maybe ^Cell`       | optional custom data (which is used by either sender or receiver jetton wallet for inner logic)                           |
+| `forward_ton_amount`   | `VarUInteger 16`    | the amount of nanotons to be sent to the destination address                                                              |
+| `forward_payload`      | `Either Cell ^Cell` | optional custom data that should be sent to the destination address                                                       |
+
+### Forward payload formats
+
+If you want to send a simple comment in the `forward_payload` then the `forward_payload` must starts with `0x00000000` (32-bits unsigned integer equals to zero) and the comment is contained in the remainder of the `forward_payload`.
+
+If comment does not begin with the byte `0xff`, the comment is a text one; it can be displayed "as is" to the end user of a wallet (after filtering invalid and control characters and checking that it is a valid UTF-8 string). For instance, users may indicate the purpose ("for coffee") of a simple transfer from their wallet to the wallet of another user in this text field.
+
+On the other hand, if the comment begins with the byte `0xff`, the remainder is a "binary comment", which should not be displayed to the end user as text (only as hex dump if necessary). The intended use of "binary comments" is, e.g., to contain a purchase identifier for payments in a store, to be automatically generated and processed by the store's software.
+
+If the `forward_payload` contains a binary message for interacting with the destination smart contract (for example, with DEX), then there are no prefixes.
+
+### Transfer notification message layout
+
+| Field                  | Type                | Description                                             |
+|------------------------|---------------------|---------------------------------------------------------|
+| `transfer_notification`| `0x7362d09c`        | tag                                                     |
+| `query_id`             | `uint64`            | should be equal with request's `query_id`               |
+| `amount`               | `VarUInteger 16`    | amount of transferred jettons                           |
+| `sender`               | `MsgAddress`        | an address of the previous owner of transferred jettons |
+| `forward_payload`      | `Either Cell ^Cell` | should be equal with request's `forward_payload`        |
+
+### Excesses message layout
+
+| Field                  | Type                | Description                                             |
+|------------------------|---------------------|---------------------------------------------------------|
+| `excesses`             | `0xd53276db`        | tag                                                     |
+| `query_id`             | `uint64`            | should be equal with request's `query_id`               |
+
+### Burn message layout
+
+| Field                  | Type             | Description                                                                                                           |
+|------------------------|------------------|-----------------------------------------------------------------------------------------------------------------------|
+| `burn`                 | `0x595f07bc`     | tag                                                                                                                   |
+| `query_id`             | `uint64`         | arbitrary request number                                                                                              |
+| `amount`               | `VarUInteger 16` | amount of burned jettons                                                                                              |
+| `response_destination` | `MsgAddress`     | an address where to send a response with confirmation of a successful burn and the rest of the incoming message coins |
+| `custom_payload`       | `Maybe ^Cell`    | optional custom data                                                                                                  |
+
+### get_wallet_data()
+
+No arguments. Outputs:
+
+| Field                | Type            | Description                          |
+|----------------------|-----------------|--------------------------------------|
+| `balance`            | `VarUInteger 16`| amount of jettons on wallet          |
+| `owner`              | `MsgAddress`    | an address of wallet owner           |
+| `jetton`             | `MsgAddress`    | an address of Jetton master contract |
+| `jetton_wallet_code` | `Cell`          | code of this wallet                  |
+
+### get_jetton_data()
+
+No arguments. Outputs:
+
+| Field                | Type             | Description                                                        |
+|----------------------|------------------|--------------------------------------------------------------------|
+| `total_supply`       | `VarUInteger 16` | the total number of issues jettons                                 |
+| `mintable`           | `Bool`           | (-1/0) flag which indicates whether number of jettons can increase |
+| `admin_address`      | `MsgAddress`     | an address of smart contract that controls Jetton                  |
+| `jetton_content`     | `Cell`           | data in accordance to TEP 0064                                     |
+| `jetton_wallet_code` | `Cell`           | code of wallet for that jetton                                     |
+
+### get_jetton_data()
+
+Argument: `owner_address` as `MsgAddress`.
+
+Output: `jetton_wallet_address`as `MsgAddress`.
+
+## [TEP 0089](https://github.com/ton-blockchain/TEPs/blob/master/text/0089-jetton-wallet-discovery.md)
+
+### Provide wallet address message layout
+
+| Field                    | Type         | Description                                                        |
+|--------------------------|--------------|--------------------------------------------------------------------|
+| `provide_wallet_address` | `0x2c76b973` | tag                                                                |
+| `query_id`               | `uint64`     | arbitrary request number                                           |
+| `owner_address`          | `MsgAddress` | owner's address of Jetton wallet of interest                       |
+| `include_address`        | `Bool`       | whether to include owner's address in the outgoing message         |
+
+### Take wallet address message layout
+
+| Field                 | Type                | Description                                            |
+|-----------------------|---------------------|--------------------------------------------------------|
+| `take_wallet_address` | `0xd1735400`        | tag                                                    |
+| `query_id`            | `uint64`            | arbitrary request number                               |
+| `wallet_address`      | `MsgAddress`        | an address of Jetton wallet of interest                |
+| `owner_address`       | `Maybe ^MsgAddress` | optional: owner's address of Jetton wallet of interest |
