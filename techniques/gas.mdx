@@ -1,110 +1,184 @@
-## title: "Estimate gas usage in TON contracts"
+---
+title: "Estimate gas usage in TON contracts"
+---
 
 import {Aside} from "/snippets/aside.jsx";
 
-Accurately estimate gas consumption by defining operation-specific constants and proving they are never exceeded through systematic testing.
+<Aside type="note">
+  The whole idea behind this is that any contract system has some kind of *in* contracts. Those contracts receive the message from the user directly. Those cointracts should check, that there are enough attached toncoins to cover fees for all contracts in the future trace. If *in* contract accepts message from the user (by *accept* I mean not `accept_message()` but semantically accept, e.g. do not throw an exception, do not send jettons or extra-currency back), then it should guarantee that this exact message won't later fail because of insufficient attached toncoins.
+<Aside>
 
-## Objective
+In case you are writing a contract system, where correctness depends on successful execution of the rest of the transaction trace, then you need to guarantee that there are enough attached toncoins in an incoming message to cover all fees. This article describes how to compute those fees.
 
-Establish gas constants for each contract operation and validate them across all execution paths to prevent out-of-gas failures.
+Define variables for limits and initialize them with zero. We will raise them further to actual values.
 
-## Core methodology
-
-Gas estimation follows a test-driven approach:
-
-1. Define conservative gas constants for each operation
-1. Run comprehensive tests covering all execution paths
-1. Extract actual gas consumption from transaction receipts
-1. Verify actual usage never exceeds constants
-1. Adjust constants if needed with safety margin
-
-This ensures operations always have sufficient gas while avoiding overpayment.
-
-## Define operation-specific constants
-
-Create a dedicated constants file organized by functionality:
-
+Use descriptive names indicating the operation and contract.
+We recommend creating a dedicated constants file.
 ```tact
-// Swap operations
-const GasSwapRequest: Int = 11000;
-const GasPoolSwap: Int = 12000;
-
-// Liquidity operations
-const GasLiquidityDeposit: Int = 15500;
-const GasLiquidityWithdraw: Int = 9500;
+const GasSwapRequest: Int = 0;
 ```
 
-Use descriptive names indicating the operation and contract. Jetton operations typically require 20–30% more gas than native TON operations due to additional contract calls.
+Run tests covering all execution paths. If you miss a path, it might be the most expensive.
+Extract resource consumption from `send()` method return value. The sections below describe ways to compute consumption of different kinds of resources.
+Use `expect(extractedValue).toBeLessThanOrEqual(hardcodedConstant)` to verify that the hardcoded limit is not exceeded.
 
-## Calculate total fees
+```typescript
+import {findTransactionRequired} from "@ton/test-utils";
 
-Transaction fees consist of three components:
+const result = await contract.send(...);
+const vaultTx = findTransactionRequired(result.transactions, {
+    on: contract.address,
+    op: 0x12345678,
+});
+expect(getGas(vaultTx)).toBeLessThanOrEqual(GasSwapRequest);
+```
+
+On the first run, use an error message to set the constant to the actual value used.
+
+```text
+expect(received).toBeLessThanOrEqual(expected)
+
+Expected: <= 0n
+Received:    11578n
+```
+
+```tact
+const GasSwapRequest: Int = 12000;
+```
 
 ### Compute fees
 
-The cost of TVM execution, measured in gas units. Convert to TON at runtime using blockchain config parameters:
+There are two kinds of values: gas units and toncoins.
+
+The price of contract execution is fixed in gas units. However, the price of the gas itself is determined by the blockchain configuration.
+
+One can convert to toncoins in the contract code using current blockchain config parameters:
 
 ```tact
-getComputeFee(hardcodedGasValue, isAccountInMasterchain)
+let fee = getComputeFee(hardcodedGasValue, isAccountInMasterchain);
 ```
 
 This function uses the [`GETGASFEE`](/tvm/instructions#f836-getgasfee) TVM opcode.
 
 ### Forward fees
 
-Message routing costs based on message size. When your outgoing message is smaller than or equal to the incoming message, read the fee from context:
-
-```tact
-let fwdFee = context().readForwardFee();
-```
-
-Fees scale with message size—if you are not adding data, the outgoing fee will not exceed the incoming fee.
-
-For precise calculation when creating larger messages, use [`GETFORWARDFEE`](/tvm/instructions#f838-getforwardfee):
-
-If the outgoing message size cannot be predicted at compile time, calculate its size at runtime using [`CDATASIZE`](/tvm/instructions#f941-cdatasize):
+In general, you can calculate message size at runtime using `computeDataSize()` which uses [`CDATASIZE`](/tvm/instructions#f941-cdatasize):
+And then, calculate forward fee using `getForwardFee()` which uses [`GETFORWARDFEE`](/tvm/instructions#f838-getforwardfee)
 
 ```tact
 let size = computeDataSize(msg.toCell(), 65536);
 let fwdFee = getForwardFee(size.cells, size.bits, isAccountInMasterchain);
 ```
 
+<Aside type="warning">
+  `computeDataSize()` function consumes large, unpredictable amount of gas. If at all it is possible to precompute the size, it is recommended to do so.
+</Aside>
+
+
+### Optimized forward fee calculation
+
+If the size of the outgoing message is bounded by the size of the incoming message, we can estimate the forward fee of an outgoing message to be no larger than the forward fee of the incoming message, that was already computed by TVM. Thus, we don't have to calculate it again.
+
+```tolk
+fun onInternalMessage(in: InMessage) {
+    val fwdFee = in.originalForwardFee;
+    // ...
+}
+```
+
+### Additional forward fee calculation
+
+Forward fee is calculated using such formula
+```
+fwdFee = basePrice + priceForCells * cells + priceForBits * bits
+```
+
+So, when one want to send message, with `a + b` cells and `x + y` bits, the forward fee won't be `getForwardFee(a + b, x + y)`, but rather `basePrice + priceForCells * (a + b) + priceForBits * (x + y)`.
+
+For this case, we can use `getSimpleForwardFee()` which uses [`GETSIMPLEFORWARDFEE`](/tvm/instructions#f839-getsimpleforwardfee). This function does not add basePrice (called `lump_price` in config) into account.
+
+So the price of sending message with `a + b` cells and `x + y` bits is `getForwardFee(a, x) + getSimpleForwardFee(b, y)`.
+
+For example, when deploying contracts as part of the operation:
+
+```tact
+deploy(DeployParameters{
+    init: initOf TargetContract(params),
+    value: 0,
+    mode: SendRemainingBalance,
+    body: msg.toCell(),
+});
+```
+
+The `init` field adds significant message size. Calculate its forward fee separately using actual cell/bit counts with `getForwardFee(msgCells, msgBits) + getSimpleForwardFee(TargetContractStateInitCells, TargetContractStateInitBits)`. Which is equivalent to `getSimpleForwardFee(msgCells, msgBits) + getForwardFee(TargetContractStateInitCells, TargetContractStateInitBits)`
+
+### Complex forward fee calculation
+
+Sometimes, out message is larger than the input one. In that cases combined approach can be used. 
+```tolk
+fun onInternalMessage(in: InMessage) {
+    val origFwdFee = in.originalForwardFee;
+    // Out message will consist of fields from in message, plus some extra fields.
+    // We can estimate forward fee for out message using forward fee for in message.
+    let additionalFwdFee = getSimpleForwardFee(additionalFieldsSize.cells, additionalFieldsSize.bits, isAccountInMasterchain);
+    let totalFwdFee = origFwdFee + additionalFwdFee;
+    // Remember to multiply those by the number of hops in the trace.
+}
+```
+
 ### Storage fees
 
-<Aside>
-  If the incoming message is non‑bounceable, storage fees are deducted from the incoming message’s balance before processing. For bounceable messages, storage fees are not deducted in that transaction.
-</Aside>
+Let's call contracts, that receives user's message *in* contracts. Other contracts in contract system are called *internal* contracts. That is not global terminology, just local to the current article.
+
+We cannot predict storage fees that we have to pay for sending messages because it depends on how long the target contract didn't pay storage fee.
+Storage fees are different from forward and compute fees in that term, they should be handled in *in* contracts and in *internal* contracts.
 
 Two distinct approaches exist:
 
 **Approach 1: Maintain a positive reserve**
 
-Always keep a minimum balance on the contract. Storage fees deduct from this reserve, which replenishes with each user interaction.
+Always keep a minimum balance on the all contracts in your system. Storage fees deduct from this reserve, which replenishes with each user interaction.
 Do not hardcode TON; instead, hardcode the maximum possible contract size in cells and bits.
 
+
+Note, this is supposed to be the code in *internal* contracts.
 ```tact
 const secondsInFiveYears: Int = 5 * 365 * 24 * 60 * 60;
 receive(msg: Transfer) {
     let minTonsForStorage: Int = getStorageFee(maxCells, maxBits, secondsInFiveYears, isAccountInMasterchain);
-    nativeReserve(minTonsForStorage, ReserveAtMost);
+    nativeReserve(max(oldBalance, minTonsForStorage), ReserveAtMost);
     // Process operation with remaining value...
+}
+// Also this contract probably will require some code, that will allow owner to withdraw TONs from this contract.
+```
+
+In this approach, *in* contract should calculate maximum possible storage fees for all contracts in trace.
+
+```
+const secondsInFiveYears: Int = 5 * 365 * 24 * 60 * 60;
+receive(msg: UserIn) {
+    // Suppose trace will be *in* -> *A* -> *B*
+    let storageForA = getStorageFee(maxCellsInA, maxBitsInA, secondsInFiveYears, isAccountInMasterchain);
+    let storageForB = getStorageFee(maxCellsInB, maxBitsInB, secondsInFiveYears, isAccountInMasterchain);
+    let totalStorageFees = storageForA + storageForB;
+    let otherFees = ...;
+    require(messageValue() >= totalStorageFees + otherFees, "Not enough toncoins");
 }
 ```
 
-<Aside>
+<Aside type="caution">
   Verify the hardcoded contract size in tests.
 </Aside>
 
-Use this when contracts must maintain a continuous positive balance, such as jetton wallets that may sit idle for extended periods.
-
 **Approach 2: Cover storage on demand**
 
-Allow the balance to remain at zero or with small debt. Reserve storage debt from incoming messages when needed.
+In the worst case the storage fee for a single message is [`freeze_due_limit`](/ton/config#param-20-and-21%3A-gas-prices). Otherwise, the contract likely is already frozen and a transaction chain is likely to fail anyway.
 
+So if we reserve storage debt from incoming messages. Allow the balance to remain at zero or with small debt.
+
+Note, this is supposed to be the code in the *internal* contracts.
 ```tact
 receive(msg: Operation) {
-    // Process operation first...
-
     // Reserve original balance plus any storage debt
     nativeReserve(myStorageDue(), ReserveAddOriginalBalance | ReserveExact);
 
@@ -119,81 +193,23 @@ receive(msg: Operation) {
 
 This simplifies fee calculation at the start of the operation—you do not need to pre‑calculate storage fees. The `myStorageDue()` function returns the amount needed to bring the balance to zero (or zero if it is already positive).
 
-## Implement fee validation
+<Aside type="tip">
+  If the incoming message is non‑bounceable, storage fees are deducted from the incoming message’s balance before processing. For bounceable messages, storage fees are deducted from the contract’s balance. So, if all messages to *internal* contracts are unbounceable, and you use this, there is no need to reserve toncoins for storage in *internal* contracts.
+</Aside>
 
-Check that the incoming value covers all operation costs before processing:
-
+If we expect that the rest of trace uses `n` unique contracts, then it won't take more than `n` freeze limits to pay their storage fees. So, in *in* contract, the check should be:
 ```tact
-receive(msg: SwapRequest) {
-    let ctx = context();
-    let fwdFee = ctx.readForwardFee();
-
-    // Count all messages in the operation chain
-    let messageCount = 3;  // vault → pool → vault
-
-    // Calculate minimum required
-    let minFees =
-        messageCount * fwdFee +
-        getComputeFee(GasSwapRequest, false) +
-        getComputeFee(GasPoolSwap, false) +
-        minTonsForStorage;
-
-    require(ctx.value >= msg.amount + minFees, "Insufficient TON attached");
-
-    // Reserve swap amount and process
-    nativeReserve(msg.amount, ReserveExact | ReserveAddOriginalBalance);
-    // Send remaining value for fees...
+receive(msg: Operation) {
+    // The trace is still *in* -> *A* -> *B*
+    let freezeLimit = getFreezeLimit(isAccountsInMasterchain);
+    let otherFees = ...;
+    // n equals 3 because *in* -> *A* -> *B*
+    require(messageValue() >= freezeLimit * 3 + otherFees, "Not enough toncoins");
 }
 ```
 
-Document each fee component with inline comments explaining the count and purpose. This helps future maintainers understand the calculation.
 
-## Verify through testing
-
-### Extract gas consumption
-
-Create a utility to extract compute gas from transaction receipts:
-
-```typescript
-export function getComputeGasForTx(tx: Transaction): bigint {
-    if (tx.description.type !== "generic") {
-        throw new Error("Expected generic transaction");
-    }
-    if (tx.description.computePhase.type !== "vm") {
-        throw new Error("Expected VM compute phase");
-    }
-    return tx.description.computePhase.gasUsed;
-}
-```
-
-### Check every execution path
-
-Verify gas usage for each transaction in multi‑step operations:
-
-```typescript
-async function testSwap() {
-    const result = await vault.sendSwap(amount, params);
-
-    // Find and verify each transaction
-    const vaultTx = findTransactionRequired(result.transactions, {
-        on: vault.address,
-        op: VaultOpcodes.Swap,
-    });
-    expect(getComputeGasForTx(vaultTx))
-        .toBeLessThanOrEqual(GasSwapRequest);
-
-    const poolTx = findTransaction(result.transactions, {
-        on: pool.address,
-        op: PoolOpcodes.Swap,
-    });
-    expect(getComputeGasForTx(poolTx))
-        .toBeLessThanOrEqual(GasPoolSwap);
-}
-```
-
-### Verify balance behavior
-
-For contracts using the zero‑balance approach, confirm there is no excess accumulation:
+For contracts using this approach, confirm there is no excess accumulation:
 
 ```typescript
 it("should not accumulate excess balance", async () => {
@@ -206,41 +222,76 @@ it("should not accumulate excess balance", async () => {
 
 This confirms that all incoming value was consumed or forwarded, with none left behind. It helps identify any bugs that cause accumulation of TON on any contract.
 
-## Common patterns
 
-### Multi‑hop operations
+## Implement fee validation
 
-Scale fees with chain length:
-
-```tact
-let totalFees =
-    (hops + 2) * storageFeePerContract +
-    (hops + 1) * fwdFee +
-    getComputeFee(GasPerHop, false) * hops;
-```
-
-Account for both ends of the chain (hence `+ 2` for storage, `+ 1` for the final message).
-
-<Aside
-  type="caution"
->
-  Verify in tests that each hop’s message size is less than or equal to the input message. Otherwise, reading the forward fee from context (`readForwardFee()`) will not be accurate.
-</Aside>
-
-### State initialization
-
-When deploying contracts as part of the operation:
+So, final code in *in* contract could look like this:
 
 ```tact
-deploy(DeployParameters{
-    init: initOf TargetContract(params),
-    value: 0,
-    mode: SendRemainingBalance,
-    body: initialMessage.toCell(),
-});
+receive(msg: SwapRequest) {
+    let ctx = context();
+    let fwdFee = ctx.readForwardFee();
+
+    // Count all messages in the operation chain
+    // IMPORTANT: We know that each of messages is less or equal to `SwapRequest`.
+    let messageCount = 3;  // *in* -> vault → pool → vault
+
+    // Calculate minimum required
+    let minFees =
+        messageCount * fwdFee +
+        getComputeFee(GasSwapRequest, isInMasterchain) + // Operation in first vault
+        getComputeFee(GasPoolSwap, isInMasterchain) + // Operation in pool
+        getComputeFee(GasVaultPayout, isInMasterchain) + // Operation in second vault
+        3 * getFreezeLimit();
+
+    require(ctx.value >= msg.amount + minFees, "Insufficient TON attached");
+
+    // Send remaining value for fees...
+
+    // Also, you may need to handle fee on this exact contract, if this contract is supposed not to hold users TONs.
+    // You can do that in any of 2 ways
+}
 ```
 
-The `init` field adds significant message size (the size of a forwarded `StateInit` also affects forward fees). Calculate its forward fee separately using actual cell/bit counts with `getForwardFee` / `getSimpleForwardFee`.
+## Helper functions
+
+Getting gas for transaction in sandbox is quite easy:
+
+```ts
+function getComputeGasForTx(tx: Transaction): bigint {
+    if (tx.description.type !== "generic") {
+        throw new Error("Expected generic transaction");
+    }
+    if (tx.description.computePhase.type !== "vm") {
+        throw new Error("Expected VM compute phase");
+    }
+    return tx.description.computePhase.gasUsed;
+}
+```
+
+
+To calculate size of a message in cells, you can use this function:
+
+```ts
+const calculateCellsAndBits = (root: Cell, visited: Set<string> = new Set<string>()) => {
+    const hash = root.hash().toString("hex")
+    if (visited.has(hash)) {
+        return {cells: 0, bits: 0}
+    }
+    visited.add(hash)
+
+    let cells = 1
+    let bits = root.bits.length
+    for (const ref of root.refs) {
+        const childRes = calculateCellsAndBits(ref, visited)
+        cells += childRes.cells
+        bits += childRes.bits
+    }
+    return {cells, bits, visited}
+}
+```
+
+Remember to check your message size constants on all possible pathes in the tests. Othervise, you gas estimations might be wrong.
 
 ## See also
 
