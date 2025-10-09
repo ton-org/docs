@@ -1,15 +1,16 @@
 ---
 title: Get Full Transaction Trace
-description: Learn how to fetch the full execution trace of a transaction using TonCenter v3 APIs.
+description: Learn what a trace is, how trace emulation differs from on-chain traces, how to obtain a transaction hash (including normalized external-in), and how to fetch and interpret TonCenter v3 traces end-to-end.
 ---
 
-This guide shows how to fetch a **transaction trace** from the Ton Center API.  
-Traces expand a single transaction into a tree of all triggered calls, including intermediate contract executions, fees, and message flows.
+This guide shows how to fetch a **transaction trace** from the Ton Center API and how to interpret it.  
+A **trace** expands a single transaction into a **tree of all triggered calls**, including intermediate contract executions, fees, and message flows across accounts.
 
 This recipe is useful for:
 - **Exchanges** validating deposits end-to-end  
 - **DApps** debugging complex interactions (e.g., Jetton swaps, NFT mints)  
 - **Explorers** building a visual graph of what happened in a transaction  
+- **Bridges** indexing **trace finality** to confirm cross-chain settlement consistency
 
 <Info>
 The examples use the public Ton Center endpoint:
@@ -23,39 +24,108 @@ For production, request your own API key and use a dedicated endpoint for higher
 
 ---
 
-## 1. Fetching a trace by transaction hash
+## Understanding Traces
 
-Use the `/traces` endpoint with the transaction hash:
+
+A **trace** represents the *complete on-chain execution flow* of a transaction. It shows every step that occurred as the message propagated through the network—covering all internal calls, fees, and resulting state changes.
+
+
+In other words, it provides:
+- the full **call chain** (incoming -> outgoing -> nested calls),
+- all **intermediate transactions** involved,
+- **state updates** and **fees** for each phase,
+- bounce behavior and **exit codes** indicating success or failure.
+
+
+Traces are **authoritative** because they reflect the *final, confirmed result* on the blockchain.
+
+
+---
+
+## Emulation vs. On-chain Trace
+
+While traces show what *actually happened*, **trace emulation** predicts what *would happen* if a message were processed at the current network state. Emulation is typically used *before* sending a transaction to:
+- estimate whether it will succeed or fail,
+- preview gas consumption and expected actions,
+- simulate complex interactions like swaps or NFT mints.
+
+Once the transaction is included on-chain, the **on-chain trace** becomes the factual record of the execution.
+
+> **Workflow tip**
+> 1. **Before sending:** emulate to check success, cost, and side effects.
+> 2. **After confirmation:** fetch the on-chain trace to verify final behavior and outcomes.
+
+---
+
+## How to obtain the transaction hash
+
+You need a **transaction hash** (or a **normalized external-in hash**) to fetch a trace.
+
+- From a **block explorer** like tonviewer.com or tonscan.org (copy the tx hash from the UI).  
+- From **Ton Center APIs** that return transactions.  
+- If you start from an **external-in** (e.g., sent through TON Connect), compute the **normalized external-in hash** per [TEP-467] and locate the resulting transaction.
+See the [dedicated guide for message lookup](/ecosystem/ton-connect/message-lookup).  
+
+That guide explains **normalization** (TEP-467) and provides working code to:
+- compute the **normalized hash** of the external-in,
+- **page through** the destination account’s history,
+- match the transaction by comparing the normalized input message.
+
+<Aside type="warning" title="About externals">
+When tracing from an **external-in**:
+- Use the **normalized external hash** to look up the resulting transaction reliably.
+- Traces returned by Ton Center v3 include the `external_hash` field when applicable, tying the trace back to the originating external-in.
+- **Do not** use external-in tracking for payment processing or final settlement logic; it is a UX aid. See the notice in the Message lookup guide.
+</Aside>
+
+---
+## Fetching and Analyzing Traces
+
+### 1. Fetch a trace by transaction hash
 
 ```bash
 curl -X GET "https://toncenter.com/api/v3/traces?hash=Vy11B+AiGGrDBcGx3UiUFUJozUQ3U2yHvaATSrS03og=" \
   -H "accept: application/json"
 ```
 
+If you start from an **external-in**, first follow **Message lookup** to resolve the **transaction hash**, then call `/traces` with that hash.
+
 ---
 
-## 2. Understanding the response
+### 2. Understanding the response
 
-A simplified JSON response looks like this:
-```json
-{
-  "traces": [
-    {
-      "trace_id": "Vy11B+AiGGrDBc...",
-      "transactions": {
-        "tx1_hash": { "account": "...", "lt": "...", "in_msg": {...}, "out_msgs": [...] },
-        "tx2_hash": { "account": "...", "lt": "...", "in_msg": {...}, "out_msgs": [...] }
-      },
-      "trace": {
-        "tx_hash": "tx1_hash",
-        "children": [
-          { "tx_hash": "tx2_hash", "children": [] }
-        ]
-      }
-    }
-  ]
-}
-```
+A trace response has three layers:
+
+1. **Trace envelope** (per trace):
+- `trace_id`: identifier for this end-to-end trace.
+- `external_hash` (optional): normalized hash of the originating **external-in** (if any).
+- `mc_seqno_start`, `mc_seqno_end`: masterchain boundaries in which the trace executed.
+- `start_lt` / `end_lt`, `start_utime` / `end_utime`: logical times and timestamps for the trace window.
+- `trace_info`: summary object  
+  - `trace_state`: e.g. `complete` / `incomplete`  
+  - counters: `messages`, `transactions`, `pending_messages`  
+  - `classification_state`: internal/heuristic classification state (provider-specific)
+- `is_incomplete`: `true` when some sub-messages are still pending (e.g., delayed/IHR paths).
+
+2. **Trace tree** (`trace`):
+- A root node `{ tx_hash, in_msg_hash, children[] }`.  
+- **Children** recursively enumerate sub-transactions spawned by out-messages.
+
+3. **Transactions map** (`transactions`) and **order** (`transactions_order`):
+- `transactions` is a **hash -> transaction** dictionary giving full details for each tx in the tree.
+- `transactions_order` offers a deterministic ordering for UI rendering.
+
+Inside each **transaction**:
+- `account`, `hash`, `lt`, `now`, `mc_block_seqno`
+- **Phases** under `description`:  
+  - `storage_ph`: storage fee collection and status change  
+  - `credit_ph`: inbound value credit (if any)  
+  - `compute_ph`: VM execution info (`success`, `exit_code`, `gas_used`, `vm_steps`, etc.)  
+  - `action`: actions taken, **msgs_created**, **fwd fees**, **result_code**
+- `in_msg`: the inbound message (fields like `source`, `destination`, `value`, `opcode`, `bounce`, `message_content`, etc.)
+- `out_msgs`: array of messages produced by this tx
+- `account_state_before` / `account_state_after`: balance, code/data hashes, status transitions
+- `emulated`: whether this record was emulated (for real on-chain traces this is `false`)
 
 <Accordion title="Full output example">
 Output for transaction hash `Vy11B+AiGGrDBcGx3UiUFUJozUQ3U2yHvaATSrS03og=`:
@@ -913,40 +983,63 @@ Output for transaction hash `Vy11B+AiGGrDBcGx3UiUFUJozUQ3U2yHvaATSrS03og=`:
 ```
 </Accordion>
 
-### How to Interpret the Trace
+**Reading the example**
 
-- **External → 0:9B14407F88AB1A73C5D09E26F98B7DB9664F11D5251094C129A71C7CFA2B27D1 : 0**  
-  The transaction begins with an **external message** sent to account `0:9B14407F88AB1A73C5D09E26F98B7DB9664F11D5251094C129A71C7CFA2B27D1`, with **0 nanotons** attached.
+- **External -> 0:9B14…27D1 : 0** — the trace starts from an **external-in** with **0 nanotons** attached.  
+- **0:9B14…27D1 -> 0:52D7…1C77 : 565,276,000** — value forwarded to a contract.  
+- **0:52D7…1C77 -> 0:1C22…8E34 : 547,800,000** — the contract performs a **sub-transfer**.  
+- **0:1C22…8E34 -> 0:8524…283A : 543,800,000 (100 Telegram Stars)** — main action.  
+- **0:52D7…1C77 -> 0:F9BC…94A1 : 4,350,400 (Fee)** — processing fee path.  
+- **0:52D7…1C77 -> 0:7D87…5E19 : 6,525,600** — small commission/auxiliary payout.
 
-- **0:9B14407F88AB1A73C5D09E26F98B7DB9664F11D5251094C129A71C7CFA2B27D1 → 0:52D75E0584730001239D4CD8C73D651B206EAC67DB551535B6B6D505E6D41C77 : 565276000**  
-  This account forwards **565,276,000 nanotons (≈ 0.565 TON)** to contract `0:52D75E0584730001239D4CD8C73D651B206EAC67DB551535B6B6D505E6D41C77`.
+Look at:
+- `compute_ph.success` and `exit_code` to confirm execution success.
+- `action.msgs_created` and each message’s `bounce`/`bounced` flags.
+- `total_fees`, `gas_used` for cost analysis.
+- `account_state_*` to verify code/data and balance deltas.
 
-- **0:52D75E0584730001239D4CD8C73D651B206EAC67DB551535B6B6D505E6D41C77 → 0:1C2201823E6DAE55FADD08CAD27845C77267C462D81B0620FE664DEE28BB8E34 : 547800000**  
-  That contract performs a **sub-transfer of 547,800,000 nanotons (≈ 0.5478 TON)** to account `0:1C2201823E6DAE55FADD08CAD27845C77267C462D81B0620FE664DEE28BB8E34`.
+**Field legend**
 
-- **0:1C2201823E6DAE55FADD08CAD27845C77267C462D81B0620FE664DEE28BB8E34 → 0:852443F8599FE6A5DA34FE43049AC4E0BEB3071BB2BFB56635EA9421287C283A : 543800000 (100 Telegram Stars)**  
-  The key action: **543,800,000 nanotons (≈ 0.5438 TON)** are paid to account `0:852443F8599FE6A5DA34FE43049AC4E0BEB3071BB2BFB56635EA9421287C283A` as a purchase of **100 Telegram Stars**.
-
-- **0:52D75E0584730001239D4CD8C73D651B206EAC67DB551535B6B6D505E6D41C77 → 0:F9BC895682821EA345A8EE3B5D6B03F15F0EFA8E0C9BF3E515983B84B0BA94A1 : 4350400 (Fee)**  
-  The same contract pays **4,350,400 nanotons (≈ 0.00435 TON)** to account `0:F9BC895682821EA345A8EE3B5D6B03F15F0EFA8E0C9BF3E515983B84B0BA94A1`, recorded as a **network/processing fee**.
-
-- **0:52D75E0584730001239D4CD8C73D651B206EAC67DB551535B6B6D505E6D41C77 → 0:7D877313EFF8F86333E143B5EF46331992057CBD044595C0C9BCC3F40C255E19 : 6525600**  
-  Finally, **6,525,600 nanotons (≈ 0.00652 TON)** are transferred to account `0:7D877313EFF8F86333E143B5EF46331992057CBD044595C0C9BCC3F40C255E19`, likely a **commission or validator payout**.
+| Field | Where | Why it matters |
+|---|---|---|
+| `trace_id` | root | Stable identifier for correlating logs/UX to one end-to-end execution. |
+| `external_hash` | root | Binds the trace back to the normalized **external-in**; use for UX linking from TON Connect flows. |
+| `trace_info.trace_state` | root | `complete` vs `incomplete`; incomplete means some sub-messages may still be in flight—poll again. |
+| `is_incomplete` | root | Boolean shortcut for the above. Useful for retry logic. |
+| `transactions_order` | root | Deterministic order to render steps in a UI/timeline. |
+| `mc_seqno_start`/`end` | root | Masterchain boundaries; handy for indexing and cross-provider reconciliation. |
+| `start_lt`/`end_lt`, `start_utime`/`end_utime` | root | Time/ordering window for analytics and SLA metrics. |
+| `compute_ph.exit_code` | transaction.description | Primary success/failure code for VM execution. Non-zero indicates an error. |
+| `compute_ph.success` | transaction.description | Quick boolean for UI badges/alerts. |
+| `compute_ph.gas_used` / `gas_fees` | transaction.description | Cost analysis and anomaly detection. |
+| `action.msgs_created` | transaction.description | How many outgoing messages (children) were produced from this step. |
+| `action.total_fwd_fees` / `total_action_fees` | transaction.description | Forwarding + action fees; useful for fee breakdowns. |
+| `in_msg.bounce` / `bounced` | transaction.in_msg | Detect bounced paths and failed deliveries. |
+| `in_msg.opcode` | transaction.in_msg | Classify calls (e.g., known method selectors) for analytics. |
+| `out_msgs[].message_content.decoded` | transaction.out_msgs | Human-readable comments/decoded payloads (when available) for UX tooltips. |
+| `account_state_before/after.balance` | transaction | Verify value flows and final balances. |
+| `account_state_*.code_hash` / `account_state_*.data_hash` | transaction | Detect contract upgrades or state changes across the trace. |
+| `block_ref.seqno` / `mc_block_seqno` | transaction | Precise anchoring in the chain for explorers/indexers. |
 
 ---
 
-## 3. Code Implementation
-The script fetches a trace and prints the call tree.
+### 3. End-to-end flow: create -> emulate -> wait -> trace
+
+Below is a pragmatic end-to-end flow developers typically implement:
+
+1. **Create** an external-in (e.g., via TON Connect).  
+2. **Emulate** (optional but recommended) to anticipate success and costs.  
+3. **Send**.  
+4. **Wait** for inclusion using **Message lookup** (normalized hash).  
+5. **Trace** the final transaction with `/traces` and render the call tree.
 
 <Tabs>
-  <Tab title="JavaScript (fetch)">
+  <Tab title="JavaScript (fetch) – Trace by tx hash">
 
-  Install dependencies:
   ```bash
   yarn add node-fetch
   ```
 
-  Code:
   ```js
   import fetch from "node-fetch";
 
@@ -955,47 +1048,47 @@ The script fetches a trace and prints the call tree.
 
   async function getTrace(hash) {
     const res = await fetch(`${endpoint}?hash=${encodeURIComponent(hash)}`);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
     const data = await res.json();
 
     if (!data.traces?.length) {
-      console.log("No trace found.");
+      console.log("No trace found (yet). If this was an external-in, confirm the tx via Message lookup first.");
       return;
     }
 
-    const trace = data.traces[0].trace;
+    const { trace_id, trace } = data.traces[0];
 
     function printNode(node, depth = 0) {
       console.log(" ".repeat(depth * 2) + "tx:", node.tx_hash);
-      if (node.children) {
-        node.children.forEach((child) => printNode(child, depth + 1));
-      }
+      (node.children || []).forEach((child) => printNode(child, depth + 1));
     }
 
-    console.log("Trace ID:", data.traces[0].trace_id);
+    console.log("Trace ID:", trace_id);
     printNode(trace);
   }
 
-  getTrace(txHash);
+  getTrace(txHash).catch(console.error);
   ```
+  </Tab>
 
-  Example output:
-  ```bash
-  Trace ID: Vy11B+AiGGrDBcGx3UiUFUJozUQ3U2yHvaATSrS03og=
-  external → 0:9B14407F88AB1A73C5D09E26F98B7DB9664F11D5251094C129A71C7CFA2B27D1 : 0
-  0:9B14407F88AB1A73C5D09E26F98B7DB9664F11D5251094C129A71C7CFA2B27D1 → 0:52D75E0584730001239D4CD8C73D651B206EAC67DB551535B6B6D505E6D41C77 : 565276000
-    0:52D75E0584730001239D4CD8C73D651B206EAC67DB551535B6B6D505E6D41C77 → 0:1C2201823E6DAE55FADD08CAD27845C77267C462D81B0620FE664DEE28BB8E34 : 547800000
-      0:1C2201823E6DAE55FADD08CAD27845C77267C462D81B0620FE664DEE28BB8E34 → 0:852443F8599FE6A5DA34FE43049AC4E0BEB3071BB2BFB56635EA9421287C283A : 543800000 (100 Telegram Stars 
+  <Tab title="From external-in -> tx (Message lookup)">
 
-  Ref#wQXRXxWt6)
-    0:52D75E0584730001239D4CD8C73D651B206EAC67DB551535B6B6D505E6D41C77 → 0:F9BC895682821EA345A8EE3B5D6B03F15F0EFA8E0C9BF3E515983B84B0BA94A1 : 4350400 (Fee)
-    0:52D75E0584730001239D4CD8C73D651B206EAC67DB551535B6B6D505E6D41C77 → 0:7D877313EFF8F86333E143B5EF46331992057CBD044595C0C9BCC3F40C255E19 : 6525600
-  ```
+  Use **[Message lookup](/ecosystem/rpc/cookbook/message-lookup)** to:
+  - compute the **normalized external-in hash** (TEP-467),
+  - **wait** for the matching transaction (polling),
+  - then call `/v3/traces?hash=<tx_hash>`.
+
+  This ensures robust linkage between the user’s **external-in** and the on-chain **transaction** you will trace.
   </Tab>
 </Tabs>
 
 ---
 
-## Usecases
-- Exchanges can **verify deposits** by ensuring the trace ends at the expected wallet.  
-- Developers can **debug dApp interactions** by inspecting fees, bounced messages, or unexpected contract calls.  
-- Explorers can **visualize the trace graph** for end users.  
+## Troubleshooting
+
+- **`is_incomplete: true`**: some sub-messages were still pending at query time—poll again.  
+- **No trace found**: the transaction may not be finalized or you’re using the wrong hash. If starting from an external-in, **verify normalization** and use the **Message lookup** flow.  
+- **Bounced messages**: look for `bounce: true` and `bounced: true` in message nodes; check `exit_code` and `compute_ph` for the failing hop.  
+- **High fees**: inspect `gas_used`, `total_fwd_fees`, and `total_action_fees` in `description`.
