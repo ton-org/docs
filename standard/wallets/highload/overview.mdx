@@ -11,6 +11,10 @@ Highload Wallets are specialized wallet contracts designed for services that nee
 
 Unlike standard wallets (v3, v4, v5) that use sequential processing with a `seqno` counter, Highload Wallets (v2 and v3) store processed request identifiers in a dictionary, enabling **parallel transaction submission** without blocking.
 
+<Aside>
+  **`seqno`** (sequence number) is a counter that increments with each transaction. Standard wallets use it for [replay protection](/standard/wallets/how-it-works#how-replay-protection-works) — each transaction must match the current `seqno` value.
+</Aside>
+
 **Standard wallet limitation:**\
 Each transaction must wait for the previous one to complete. If you send 100 transactions, they must process sequentially: transaction 2 waits for transaction 1, transaction 3 waits for transaction 2, and so on.
 
@@ -25,7 +29,13 @@ The first highload wallet, using a simple `seqno` counter:
 
 - **Simple seqno-based:** Sequential processing like standard wallets
 - **Batch support:** Could send up to 255 messages per transaction
-- **Replay protection rollback:** If the action phase failed, replay protection would roll back (same issue as standard wallets v1-v4)
+- **Replay protection rollback:** If the action phase failed, replay protection would roll back ([learn about](#replay-protection-rollback))
+
+<Aside
+  type="danger"
+>
+  **Legacy contracts:** Highload Wallet v1 and v2 are deprecated. Use Highload Wallet v3 for all new deployments.
+</Aside>
 
 ### Highload Wallet v2
 
@@ -33,7 +43,7 @@ Improved version with dictionary-based replay protection:
 
 - **Fund locking risk:** Under certain conditions, the contract could enter a state where funds became inaccessible
 - **High gas costs:** Storage updates and cleanup operations consumed excessive gas
-- **Replay protection rollback:** If the action phase failed, replay protection would roll back (same issue as v1 and standard wallets)
+- **Replay protection rollback:** If the action phase failed, replay protection would roll back ([learn about](#replay-protection-rollback))
 
 <Aside
   type="danger"
@@ -47,10 +57,10 @@ The current recommended version, redesigned to solve all previous architectural 
 
 - **More requests:** Up to 8,380,416 unique query IDs with efficient rotation
 - **Lower gas costs:** Optimized cleanup and storage operations
-- **Maximum safety:** Architectural design prevents fund locking; impossible to break
+- **Maximum safety:** Architectural design prevents fund locking; bulletproof
 - **Guaranteed replay protection:** Unlike v1, v2, and standard wallets v1-v4, replay protection **never rolls back** even if the action phase fails. The two-transaction pattern ensures the `query_id` is always committed before attempting to send messages.
 
-## Version comparison
+## Highload Wallet version comparison
 
 | Feature                               | v1                 | v2                    | v3                             |
 | ------------------------------------- | ------------------ | --------------------- | ------------------------------ |
@@ -63,6 +73,12 @@ The current recommended version, redesigned to solve all previous architectural 
 | **Query ID space**                    | Sequential seqno   | \~32,000              | 8,380,416 unique IDs           |
 | **Parallel submissions**              | ❌ Sequential only  | ✅ Supported           | ✅ Supported                    |
 | **Status**                            | ⚠️ Deprecated      | ⚠️ Deprecated         | ✅ Recommended                  |
+
+## Replay protection rollback
+
+Standard wallets (v1-v4) and Highload wallets (v1-v2) share a fundamental problem: if the action phase fails (e.g., insufficient funds), the entire transaction rolls back, including [replay protection](/standard/wallets/how-it-works#how-replay-protection-works) marks. This causes lite-servers to retry the same message repeatedly, burning gas for a long time.
+
+**Highload v3's solution:** Uses a [two-transaction pattern](/standard/wallets/highload/v3/specification#why-internal-messages-to-self) where replay protection is committed in the first transaction, and actions are performed in a separate internal transaction. This guarantees replay protection **never rolls back**, even if sending messages fails.
 
 ## See also
 
