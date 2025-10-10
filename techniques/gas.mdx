@@ -5,8 +5,10 @@ title: "Estimate gas usage in TON contracts"
 import {Aside} from "/snippets/aside.jsx";
 
 <Aside type="note">
-  The whole idea behind this is that any contract system has some kind of _in_ contracts. Those contracts receive the message from the user directly. Those cointracts should check, that there are enough attached toncoins to cover fees for all contracts in the future trace. If _in_ contract accepts message from the user (by _accept_ I mean not `accept_message()` but semantically accept, e.g. do not throw an exception, do not send jettons or extra-currency back), then it should guarantee that this exact message won't later fail because of insufficient attached toncoins.
+  Any contract system includes entry contracts that receive messages directly from users. These contracts must verify that the attached TON is sufficient to cover fees for all contracts in the subsequent trace. If an entry contract accepts a user message—by “accept” we do not mean calling `accept_message()`, but semantic acceptance (no throw and no asset returns)—it must guarantee that the message will not later fail due to insufficient attached TON.
 </Aside>
+
+The reason for this requirement is that reverting the contract system state is usually not possible, because the toncoins are already spent.
 
 In case you are writing a contract system, where correctness depends on successful execution of the rest of the transaction trace, then you need to guarantee that there are enough attached toncoins in an incoming message to cover all fees. This article describes how to compute those fees.
 
@@ -66,8 +68,9 @@ This function uses the [`GETGASFEE`](/tvm/instructions#f836-getgasfee) TVM opcod
 In general, you can calculate message size at runtime using `computeDataSize()` which uses [`CDATASIZE`](/tvm/instructions#f941-cdatasize):
 And then, calculate forward fee using `getForwardFee()` which uses [`GETFORWARDFEE`](/tvm/instructions#f838-getforwardfee)
 
+ComputeDataSize have the second argument - maximum number of cells to visit. If it is ok to set in in *8192* since it is the [limit for message size](/ton/limits#message-and-transaction-limits).
 ```tact
-let size = computeDataSize(msg.toCell(), 65536);
+let size = computeDataSize(msg.toCell(), 8192);
 let fwdFee = getForwardFee(size.cells, size.bits, isAccountInMasterchain);
 ```
 
@@ -77,7 +80,8 @@ let fwdFee = getForwardFee(size.cells, size.bits, isAccountInMasterchain);
 
 ### Optimized forward fee calculation
 
-If the size of the outgoing message is bounded by the size of the incoming message, we can estimate the forward fee of an outgoing message to be no larger than the forward fee of the incoming message, that was already computed by TVM. Thus, we don't have to calculate it again.
+If the size of the outgoing message is bounded by the size of the incoming message, we can estimate the forward fee of an outgoing message to be no larger than the forward fee of the incoming message, that was already computed by TVM. Thus, we don't have to calculate it again. Note, that this estimation is correct only for contract system in the same workchain. 
+
 
 ```tolk
 fun onInternalMessage(in: InMessage) {
@@ -129,6 +133,10 @@ fun onInternalMessage(in: InMessage) {
 ```
 
 ### Storage fees
+
+<Aside>
+    For calculating storage fees, you need to know the maximum possible size of the contract in `cells` and `bits`. This might not be the trivial task, especially if the contract is storing a `hashmap` in the data. In any case, the approach is the same here. Write test, that will occupy maximum possible size and calculate that. [Helper function for this](#helper-functions)
+</Aside>
 
 Let's call contracts, that receives user's message _in_ contracts. Other contracts in contract system are called _internal_ contracts. That is not global terminology, just local to the current article.
 
@@ -291,6 +299,32 @@ const calculateCellsAndBits = (root: Cell, visited: Set<string> = new Set<string
         bits += childRes.bits
     }
     return {cells, bits, visited}
+}
+```
+
+To extract the size of a contract in test you can use this function
+```ts
+export async function getStateSizeForAccount(
+    blockchain: Blockchain,
+    address: Address,
+): Promise<{cells: number; bits: number}> {
+    const accountState = (await blockchain.getContract(address)).accountState
+    if (!accountState || accountState.type !== "active") {
+        throw new Error("Account state not found")
+    }
+    if (!accountState.state.code || !accountState.state.data) {
+        throw new Error("Account state code or data not found")
+    }
+    const accountCode = accountState.state.code
+    const accountData = accountState.state.data
+    // There probably won't be the same cells in both code and data, but still it's fairer to take that into account
+    const codeSize = calculateCellsAndBits(accountCode)
+    const dataSize = calculateCellsAndBits(accountData, codeSize.visited)
+
+    return {
+        cells: codeSize.cells + dataSize.cells,
+        bits: codeSize.bits + dataSize.bits,
+    }
 }
 ```
 
