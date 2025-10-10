@@ -14,57 +14,13 @@ Every function declaration or definition follows a common pattern. The general f
 
 where `[ ... ]` represents an optional entry. Here, 
 
-- `<forall declarator>` declares that it is a polymorphic function. This is optional.
-- `<return type>` is the return type of the function.
-- `<function name>` is the function name.
-- `<comma separated function args>` is a comma separated list of function arguments, each argument consisting on a type and the argument's name.
-- `<specifiers>` are specifiers that instruct the compiler on how to process the function.
-- `<function_body>` is the actual function body, which can be of three kinds: a function declaration (i.e., no body), an assembler function, or a standard function definition.
-
-## Forall declarator
-
-The forall declarator has the following syntax:
-
-```func
-forall <comma separated list of type variables names> ->
-```
-
-The declarator starts with the `forall` keyword and finishes with the symbol `->`. Each element in the comma separated list must be a type variable name. 
-A type variable name can be any [identifier](literals#identifiers), but capital letters are commonly used. 
-
-The forall declarator makes the function a [polymorphic function](https://en.wikipedia.org/wiki/Parametric_polymorphism), 
-meaning that when the function is called, the type variables get replaced with actual types.
-
-For example,
-
-```func
-forall X, Y -> [Y, X] pair_swap([X, Y] pair) {
-  [X p1, Y p2] = pair;
-  return [p2, p1];
-}
-```
-
-This function declares two type variables `X` and `Y`. 
-The function uses these two type variables to declare an argument `pair` of type `[X, Y]`, i.e., a [tuple](types#tuple-types) where the first component is
-of type `X` and the second component of type `Y`. The function then swaps the components of the tuple and returns a tuple of type `[Y, X]`.
-
-That `pair_swap` is polymorphic means that it can be called with tuples of type `[int, int]`, `[int, cell]`, `[cell, slice]`, `[[int, int], cell]`, etc. For instance:
-- `pair_swap([2, 3])` returns `[3, 2]`. In this case, both type variables `X` and `Y` get substituted with `int`.
-- `pair_swap([1, [2, 3, 4]])` returns `[[2, 3, 4], 1]`. In this case, type variable `X` gets substituted with `int`, and `Y` with `[int, int, int]`.
-
-Even though the function is polymorphic, the compiled assembly code remains the same for any substitution of the type variables. 
-This is possible due to the polymorphic nature of stack manipulation operations. 
-
-However, other forms of polymorphism, such as [`ad-hoc` polymorphism](https://en.wikipedia.org/wiki/Ad_hoc_polymorphism) with type classes, are not supported.
-
-<Aside>
-
-At the moment, type variables in polymorphic functions cannot be instantiated with tensor types. 
-There is only one exception: the tensor type `(a)`, where `a` is not a tensor type itself, since the compiler treats `(a)` as if it was `a`.
-
-This means you can't use `pair_swap` on a tuple of type `[(int, int), int]` because type `(int, int)` is a tensor type.
-
-</Aside>
+- `<forall declarator>` is the [`forall` declarator](#forall-declarator), which declares that the function is [polymorphic](https://en.wikipedia.org/wiki/Parametric_polymorphism). This is optional.
+- `<return type>` is the [return type](#return-type) of the function.
+- `<function name>` is the [function name](#function-name).
+- `<comma separated function args>` is a comma separated list of [function arguments](#function-arguments), each argument consisting on a type and the argument's name.
+- `<specifiers>` are [specifiers](#specifiers) that instruct the compiler on how to process the function.
+- `<function body>` is the actual [function body](#function-body), which can be of three kinds: an [empty body](#empty-body), 
+an [assembler body](#assembler-body), or a [standard body](#standard-body).
 
 ## Return type
 
@@ -81,13 +37,14 @@ int foo() {...}
 FunC also supports **type inference** with the use of underscore `_` as the return type. For example:
 
 ```func
-_ pyth(int m, int n) {
-  return (m * m - n * n, 2 * m * n, m * m + n * n);
+_ divAndMod(int m, int n) {
+  return (m /% n);
 }
 ```
 
-This is a valid definition of the function `pyth`, which has the inferred type `(int, int) -> (int, int, int)`.
-It computes Pythagorean triples based on the given input values.
+The function `divAndMod` has the inferred type `(int, int) -> (int, int)`.
+The function computes the division and modulo of the parameters `m` and `n` by using the [division and modulo](operators#division-and-modulo%2C-%2F%25) operator `/%`, 
+which always returns a two-element tensor `(int, int)`.
 
 ## Function name
 
@@ -97,122 +54,7 @@ Specifically, refer to this [section](expressions#and-in-function-names) to unde
 
 For example, `udict_add_builder?`, `dict_set`, and `~dict_set` are all valid function names, and each is distinct. These functions are defined in [stdlib.fc](stdlib).
 
-### Special function names
-FunC (specifically, the Fift assembler) reserves several function names with predefined [IDs](#method_id):
-
-- [`recv_internal`](#receive-internal) and [`main`](#main) have `id = 0`
-- [`recv_external`](#receive-external) has `id = -1`
-- [`run_ticktock`](#run-ticktock) has `id = -2`
-
-<Aside type="danger">
-  What about the "Split prepare" and "Merge install" events? FunC cannot handle those?
-</Aside>
-
-Every program must include a function with `id = 0`, meaning it must define either `recv_internal` or `main`, but **not** both.
-The `run_ticktock` function is used in ticktock transactions of special smart contracts.
-
-#### Receive internal
-
-The `recv_internal` function is invoked when a smart contract receives **an inbound [internal message]()**. 
-Any of the following `recv_internal` declarations can be used. 
-
-```func
-() recv_internal(int balance, int msg_value, cell in_msg_cell, slice in_msg_body)
-() recv_internal(int msg_value, cell in_msg_cell, slice in_msg_body)
-() recv_internal(cell in_msg_cell, slice in_msg_body)
-() recv_internal(slice in_msg_body)
-() recv_internal()
-```
-
-Here, 
-- `balance` is the smart contract balance in nanotons after adding the amount `msg_value` in the inbound message. It is an integer.
-- `msg_value` is the amount in nanotons included in the inbound message. It is an integer.
-- `in_msg_cell` is the inbound message, given as a cell.
-- `in_msg_body` is the inbound message body, equal to the body field in `in_msg_cell`. The body is given as a cell slice.
-
-<Aside>
-
-Each time a contract receives a message, the [TVM initializes](/tvm/initialization) and pushes into the stack the following four pieces of data, in this order:
-
-- The balance of the contract.
-- The coins included in the inbound message.
-- The message itself as a cell.
-- The message body as a slice.
-
-This means that the message body slice is the value at the top of the stack, since it was pushed last. 
-
-At the moment `recv_internal` executes, its arguments are assigned values from the stack as follows:
-
-```func
-() recv_internal(arg_1, arg_2, ....., arg_n-1, arg_n)
-;;                 |       |            |        |
-;;                 |       |            |        value at the top of the stack 
-;;                 |       |            |
-;;                 |       |            second value from the top of the stack
-;;                 |       |
-;;                 |       (n-1)-th value from the top of the stack
-;;                 |
-;;                 n-th value from the top of the stack
-```
-
-This means that if, for example, you use the declaration:
-
-```func 
-() recv_internal(cell in_msg_cell, slice in_msg_body)
-```
-
-`in_msg_body` will get assigned the value at the top of the stack (which corresponds to the message body slice),
-and `in_msg_cell` will receive the second value from the top of the stack (which corresponds to the message as a cell).
-The rest of values in the stack remain unassigned to variables during the execution of `recv_internal`, meaning that they 
-will remain unused in the stack and will be dropped once the TVM finishes execution.
-
-The declarations of `recv_internal` with fewer arguments consume slightly less gas, 
-because each unused value in the stack is automatically dropped from the stack once the TVM finishes execution, without the need 
-to spend gas by explicitly executing a [DROP]() instruction when `recv_internal` finishes.
-</Aside>
-
-<Aside type="danger">
-  The FunC compiler does not check if the `recv_internal` arguments will actually match the values in the stack.
-  For example, the following declaration will compile, but leads to errors during contract execution, because variable `in_msg_body` will
-  not hold a slice, but the contract's balance, which is an integer!
-
-  ```func
-  () recv_internal(slice in_msg_body, int int msg_value, cell in_msg_cell, int balance)
-  ```
-
-  Be careful of accidentally permuting the arguments in `recv_internal`. Only use the five possible declarations listed previously for `recv_internal`.
-</Aside>
-
-
-#### Main
-
-`main` is an alias for `recv_internal`. 
-
-If the intention of the code is to handle inbound internal messages, it is preferable to use `recv_internal` over `main`, 
-since `recv_internal` states more clearly the intention of the code.
-
-#### Receive external
-
-The `recv_external` function handles **inbound [external messages]()**. It allows declarations similar to those for [`recv_internal`](#receive-internal):
-
-```func
-() recv_external(int balance, int msg_value, cell in_msg_cell, slice in_msg_body)
-() recv_external(int msg_value, cell in_msg_cell, slice in_msg_body)
-() recv_external(cell in_msg_cell, slice in_msg_body)
-() recv_external(slice in_msg_body)
-() recv_external()
-```
-
-The only difference is that `msg_value` is always `0`, since [external messages cannot carry coins](), as they are created outside the blockchain. 
-
-The behavior of the stack is identical to the behavior described for [`recv_internal`](#receive-internal).
-
-#### Run ticktock
-
-<Aside type="danger">
-  Pending explanation of `run_ticktock` function.
-</Aside>
-
+FunC reserves several function names. See the [reserved functions](special-functions) article for more details.
 
 ## Function arguments
 
@@ -346,13 +188,17 @@ However, recursive calls to `inline_ref` functions remain impossible, as TVM cel
 
 ### `method_id` specifier
 
-In a TVM program, every function has an internal integer ID that determines how it can be called.
-By default, ordinary functions are assigned sequential numbers starting from `1`, while contract get-methods use `crc16` hashes of their names.
-The `method_id(<some_number>)` specifier allows you to set a function's ID to a specific value manually.
-If no ID is specified, the default is calculated as `(crc16(<function_name>) & 0xffff) | 0x10000`.
-If a function has the `method_id` specifier, it can be invoked by its name as a get-method in lite client or TON explorer.
+In a TVM program, every function has an internal integer ID that identifies it uniquely. These IDs are necessary because of the way 
+the TVM calls functions within a program: it uses a dictionary where each key is a function ID that maps to the corresponding function code.
+When the TVM needs to invoke a particular function, the TVM looks up the ID in the dictionary and executes the corresponding code.
 
-This example declares a function whose ID is computed by the compiler and the function is available as a get-method in TON blockchain explorers:
+By default, functions are assigned sequential numbers starting from `1`.
+If a function has the `method_id` specifier, the compiler will compute an ID using the formula `(crc16(<function_name>) & 0xffff) | 0x10000` instead.
+Additionally, such function becomes a get-method (or getter method), which are functions that can be invoked by its name in lite client or TON explorer.
+
+The `method_id` specifier has the variant `method_id(<some_number>)`, which allows you to set a function's ID to a specific number manually.
+
+For example, this defines a function whose ID is computed by the compiler and the function is available as a get-method in TON blockchain explorers:
 
 ```func
 int get_counter() method_id {
@@ -361,7 +207,7 @@ int get_counter() method_id {
 }
 ```
 
-This example declares the same function, but this time it specifies the specific ID `65536`. Again, the function is available a a get-method in TON explorers.
+This other example defines the same function, but this time it sets the specific ID `65536`. Again, the function is available as a get-method in TON explorers.
 
 ```func
 int get_counter() method_id(65536) {
@@ -377,7 +223,7 @@ int get_counter() method_id(65536) {
 
   **Reserved ranges**:
   - **0-999**: Reserved for system functions (approximate range).
-  - **Special functions**: `main`/`recv_internal` (id=0), `recv_external` (id=-1), `run_ticktock` (id=-2), `split_prepare` (id=-3), `split_install` (id=-4)
+  - **Reserved functions**: `main`/`recv_internal` (id=0), `recv_external` (id=-1), `run_ticktock` (id=-2), `split_prepare` (id=-3), `split_install` (id=-4)
   - **65536+**: Default range for user functions when using automatic generation: `(crc16(function_name) & 0xffff) | 0x10000`
 
   **Best practice**: It's recommended to **avoid setting method IDs manually** and rely on automatic generation instead. 
@@ -387,10 +233,11 @@ int get_counter() method_id(65536) {
 
 ## Function body 
 
-### Function declaration
+### Empty body
 
 An empty body, marked with a single semicolon `;` indicates that the function is declared but not yet defined. 
 Its definition must appear later in the same file or a different file processed before the current one by the FunC compiler.
+A function with an empty body is also called a **function declaration**.
 
 For example:
 
@@ -400,7 +247,9 @@ For example:
 
 This declares a function named `add` with type `(int, int) -> int` but does not define it.
 
-In FunC, all functions must be defined or declared before using them in other functions. 
+
+In FunC, all functions must be defined or declared before using them in other functions, which explains the need for function declarations.
+ 
 For example, the following code calls function `foo` inside the `main` function, but `foo` is defined *after* `main`. 
 Hence, the compiler rejects the code:
 
@@ -443,9 +292,9 @@ int foo() {
 }
 ```
 
-### Assembler function 
+### Assembler body
 
-An assembler function body defines the function using low-level TVM primitives for use in a FunC program. 
+An assembler body defines the function using low-level TVM primitives for use in a FunC program. 
 The body consists on the keyword `asm`, followed a list of TVM instructions, and ending with symbol `;`.
 Refer to the [assembler functions](asm-functions) article for more details.
 
@@ -457,9 +306,9 @@ For example:
 
 This defines the function `add` of type `(int, int) -> int`, using the TVM instruction `ADD`.
 
-### Standard function
+### Standard body
 
-A standard function body uses a [block statement](statements#block-statement), i,e,. the body of the function is defined inside curly braces `{ }`. 
+A standard body uses a [block statement](statements#block-statement), i,e,. the body of the function is defined inside curly braces `{ }`. 
 For example:
 
 ```func
@@ -469,3 +318,48 @@ int add(int x, int y) {
 ```
 
 This defines a function that adds its two arguments and returns the result of the addition.
+
+## Forall declarator
+
+The forall declarator has the following syntax:
+
+```func
+forall <comma separated list of type variables names> ->
+```
+
+The declarator starts with the `forall` keyword and finishes with the symbol `->`. Each element in the comma separated list must be a type variable name. 
+A type variable name can be any [identifier](literals#identifiers), but capital letters are commonly used. 
+
+The forall declarator makes the function a [polymorphic function](https://en.wikipedia.org/wiki/Parametric_polymorphism), 
+meaning that when the function is called, the type variables get replaced with actual types.
+
+For example,
+
+```func
+forall X, Y -> [Y, X] pair_swap([X, Y] pair) {
+  [X p1, Y p2] = pair;
+  return [p2, p1];
+}
+```
+
+This function declares two type variables `X` and `Y`. 
+The function uses these two type variables to declare an argument `pair` of type `[X, Y]`, i.e., a [tuple](types#tuple-types) where the first component is
+of type `X` and the second component of type `Y`. The function then swaps the components of the tuple and returns a tuple of type `[Y, X]`.
+
+That `pair_swap` is polymorphic means that it can be called with tuples of type `[int, int]`, `[int, cell]`, `[cell, slice]`, `[[int, int], cell]`, etc. For instance:
+- `pair_swap([2, 3])` returns `[3, 2]`. In this case, both type variables `X` and `Y` get substituted with `int`.
+- `pair_swap([1, [2, 3, 4]])` returns `[[2, 3, 4], 1]`. In this case, type variable `X` gets substituted with `int`, and `Y` with `[int, int, int]`.
+
+Even though the function is polymorphic, the compiled assembly code remains the same for any substitution of the type variables. 
+This is possible due to the polymorphic nature of stack manipulation operations. 
+
+However, other forms of polymorphism, such as [`ad-hoc` polymorphism](https://en.wikipedia.org/wiki/Ad_hoc_polymorphism) with type classes, are not supported.
+
+<Aside>
+
+At the moment, type variables in polymorphic functions cannot be instantiated with tensor types. 
+There is only one exception: the tensor type `(a)`, where `a` is not a tensor type itself, since the compiler treats `(a)` as if it was `a`.
+
+This means you can't use `pair_swap` on a tuple of type `[(int, int), int]` because type `(int, int)` is a tensor type.
+
+</Aside>
