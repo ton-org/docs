@@ -2,7 +2,39 @@
 title: "Estimate gas usage in TON contracts"
 ---
 
+
+
 import {Aside} from "/snippets/aside.jsx";
+
+Let's call contracts, that receives user's message **in** contracts. Other contracts in contract system are called **internal** contracts. That is not global terminology, just local to the current article.
+
+So, on this diagram of toncoins flow **A** and **B** are **internal** contracts.
+
+```mermaid
+---
+config:
+  sankey:
+    showValues: false
+---
+sankey-beta
+%% source,target,value
+User wallet,in,100
+Old balance on in,in,20
+in,A,80
+in,Storage fee (in),5
+in,Forward fee (in),20
+in,Compute fee (in),15
+A,Compute fee (A),10
+A,Forward fee (A),15
+A,Storage fee (A),5
+A,B,50
+B,Compute fee (B),5
+B,Forward fee (B),10
+B,Storage fee (B),5
+B,User wallet (refund),30
+```
+
+It is crucial to understand, that there is no separate message balance and contract balance. After the message is received, coins are added to contract balance, and then the contract is executed. 
 
 <Aside type="note">
   Any contract system includes entry contracts that receive messages directly from users. These contracts must verify that the attached TON is sufficient to cover fees for all contracts in the subsequent trace. If an entry contract accepts a user message—by “accept” we do not mean calling `accept_message()`, but semantic acceptance (no throw and no asset returns)—it must guarantee that the message will not later fail due to insufficient attached TON.
@@ -68,7 +100,8 @@ This function uses the [`GETGASFEE`](/tvm/instructions#f836-getgasfee) TVM opcod
 In general, you can calculate message size at runtime using `computeDataSize()` which uses [`CDATASIZE`](/tvm/instructions#f941-cdatasize):
 And then, calculate forward fee using `getForwardFee()` which uses [`GETFORWARDFEE`](/tvm/instructions#f838-getforwardfee)
 
-ComputeDataSize have the second argument - maximum number of cells to visit. If it is ok to set in in *8192* since it is the [limit for message size](/ton/limits#message-and-transaction-limits).
+ComputeDataSize have the second argument - maximum number of cells to visit. If it is ok to set in in _8192_ since it is the [limit for message size](/ton/limits#message-and-transaction-limits).
+
 ```tact
 let size = computeDataSize(msg.toCell(), 8192);
 let fwdFee = getForwardFee(size.cells, size.bits, isAccountInMasterchain);
@@ -80,8 +113,7 @@ let fwdFee = getForwardFee(size.cells, size.bits, isAccountInMasterchain);
 
 ### Optimized forward fee calculation
 
-If the size of the outgoing message is bounded by the size of the incoming message, we can estimate the forward fee of an outgoing message to be no larger than the forward fee of the incoming message, that was already computed by TVM. Thus, we don't have to calculate it again. Note, that this estimation is correct only for contract system in the same workchain. 
-
+If the size of the outgoing message is bounded by the size of the incoming message, we can estimate the forward fee of an outgoing message to be no larger than the forward fee of the incoming message, that was already computed by TVM. Thus, we don't have to calculate it again. Note, that this estimation is correct only for contract system in the same workchain.
 
 ```tolk
 fun onInternalMessage(in: InMessage) {
@@ -135,13 +167,11 @@ fun onInternalMessage(in: InMessage) {
 ### Storage fees
 
 <Aside>
-    For calculating storage fees, you need to know the maximum possible size of the contract in `cells` and `bits`. This might not be the trivial task, especially if the contract is storing a `hashmap` in the data. In any case, the approach is the same here. Write test, that will occupy maximum possible size and calculate that. [Helper function for this](#helper-functions)
+  For calculating storage fees, you need to know the maximum possible size of the contract in `cells` and `bits`. This might not be the trivial task, especially if the contract is storing a `hashmap` in the data. In any case, the approach is the same here. Write test, that will occupy maximum possible size and calculate that. [Helper function for this](#helper-functions)
 </Aside>
 
-Let's call contracts, that receives user's message _in_ contracts. Other contracts in contract system are called _internal_ contracts. That is not global terminology, just local to the current article.
-
 We cannot predict storage fees that we have to pay for sending messages because it depends on how long the target contract didn't pay storage fee.
-Storage fees are different from forward and compute fees in that term, they should be handled in _in_ contracts and in _internal_ contracts.
+Storage fees are different from forward and compute fees in that term, they should be handled in **in** contracts and in **internal** contracts.
 
 Two distinct approaches exist:
 
@@ -150,7 +180,7 @@ Two distinct approaches exist:
 Always keep a minimum balance on the all contracts in your system. Storage fees deduct from this reserve, which replenishes with each user interaction.
 Do not hardcode TON; instead, hardcode the maximum possible contract size in cells and bits.
 
-Note, this is supposed to be the code in _internal_ contracts.
+Note, this is supposed to be the code in **internal** contracts.
 
 ```tact
 const secondsInFiveYears: Int = 5 * 365 * 24 * 60 * 60;
@@ -162,7 +192,7 @@ receive(msg: Transfer) {
 // Also this contract probably will require some code, that will allow owner to withdraw TONs from this contract.
 ```
 
-In this approach, _in_ contract should calculate maximum possible storage fees for all contracts in trace.
+In this approach, **in** contract should calculate maximum possible storage fees for all contracts in trace.
 
 ```
 const secondsInFiveYears: Int = 5 * 365 * 24 * 60 * 60;
@@ -188,7 +218,7 @@ In the worst case the storage fee for a single message is [`freeze_due_limit`](/
 
 So if we reserve storage debt from incoming messages. Allow the balance to remain at zero or with small debt.
 
-Note, this is supposed to be the code in the _internal_ contracts.
+Note, this is supposed to be the code in the **internal** contracts.
 
 ```tact
 receive(msg: Operation) {
@@ -207,10 +237,10 @@ receive(msg: Operation) {
 This simplifies fee calculation at the start of the operation—you do not need to pre‑calculate storage fees. The `myStorageDue()` function returns the amount needed to bring the balance to zero (or zero if it is already positive).
 
 <Aside type="tip">
-  If the incoming message is non‑bounceable, storage fees are deducted from the incoming message’s balance before processing. For bounceable messages, storage fees are deducted from the contract’s balance. So, if all messages to _internal_ contracts are unbounceable, and you use this, there is no need to reserve toncoins for storage in _internal_ contracts.
+  If the incoming message is non‑bounceable, storage fees are deducted from the incoming message’s balance before processing. For bounceable messages, storage fees are deducted from the contract’s balance. So, if all messages to **internal** contracts are unbounceable, and you use this, there is no need to reserve toncoins for storage in **internal** contracts.
 </Aside>
 
-If we expect that the rest of trace uses `n` unique contracts, then it won't take more than `n` freeze limits to pay their storage fees. So, in _in_ contract, the check should be:
+If we expect that the rest of trace uses `n` unique contracts, then it won't take more than `n` freeze limits to pay their storage fees. So, in **in** contract, the check should be:
 
 ```tact
 receive(msg: Operation) {
@@ -237,7 +267,7 @@ This confirms that all incoming value was consumed or forwarded, with none left 
 
 ## Implement fee validation
 
-So, final code in _in_ contract could look like this:
+So, final code in **in** contract could look like this:
 
 ```tact
 receive(msg: SwapRequest) {
@@ -281,7 +311,7 @@ function getComputeGasForTx(tx: Transaction): bigint {
 }
 ```
 
-To calculate size of a message in cells, you can use this function:
+To calculate the size of a message in cells, use this function:
 
 ```ts
 const calculateCellsAndBits = (root: Cell, visited: Set<string> = new Set<string>()) => {
@@ -302,7 +332,8 @@ const calculateCellsAndBits = (root: Cell, visited: Set<string> = new Set<string
 }
 ```
 
-To extract the size of a contract in test you can use this function
+To extract a contract’s size in tests, use this function:
+
 ```ts
 export async function getStateSizeForAccount(
     blockchain: Blockchain,
@@ -317,7 +348,7 @@ export async function getStateSizeForAccount(
     }
     const accountCode = accountState.state.code
     const accountData = accountState.state.data
-    // There probably won't be the same cells in both code and data, but still it's fairer to take that into account
+    // Code and data likely do not share cells
     const codeSize = calculateCellsAndBits(accountCode)
     const dataSize = calculateCellsAndBits(accountData, codeSize.visited)
 
@@ -328,7 +359,7 @@ export async function getStateSizeForAccount(
 }
 ```
 
-Remember to check your message size constants on all possible pathes in the tests. Othervise, you gas estimations might be wrong.
+Remember to verify your message-size constants across all possible paths in tests. Otherwise, your gas estimates might be wrong.
 
 ## See also
 
