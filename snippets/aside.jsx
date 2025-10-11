@@ -1,9 +1,15 @@
 /**
- * Astro-compatible Aside component, which is called Callout by the Mintlify
+ * Astro-compatible Aside component, which is called Callout by the Mintlify.
  *
- * @param {{type: 'note' | 'tip' | 'caution' | 'danger', title: string, children: any}} props
+ * @param {{
+ *   type: 'note' | 'tip' | 'caution' | 'danger',
+ *   title: string,
+ *   icon: string,
+ *   iconType: 'regular' | 'solid' | 'light' | 'thin' | 'sharp-solid' | 'duotone' | 'brands',
+ *   children: any
+ * }} props
  */
-export const Aside = ({ type = "note", title = "", children }) => {
+export const Aside = ({ type = "note", title = "", icon = "", iconType = "regular", children }) => {
   const asideVariants = ["note", "tip", "caution", "danger"];
   const asideComponents = {
     note: {
@@ -90,6 +96,10 @@ export const Aside = ({ type = "note", title = "", children }) => {
     gotInvalidVariant = true;
     variant = "danger";
   }
+  const iconVariants = ["regular", "solid", "light", "thin", "sharp-solid", "duotone", "brands"];
+  if (!iconVariants.includes(iconType)) {
+    iconType = "regular";
+  }
 
   return (
     <>
@@ -98,8 +108,8 @@ export const Aside = ({ type = "note", title = "", children }) => {
         data-callout-type={asideComponents[variant].calloutType}
       >
         <div className="mt-0.5 w-4" data-component-part="callout-icon">
-          {" "}
-          {asideComponents[variant].icon}
+          {/* @ts-ignore */}
+          {icon === "" ? asideComponents[variant].icon : <Icon icon={icon} iconType={iconType} size={14} />}
         </div>
         <div
           className={`text-sm prose min-w-0 w-full ${asideComponents[variant].innerStyle}`}
