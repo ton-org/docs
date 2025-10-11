@@ -1,5 +1,6 @@
 /**
  * Astro-compatible Aside component, which is called Callout by the Mintlify.
+ * Unlike its Astro's counterpart, this component supports custom icons from Font Awesome and Lucide sets.
  *
  * @param {{
  *   type: 'note' | 'tip' | 'caution' | 'danger',
