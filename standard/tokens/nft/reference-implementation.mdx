@@ -15,17 +15,17 @@ The TEP-62 standard only requires the implementation of get‑methods: `get_coll
 
 All other behavior is implementation‑specific. This includes any kind of modifications to the logic of minting new items, managing ownership of the collection, changing metadata, and other features. The reference implementation, for example, implements the ownership management feature and two ways of minting items: singular and batched. Both of these are outside the scope of the standards but are common and needed in most cases. These features are optional and can be removed or replaced.
 
-| Capability                                          | Requirement                                    |
-| --------------------------------------------------- | ---------------------------------------------- |
-| `get_collection_data` (get-method)                  | Required by TEP-62                             |
-| `get_nft_address_by_index` (get-method)             | Required by TEP-62                             |
-| `get_nft_content` (get-method)                      | Required by TEP-62, data format follows TEP-64 |
-| `royalty_params` (get-method)                       | Required by TEP-66                             |
-| `get_royalty_params` (inbound internal message)     | Required by TEP-66                             |
-| `report_royalty_params` (outbound internal message) | Required by TEP-66                             |
-| `op=1` (inbound internal message, owner-only)       | Optional — deploy single item                  |
-| `op=2` (inbound internal message, owner-only)       | Optional — deploy batch of items               |
-| `op=3` (inbound internal message, owner-only)       | Optional — change owner                        |
+| Capability                                                           | Requirement                                    |
+| -------------------------------------------------------------------- | ---------------------------------------------- |
+| `get_collection_data` (get-method)                                   | Required by TEP-62                             |
+| `get_nft_address_by_index` (get-method)                              | Required by TEP-62                             |
+| `get_nft_content` (get-method)                                       | Required by TEP-62, data format follows TEP-64 |
+| `royalty_params` (get-method)                                        | Required by TEP-66                             |
+| `get_royalty_params` (inbound internal message)                      | Required by TEP-66                             |
+| `report_royalty_params` (outbound internal message)                  | Required by TEP-66                             |
+| Deploy singe item, `op=1` (inbound internal message, owner-only)     | Optional                                       |
+| Deploy batch of items, `op=2` (inbound internal message, owner-only) | Optional                                       |
+| Change owner, `op=3` (inbound internal message, owner-only)          | Optional                                       |
 
 ### Storage
 
@@ -143,7 +143,7 @@ Then it parses `op` and `query_id` from incoming message body, and loads the sto
 
 #### Request royalty parameters
 
-The `get_royalty_params` message is the only inbound message handling required by the standard. On receipt, the contract sends a `report_royalty_params` message back to the sender with the `royalty_params` field from storage. The helper `send_royalty_params` is mostly boilerplate: it sends a non‑bounceable message with a body following the standard and carries the value of the incoming message.
+The `get_royalty_params` message is the only inbound message handling required by TEP-66. On receipt, the contract sends a `report_royalty_params` message back to the sender with the `royalty_params` field from storage. The helper `send_royalty_params` is mostly boilerplate: it sends a non‑bounceable message with a body following the standard and carries the value of the incoming message.
 
 ```func
 () send_royalty_params(slice to_address, int query_id, slice data) impure inline {
@@ -446,7 +446,9 @@ And then there are two conditions for opcodes, processing either `transfer` or `
 
 The `transfer` message's structure is defined by the standard. It must contain, apart from the opcode and `query_id`: `new_owner` (the destination address of the item transfer), `response_destination` (an address where the contract should send the remaining TON left after the transfer along with a confirmation message), `custom_payload` for extensions of the standard and additional custom logic, `forward_amount` (amount of TON to send to a new owner with the item transfer), and `forward_payload` (a cell for any arbitrary data to send to a new owner with the item transfer).
 
-The `transfer` message handler checks whether the `sender_address` equals `owner_address`, parses those fields from the message, checks the workchain of the new owner address, checks all the TON amounts to make sure it has enough balance to complete the transfer, and finally completes the transfer by updating the `owner_address` field in storage. It also sends from 0 to 2 messages, depending on whether a response is required and whether there is any `forward_amount`. The `custom_payload` is ignored in this implementation.
+The `transfer` message handler checks whether the `sender_address` equals `owner_address`, then parses fields from the message. While parsing, it checks them for validity. The new owner's address must have a workchain equal to a constant specified in source code. This is a safety measure made to prevent troubles with differences in transaction fees between workchains.
+
+Then it checks all the TON amounts to make sure it has enough balance to complete the transfer. After that it finally completes the transfer by updating the `owner_address` field in storage. It also sends from 0 to 2 messages, depending on whether a response is required and whether there is any `forward_amount`. The `custom_payload` is ignored in this implementation.
 
 The response message has the `excesses` opcode and only contains the original `query_id`, with its only purpose being forwarding the remaining TON value of the transfer message to some address, usually the sender address.
 
