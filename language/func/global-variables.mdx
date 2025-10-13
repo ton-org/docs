@@ -1,79 +1,108 @@
 ---
-title: "FunC global variables"
+title: "Global variables"
 sidebarTitle: "Global variables"
 noindex: "true"
 ---
 
-A FunC program primarily consists of function declarations/definitions and global variable declarations. 
-This section focuses on the latter.
+## Declaration
 
 **A global variable** is declared using the `global` keyword, followed by the variable's type and name. For example:
 
 ```func
 global ((int, int) -> int) op;
 ```
-Here's a simple program demonstrating how to use a global functional variable:
+
+This defines global variable `op` of type `(int, int) -> int`. In other words, `op` can store a function that receives two arguments and returns an integer.
+
+Here is an example that uses global variable `op`:
 
 ```func
-int check_assoc(int a, int b, int c) {
-  return op(op(a, b), c) == op(a, op(b, c));
+global ((int, int) -> int) op;
+
+int check_commutative(int a, int b) {
+  return op(a, b) == op(b, a);
+}
+
+int add(int a, int b) {
+  return a + b;
 }
 
 int main() {
-  op = _+_;
-  return check_assoc(2, 3, 9);
+  op = add;
+  return check_commutative(2, 3);
 }
 ```
 
-In this example, the global variable `op` is assigned the addition operator `_+_`. The program then verifies the associativity of addition using three sample integers: 2, 3, and 9.
+The example defines two auxiliary functions: `check_commutative` and `add`, in addition to the program entry point [`main`](#special-functions#main).
+Function `check_commutative` checks if the operator stored in the global variable `op` satisfies the commutative property for the specified inputs `a` and `b`.
+Function `add`, adds its two inputs. 
+Function `main` assigns the addition function `add` to the global variable `op`. Then, it verifies the commutativity of addition for the specific values: `2`, `3`.
 
-Under the hood, global variables in FunC are stored in the `c7` control register of the TVM, with a maximum limit of 31 variables.
+In FunC, you can _omit the type_ of global variables. In this case, the compiler determines the type based on how the variable is used. Equivalently, 
+instead of declaring the type, you can use the `var` keyword as a replacement for the type.
 
-
-In FunC, you can _omit the type_ of global variable. 
-In this case, the compiler determines the type based on how the variable is used. 
-For example, you can rewrite the previous program like this:
+For example, in the previous program you can declare the variable `op` as:
 
 ```func
 global op;
-
-int check_assoc(int a, int b, int c) {
-  return op(op(a, b), c) == op(a, op(b, c));
-}
-
-int main() {
-  op = _+_;
-  return check_assoc(2, 3, 9);
-}
 ```
 
-**Declaring multiple global variables**
+or as:
+
+```func
+global var op;
+```
+
+<Aside>
+  Under the hood, global variables in FunC are stored in the `c7` control register of the TVM, with a maximum limit of 31 variables.
+
+  Global variables do *not* allow initialization during declaration, contrary to local variables, which must be initialized during declaration.
+  For example,
+
+  ```func 
+  global int a = 5;  ;; DOES NOT COMPILE
+  ```
+
+  Reading a global variable that has not been assigned, will result in the [`null` value](types#null-values).
+</Aside>
+
+
+## Multiple declarations
 
 FunC allows users to declare multiple global variables using a single `global` keyword. 
-The following examples are equivalent:
+
+The following example:
 
 ```func
 global int A;
 global cell B;
 global C;
 ```
+
+is equivalent to this:
+
 ```func
 global int A, cell B, C;
 ```
 
-**Restrictions on global and local variable names**
+## Restrictions on declarations
 
-A local variable **cannot** have the same name as a previously declared global variable. The following example is invalid and will not compile:
+A local variable **cannot** have the same name of a previously declared global variable **but only if their types differ**. 
+
+The following example does not compile, because the local variable `C` of type `int` has the same name as the global variable `C` of type `cell`,
+and `int` and `cell` are different types.
 
 ```func
 global cell C;
 
 int main() {
-  int C = 3; ;; Error: cannot declare a local variable with the same name as a global variable
+  int C = 3; ;; DOES NOT COMPILE
   return C;
 }
 ```
-However, the following example is valid:
+
+However, if the local variable and the global variable have the same type and the same name, the declaration of the local variable actually means assignment 
+to the global variable. For example,
 
 ```func
 global int C;
@@ -84,7 +113,5 @@ int main() {
 }
 ```
 
-In this case, `int C = 3;` is not declaring a new local variable 
-but instead assigning value `3` to the global variable `C`. 
-This behavior is explained in more detail in the section on [statements](/language/func/statements#variable-declaration).
+In this case, `int C = 3;` is not declaring a new local variable, but instead assigning value `3` to the global variable `C`. 
 
