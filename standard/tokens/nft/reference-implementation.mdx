@@ -64,9 +64,9 @@ The `royalty_params` cell contains 3 values: `royalty_factor` which is a numerat
 
 The collection and item contracts implement a classic pattern of parent–child contracts, where the collection acts as the parent and items are children. Therefore, the collection implements functionality to deploy its children, and the contract keeps the `nft_item_code` field in storage.
 
-The contract uses helper functions to compose StateInit, calculate addresses, and send deploy messages for NFT items.
+The contract uses helper functions to compose [StateInit](/ton/tblkch#3-1-7-message-layout), calculate addresses, and send deploy messages for NFT items.
 
-First, `calculate_nft_item_state_init` composes a StateInit cell of an NFT item with a given `item_index`. It composes a data cell following the expected storage schema of the item contract. Then the data and code cells are placed in a final StateInit cell following the format required by the TON blockchain. It uses the `store_dict` builder to encode optional refs; it does not store dictionaries. This can be replaced with a more self‑explanatory `store_maybe_ref` builder which does the same thing. It stores a single bit `0` in a builder if the cell is null, otherwise bit `1` and a cell as a reference.
+First, `calculate_nft_item_state_init` composes a StateInit cell of an NFT item with a given `item_index`. It composes a data cell following the expected storage schema of the item contract. Then the data and code cells are placed in a final StateInit cell following the format required by the TON blockchain. It uses the `store_dict` builder to encode optional refs; it does not store dictionaries. This can be replaced with a more self‑explanatory [`store_maybe_ref`](/language/func/stdlib/#store-maybe-ref) builder which does the same thing. It stores a single bit `0` in a builder if the cell is null, otherwise bit `1` and a cell as a reference.
 
 ```func
 cell calculate_nft_item_state_init(int item_index, cell nft_item_code) {
@@ -75,7 +75,7 @@ cell calculate_nft_item_state_init(int item_index, cell nft_item_code) {
 }
 ```
 
-The `calculate_nft_item_address` function takes `state_init` composed by `calculate_nft_item_state_init`, along with `wc` (the workchain for the resulting address). It calculates the address by hashing the StateInit and composing a `MsgAddressInt` slice according to the format required by the TON blockchain.
+The `calculate_nft_item_address` function takes `state_init` composed by `calculate_nft_item_state_init`, along with `wc` (the [workchain](/ton/glossary#workchain) for the resulting address). It calculates the address by hashing the StateInit and composing a [`MsgAddressInt`](/ton/addresses/addresses-general-info) slice according to the format required by the TON blockchain.
 
 ```func
 slice calculate_nft_item_address(int wc, cell state_init) {
@@ -87,7 +87,7 @@ slice calculate_nft_item_address(int wc, cell state_init) {
 }
 ```
 
-`deploy_nft_item` builds the StateInit, derives the address, and sends the deploy message. It calls `calculate_nft_item_state_init` to compose the StateInit, then `calculate_nft_item_address` with `workchain()` to derive the contract's workchain (reference implementation uses `0` for basechain), and finally composes and sends the deploy message with the StateInit and content.
+`deploy_nft_item` builds the StateInit, derives the address, and sends the deploy message. It calls `calculate_nft_item_state_init` to compose the StateInit, then `calculate_nft_item_address` with `workchain()` to derive the contract's workchain (reference implementation uses `0` for basechain), and finally composes and sends the deploy message with the StateInit and content (using [`send_raw_message`](/language/func/stdlib/#send-raw-message)).
 
 ```func
 () deploy_nft_item(int item_index, cell nft_item_code, int amount, cell nft_content) impure {
@@ -204,9 +204,9 @@ It parses the incoming message and expects it to contain 3 values: `item_index:u
 
 #### Batch deploy items
 
-This feature is useful when you need to deploy many NFTs at once, for example when minting some initial items. It takes a single `deploy_list` dictionary from the message where keys are item indices and values are cells containing amounts of TON to attach to deployment, and content cells, similar to the values parsed by the singular deploy feature above. It traverses the dictionary in ascending order of indices and limits the batch to ≤249 items to stay under the 254‑message action list limit. This reference contract chooses a lower limit than the maximum as a safe margin.
+This feature is useful when you need to deploy many NFTs at once, for example when minting some initial items. It takes a single `deploy_list` dictionary from the message where keys are item indices and values are cells containing amounts of TON to attach to deployment, and content cells, similar to the values parsed by the singular deploy feature above. It traverses the dictionary in ascending order of indices and limits the batch to ≤249 items to stay under the 254‑message [action list limit](/tvm/exit-codes#33%3A-action-list-is-too-long). This reference contract chooses a lower limit than the maximum as a safe margin.
 
-The logic is straightforward. The loop uses `~udict::delete_get_min(64)` to get and delete the item with the minimum unsigned 64‑bit key. It does that on each iteration and increments `counter` each iteration to avoid exceeding the action list limit. The deployment logic is the same as for the singular deployment feature above.
+The logic is straightforward. The loop uses [`~udict::delete_get_min(64)`](/language/func/stdlib/#dict-delete-get-min) to get and delete the item with the minimum unsigned 64‑bit key. It does that on each iteration and increments `counter` each iteration to avoid exceeding the action list limit. The deployment logic is the same as for the singular deployment feature above.
 
 ```func
 () recv_internal(cell in_msg_full, slice in_msg_body) impure {
@@ -311,7 +311,7 @@ Since item content in the off‑chain format is a URL pointing to a JSON with al
 
 Composing a full URL means joining these two strings, which this method does. This is the most common approach, but it's possible to implement any custom logic for composing item content, like calculating the suffix right in the get‑method from the index and allowing items to not hold any additional content.
 
-The common prefix for content is stored as a second reference in the `content` cell from the collection's contract storage. The resulting cell is then composed with an off‑chain tag `0x01`, followed by a common prefix, and finally an individual content stored as a reference. Since content is text in this format, it is stored in snake format (a chain of cells). For example, it could be composed of four cells, each containing just three letters and referencing the next one: `[abc] -> [def] -> [ghi] -> [jkl]`, and this tree of cells would represent the `abcdefghijkl` string.
+The common prefix for content is stored as a second reference in the `content` cell from the collection's contract storage. The resulting cell is then composed with an off‑chain tag `0x01`, followed by a common prefix joined with individual content in [snake format](/standard/tokens/metadata#snake-data-encoding).
 
 ```func
 cell get_nft_content(int index, cell individual_nft_content) method_id {
