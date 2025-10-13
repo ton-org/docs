@@ -78,6 +78,12 @@ Besides `InnerRequest` field that contains actual actions that will be performed
 
 ### Inner Request
 
+Inner request is defined as follows:
+
+```tlb
+actions$_ out_actions:(Maybe OutList) has_other_actions:(## 1) {m:#} {n:#} other_actions:(ActionList n m) = InnerRequest;
+```
+
 V5 wallet supports two main types of actions that can be performed:
 
 ```mermaid
@@ -90,10 +96,80 @@ graph TD
 ```
 
 The action structure allows for:
-- **Send Message Actions**: Standard message sending with specified modes
+- **Send Message Actions**: Standard message sending with specified mode
 - **Extended Actions**: Advanced wallet management operations
   - **Add Extension**: Register new extension addresses
   - **Delete Extension**: Remove extension addresses
   - **Set Signature Auth**: Enable/disable signature-based authentication
 
+As you can see in TL-B, `out_actions` are snake-cell list of ordinary out messages, followed then by binary flag `has_other_actions` and `other_actions` extended action list.
+
+#### Inner Request Structure
+
+The Inner Request serialization follows this structure:
+
+```mermaid
+graph TD
+    A[Inner Request] --> B[out_actions: Maybe OutList]
+    A --> C[has_other_actions: 1 bit]
+
+    B --> B1{Has out actions?}
+    B1 -->|Yes| B2[OutList Chain]
+    B1 -->|No| B3[Empty/Nothing]
+
+    B2 --> B4[Mode: 8 bits]
+    B2 --> B5[Message Reference]
+    B2 --> B6[Previous OutList Reference]
+
+    C --> C1{Bit = 1?}
+    C1 -->|Yes| D[other_actions: ActionList]
+    C1 -->|No| D1[No extended actions]
+
+    D --> D2[Extended Action]
+    D --> D3[Previous ActionList Reference]
+
+    D2 --> D4[Add Extension #02]
+    D2 --> D5[Delete Extension #03]
+    D2 --> D6[Set Signature Auth #04]
+
+    style A fill:#e1f5fe
+    style B2 fill:#f3e5f5
+    style D fill:#e8f5e8
+```
+
+#### Serialization Layout
+
+The Inner Request is serialized in the following order:
+
+```mermaid
+graph LR
+    subgraph "Cell Data"
+        A[out_actions flag] --> B[has_other_actions: 1 bit]
+    end
+
+    subgraph "References"
+        C[Ref 0: OutList Chain]
+        D[Ref 1: ActionList Chain]
+    end
+
+    A -.-> C
+    B -.-> D
+
+    subgraph "OutList Structure"
+        E[Mode: 8 bits] --> F[Message Ref] --> G[Prev OutList Ref]
+    end
+
+    subgraph "ActionList Structure"
+        H[Action Type: 8 bits] --> I[Action Data] --> J[Prev ActionList Ref]
+    end
+
+    C --> E
+    D --> H
+```
+
+
 ## Examples
+
+### How to create Inner Request
+
+
