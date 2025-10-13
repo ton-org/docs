@@ -29,7 +29,7 @@ Each transaction consists of up to five phases:
   Storage → Credit → Compute → Action → Bounce
 </Aside>
 
-### Fee deduction sequence
+## Fee deduction sequence
 
 1. Import fee (before the first phase)
 1. Storage fee (storage phase)
@@ -52,10 +52,9 @@ tr_phase_storage$_ storage_fees_collected:Grams
 
 The `storage_fees_due` field is of type `Maybe` because it is only present when the account has **insufficient balance** to cover the storage fees. When the account has enough funds, this field is omitted.
 
-The `AccStatusChange` field indicates whether the account's status changed during this phase. For example:
+> Note: Grams are unsigned integers, so account balances cannot be negative.
 
-- If the debt exceeds **0.1 TON**, the account becomes [frozen](https://github.com/ton-blockchain/ton/blob/72056a2261cbb11f7cf0f20b389bcbffe018b1a8/crypto/block/transaction.cpp#L949C11-L953C12).
-- If the debt exceeds **1 TON**, the account is [deleted](https://github.com/ton-blockchain/ton/blob/72056a2261cbb11f7cf0f20b389bcbffe018b1a8/crypto/block/transaction.cpp#L936C11-L946C12).
+The `AccStatusChange` field indicates whether the account's status changed during this phase. For example, see [account status variety](/ton/statuses#status-variety).
 
 ## Credit phase
 
@@ -101,11 +100,13 @@ cskip_no_gas$10 = ComputeSkipReason;
 cskip_suspended$110 = ComputeSkipReason;
 ```
 
+### When the compute phase is skipped
+
 To start, note that the compute phase can be **skipped** entirely. In that case, the reason for skipping is explicitly recorded and can be one of the following:
 
 | Skip reason       | Description                                                                                                                                                                                                             |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cskip_no_state`  | The smart contract has no state and, therefore, no code, so execution is not possible.                                                                                                                                  |
+| `cskip_no_state`  | The smart contract has no [state](/ton/statuses#status-variety) and, therefore, no code, so execution is not possible.                                                                                                                                  |
 | `cskip_bad_state` | Raised in two cases: when the `fixed_prefix_length` [field has an invalid value][fixed_prefix_length] or when the `StateInit` provided in the incoming message [does not match the account’s address][account_address]. |
 | `cskip_no_gas`    | The incoming message did not provide enough TON to cover the gas required to execute the smart contract.                                                                                                                |
 | `cskip_suspended` | The address is suspended; execution is disabled (used to limit early miner accounts).                                                                                                                                   |
@@ -119,19 +120,8 @@ To start, note that the compute phase can be **skipped** entirely. In that case,
   title="Bad state"
 >
   The `fixed_prefix_length` field can be used to specify a fixed prefix for the account address, ensuring that the account resides in a specific shard.
-  This topic is outside the scope of this guide, but more information is available [here](https://github.com/ton-blockchain/ton/blob/master/doc/GlobalVersions.md#anycast-addresses-and-address-rewrite).
+  This topic is outside the scope of this guide, but more information is available in [Shards page](/ton/shards).
 </Aside>
-
-### When the compute phase is skipped
-
-The compute phase may be skipped under certain conditions, such as when the account is missing, uninitialized, or frozen, or when the incoming message lacks code or data fields.
-These scenarios are represented by specific constructors:
-
-- `cskip_no_state$00`: the account lacks a [valid state](/ton/statuses#status-variety).
-- `cskip_bad_state$01`: the message contains an invalid state,\
-  for example, incorrect state for a frozen or uninitialized account.
-- `cskip_no_gas$10`: the account lacks enough funds to cover gas costs.
-- `cskip_suspended$110`: the account is suspended.
 
 ## Action phase
 
@@ -199,10 +189,8 @@ The `tr_phase_bounce_negfunds` type is not used in the current version of the bl
 | `tr_phase_bounce_nofunds` | Indicates that the account does not have enough funds to process the message that should be bounced back to the sender. |
 | `tr_phase_bounce_ok`      | Indicates that the system successfully processes the bounce and sends the message back to the sender.                   |
 
-In this phase, `msg_fees` and `fwd_fees` are calculated based on the total forwarding fee `total_fwd_fees` for the message:
-
-- **One-third** of the fee goes into `msg_fees` and is charged immediately.
-- The remaining **two-thirds** go into `fwd_fees`.
+In this phase, `msg_fees` and `fwd_fees` are calculated from the `total_fwd_fees`:\
+approximately $\frac{1}{3}$ goes to `msg_fees` and $\frac{2}{3}$ go to `fwd_fees`.
 
 > See [Fees → Forward fee](/ton/fees#forward-fee) for more info.
 

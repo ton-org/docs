@@ -16,12 +16,11 @@ export const FeePlayground = () => {
 
   const compute = (form) => {
     const presets = {
-      // #25 - Messages prices (workchain)
-      workchain: {
+      // #25 - Messages prices (basechain)
+      basechain: {
         lump_price: 400000,
         bit_price: 26214400,
         cell_price: 2621440000,
-        ihr_price_factor: 98304,
         first_frac: 21845,
         next_frac: 21845,
       },
@@ -30,19 +29,17 @@ export const FeePlayground = () => {
         lump_price: 10000000,
         bit_price: 655360000,
         cell_price: 65536000000,
-        ihr_price_factor: 98304,
         first_frac: 21845,
         next_frac: 21845,
       },
     };
     const storagePrices = {
-      workchain: { bit_ps: 1, cell_ps: 500 },
+      basechain: { bit_ps: 1, cell_ps: 500 },
       masterchain: { bit_ps: 1000, cell_ps: 500000 },
     };
 
-    const net = form.network.value === 'masterchain' ? 'masterchain' : 'workchain';
-    const { lump_price: lumpPrice, bit_price: bitPrice, cell_price: cellPrice, ihr_price_factor: ihrPriceFactor, first_frac: firstFrac } = presets[net];
-    const ihrDisabled = form.ihr_disabled.checked ? 1 : 0;
+    const net = form.network.value === 'masterchain' ? 'masterchain' : 'basechain';
+    const { lump_price: lumpPrice, bit_price: bitPrice, cell_price: cellPrice, first_frac: firstFrac } = presets[net];
 
     const importBits = Number(form.import_bits.value || 0);
     const importCells = Number(form.import_cells.value || 0);
@@ -64,8 +61,7 @@ export const FeePlayground = () => {
     // storage fee is displayed in the results area only
 
     const fwdFee = lumpPrice + Math.ceil((bitPrice * fwdBits + cellPrice * fwdCells) / bit16);
-    const ihrFee = ihrDisabled ? 0 : Math.ceil((fwdFee * ihrPriceFactor) / bit16);
-    const totalFwdFees = fwdFee + ihrFee;
+    const totalFwdFees = fwdFee;
     const totalActionFees = +((fwdFee * firstFrac) / bit16).toFixed(9);
     const importFee = lumpPrice + Math.ceil((bitPrice * importBits + cellPrice * importCells) / bit16);
     const totalFeeTon = gasFeesTon + storageFeesTon + importFee * nano + totalFwdFees * nano;
@@ -79,7 +75,6 @@ export const FeePlayground = () => {
     setOut('action', (totalActionFees * nano).toFixed(9));
     setOut('fwd', (totalFwdFees * nano).toFixed(9));
     setOut('import', (importFee * nano).toFixed(9));
-    setOut('ihr', (ihrFee * nano).toFixed(9));
     setOut('gas', gasFeesTon.toFixed(9));
     setOut('storage', storageFeesTon.toFixed(9));
   };
@@ -93,8 +88,8 @@ export const FeePlayground = () => {
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="text-xs">Network</div>
         <div>
-          <select name="network" defaultValue="workchain" className="border rounded-md px-2 py-1 bg-transparent text-sm">
-            <option value="workchain">Workchain</option>
+          <select name="network" defaultValue="basechain" className="border rounded-md px-2 py-1 bg-transparent text-sm">
+            <option value="basechain">Basechain</option>
             <option value="masterchain">Masterchain</option>
           </select>
         </div>
@@ -118,11 +113,6 @@ export const FeePlayground = () => {
           </label>
           <label className="block text-xs">fwd cells
             <input name="fwd_cells" defaultValue={0} className="mt-1 w-full border rounded-md px-2 py-1 bg-transparent" type="number" />
-          </label>
-
-          <label className="inline-flex items-center gap-2 text-xs mt-2">
-            <input name="ihr_disabled" type="checkbox" />
-            ihr_disabled
           </label>
         </div>
       </div>
@@ -167,7 +157,6 @@ export const FeePlayground = () => {
         </div>
         <div className="space-y-1">
           <div>Import fee: <strong><span data-out="import"></span> TON</strong></div>
-          <div>IHR fee: <strong><span data-out="ihr"></span> TON</strong></div>
           <div>Total fee: <strong><span data-out="total"></span> TON</strong></div>
         </div>
       </div>
