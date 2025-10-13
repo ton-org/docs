@@ -3,7 +3,7 @@ title: "NFT: reference implementation"
 sidebarTitle: "Reference implementation"
 ---
 
-The NFT standard ([TEP-62](https://github.com/ton-blockchain/TEPs/blob/master/text/0062-nft-standard.md)) describes the required messages and get-methods. The NFT royalty standard ([TEP-66](https://github.com/ton-blockchain/TEPs/blob/master/text/0066-nft-royalty-standard.md)) describes a standard way to implement royalty information for NFT sales. The token data standard ([TEP-64](https://github.com/ton-blockchain/TEPs/blob/master/text/0064-token-data-standard.md)) describes available formats for metadata of tokens. A widely used [reference implementation](https://github.com/ton-blockchain/token-contract/tree/1182ad99413242f09925d50e70ccb7e0e09f94d4/nft) follows these standards for simple NFTs with only the essential mechanics. This page explains the reference implementation, what you can extend, and what must remain unchanged.
+The NFT standard ([TEP-62](https://github.com/ton-blockchain/TEPs/blob/0d7989fba6f2d9cb08811bf47263a9b314dc5296/text/0062-nft-standard.md)) describes the required messages and get-methods. The NFT royalty standard ([TEP-66](https://github.com/ton-blockchain/TEPs/blob/0d7989fba6f2d9cb08811bf47263a9b314dc5296/text/0066-nft-royalty-standard.md)) describes a standard way to implement royalty information for NFT sales. The token data standard ([TEP-64](https://github.com/ton-blockchain/TEPs/blob/0d7989fba6f2d9cb08811bf47263a9b314dc5296/text/0064-token-data-standard.md)) describes available formats for metadata of tokens. A widely used [reference implementation](https://github.com/ton-blockchain/token-contract/tree/1182ad99413242f09925d50e70ccb7e0e09f94d4/nft) follows these standards for simple NFTs with only the essential mechanics. This page explains the reference implementation, what you can extend, and what must remain unchanged.
 
 The implementation contains multiple smart contracts written in FunC language, including additional ones for NFT sales. This page describes the collection and item smart contracts, as they are the only necessary ones per standard.
 
@@ -11,7 +11,9 @@ The implementation contains multiple smart contracts written in FunC language, i
 
 The full source code is in [nft-collection.fc](https://github.com/ton-blockchain/token-contract/blob/1182ad99413242f09925d50e70ccb7e0e09f94d4/nft/nft-collection.fc) file.
 
-The TEP-62 standard only requires the implementation of get‑methods: `get_collection_data()`, `get_nft_address_by_index(int index)`, and `get_nft_content(int index, cell individual_content)`. The TEP‑66 standard also adds the `royalty_params()` get‑method, a `get_royalty_params` message for requesting royalty parameters on‑chain, and a `report_royalty_params` message for response containing these parameters. All other behavior is implementation‑specific. This includes any kind of modifications to the logic of minting new items, managing ownership of the collection, changing metadata, and other features. The reference implementation, for example, implements the ownership management feature and two ways of minting items: singular and batched. Both of these are outside the scope of the standards but are common and needed in most cases. These features are optional and can be removed or replaced.
+The TEP-62 standard only requires the implementation of get‑methods: `get_collection_data()`, `get_nft_address_by_index(int index)`, and `get_nft_content(int index, cell individual_content)`. The TEP‑66 standard also adds the `royalty_params()` get‑method, a `get_royalty_params` message for requesting royalty parameters on‑chain, and a `report_royalty_params` message for the response containing these parameters.
+
+All other behavior is implementation‑specific. This includes any kind of modifications to the logic of minting new items, managing ownership of the collection, changing metadata, and other features. The reference implementation, for example, implements the ownership management feature and two ways of minting items: singular and batched. Both of these are outside the scope of the standards but are common and needed in most cases. These features are optional and can be removed or replaced.
 
 | Capability                                          | Requirement                                    |
 | --------------------------------------------------- | ---------------------------------------------- |
@@ -62,9 +64,9 @@ The `royalty_params` cell contains 3 values: `royalty_factor` which is a numerat
 
 The collection and item contracts implement a classic pattern of parent–child contracts, where the collection acts as the parent and items are children. Therefore, the collection implements functionality to deploy its children, and the contract keeps the `nft_item_code` field in storage.
 
-Helper functions used across the contract: composing stateinit, calculating addresses, and sending a deploy message for NFT items.
+The contract uses helper functions to compose stateinit, calculate addresses, and send deploy messages for NFT items.
 
-First, `calculate_nft_item_state_init` composes a stateinit cell of an NFT item with a given `item_index`. It composes a data cell following the expected storage schema of the item contract. Then the data and code cells are placed in a final stateinit cell following the format required by the TON blockchain. It uses `store_dict` functions but doesn't actually work with dictionaries. This function can be replaced with a more self‑explanatory `store_maybe_ref` function which does the same thing. It stores a single bit `0` in a builder if the cell is null, otherwise bit `1` and a cell as a reference.
+First, `calculate_nft_item_state_init` composes a stateinit cell of an NFT item with a given `item_index`. It composes a data cell following the expected storage schema of the item contract. Then the data and code cells are placed in a final stateinit cell following the format required by the TON blockchain. It uses the `store_dict` builder to encode optional refs; it does not store dictionaries. This can be replaced with a more self‑explanatory `store_maybe_ref` builder which does the same thing. It stores a single bit `0` in a builder if the cell is null, otherwise bit `1` and a cell as a reference.
 
 ```func
 cell calculate_nft_item_state_init(int item_index, cell nft_item_code) {
@@ -73,7 +75,7 @@ cell calculate_nft_item_state_init(int item_index, cell nft_item_code) {
 }
 ```
 
-Then comes the `calculate_nft_item_address` function that takes `state_init` composed by `calculate_nft_item_state_init`, along with `wc` which is a workchain for the resulting address. This function is boilerplate. It calculates the address by taking the hash of the stateinit and composes a `MsgAddressInt` slice according to the format required by the TON blockchain.
+The `calculate_nft_item_address` function takes `state_init` composed by `calculate_nft_item_state_init`, along with `wc` (the workchain for the resulting address). It calculates the address by hashing the stateinit and composing a `MsgAddressInt` slice according to the format required by the TON blockchain.
 
 ```func
 slice calculate_nft_item_address(int wc, cell state_init) {
@@ -85,7 +87,7 @@ slice calculate_nft_item_address(int wc, cell state_init) {
 }
 ```
 
-Then there is a function which is mostly boilerplate: `deploy_nft_item`. It deploys an item with the provided index, code, amount of TON to attach, and the content for metadata. It first calls `calculate_nft_item_state_init` to compose the stateinit, then uses it to calculate the address by calling `calculate_nft_item_address` and using `workchain()` to derive the contract’s hardcoded workchain (`0` for basechain in this implementation). Then it uses both stateinit and address to compose and send a message for deploying that item contract.
+`deploy_nft_item` builds the stateinit, derives the address, and sends the deploy message. It calls `calculate_nft_item_state_init` to compose the stateinit, then `calculate_nft_item_address` with `workchain()` to derive the contract's workchain (reference implementation uses `0` for basechain), and finally composes and sends the deploy message with the stateinit and content.
 
 ```func
 () deploy_nft_item(int item_index, cell nft_item_code, int amount, cell nft_content) impure {
@@ -139,9 +141,9 @@ Then it parses `op` and `query_id` from incoming message body, and loads the sto
 }
 ```
 
-#### get\_royalty\_params
+#### Request royalty parameters
 
-Then comes the only message handling required by the standard: the implementation of the `get_royalty_params` message. All it does is send a `report_royalty_params` message back to the sender, providing the `royalty_params` field taken from storage. The `send_royalty_params` function is mostly boilerplate. It sends a non‑bounceable message to a desired address with a body following the standard. It carries the value of the incoming message.
+The `get_royalty_params` message is the only inbound message handling required by the standard. On receipt, the contract sends a `report_royalty_params` message back to the sender with the `royalty_params` field from storage. The helper `send_royalty_params` is mostly boilerplate: it sends a non‑bounceable message with a body following the standard and carries the value of the incoming message.
 
 ```func
 () send_royalty_params(slice to_address, int query_id, slice data) impure inline {
@@ -202,9 +204,9 @@ It parses the incoming message and expects it to contain 3 values: `item_index:u
 
 #### Batch deploy items
 
-This feature is useful when you need to deploy many NFTs at once, for example when minting some initial items. It takes a single `deploy_list` dictionary from the message where keys are item indices and values are cells containing amounts of TON to attach to deployment, and content cells, similar to the values parsed by the singular deploy feature above. It traverses the dictionary in ascending order of indices, up to 249 items, so that it does not hit an actions limit. The actions limit is actually 254 out messages, but this reference contract sets a lower limit, which is an arbitrary choice.
+This feature is useful when you need to deploy many NFTs at once, for example when minting some initial items. It takes a single `deploy_list` dictionary from the message where keys are item indices and values are cells containing amounts of TON to attach to deployment, and content cells, similar to the values parsed by the singular deploy feature above. It traverses the dictionary in ascending order of indices and limits the batch to ≤249 items to stay under the 254‑message action list limit. This reference contract chooses a lower limit than the maximum as a safe margin.
 
-The logic here is straightforward. The loop uses `~udict::delete_get_min(64)` to get and delete the item from the dictionary with the minimum unsigned 64‑bit integer key. It does that on each iteration, eventually iterating through the dictionary, and increments `counter` on each step to catch the message count limit. The deployment logic is the same as for the singular deployment feature above.
+The logic is straightforward. The loop uses `~udict::delete_get_min(64)` to get and delete the item with the minimum unsigned 64‑bit key. It does that on each iteration and increments `counter` each iteration to avoid exceeding the action list limit. The deployment logic is the same as for the singular deployment feature above.
 
 ```func
 () recv_internal(cell in_msg_full, slice in_msg_body) impure {
@@ -216,7 +218,7 @@ The logic here is straightforward. The loop uses `~udict::delete_get_min(64)` to
         var (item_index, item, f?) = deploy_list~udict::delete_get_min(64);
         if (f?) {
           counter += 1;
-          if (counter >= 250) { ;; Limit due to limits of action list size
+          if (counter >= 250) { ;; Limit due to action list size
             throw(399);
           }
 
@@ -250,7 +252,7 @@ The last incoming message handler is for changing ownership of the collection. I
 }
 ```
 
-Finally, if none of the conditions above are met, which means that the opcode provided in the message does not match any of the expected ones, it throws `0xffff`, which is a common exit code for "unknown opcode" errors:
+Finally, if none of the conditions above are met, which means that the opcode provided in the message does not match any of the expected ones, it throws `0xffff`, which is a common exit code for unknown‑opcode errors:
 
 ```func
 () recv_internal(cell in_msg_full, slice in_msg_body) impure {
@@ -263,9 +265,9 @@ Finally, if none of the conditions above are met, which means that the opcode pr
 
 The collection contract implements only the get‑methods required by the standards: `get_collection_data`, `get_nft_address_by_index`, `royalty_params`, and `get_nft_content`.
 
-#### Return collection data (`get_collection_data`)
+#### Return collection data
 
-This get‑method returns `next_item_index` (typically the number minted if minted sequentially), collection content, and an owner address. It loads the contract storage, loads the first reference from the `content` cell (which contains the collection content), and returns those values.
+The get‑method `get_collection_data` returns `next_item_index` (typically the number minted if minted sequentially), collection content, and an owner address. It loads the contract storage, loads the first reference from the `content` cell (which contains the collection content), and returns those values.
 
 ```func
 (int, cell, slice) get_collection_data() method_id {
@@ -275,9 +277,9 @@ This get‑method returns `next_item_index` (typically the number minted if mint
 }
 ```
 
-#### Return item address by index (`get_nft_address_by_index`)
+#### Return item address by index
 
-This get‑method takes an item index and returns the item's address. It uses helper functions `calculate_nft_item_state_init` and `calculate_nft_item_address` to calculate the address.
+The get‑method `get_nft_address_by_index` takes an item index and returns the item's address. It uses helper functions `calculate_nft_item_state_init` and `calculate_nft_item_address` to calculate the address.
 
 ```func
 slice get_nft_address_by_index(int index) method_id {
@@ -287,9 +289,9 @@ slice get_nft_address_by_index(int index) method_id {
 }
 ```
 
-#### Return royalty parameters (`royalty_params`)
+#### Return royalty parameters
 
-This get‑method returns royalty parameters: `numerator`, `denominator`, and `destination`, as required by the standard. These values are stored in a `royalty` cell in data, which we parse here to return.
+The get‑method `royalty_params` returns royalty parameters: `numerator`, `denominator`, and `destination`, as required by the standard. These values are stored in a `royalty` cell in data, which this method parses and returns.
 
 ```func
 (int, int, slice) royalty_params() method_id {
@@ -299,13 +301,13 @@ This get‑method returns royalty parameters: `numerator`, `denominator`, and `d
 }
 ```
 
-#### Compose full item content (`get_nft_content`)
+#### Compose full item content
 
-This get‑method takes an item index and item content, and returns full content of the item. It composes and returns a cell following the off‑chain format for metadata from the TEP‑64 standard.
+The get‑method `get_nft_content` takes an item index and item content, and returns full content of the item. It composes and returns a cell following the off‑chain format for metadata from the TEP‑64 standard.
 
 This reference implementation works with an off‑chain metadata format, joining a common prefix stored in the collection contract with individual item content from the item contract. The specific way of composing the full item's content is not forced by the standard, and can be implemented in any way. Since item content in the off‑chain format is a URL pointing to a JSON with all the metadata fields, the common prefix is usually a URL to the endpoint for getting metadata for each item or a directory with all the JSONs, for example `https://example-collection.com/items/`. Then each item can contain just the suffix of the full URL, such as `123.json`. Composing a full URL means joining these two strings, which this method does. This is the most common approach, but it's possible to implement any custom logic for composing item content, like calculating the suffix right in the get‑method from the index and allowing items to not hold any additional content.
 
-The common prefix for content is stored as a second reference in the `content` cell from the collection's contract storage. The resulting cell is then composed with an off‑chain tag `0x01`, followed by a common prefix, and finally an individual content stored as a reference. Since content is text in this format, it is stored in a "snake" format in a cell, meaning that text can be split in parts and stored as a chain of cells. For example, it could be composed of four cells, each containing just three letters and referencing the next one: `[abc] -> [def] -> [ghi] -> [jkl]`, and this tree of cells would represent the `abcdefghijkl` string.
+The common prefix for content is stored as a second reference in the `content` cell from the collection's contract storage. The resulting cell is then composed with an off‑chain tag `0x01`, followed by a common prefix, and finally an individual content stored as a reference. Since content is text in this format, it is stored in snake format (a chain of cells). For example, it could be composed of four cells, each containing just three letters and referencing the next one: `[abc] -> [def] -> [ghi] -> [jkl]`, and this tree of cells would represent the `abcdefghijkl` string.
 
 ```func
 cell get_nft_content(int index, cell individual_nft_content) method_id {
@@ -368,7 +370,7 @@ The TEP‑62 standard defines `transfer` and `get_static_data` messages that mus
 
 ### Storage
 
-Same as for the collection, the storage schema itself is not defined by the standard and it can be arbitrary. Here, we only have the essentials: the `index` of the item, `collection_address`, `owner_address`, and `content` with individual item content. An important consideration with this contract is that it has two states: initialized or not initialized. It is made this way to properly support deployments only by the collection contract. When the item is not initialized yet, it only has an index and collection address. Below are `load_data` and `store_data` for the item contract. Note that `load_data` also returns as the first value the boolean initialization flag, equal to `-1` if the item is initialized and `0` if not.
+Same as for the collection, the storage schema itself is not defined by the standard and it can be arbitrary. This contract stores only the essentials: the `index` of the item, `collection_address`, `owner_address`, and `content` with individual item content. An important consideration with this contract is that it has two states: initialized or not initialized. It is made this way to properly support deployments only by the collection contract. When the item is not initialized yet, it only has an index and collection address. Below are `load_data` and `store_data` for the item contract. Note that `load_data` also returns as the first value the boolean initialization flag, equal to `-1` if the item is initialized and `0` if not.
 
 ```func
 (int, int, slice, slice, cell) load_data() {
@@ -435,12 +437,12 @@ The `recv_internal` function begins with boilerplate code for parsing flags, the
     cs~load_coins(); ;; skip `grams:Grams` from `value:CurrencyCollection`
     cs~skip_bits(1); ;; skip `other:ExtraCurrencyCollection` from `value:CurrencyCollection`
     cs~load_coins(); ;; skip ihr_fee:Grams
-    int fwd_fee = muldiv(cs~load_coins(), 3, 2); ;; we use message fwd_fee for estimation of forward_payload costs
+    int fwd_fee = muldiv(cs~load_coins(), 3, 2); ;; use the inbound message's fwd_fee to estimate an upper bound for outbound messages
     ;; ...
 }
 ```
 
-Then it loads the data and handles the case when item is not initialized yet, by checking whether the incoming message was sent by the collection contract, and if it was - parses the message body and saves the new `content` and `owner_address`:
+Load the data and handle the uninitialized state by checking that the sender is the collection contract. If so, parse the message body and save the new `content` and `owner_address`:
 
 ```func
 () recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
@@ -455,7 +457,7 @@ Then it loads the data and handles the case when item is not initialized yet, by
 }
 ```
 
-Then it parses `op` and `query_id` from the incoming message body:
+Parse `op` and `query_id` from the incoming message body:
 
 ```func
 () recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
@@ -468,9 +470,9 @@ Then it parses `op` and `query_id` from the incoming message body:
 
 And then there are two conditions for opcodes, processing either `transfer` or `get_static_data` messages required by the standard.
 
-#### Transfer ownership (`transfer`)
+#### Transfer ownership
 
-The transfer message's structure is defined by the standard. It must contain, apart from the opcode and `query_id`: `new_owner` (the destination address of the item transfer), `response_destination` (an address where the contract should send the remaining TON left after the transfer along with a confirmation message), `custom_payload` for extensions of the standard and additional custom logic, `forward_amount` (amount of TON to send to a new owner with the item transfer), and `forward_payload` (a cell for any arbitrary data to send to a new owner with the item transfer).
+The `transfer` message's structure is defined by the standard. It must contain, apart from the opcode and `query_id`: `new_owner` (the destination address of the item transfer), `response_destination` (an address where the contract should send the remaining TON left after the transfer along with a confirmation message), `custom_payload` for extensions of the standard and additional custom logic, `forward_amount` (amount of TON to send to a new owner with the item transfer), and `forward_payload` (a cell for any arbitrary data to send to a new owner with the item transfer).
 
 The `transfer` message handler checks whether the `sender_address` equals `owner_address`, parses those fields from the message, checks the workchain of the new owner address, checks all the TON amounts to make sure it has enough balance to complete the transfer, and finally completes the transfer by updating the `owner_address` field in storage. It also sends from 0 to 2 messages, depending on whether a response is required and whether there is any `forward_amount`. The `custom_payload` is ignored in this implementation.
 
@@ -521,7 +523,7 @@ The `ownership_assigned` message is sent only if `forward_amount` is greater tha
 }
 ```
 
-#### Report static data (`get_static_data`)
+#### Report static data
 
 On `get_static_data`, respond with `report_static_data` containing the item's `index` and `collection` address. This handler composes and sends a message with the index and collection address in the body.
 
@@ -536,7 +538,7 @@ On `get_static_data`, respond with `report_static_data` containing the item's `i
 }
 ```
 
-Finally, if none of the conditions above are met, which means that the opcode provided in the message does not match any of the expected ones, it throws `0xffff`, which is a common exit code for "unknown opcode" errors:
+Finally, if none of the conditions above are met, which means that the opcode provided in the message does not match any of the expected ones, it throws `0xffff`, which is a common exit code for unknown‑opcode errors:
 
 ```func
 () recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
@@ -549,9 +551,9 @@ Finally, if none of the conditions above are met, which means that the opcode pr
 
 The standard only requires the `get_nft_data` get‑method.
 
-#### Return NFT data (`get_nft_data`)
+#### Return item data
 
-It returns `init?` flag showing whether item is initialized or not, `index`, `collection_address`, `owner_address`, and `individual_content`. In case of this implementation, it returns all the values from `load_data` function as is, including the logic for setting `init?` flag.
+The get‑method `get_nft_data` returns the `init?` flag (whether the item is initialized), `index`, `collection_address`, `owner_address`, and `individual_content`. In this implementation, it returns all the values from `load_data` as is, including the logic for setting the `init?` flag.
 
 Importantly, the `content` returned by this contract follows the format required by the collection contract, where it only includes the suffix of the URL pointing to an off‑chain JSON with metadata. But this is not forced by the standard, and the format can be arbitrary. The only requirements are that the collection's `get_nft_content` must return full content following TEP‑64, and that if the item has no collection it must return full content right away at this point, but the latter is out of scope here.
 
