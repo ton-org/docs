@@ -1,0 +1,61 @@
+## MyTonCtrl backup commands
+
+MyTonCtrl bundles helper scripts for creating and restoring node backups. These commands wrap the shell scripts located in `mytonctrl/scripts/` and handle temporary files, keyring exports, and user selection.
+
+<Warning>Exporting and restoring backups exposes private keys and validator configuration.
+Risk: key leakage allows account takeover; config mistakes can halt validation.
+Scope: this node’s keys and validator state.
+Rollback: create a fresh backup first; you can restore it if needed.
+Environment: test on TON Testnet before using on TON Mainnet.</Warning>
+
+## Operational notes
+- Backups capture MyTonCtrl data, validator config, and keyring files. Always store backup archives securely (they contain private keys).
+- Restoration overwrites existing configuration. Ensure the donor node is offline before restoring its backup to avoid data divergence.
+- Both scripts expect `sudo` or equivalent privileges when manipulating system files. Use the `-u` flag to match the original install user if necessary.
+
+## create_backup
+**Purpose:** Generate a compressed archive containing MyTonCtrl configuration, keyring, and validator data.
+
+**Syntax**
+```mytonctrl
+create_backup [filename] [-u <user>]
+```
+
+**Behavior**
+- Exports the validator keyring via `exportallprivatekeys`, captures the current `config.json`, and stages them in a temporary directory.
+- Invokes `scripts/create_backup.sh` with:
+  - `-m` pointing to the MyTonCtrl working directory (usually `/var/ton-work`).
+  - `-t` referencing the temporary snapshot directory.
+  - Optional `-d <filename>` when you supply `filename`; otherwise the script chooses its own name.
+  - Optional `-u <user>` to run the backup script as a specific system user (defaults to the effective user).
+- Removes the temporary directory afterwards and prints `create_backup - OK` or `... - Error` based on the script’s exit code.
+
+**Examples**
+```mytonctrl
+create_backup
+create_backup mynode-backup-2024-05-01.tar -u validator
+```
+
+## restore_backup
+**Purpose:** Restore a previously created backup archive into the current node environment.
+
+**Syntax**
+```mytonctrl
+restore_backup <filename> [-y] [--skip-create-backup] [-u <user>]
+```
+
+**Behavior**
+- Requires the backup archive filename. Optional flags:
+  - `-y` skips the interactive confirmation prompt.
+  - `--skip-create-backup` prevents MyTonCtrl from making a safety backup of the current state before restoring.
+  - `-u <user>` runs the restore script as the specified system user (defaults to the current user).
+- Without `--skip-create-backup`, first calls `create_backup` with default arguments so you can roll back if needed.
+- Resolves the node’s IP address, then runs `scripts/restore_backup.sh` with `-m <work_dir>`, `-n <filename>`, `-i <node_ip>` (converted to integer form).
+- If restoration succeeds and validator mode is active, reinitializes BTC Teleport to ensure the service still matches the restored state.
+- Exits MyTonCtrl after a successful restore so you can restart with the new configuration.
+
+**Examples**
+```mytonctrl
+restore_backup mynode-backup-2024-05-01.tar
+restore_backup mynode-backup-2024-05-01.tar -y --skip-create-backup -u validator
+```
