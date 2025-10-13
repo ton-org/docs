@@ -64,9 +64,9 @@ The `royalty_params` cell contains 3 values: `royalty_factor` which is a numerat
 
 The collection and item contracts implement a classic pattern of parent–child contracts, where the collection acts as the parent and items are children. Therefore, the collection implements functionality to deploy its children, and the contract keeps the `nft_item_code` field in storage.
 
-The contract uses helper functions to compose [StateInit](/ton/tblkch#3-1-7-message-layout), calculate addresses, and send deploy messages for NFT items.
+The contract uses helper functions to compose [`StateInit`](/ton/tblkch#3-1-7-message-layout), calculate addresses, and send deploy messages for NFT items.
 
-First, `calculate_nft_item_state_init` composes a StateInit cell of an NFT item with a given `item_index`. It composes a data cell following the expected storage schema of the item contract. Then the data and code cells are placed in a final StateInit cell following the format required by the TON blockchain. It uses the `store_dict` builder to encode optional refs; it does not store dictionaries. This can be replaced with a more self‑explanatory [`store_maybe_ref`](/language/func/stdlib/#store-maybe-ref) builder which does the same thing. It stores a single bit `0` in a builder if the cell is null, otherwise bit `1` and a cell as a reference.
+First, `calculate_nft_item_state_init` composes a `StateInit` cell of an NFT item with a given `item_index`. It composes a data cell following the expected storage schema of the item contract. Then the data and code cells are placed in a final `StateInit` cell following the format required by the TON blockchain. It uses the `store_dict` builder to encode optional refs; it does not store dictionaries. This can be replaced with a more self‑explanatory [`store_maybe_ref`](/language/func/stdlib/#store-maybe-ref) builder which does the same thing. It stores a single bit `0` in a builder if the cell is null, otherwise bit `1` and a cell as a reference.
 
 ```func
 cell calculate_nft_item_state_init(int item_index, cell nft_item_code) {
@@ -75,7 +75,7 @@ cell calculate_nft_item_state_init(int item_index, cell nft_item_code) {
 }
 ```
 
-The `calculate_nft_item_address` function takes `state_init` composed by `calculate_nft_item_state_init`, along with `wc` (the [workchain](/ton/glossary#workchain) for the resulting address). It calculates the address by hashing the StateInit and composing a [`MsgAddressInt`](/ton/addresses/addresses-general-info) slice according to the format required by the TON blockchain.
+The `calculate_nft_item_address` function takes `state_init` composed by `calculate_nft_item_state_init`, along with `wc` (the [workchain](/ton/glossary#workchain) for the resulting address). It calculates the address by hashing the `StateInit` and composing a [`MsgAddressInt`](/ton/addresses/addresses-general-info) slice according to the format required by the TON blockchain.
 
 ```func
 slice calculate_nft_item_address(int wc, cell state_init) {
@@ -87,7 +87,7 @@ slice calculate_nft_item_address(int wc, cell state_init) {
 }
 ```
 
-`deploy_nft_item` builds the StateInit, derives the address, and sends the deploy message. It calls `calculate_nft_item_state_init` to compose the StateInit, then `calculate_nft_item_address` with `workchain()` to derive the contract's workchain (reference implementation uses `0` for basechain), and finally composes and sends the deploy message with the StateInit and content (using [`send_raw_message`](/language/func/stdlib/#send-raw-message)).
+`deploy_nft_item` builds the `StateInit`, derives the address, and sends the deploy message. It calls `calculate_nft_item_state_init` to compose the `StateInit`, then `calculate_nft_item_address` with `workchain()` to derive the contract's workchain (reference implementation uses `0` for basechain), and finally composes and sends the deploy message with the `StateInit` and content (using [`send_raw_message`](/language/func/stdlib/#send-raw-message)).
 
 ```func
 () deploy_nft_item(int item_index, cell nft_item_code, int amount, cell nft_content) impure {
@@ -325,38 +325,6 @@ cell get_nft_content(int index, cell individual_nft_content) method_id {
                       .store_ref(individual_nft_content)
           .end_cell());
 }
-```
-
-#### Client flow for metadata
-
-The reference implementation uses the off-chain metadata format, but this is not the only one defined by the standard. There are also on-chain and semi-chain formats, and it is possible to use a custom format if needed. The sequence diagram shows the flow for resolving an item's metadata. Note that the reference implementation follows only the tag 0x01 branch.
-
-```mermaid
-sequenceDiagram
-  participant Client as Client/DApp
-  participant Item as NFT Item
-  participant Collection
-  participant HTTP as Metadata server
-
-  Client->>Item: get_nft_data()
-  Item-->>Client: index, collection_address, individual_content
-  Client->>Collection: get_nft_content(index, individual_content)
-  Collection-->>Client: content cell
-  Client->>Client: parse tag
-  alt tag 0x01: off-chain
-    Client->>Client: extract URL
-    Client->>HTTP: GET URL
-    HTTP-->>Client: JSON metadata: name, image, attributes
-  else tag 0x00: on-chain dictionary
-    Client->>Client: read on-chain fields
-    opt semi-chain: uri key present
-      Client->>HTTP: GET uri
-      HTTP-->>Client: JSON metadata
-      Client->>Client: add fields from JSON
-    end
-  else custom tag: contract specific
-    Client->>Client: handle contract specific TL-B content
-  end
 ```
 
 ## Item
