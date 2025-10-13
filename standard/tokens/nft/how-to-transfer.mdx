@@ -12,25 +12,22 @@ also specified and must comply with the corresponding TL-B scheme. This scheme i
 
 If `forward_ton_amount > 0`, then `forward_payload` must comply with one of the [standard formats](https://github.com/ton-blockchain/TEPs/blob/master/text/0062-nft-standard.md#forward_payload-format).
 
-First, you can use your wallet app with NFTs, just follow the corresponding guides.
-Second, you can use your favorite IDE. Below there are two illustrative examples:
+First, you can use your wallet app with NFTs, just follow the corresponding guides (see [Tonkeeper](https://tonkeeper.helpscoutdocs.com/article/47-how-to-send-nft-to-another-wallet) for an instance).
+Or you can do it manually. Below there are two illustrative examples:
 
 ```typescript
-import { Address, beginCell, internal, toNano } from "@ton/core";
-import { TonClient, WalletContractV4 } from "@ton/ton";
+import { Address, beginCell, internal, toNano, SendMode } from "@ton/core";
+import { TonClient, WalletContractV5R1 } from "@ton/ton";
 import { mnemonicToPrivateKey } from "@ton/crypto";
 
 async function main() {
-    const nftItemAddress = Address
-        .parse('put your NFT item address');
-    const newOwner = Address
-        .parse('put new owner address');
-    const destinationAddress = Address
-        .parse('put destination wallet address');
+    const nftItemAddress = Address.parse("put your NFT item address");
+    const newOwner = Address.parse("put new owner address");
+    const destinationAddress = Address.parse("put destination wallet address");
 
     const forwardPayload = beginCell()
         .storeUint(0, 32) // 0 opcode means we have a comment
-        .storeStringTail('you are the new owner')
+        .storeStringTail("you are the new owner")
         .endCell();
 
     const messageBody = beginCell()
@@ -40,27 +37,27 @@ async function main() {
         .storeAddress(newOwner) // the address of the new NFT owner
         .storeAddress(destinationAddress) // response destination
         .storeBit(0) // no custom payload
-        .storeCoins(toNano('0.02')) // forward amount - if >0, will send notification message
+        .storeCoins(toNano("0.02")) // forward amount - if >0, will send notification message
         .storeBit(1) // store forwardPayload as a reference
         .storeRef(forwardPayload)
         .endCell();
 
     const nftTransferMessage = internal({
         to: nftItemAddress,
-        value: toNano('0.1'),
+        value: toNano("0.1"),
         bounce: true,
-        body: messageBody
+        body: messageBody,
     });
 
     // connect to your regular wallet
     const client = new TonClient({
-    endpoint: 'https://toncenter.com/api/v2/jsonRPC',
+        endpoint: "https://toncenter.com/api/v2/jsonRPC",
     });
     const provider = client.provider(destinationAddress);
 
-    const your_mnemonic = 'put your mnemonic here, ...';
+    const your_mnemonic = "put your mnemonic here, ...";
     const keyPair = await mnemonicToPrivateKey(your_mnemonic.split(" "));
-    const walletContract = WalletContractV4.create({
+    const walletContract = WalletContractV5R1.create({
         workchain: 0,
         publicKey: keyPair.publicKey,
     });
@@ -70,10 +67,9 @@ async function main() {
     await walletContract.sendTransfer(provider, {
         seqno: seqno,
         secretKey: keyPair.secretKey,
-        messages: [
-            nftTransferMessage,
-        ],
-        });
+        messages: [nftTransferMessage],
+        sendMode: SendMode.PAY_GAS_SEPARATELY,
+    });
 }
 
 void main();
@@ -83,16 +79,22 @@ However, there is an [SDK](https://github.com/ton-community/assets-sdk) that all
 An example of how it can be used to send the NFT transfer message is provided below:
 
 ```typescript
-import { Address, toNano } from '@ton/core';
+import { Address, toNano } from "@ton/core";
 
-import { AssetsSDK, createApi, createSender, importKey, PinataStorageParams } from '@ton-community/assets-sdk';
+import {
+    AssetsSDK,
+    createApi,
+    createSender,
+    importKey,
+    PinataStorageParams,
+} from "@ton-community/assets-sdk";
 
 async function main() {
-    const NETWORK = 'mainnet';
+    const NETWORK = "testnet";
     const api = await createApi(NETWORK);
 
     const keyPair = await importKey(process.env.MNEMONIC!);
-    const sender = await createSender('highload-v2', keyPair, api);
+    const sender = await createSender("highload-v2", keyPair, api);
 
     const storage: PinataStorageParams = {
         pinataApiKey: process.env.PINATA_API_KEY!,
@@ -100,16 +102,16 @@ async function main() {
     };
 
     const sdk = AssetsSDK.create({
-        api: api,
-        storage: storage,
-        sender: sender,
+        api,
+        storage,
+        sender,
     });
 
-    const NFT_ADDRESS = Address.parse('MY_NFT_ADDRESS');
+    const NFT_ADDRESS = Address.parse("put your NFT item address");
     const nftItem = await sdk.openNftItem(NFT_ADDRESS);
 
-    const RECEIVER_ADDRESS = Address.parse('RECEIVER_ADDRESS');
-    await nftItem.send(sender, RECEIVER_ADDRESS, {value: toNano(10)})
+    const RECEIVER_ADDRESS = Address.parse("put receiver address");
+    await nftItem.send(sender, RECEIVER_ADDRESS, { value: toNano(10) });
 }
 
 void main();
