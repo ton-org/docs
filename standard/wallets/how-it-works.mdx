@@ -1,56 +1,56 @@
 ---
 title: "How TON wallets work"
-sidebarTitle: "How they work"
+sidebarTitle: "How wallets work"
 ---
 
 import { Aside } from '/snippets/aside.jsx';
 
-Wallets are often the entry point of transactions in TON. See [external messages](/ton/ton#2-4-6-external-messages%2C-or-messages-from-nowhere).
+[Wallets](/ton/glossary#wallet) are often the entry point for transactions in The Open Network (TON). See [external messages](../../ton/ton#2-4-6-external-messages%2C-or-messages-from-nowhere).
 
-### General principle
+## General principle
 A wallet smart contract stores two critical variables — the public key and the sequence number (`seqno`). Together they secure the wallet.
 
 Using the public key, the contract verifies that the request comes from the wallet owner; using `seqno`, it protects against replayed transactions (see [How replay protection works](#how-replay-protection-works)).
 
-## Why wallet contracts don't store a `balance` field
+## Why wallet contracts don't store a balance field
 
-In TON, an account's balance is not stored inside the smart contract's persistent data. It is a part of the protocol-level account state, maintained by validators and updated automatically when value is received/sent and when fees are paid.
+In TON, an account's balance is not stored inside the smart contract's persistent data. It is part of the protocol-level account state, maintained by validators and updated automatically when value is received/sent and when fees are paid.
 
-Therefore, a wallet contract does not and should not keep a separate `balance` variable in storage. Doing so would be redundant and could drift out of sync with the actual account state.
+Therefore, a wallet contract should not keep a separate `balance` variable in storage. Doing so would be redundant and could drift out of sync with the actual account state.
 
-From outside, the balance is exposed via RPC and blockchain explorers as part of the public account state.
+Remote procedure call (RPC) and blockchain explorers expose the balance as part of the public account state.
 
-## How ownership verification works
+## Ownership verification
 
 Wallet contracts use the Ed25519 signature scheme.
 You generate a private key (keep it safe) and a public key (stored in the contract; readable by anyone).
 
-<Aside type="caution" title="Important">
-The public key is not the wallet address. The address is derived from the contract’s `StateInit` and other parameters. See [address formats](/ton/addresses/address-formats).
+<Aside type="note" title="Important">
+The public key is not the wallet address. The address is derived from the contract’s `StateInit` and other parameters. See [address formats](../../ton/addresses/address-formats).
 </Aside>
 
-An external message is sent to the contract (containing a 512‑bit signature and the desired payload). Ed25519 verifies that the provided signature matches the hash of the message.
+An external message to the contract contains a 512‑bit signature and the desired payload. Ed25519 verifies the provided signature against the message hash.
 
-## How replay protection works
+## Replay protection
 
 <Aside type="note" title="Why do we need replay protection?">
-Imagine Alice has 100 TON. Alice sends 10 TON to Bob as a gift. Bob, being sneaky, forwards the exact same message to Alice's wallet and would receive another 10 TON — unless the wallet prevents replays.
+Imagine Alice has 100 TON. Alice sends 10 TON to Bob as a gift. Bob forwards the exact same message to Alice's wallet and receives another 10 TON — unless the wallet prevents replays.
 </Aside>
 
 Each transaction carries a counter value (in our case, `seqno`) that must be unique and strictly increasing for every outgoing transaction. Because `seqno` changes, the message hash changes as well, making it impossible to reuse a previous signature.
 
-### Role of `valid_until`
+### Role of valid_until
 
 `valid_until` is a Unix timestamp embedded into the wallet’s signing message. The wallet rejects any external message if the current time exceeds this value. This limits the lifetime of a signature and prevents an attacker from replaying a captured message indefinitely.
 
-It also makes retries safe: a client may re-send the same signed message until the deadline; after it expires, the client must re-sign with a new `valid_until`. Combined with `seqno` equality (the contract accepts only the exact current `seqno` and increments it on success), this provides robust replay protection.
+It also makes retries safe: a client may resend the same signed message until the deadline; after it expires, the client must re-sign with a new `valid_until`. Combined with `seqno` equality (the contract accepts only the exact current `seqno` and increments it on success), this provides robust replay protection.
 
 ## Subwallet ID
 
 `subwallet_id` is a 32‑bit identifier tied to a wallet instance. It is set at wallet creation time and is included in the signing message. On each external call, the wallet verifies that the provided `subwallet_id` matches its own; otherwise the message is rejected.
 
-By varying `subwallet_id`, you can deploy multiple independent wallet contracts controlled by the same public key, each with its own address and `seqno`. This is useful for separating accounts, environments, or business lines while keeping a single keypair.
+By varying `subwallet_id`, you can deploy multiple independent wallet contracts controlled by the same public key, each with its own address and `seqno`. This is useful for separating accounts, environments, or business lines while keeping a single key pair.
 
-<Aside type="caution" title="Important">
+<Aside type="note" title="Important">
 Changing `subwallet_id` creates a different wallet address. Funds are not shared across subwallets even if they use the same public key.
 </Aside>
