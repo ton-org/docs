@@ -1,0 +1,310 @@
+---
+title: "Highload Wallet v2 — specification"
+sidebarTitle: "Specification"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+<Aside
+  type="danger"
+>
+  **Deprecated:** Highload Wallet v2 is a legacy contract. Use [Highload Wallet v3](/standard/wallets/highload/v3/specification) for new deployments.
+
+  This specification is maintained for reference to support existing legacy systems.
+</Aside>
+
+This page provides a complete technical specification for Highload Wallet v2, covering storage structure, message formats, replay protection, and limitations.
+
+## What is Highload Wallet v2?
+
+Highload Wallet v2 is a specialized wallet contract designed for services that need to send many transactions in a short time. It uses dictionary-based replay protection to enable parallel transaction submission.
+
+**Key difference from standard wallets:**\
+Unlike seqno-based wallets that require sequential transaction processing, Highload v2 stores processed request identifiers in a dictionary, enabling parallel submissions.
+
+**Replaced by:** [Highload Wallet v3](/standard/wallets/highload/v3/specification)
+
+## TL-B schema
+
+[TL-B (Type Language - Binary)](/language/TL-B/overview) is a domain-specific language designed to describe data structures in TON. The schemas below define the binary layout of the contract's storage and external messages.
+
+### Storage structure
+
+```tlb
+storage$_ subwallet_id:uint32 last_cleaned:uint64 public_key:bits256
+          queries:(HashmapE 64 Cell) = Storage;
+```
+
+### Query ID structure
+
+```tlb
+_ query_id:uint64 = QueryId;
+```
+
+### External message structure
+
+```tlb
+_ mode:uint8 message:^Cell = OutListNode;
+
+msg_body$_ signature:bits512 subwallet_id:uint32 query_id:uint64 
+          messages:(HashmapE 16 Cell) = ExternalInMsgBody;
+```
+
+## Storage structure
+
+The Highload Wallet v2 contract stores four persistent fields (in this order):
+
+### `subwallet_id` (32 bits)
+
+**Purpose:**\
+Allows a single keypair to control multiple wallets with different addresses.
+
+**How it works:**\
+The `subwallet_id` is part of the contract's initial state. Changing it produces a different contract address. Each external message must include the correct `subwallet_id`; mismatches result in transaction failure.
+
+---
+
+### `last_cleaned` (64 bits)
+
+**Purpose:**\
+Timestamp (in query\_id format) of the oldest query that was kept during the last cleanup.
+
+**How it works:**\
+During each transaction, the contract removes queries older than **64 seconds** from the `queries` dictionary. The `last_cleaned` field tracks the last query ID that was removed.
+
+**Cleanup logic:**
+
+```func
+bound -= (64 << 32);  // Clean up records expired more than 64 seconds ago
+```
+
+Queries with `query_id < (now() - 64) << 32` are removed from storage.
+
+<Aside
+  type="caution"
+>
+  **Gas costs:** Cleanup operations consume gas proportional to the number of expired queries. With many expired queries, cleanup can exceed the 1,000,000 gas limit, causing the transaction to fail.
+</Aside>
+
+---
+
+### `public_key` (256 bits)
+
+**Purpose:**\
+Ed25519 public key used to verify signatures on incoming external messages.
+
+**How it works:**\
+When the wallet receives an external message, it verifies that the 512-bit signature was created by the holder of the private key corresponding to this public key.
+
+---
+
+### `queries` (HashmapE 64 Cell)
+
+**Purpose:**\
+Stores processed `query_id` values for replay protection.
+
+**Structure:**
+
+- **Key:** 64-bit `query_id`
+- **Value:** Cell containing metadata (typically the timestamp when processed)
+
+**How it works:**\
+Before processing a message, the contract checks if `query_id` exists in `queries`. If found, the message is rejected (replay attack). If not found, the `query_id` is added to `queries`, and the message is processed.
+
+<Aside
+  type="caution"
+>
+  **Storage limit:** The `queries` dictionary cannot exceed 65,535 cells. If this limit is reached, the contract will fail during the action phase.
+</Aside>
+
+## External message structure
+
+### Message layout
+
+```text
+signature:bits512
+subwallet_id:uint32
+query_id:uint64
+messages:(HashmapE 16 Cell)
+```
+
+**Key point:**\
+Unlike v3, in v2 the signature is in the **same cell** as the message body, not in a separate reference cell.
+
+### `signature` (512 bits)
+
+**Type:**\
+Ed25519 signature (512 bits).
+
+**What is signed:**\
+The hash of the remaining slice after the signature, containing `subwallet_id`, `query_id`, and `messages`.
+
+**From source code:**
+
+```func
+throw_unless(35, check_signature(slice_hash(in_msg), signature, public_key));
+```
+
+The contract uses `slice_hash()` on the message body after loading the signature.
+
+---
+
+### `subwallet_id` (32 bits)
+
+**Purpose:**\
+Identifies which subwallet this message targets.
+
+**Validation:**\
+Must match the `subwallet_id` stored in contract storage.
+
+---
+
+### `query_id` (64 bits)
+
+**Purpose:**\
+Unique identifier for replay protection and timestamp validation.
+
+**Structure:**\
+The 64-bit value is internally interpreted as a timestamped identifier:
+
+- High 32 bits: Unix timestamp (seconds)
+- Low 32 bits: counter within that second
+
+**Validation:**\
+The contract checks `query_id >= now() << 32`, ensuring the query ID is not from the past (based on current time shifted left by 32 bits).
+
+**Total unique IDs:**\
+Approximately **32,000** unique query IDs (limited by cleanup mechanism and bitmap structure).
+
+---
+
+### `messages` (HashmapE 16)
+
+**Purpose:**\
+Dictionary of messages to send in this transaction.
+
+**Structure:**
+
+- **Key:** `uint16` (message index, 0 to 65,535)
+- **Value:** `mode:uint8` + `^Cell` (reference to internal message)
+
+**How it works:**\
+The contract iterates through the dictionary and sends each message with its corresponding send mode:
+
+```func
+int i = -1;
+do {
+  (i, var cs, var f) = dict.idict_get_next?(16, i);
+  if (f) {
+    var mode = cs~load_uint(8);
+    send_raw_message(cs~load_ref(), mode);
+  }
+} until (~ f);
+```
+
+**Max batch size:**\
+Up to **255 messages** (limited by action list size, not dictionary structure).
+
+---
+
+## Replay protection mechanism
+
+### Validation sequence
+
+1. **Check query\_id timestamp:** `query_id >= now() << 32` (exit code `35` if too old)
+1. **Check replay:** `query_id` must not be in `queries` (exit code `32` if already processed)
+1. **Check subwallet:** `subwallet_id == stored_subwallet` (exit code `34` if mismatch)
+1. **Verify signature:** Ed25519 signature verification (exit code `35` if invalid)
+1. **Mark as processed:** Add `query_id` to `queries`
+1. **Send messages:** Iterate through message dictionary and send each message
+1. **Cleanup:** Remove queries older than 64 seconds
+
+<Aside
+  type="caution"
+>
+  **Rollback issue:** Highload Wallet v2 does not use `commit()` to persist storage changes. If the compute phase fails after `accept_message()` (e.g., gas limit exceeded during cleanup) or if the action phase fails, **all changes roll back**, including replay protection. The `query_id` is not marked as processed, and lite-servers will retry the same message, burning gas repeatedly.
+
+  Highload Wallet v3 solves this with `commit()` and a two-transaction pattern. See [Why internal messages to self?](/standard/wallets/highload/v3/specification#why-internal-messages-to-self) for details.
+</Aside>
+
+---
+
+## Exit codes
+
+| Exit code | Name                           | Description                                                     | How to fix                                                      |
+| --------- | ------------------------------ | --------------------------------------------------------------- | --------------------------------------------------------------- |
+| `0`       | Success                        | Message processed successfully                                  | —                                                               |
+| `32`      | Query already executed         | The `query_id` was already processed (found in `queries`)       | Use a new, unique `query_id`                                    |
+| `34`      | Subwallet ID mismatch          | The `subwallet_id` in the message does not match storage        | Verify you are using the correct `subwallet_id` for this wallet |
+| `35`      | Invalid signature or query\_id | Ed25519 signature verification failed, or `query_id` is too old | Check the private key and ensure `query_id >= now() << 32`      |
+
+---
+
+## Limitations and constraints
+
+### Storage size limit
+
+**Limit:**\
+The `queries` dictionary cannot exceed **65,535 cells**.
+
+**What happens if exceeded:**\
+An exception is thrown during the action phase, and the transaction fails. The failed transaction may be replayed, potentially locking funds.
+
+### Gas limit for cleanup
+
+**Limit:**\
+Transaction gas limit is **1,000,000 gas**.
+
+**What happens if exceeded:**\
+Cleanup operations that exceed this limit will fail, preventing the contract from processing new transactions.
+
+**Recommended limits:**
+
+- Queries within expiration window: ≤ 1,000
+- Queries cleaned per transaction: ≤ 100
+
+### Query ID expiration
+
+**Expiration time:**\
+Queries older than **64 seconds** are removed from storage during cleanup.
+
+**Effective limit:**\
+With the 64-second expiration window and recommended limit of ≤1,000 queries per window, the effective query ID space is approximately **32,000** unique IDs before cleanup is required.
+
+---
+
+## Get methods
+
+| Method                 | Returns          | Description                                                                               |
+| ---------------------- | ---------------- | ----------------------------------------------------------------------------------------- |
+| `processed?(query_id)` | `int`            | Returns `-1` if processed, `0` if not processed, `1` if unknown (forgotten after cleanup) |
+| `get_public_key()`     | `int` (256 bits) | Returns the Ed25519 public key                                                            |
+
+### `processed?` method details
+
+**Returns:**
+
+- `-1` (true) — the `query_id` was processed and is still stored in `queries`
+- `0` (false) — the `query_id` has not been processed yet
+- `1` (unknown) — the `query_id` is older than `last_cleaned` and was forgotten during cleanup
+
+---
+
+## Implementation
+
+**Source code:**\
+[ton-blockchain/ton (highload-wallet-v2-code.fc)](https://github.com/ton-blockchain/ton/blob/4ebd7412c52248360464c2df5f434c8aaa3edfe1/crypto/smartcont/highload-wallet-v2-code.fc)
+
+**SDK wrappers:**
+
+- **Go:** [tonutils-go](https://github.com/xssnick/tonutils-go) — includes Highload v2 wrapper
+- **Python:** [pytoniq](https://github.com/yungwine/pytoniq) — includes Highload v2 wrapper
+
+For new projects, consider using [Highload Wallet v3](/standard/wallets/highload/v3/specification) instead.
+
+---
+
+## See also
+
+- [Highload Wallet v3 specification](/standard/wallets/highload/v3/specification) — recommended version
+- [Version comparison](/standard/wallets/highload/overview#version-comparison) — v1 vs v2 vs v3
