@@ -11,93 +11,43 @@ to influence the market (burning a large number of jettons could increase its li
 Here is the code for that:
 
 ```typescript
-import { Address, beginCell, internal, toNano } from "@ton/core";
-import { TonClient, WalletContractV4 } from "@ton/ton";
+import { Address, toNano, WalletContractV5R1, TonClient } from "@ton/ton";
+
 import { mnemonicToPrivateKey } from "@ton/crypto";
 
+import {
+    AssetsSDK,
+    createApi,
+} from "@ton-community/assets-sdk";
+
 async function main() {
-    // forming a burning message
-    const jettonWalletAddress = Address.parse("<JETTON_WALLET_ADDR>");
-    const destinationAddress = Address.parse("<WALLET_ADDR>");
-
-    const messageBody = beginCell()
-        .storeUint(0x595f07bc, 32) // opcode for jetton burning
-        .storeUint(0, 64) // query id
-        .storeCoins(toNano(5)) // jetton amount, amount * 10^9
-        .storeAddress(destinationAddress) // response destination
-        .storeBit(0) // no custom payload
-        .endCell();
-
-    const burningMessage = internal({
-        to: jettonWalletAddress,
-        value: toNano("0.1"),
-        bounce: true,
-        body: messageBody,
-    });
-
-    // connect to your regular wallet
     const client = new TonClient({
         endpoint: "https://toncenter.com/api/v2/jsonRPC",
     });
-    const provider = client.provider(destinationAddress);
 
-    const MNEMONIC = process.env.MNEMONIC;
-    if (!MNEMONIC)
-        throw new Error("Set MNEMONIC env var with a test mnemonic.");
-    const keyPair = await mnemonicToPrivateKey(MNEMONIC.split(" "));
-    const walletContract = WalletContractV4.create({
+    const your_mnemonic = "put your mnemonic here, ...";
+    const keyPair = await mnemonicToPrivateKey(your_mnemonic.split(" "));
+
+    const wallet = WalletContractV5R1.create({
         workchain: 0,
         publicKey: keyPair.publicKey,
     });
 
-    // send the burning message through a user wallet
-    const seqno = await walletContract.getSeqno(provider);
-    await walletContract.sendTransfer(provider, {
-        seqno: seqno,
-        secretKey: keyPair.secretKey,
-        messages: [burningMessage],
-    });
-}
+    const provider = client.provider(wallet.address);
+    const sender = wallet.sender(provider, keyPair.secretKey);
 
-void main();
-```
-
-However, there is an [SDK](https://github.com/ton-community/assets-sdk) that allows you to avoid manually creating all the necessary messages.
-An example of how it can be used to send the burn message is provided below:
-
-```typescript
-import { Address } from "@ton/core";
-
-import {
-    AssetsSDK,
-    PinataStorageParams,
-    createApi,
-    createSender,
-    importKey,
-} from "@ton-community/assets-sdk";
-
-async function main() {
     const NETWORK = "testnet";
     const api = await createApi(NETWORK);
 
-    const keyPair = await importKey(process.env.MNEMONIC!);
-    const sender = await createSender("highload-v2", keyPair, api);
-
-    const storage: PinataStorageParams = {
-        pinataApiKey: process.env.PINATA_API_KEY!,
-        pinataSecretKey: process.env.PINATA_SECRET!,
-    };
-
     const sdk = AssetsSDK.create({
-        api: api,
-        storage: storage,
-        sender: sender,
+        api,
+        sender,
     });
 
-    const JETTON_ADDRESS = Address.parse("MY_JETTON_ADDRESS");
+    const JETTON_ADDRESS = Address.parse("put youe Jetton wallet address");
     const jetton = sdk.openJettonWallet(JETTON_ADDRESS);
 
-    const RECEIVER_ADDRESS = Address.parse("RECEIVER_ADDRESS");
+    const RECEIVER_ADDRESS = Address.parse("put receiver address");
     await jetton.sendBurn(sender, 1200000n);
 }
 
