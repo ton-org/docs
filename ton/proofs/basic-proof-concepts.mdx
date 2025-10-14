@@ -8,7 +8,7 @@ A **proof** is a tree-based structure that contains the necessary data and can b
 To prove something means to construct such a structure. The exact structure may differ depending on the use case. For example, suppose a proof is to be validated off-chain and requires multiple cell trees; the native TON approach is to construct a Bag of Cells (BoC) containing all the necessary cells. This is precisely what a liteserver does when data is requested from the blockchain.
 
 <Aside>
-It is highly recommended to familiarize yourself with [Exotic cells](/ton/cells/merkle-proof-cells) first. This article primarily covers situations where you want to verify a proof in a smart contract. However, the same techniques can be used to validate proofs off-chain.
+  It is highly recommended to familiarize yourself with [Exotic cells](/tvm/serialization/merkle) first. This article primarily covers situations where you want to verify a proof in a smart contract. However, the same techniques can be used to validate proofs off-chain.
 </Aside>
 
 There are several key points to consider when proving anything on-chain.
@@ -19,12 +19,12 @@ There are several key points to consider when proving anything on-chain.
 - **Blocks** serve as diffs that reflect changes to the **state** over time. Think of **blocks** as Git commits and the **state** as your repository.
 - Latest TL-B schemas can be found in the [TON Monorepo](https://github.com/ton-blockchain/ton/blob/master/crypto/block/block.tlb). They may evolve, typically in backwards-compatible ways.
 
-
 ## More about blocks
 
 We need to examine the block layout to determine what we can prove and how to do it.
 
 Each block (ShardChain block, MasterChain block) has a unique block ID:
+
 ```tlb
 block_id_ext$_ shard_id:ShardIdent seq_no:uint32
   root_hash:bits256 file_hash:bits256 = BlockIdExt;
@@ -36,6 +36,7 @@ block_id_ext$_ shard_id:ShardIdent seq_no:uint32
 - `file_hash` helps validators optimize processes; typically, you don’t need it.
 
 A full block structure is as follows:
+
 ```tlb
 block#11ef55aa global_id:int32
   info:^BlockInfo value_flow:^ValueFlow
@@ -81,27 +82,27 @@ For detailed inspections, it is convenient to use the [official explorer](https:
 To prove a transaction's existence in the **MasterChain**:
 
 1. Obtain a trusted MasterChain block `root_hash` using TVM instructions (`PREVMCBLOCKS`, `PREVMCBLOCKS_100`, `PREVKEYBLOCKS`).
-2. User provides a complete MasterChain block that should be validated against the trusted hash.
-3. Parse the block to extract the transaction.
+1. User provides a complete MasterChain block that should be validated against the trusted hash.
+1. Parse the block to extract the transaction.
 
 ### Prove a transaction in BaseChain
 
 For **BaseChain** transactions:
 
-1. Follow *steps 1-2* above to get a trusted `MasterChain` block.
-2. Extract the `shard_hashes` field from the MasterChain block.
-3. User provides the full ShardChain block that should be validated against the trusted hash.
-4. Parse the ShardChain block to find the transaction.
+1. Follow _steps 1-2_ above to get a trusted `MasterChain` block.
+1. Extract the `shard_hashes` field from the MasterChain block.
+1. User provides the full ShardChain block that should be validated against the trusted hash.
+1. Parse the ShardChain block to find the transaction.
 
 ### Prove account states
 
 Sometimes, data is not in block diffs but within the ShardState itself. To prove an account's state in the **BaseChain**:
 
 1. Parse the ShardChain block’s `state_update` field. This exotic cell contains two ShardState hashes (before and after the block).
-2. The user provides a ShardState that must be validated against the hash obtained in *step 1*.
+1. The user provides a ShardState that must be validated against the hash obtained in _step 1_.
 
 <Aside>
-You can only prove the state at block boundaries (not intermediate states).
+  You can only prove the state at block boundaries (not intermediate states).
 </Aside>
 
 ## Understanding pruned branch cells
@@ -121,13 +122,13 @@ graph TD
     end
 ```
 
-*v1* is a regular cell tree; in *v2*, the cell *c1* becomes a pruned branch, removing its content and references. However, if you only need *c0*, there’s no practical difference, as `$hash_0(v1) == hash_0(v2)$`.
+_v1_ is a regular cell tree; in _v2_, the cell _c1_ becomes a pruned branch, removing its content and references. However, if you only need _c0_, there’s no practical difference, as `$hash_0(v1) == hash_0(v2)$`.
 
 - `hash0(cell)` ignores pruned branches, returning the original tree’s hash.
 - `reprHash(cell)` accounts for everything. Matching `reprHashes` ensures cell path equivalency.
 
 <Aside>
-Use `HASHCU` for representation hash and `CHASHI`/`CHASHIX` for different-level hashes.
+  Use `HASHCU` for representation hash and `CHASHI`/`CHASHIX` for different-level hashes.
 </Aside>
 
 ## Composing proofs
@@ -159,9 +160,9 @@ graph TD
 ```
 
 <Aside>
-- Trusted data hashes may be separated from cells (e.g., `PREVMCBLOCKS`).
-- Replacing pruned cells with actual cells changes the `MERKLE_UPDATE` cell hash.
-Always manually validate proofs against trusted hashes in these cases.
+  - Trusted data hashes may be separated from cells (e.g., `PREVMCBLOCKS`).
+  - Replacing pruned cells with actual cells changes the `MERKLE_UPDATE` cell hash.
+    Always manually validate proofs against trusted hashes in these cases.
 </Aside>
 
 ## Real-world example
@@ -172,6 +173,7 @@ In this particular example, we want to prove the state of a JettonMaster and the
 The [full example](https://github.com/tact-lang/dex/blob/main/sources/contracts/vaults/proofs/block-proof.tact) is too large for this article, but let's cover some key points.
 
 This is an example of the proof composition technique described above. It is convenient because for `getRawAccountState`, the [liteserver](/ecosystem/node/overview) returns two items:
+
 - the account state itself
 - a BoC containing two proofs
 
