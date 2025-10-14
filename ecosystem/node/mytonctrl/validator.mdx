@@ -1,11 +1,10 @@
 ---
-title: "MyTonCtrl validator commands"
-sidebarTitle: "Validator commands"
+title: "Validator"
+description: "Validator mode automates governance voting, election participation, efficiency tracking, and the local collator registry."
 ---
 
-Validator mode automates governance voting, election participation, efficiency tracking, and the local collator registry. The sections below document every console command exposed by the validator module with syntax, expected inputs, and operational notes.
-
 ## Operational notes
+
 - These commands require `validator` mode to be enabled. They interact with the validator console and expect the validator wallet to be configured and funded.
 - Offer hashes, complaint hashes, and election identifiers come from `status`, lite-client, or governance dashboards. Use the exact strings reported there to avoid signature failures.
 - When managing collators, follow up with `setup_collator` (from collator mode) on the node that actually produces blocks. The validator-side registry maintained here determines which collators are accepted and how they behave during elections.
@@ -13,51 +12,61 @@ Validator mode automates governance voting, election participation, efficiency t
 ## Governance and elections
 
 ### `vo`
+
 **Purpose:** Vote for one or more governance offers (configuration proposals) using the validator wallet.
 
 **Syntax**
+
 ```mytonctrl
 vo <offer-hash> [additional_offer_hashes...]
 ```
 
 **Behavior**
+
 - Accepts one or more offer hashes exactly as reported by commands like `status` or `ol`. Hashes are typically base64 strings.
 - Fetches the full offer list, saves each voted offer locally for tracking, and submits signed votes through the validator wallet.
 - Skips unknown hashes and raises an error if the vote submission fails.
 
 **Example**
+
 ```mytonctrl
 vo xKF+2Cj4wP6w2y... xKF+2Cj4wP6w2y...
 ```
 
 ### `ve`
+
 **Purpose:** Cast the validator election entry for the upcoming round.
 
 **Syntax**
+
 ```mytonctrl
 ve
 ```
 
 **Behavior**
+
 - Runs the `Elections` helper from `mytoncore`, which prepares and sends the election request using the validator wallet.
 - Reuses configuration stored in the local database (stake amount, elector parameters, etc.).
 - Prints `VoteElectionEntry - OK` when the elector accepts the query.
 
-
 ### `vc`
+
 **Purpose:** Vote on a validator complaint by pairing the election round with the complaint hash.
 
 **Syntax**
+
 ```mytonctrl
 vc <election-id> <complaint-hash>
 ```
 
 **Behavior**
+
 - `<election-id>` is the integer identifier of the round (from `status` or elector logs).
 - `<complaint-hash>` is usually base64 and matches the hash reported in complaint notifications.
 - Delegates to `VoteComplaint`, which signs and broadcasts the vote via the validator wallet.
 
 **Example**
+
 ```mytonctrl
 vc 345678901234567890 xFFmZ...Y
 ```
@@ -65,85 +74,102 @@ vc 345678901234567890 xFFmZ...Y
 ## Performance diagnostics
 
 ### `check_ef`
+
 **Purpose:** Review validator efficiency for the previous and current validation rounds.
 
 **Syntax**
+
 ```mytonctrl
 check_ef
 ```
 
 **Behavior**
+
 - Collects validator lists for the current and previous rounds, locates the local ADNL, and prints block production statistics.
 - Highlights time ranges for each round, shows created versus expected masterchain blocks, and colorizes efficiency percentages (green when ≥90%).
 - Warns when efficiency data is unavailable (e.g., when the validator joined as a shard-only participant or the round has just started).
 
-
 ## Local collator registry
 
 ### `add_collator`
+
 **Purpose:** Add a collator entry to the validator console’s collator list and configure optional behaviors.
 
 **Syntax**
+
 ```mytonctrl
 add_collator <adnl-id> <workchain>:<shard_hex> [--self-collate true|false] [--select-mode random|ordered|round_robin]
 ```
 
 **Behavior**
+
 - `<adnl-id>` accepts base64 or hex. Hex values are automatically converted to base64 before storing.
 - `<workchain>:<shard_hex>` identifies the shard (e.g., `0:2000000000000000`). Use the same format shown in validator console output.
 - If the shard already exists in the collator list, the command appends the ADNL and optionally updates `self_collate` or `select_mode`. Otherwise it creates a new shard entry using defaults (`self_collate=true`, `select_mode=random`).
 - Persists the updated list using `set-collators-list` so the validator console starts assigning work to the new collator.
 
 **Example**
+
 ```mytonctrl
 add_collator 2F3C7A...B91 0:2000000000000000 --self-collate true --select-mode ordered
 ```
 
 ### `delete_collator`
+
 **Purpose:** Remove one or more collator entries from the validator console list.
 
 **Syntax**
+
 ```mytonctrl
 delete_collator [<workchain>:<shard_hex>] <adnl-id>
 ```
 
 **Behavior**
+
 - Accepts an optional shard selector. When omitted the ADNL is removed from every shard where it appears.
 - `<adnl-id>` can be base64 or hex; hex values are converted automatically.
 - After removal the command cleans up empty shard sections in the stored collator list.
 
 **Examples**
+
 ```mytonctrl
 delete_collator 0:2000000000000000 2F3C7A...B91
 delete_collator 2F3C7A...B91
 ```
 
 ### `print_collators`
+
 **Purpose:** Inspect the current collator list and optional liveness information.
 
 **Syntax**
+
 ```mytonctrl
 print_collators [--json]
 ```
 
 **Behavior**
+
 - By default prints the human-readable output from `show-collators-list`, augmented with online/offline status when `collation-manager-stats` provides data.
 - With `--json`, returns the parsed collator list in JSON format, matching the structure passed to `set-collators-list`.
 
 **Examples**
+
 ```mytonctrl
 print_collators
 print_collators --json
 ```
 
 ### `reset_collators`
+
 **Purpose:** Clear the entire collator list stored in the validator console.
 
 **Syntax**
+
 ```mytonctrl
 reset_collators
 ```
 
 **Behavior**
+
 - Calls `clear-collators-list` and removes all shard/ADNL mappings.
 - Reports an error if the console rejects the reset; otherwise prints `reset_collators - OK`.

@@ -1,11 +1,10 @@
 ---
-title: "MyTonCtrl liquid staking commands"
-sidebarTitle: "Liquid staking commands"
+title: "Liquid staking"
+description: "Liquid staking mode orchestrates controller deployment and maintenance for jetton-based staking pools. The commands below cover controller lifecycle management, funding flows, validator-set updates, and diagnostic helpers."
 ---
 
-Liquid staking mode orchestrates controller deployment and maintenance for jetton-based staking pools. The commands below cover controller lifecycle management, funding flows, validator-set updates, and diagnostic helpers. Ensure `liquid_pool_addr` is configured and the TON HTTP API service is enabled (the mode does this automatically) before running these commands.
-
 ## Operational notes
+
 - Liquid staking controllers rely on the validator wallet and liquid pool contracts. Keep the wallet funded and the pool address (`liquid_pool_addr`) set via `set liquid_pool_addr <address>` before deploying controllers.
 - Pending withdrawals are stored in the local database when a controller is busy (non-zero `state`). MyTonCtrl processes them automatically as soon as the controller returns to the ready state.
 - The jetton pool contracts must be available under `/usr/src/mytonctrl/contracts/jetton_pool/`. The first run of `create_controllers` downloads them if necessary.
@@ -14,58 +13,68 @@ Liquid staking mode orchestrates controller deployment and maintenance for jetto
 ## Controller deployment and discovery
 
 ### `create_controllers`
+
 **Purpose:** Deploy the two standard controllers for the configured liquid staking pool if they are missing or outdated.
 
 **Syntax**
+
 ```mytonctrl
 create_controllers
 ```
 
 **Behavior**
+
 - Compares the controller addresses returned by the pool (`GetControllers`) with the addresses stored in the local database.
 - If they differ, downloads the jetton pool deployment scripts (on first run), signs the deployment BOCs with the validator wallet, and sends them to the liquid pool with a small attach value.
 - Stores the newly active controllers under `using_controllers` so subsequent staking and voting commands target the fresh contracts.
 
-
 ### `update_controllers`
+
 **Purpose:** Re-run the controller deployment workflow to synchronize with changes on the pool side.
 
 **Syntax**
+
 ```mytonctrl
 update_controllers
 ```
 
 **Behavior**
+
 - Alias for `create_controllers`; useful after pool upgrades or migration, forcing MyTonCtrl to redeploy controllers when the contract-address mapping changes.
 
-
 ### `controllers_list`
+
 **Purpose:** Inspect every controller list tracked locally.
 
 **Syntax**
+
 ```mytonctrl
 controllers_list
 ```
 
 **Behavior**
+
 - Prints tables for the active (`using`), newly detected, previously used (`old`), and user-specified controller lists.
 - Each entry includes address, on-chain status, balance, approval flag, and controller state as reported by `get_validator_controller_data`.
 - Allows operators to verify whether a controller is approved, funded, or stopped.
 
-
 ### `add_controller`
+
 **Purpose:** Mark an additional controller address as user-managed so MyTonCtrl considers it for operations.
 
 **Syntax**
+
 ```mytonctrl
 add_controller <controller-addr>
 ```
 
 **Behavior**
+
 - Adds `<controller-addr>` to the `user_controllers` list and removes it from the stop list if present, enabling future staking or updates through MyTonCtrl.
 - Accepts base64 controller addresses.
 
 **Example**
+
 ```mytonctrl
 add_controller EQDf...9A
 ```
@@ -73,69 +82,85 @@ add_controller EQDf...9A
 ## Funding and withdrawals
 
 ### `deposit_to_controller`
+
 **Purpose:** Top up a controller contract with Toncoin from the validator wallet.
 
 **Syntax**
+
 ```mytonctrl
 deposit_to_controller <controller-addr> <amount-ton>
 ```
 
 **Behavior**
+
 - Signs the `top-up.boc` script with the validator wallet and sends `<amount-ton>` TON to `<controller-addr>`.
 - Use decimal TON amounts; the command handles the nanoTON conversion internally.
 
 **Example**
+
 ```mytonctrl
 deposit_to_controller EQDf...9A 2000
 ```
 
 ### `withdraw_from_controller`
+
 **Purpose:** Withdraw funds from a controller back to the validator wallet.
 
 **Syntax**
+
 ```mytonctrl
 withdraw_from_controller <controller-addr> [amount-ton]
 ```
 
 **Behavior**
+
 - Requests an immediate withdrawal when the controller state permits it, otherwise queues a pending withdrawal handled automatically later.
-- If `[amount-ton]` is omitted, MyTonCtrl withdraws nearly the entire balance (leaving ~10 TON to cover rent).
+- If `[amount-ton]` is omitted, MyTonCtrl withdraws nearly the entire balance (leaving \~10 TON to cover rent).
 
 **Examples**
+
 ```mytonctrl
 withdraw_from_controller EQDf...9A
 withdraw_from_controller EQDf...9A 750
 ```
 
 ### `stop_controller`
+
 **Purpose:** Flag a controller so MyTonCtrl stops using it for future staking operations.
 
 **Syntax**
+
 ```mytonctrl
 stop_controller <controller-addr>
 ```
 
 **Behavior**
+
 - Adds `<controller-addr>` to the local stop list and removes it from the user or active lists. The contract remains on-chain but is ignored by automated workflows.
 
 **Example**
+
 ```mytonctrl
 stop_controller EQDf...9A
 ```
 
 ### `stop_and_withdraw_controller`
+
 **Purpose:** Stop a controller and withdraw its funds in a single step.
 
 **Syntax**
+
 ```mytonctrl
 stop_and_withdraw_controller <controller-addr> [amount-ton]
 ```
 
 **Behavior**
+
 - Flags the controller as stopped (same as `stop_controller`).
-- Triggers a withdrawal for `[amount-ton]` TON; when omitted, withdraws almost the full balance (balance minus ~10.1 TON to keep the contract alive).
+- Triggers a withdrawal for `[amount-ton]` TON; when omitted, withdraws almost the full balance (balance minus \~10.1 TON to keep the contract alive).
 
 **Example**
+
 ```mytonctrl
 stop_and_withdraw_controller EQDf...9A
 ```
@@ -143,80 +168,97 @@ stop_and_withdraw_controller EQDf...9A
 ## Validator-set maintenance
 
 ### `controller_update_validator_set`
+
 **Purpose:** Refresh the validator set stored on a controller contract.
 
 **Syntax**
+
 ```mytonctrl
 controller_update_validator_set <controller-addr>
 ```
 
 **Behavior**
+
 - Calls the controller’s `update_validator_set` method so it picks up the latest validator ADNL IDs from the pool.
 - Use after elections or whenever the pool indicates mismatched validator sets.
 
 **Example**
+
 ```mytonctrl
 controller_update_validator_set EQDf...9A
 ```
 
 ### `check_liquid_pool`
+
 **Purpose:** Scan recent liquid pool transactions and update controller validator sets automatically.
 
 **Syntax**
+
 ```mytonctrl
 check_liquid_pool
 ```
 
 **Behavior**
+
 - Looks through the liquid pool’s account history, detects controller addresses interacting with the pool, and calls `controller_update_validator_set` for each detected controller.
 - Useful as a catch-up step after manual interventions or pool upgrades.
-
 
 ## Controller diagnostics
 
 ### `get_controller_data`
+
 **Purpose:** Dump the full controller status JSON for inspection.
 
 **Syntax**
+
 ```mytonctrl
 get_controller_data <controller-addr>
 ```
 
 **Behavior**
+
 - Runs the controller’s `get_validator_controller_data` method and prints the resulting fields (for example: state, approval, borrowed amount, and stake timing).
 - Ideal for debugging controllers stuck in a non-zero state or verifying approval.
 
 **Example**
+
 ```mytonctrl
 get_controller_data EQDf...9A
 ```
 
 ### `calculate_annual_controller_percentage`
+
 **Purpose:** Convert the per-round interest rate into an annualized percentage.
 
 **Syntax**
+
 ```mytonctrl
 calculate_annual_controller_percentage [percent-per-round]
 ```
 
 **Behavior**
+
 - Uses the validators election cycle length from config 15 to compute how many rounds fit into a year and then scales the provided (or configured `max_interest_percent`) rate.
 - Prints intermediate values and the final yearly percentage.
 
 **Examples**
+
 ```mytonctrl
 calculate_annual_controller_percentage
 calculate_annual_controller_percentage 1.25
 ```
 
 ### `test_calculate_loan_amount`
+
 **Purpose:** Test the on-chain helper that calculates controller loan amounts.
 
 **Syntax**
+
 ```mytonctrl
 test_calculate_loan_amount
 ```
 
 **Behavior**
+
 - Sends a local HTTP request to the TON HTTP API (`/runGetMethod`) using the configured loan parameters (`min_loan`, `max_loan`, `max_interest_percent`).
 - Prints the raw response (nanoTON value) used to size controller loans.
