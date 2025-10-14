@@ -15,15 +15,46 @@ Wallet source code:
 
 TL-B scheme:
 
-- [ton-blockchain/wallet-contract-v5/types.tlb](https://github.com/ton-blockchain/wallet-contract-v5/blob/main/types.tlb)
+- [ton-blockchain/wallet-contract-v5/types.tlb](https://github.com/ton-blockchain/wallet-contract-v5/blob/a98e4ad8ed1c8c5c0c814c67dd9b59f073c73d26/types.tlb)
 
-#### Official code hash
+## Official code hash
+
+The "R" in version names stands for "Revision".
 
 | Contract version | Hash                                                               |
 | ---------------- | ------------------------------------------------------------------ |
 | V5 R1            | `20834b7b72b112147e1b2fb457b84e74d1a30f04f737d4f62a668e9552d2b72f` |
 
-#### Persistent memory layout
+## Persistent memory layout
+
+- <b>is_signature_allowed</b>: 1-bit flag that restricts or allows access through the signature and stored public key.
+- <b>seqno</b>: 32-bit sequence number.
+- <b>wallet_id</b>: 32-bit wallet ID (equivalent to subwallet_id in previous versions).
+- <b>public_key</b>: 256-bit public key.
+- <b>extensions_dict</b>: dictionary containing extensions (may be empty).
+
+As you can see, the `ContractState`, compared to previous versions, hasn't undergone major changes. The main difference is the new `is_signature_allowed` 1-bit flag, which restricts or allows access through the signature and stored public key. We will describe the importance of this change in later topics.
+
+## Message layout
+
+### External message body layout
+
+- <b>signature</b>: 512-bit long [Ed25519](https://en.wikipedia.org/wiki/EdDSA#Ed25519) signature.
+- <b>wallet_id</b>: 32-bit long wallet ID.
+- <b>valid_until</b>: 32-bit long Unix time integer.
+- <b>msg_seqno</b>: 32-bit long sequence number.
+- <b>inner</b>: InnerRequest containing the actual actions to perform.
+
+### Internal message body layout
+
+1. **internal_signed**: Authentication through signature (for gasless transactions)
+   - <b>signed</b>: SignedRequest containing wallet_id, valid_until, msg_seqno, inner request, and signature.
+
+2. **internal_extension**: Authentication as registered extension
+   - <b>query_id</b>: 64-bit long integer.
+   - <b>inner</b>: InnerRequest containing the actual actions to perform.
+
+## TL-B schemes
 
 ```tlb
 contract_state$_
@@ -32,13 +63,7 @@ contract_state$_
     wallet_id:(## 32)
     public_key:(## 256)
     extensions_dict:(HashmapE 256 int1) = ContractState;
-```
 
-As you can see, the `ContractState`, compared to previous versions, hasn't undergone major changes. The main difference is the new `is_signature_allowed` 1-bit flag, which restricts or allows access through the signature and stored public key. We will describe the importance of this change in later topics.
-
-#### Authentication process
-
-```tlb
 signed_request$_             // 32 (opcode from outer)
   wallet_id:    #            // 32
   valid_until:  #            // 32
@@ -54,19 +79,7 @@ internal_extension#6578746e
     inner:InnerRequest = InternalMsgBody;
 
 external_signed#7369676e signed:SignedRequest = ExternalMsgBody;
-```
 
-Before we get to the actual payload of our messages — `InnerRequest` — let's first look at how version 5 differs from previous versions in the authentication process. The `InternalMsgBody` combinator describes two ways to access wallet actions through internal messages. The first method is one we are already familiar with from version 4: authentication as a previously registered extension, the address of which is stored in `extensions_dict`. The second method is authentication through the stored public key and signature, similar to external requests.
-
-At first, this might seem like an unnecessary feature, but it actually enables requests to be processed through external services (smart contracts) that are not part of your wallet's extension infrastructure — a key feature of V5. Gasless transactions rely on this functionality.
-
-Note that simply receiving funds is still an option. Practically, any received internal message that doesn't pass the authentication process will be considered a transfer.
-
-#### Actions
-
-The first thing that we should notice is `InnerRequest`, which we have already seen in the authentication process. In contrast to the previous version, both external and internal messages have access to the same functionality, except for changing the signature mode (i.e., the `is_signature_allowed` flag).
-
-```tlb
 out_list_empty$_ = OutList 0;
 out_list$_ {n:#}
     prev:^(OutList n)
@@ -85,9 +98,21 @@ action_set_signature_auth_allowed#04 allowed:(## 1) = ExtendedAction;
 actions$_ out_actions:(Maybe OutList) has_other_actions:(## 1) {m:#} {n:#} other_actions:(ActionList n m) = InnerRequest;
 ```
 
+## Authentication process
+
+Before we get to the actual payload of our messages — `InnerRequest` — let's first look at how version 5 differs from previous versions in the authentication process. The `InternalMsgBody` combinator describes two ways to access wallet actions through internal messages. The first method is one we are already familiar with from version 4: authentication as a previously registered extension, the address of which is stored in `extensions_dict`. The second method is authentication through the stored public key and signature, similar to external requests.
+
+At first, this might seem like an unnecessary feature, but it actually enables requests to be processed through external services (smart contracts) that are not part of your wallet's extension infrastructure — a key feature of V5. Gasless transactions rely on this functionality.
+
+Note that simply receiving funds is still an option. Practically, any received internal message that doesn't pass the authentication process will be considered a transfer.
+
+## Actions
+
+The first thing that we should notice is `InnerRequest`, which we have already seen in the authentication process. In contrast to the previous version, both external and internal messages have access to the same functionality, except for changing the signature mode (i.e., the `is_signature_allowed` flag).
+
 We can consider `InnerRequest` as two lists of actions: the first, `OutList`, is an optional chain of cell references, each containing a send message request led by the message mode. The second, `ActionList,` is led by a one-bit flag, `has_other_actions`, which marks the presence of extended actions, starting from the first cell and continuing as a chain of cell references. We are already familiar with the first two extended actions, `action_add_ext` and `action_delete_ext`, followed by the internal address that we want to add or delete from the extensions dictionary. The third, `action_set_signature_auth_allowed`, restricts or allows authentication through the public key, leaving the only way to interact with the wallet through extensions. This functionality might be extremely important in the case of a lost or compromised private key.
 
-#### Exit codes
+## Exit codes
 
 | Exit code | Description                                                                        |
 | --------- | ---------------------------------------------------------------------------------- |
@@ -115,7 +140,7 @@ We can consider `InnerRequest` as two lists of actions: the first, `OutList`, is
   Note that the `142`, `144`, and `146` wallet exit codes are designed to prevent you from losing access to wallet functionality. Nevertheless, you should still remember that the wallet doesn't check whether the stored extension addresses actually exist in TON. You can also deploy a wallet with initial data consisting of an empty extensions dictionary and restricted signature mode. In that case, you will still be able to access the wallet through the public key until you add your first extension. So, be careful with these scenarios.
 </Aside>
 
-#### Get methods
+## Get methods
 
 1. `int is_signature_allowed()` returns stored `is_signature_allowed` flag.
 1. `int seqno()` returns current stored seqno.
@@ -123,13 +148,13 @@ We can consider `InnerRequest` as two lists of actions: the first, `OutList`, is
 1. `int get_public_key()` returns current stored public key.
 1. `cell get_extensions()` returns extensions dictionary.
 
-#### Preparing for gasless transactions
+## Gasless transactions
 
 Starting with v5, the wallet smart contract supports owner-signed internal messages (`internal_signed`), which enables gasless transactions—for example, paying network fees in USDt when transferring USDt. The common scheme looks like this:
 
 ![Gasless transaction flow diagram](/resources/images/wallets/gasless.jpg)
 
-#### Flow
+### Flow details
 
 1. When sending USDt, the user signs one message containing two outgoing USDt transfers:
    1. USDt transfer to the recipient's address.
@@ -137,7 +162,3 @@ Starting with v5, the wallet smart contract supports owner-signed internal messa
 1. This signed message is sent off-chain by HTTPS to the service backend. The service backend sends it to the TON Blockchain, paying Toncoin for network fees.
 
 The beta version of the gasless backend API is available at [tonapi.io/api-v2](https://tonapi.io/api-v2). If you are developing a wallet app and have feedback about these methods, please share it in [@tonapitech](https://t.me/tonapitech) chat.
-
-Wallet source code:
-
-- [ton-blockchain/wallet-contract-v5](https://github.com/ton-blockchain/wallet-contract-v5)
