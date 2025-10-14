@@ -1,31 +1,21 @@
 ---
-title: "Wallet standard V5"
+title: "Wallet V5"
 sidebarTitle: "Overview"
 ---
 
-This article provides overview of the latest wallet standard on TON blockchain - V5.
-
 The V5 wallet standard offers many benefits that improve the experience for both users and merchants. V5 supports gasless transactions, account delegation and recovery, subscription payments using tokens and Toncoin, and low-cost multi-transfers. In addition to retaining the previous functionality (V4), the new contract allows you to send up to 255 messages at a time.
 
-![v5](/resources/images/wallets/wallet-contract-V5.png)
+This article provides only high level wallet V5 contract overview, if you want to learn more about how to use its interfaces or develop extensions, check out [wallet V5 API](/standard/wallets/v5-api) article.
 
-Wallet source code:
-
-- [ton-blockchain/wallet-contract-v5](https://github.com/ton-blockchain/wallet-contract-v5)
-
-TL-B scheme:
-
-- [ton-blockchain/wallet-contract-v5/types.tlb](https://github.com/ton-blockchain/wallet-contract-v5/blob/a98e4ad8ed1c8c5c0c814c67dd9b59f073c73d26/types.tlb)
-
-## Official code hash
-
-The "R" in version names stands for "Revision".
-
-| Contract version | Hash                                                               |
-| ---------------- | ------------------------------------------------------------------ |
-| V5 R1            | `20834b7b72b112147e1b2fb457b84e74d1a30f04f737d4f62a668e9552d2b72f` |
+Source links:
+- [Wallet V5 source code](https://github.com/ton-blockchain/wallet-contract-v5).
+- [TL-B scheme for V5](https://github.com/ton-blockchain/wallet-contract-v5/blob/321186127e8cc5e395ad3b2f1870839237c56f5f/types.tlb)
 
 ## Persistent memory layout
+
+```tlb
+contract_state$_ is_signature_allowed:(## 1) seqno:# wallet_id:(## 32) public_key:(## 256) extensions_dict:(HashmapE 256 int1) = ContractState;
+```
 
 - `is_signature_allowed`: 1-bit flag that restricts or allows access through the signature and stored public key.
 - `seqno`: 32-bit sequence number.
@@ -47,58 +37,14 @@ As you can see, the `ContractState`, compared to previous versions, hasn't under
 
 ### Internal message body layout
 
-1. **internal_signed**: Authentication through signature (for gasless transactions)
-   - `signed`: SignedRequest containing wallet_id, valid_until, msg_seqno, inner request, and signature.
-
-1. **internal_extension**: Authentication as registered extension
-   - `query_id`: 64-bit long integer.
-   - `inner`: InnerRequest containing the actual actions to perform.
-
-## TL-B schemes
-
-```tlb
-contract_state$_
-    is_signature_allowed:(## 1)
-    seqno:#
-    wallet_id:(## 32)
-    public_key:(## 256)
-    extensions_dict:(HashmapE 256 int1) = ContractState;
-
-signed_request$_             // 32 (opcode from outer)
-  wallet_id:    #            // 32
-  valid_until:  #            // 32
-  msg_seqno:    #            // 32
-  inner:        InnerRequest //
-  signature:    bits512      // 512
-= SignedRequest;             // Total: 688 .. 976 + ^Cell
-
-internal_signed#73696e74 signed:SignedRequest = InternalMsgBody;
-
-internal_extension#6578746e
-    query_id:(## 64)
-    inner:InnerRequest = InternalMsgBody;
-
-external_signed#7369676e signed:SignedRequest = ExternalMsgBody;
-
-out_list_empty$_ = OutList 0;
-out_list$_ {n:#}
-    prev:^(OutList n)
-    action:OutAction = OutList (n + 1);
-
-action_send_msg#0ec3c86d mode:(## 8) out_msg:^(MessageRelaxed Any) = OutAction;
-
-// Extended actions in V5:
-action_list_basic$_ {n:#} actions:^(OutList n) = ActionList n 0;
-action_list_extended$_ {m:#} {n:#} action:ExtendedAction prev:^(ActionList n m) = ActionList n (m+1);
-
-action_add_ext#02 addr:MsgAddressInt = ExtendedAction;
-action_delete_ext#03 addr:MsgAddressInt = ExtendedAction;
-action_set_signature_auth_allowed#04 allowed:(## 1) = ExtendedAction;
-
-actions$_ out_actions:(Maybe OutList) has_other_actions:(## 1) {m:#} {n:#} other_actions:(ActionList n m) = InnerRequest;
-```
+Learn more about internal message serialization [here](/standard/wallets/v5-api).
 
 ## Authentication process
+
+```tlb
+internal_signed#73696e74 signed:SignedRequest = InternalMsgBody;
+internal_extension#6578746e query_id:(## 64) inner:InnerRequest = InternalMsgBody;
+```
 
 Before we get to the actual payload of our messages — `InnerRequest` — let's first look at how version 5 differs from previous versions in the authentication process. The `InternalMsgBody` combinator describes two ways to access wallet actions through internal messages. The first method is one we are already familiar with from version 4: authentication as a previously registered extension, the address of which is stored in `extensions_dict`. The second method is authentication through the stored public key and signature, similar to external requests.
 
@@ -150,9 +96,11 @@ We can consider `InnerRequest` as two lists of actions: the first, `OutList`, is
 
 ## Gasless transactions
 
-Starting with v5, the wallet smart contract supports owner-signed internal messages (`internal_signed`), which enables gasless transactions—for example, paying network fees in USDt when transferring USDt. The common scheme looks like this:
+Starting with v5, the wallet smart contract supports owner-signed internal messages (`internal_signed`), which enables gasless transactions—for example, paying network fees in USDT when transferring USDT. Gasless transactions are not supported on the network protocol level, meaning that to pay fees in USDT it is necessary to rely on some off-chain infrastructure, e.g. like in Tonkeeper.
 
-![Gasless transaction flow diagram](/resources/images/wallets/gasless.jpg)
+Flow scheme for Tonkeeper gasless looks like this:
+
+![v5](/resources/images/wallets/wallet-contract-V5.png)
 
 ### Flow details
 
