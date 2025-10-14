@@ -5,10 +5,14 @@ description: "Collator mode lets a node produce blocks for selected shardchains 
 
 ## Operational notes
 
+<Aside type="danger" title="Validator/network risk">
+Misconfiguration of validator or networking settings can halt your node, produce invalid blocks, or fork it from the network. Scope: this node’s validator and Abstract Datagram Network Layer (ADNL) settings. Rollback/mitigation: revert MyTonCtrl changes or restore a known-good validator configuration backup. Prefer testing changes on a testnet first.
+</Aside>
+
 - Collator mode cannot be enabled while validator mode is active (`enable_mode collator` requires `disable_mode validator` first).
-- `setup_collator` relies on validator-console RPCs and the underlying node arguments; ensure `mytoninstaller` utilities are present and the node runs with permissions to edit `/etc/ton/validator-engine.conf`.
-- Shard identifiers follow TON conventions: `workchain` is `-1` for masterchain or `0` for basechain, and `<SHARD_HEX>` must be a 16-character hex prefix (e.g. `2000000000000000`).
-- Keep your validator wallet and ADNL keys backed up. Removing collators will delete console mappings but does not revoke keys created with `CreateNewKey`.
+- `setup_collator` relies on validator console remote procedure calls (RPCs) and the underlying node arguments. Ensure MyTonInstaller utilities are present and the node runs with permissions to edit `/etc/ton/validator-engine.conf`.
+- Shard identifiers follow TON conventions: `workchain` is `-1` for masterchain or `0` for basechain, and `<SHARD_HEX>` must be a 16-character hex prefix (for example, `2000000000000000`).
+- Keep your validator wallet and Abstract Datagram Network Layer (ADNL) keys backed up. Removing collators will delete console mappings but does not revoke keys created with `CreateNewKey`.
 
 ## Collator lifecycle commands
 
@@ -22,13 +26,22 @@ description: "Collator mode lets a node produce blocks for selected shardchains 
 setup_collator [--force] [--adnl <ADNL_ID>] <WORKCHAIN>:<SHARD_HEX> [<ADDITIONAL_SHARDS>...]
 ```
 
+<Aside type="caution" title="Potential outage or data loss">
+Using `--force` bypasses shard coverage checks and widens monitoring. Scope: local validator and engine arguments. Rollback: remove added shard arguments and rerun without `--force`.
+</Aside>
+
+Define placeholders (first use):
+- `<ADNL_ID>` — ADNL address in base64.
+- `<WORKCHAIN>:<SHARD_HEX>` — shard identifier pair; `<SHARD_HEX>` is a 16-character hexadecimal prefix.
+- `<ADDITIONAL_SHARDS>` — additional shard identifiers in the same format.
+
 **Behavior**
 
 - Requires at least one shard identifier in `<WORKCHAIN>:<SHARD_HEX>` format (for example `0:2000000000000000`).
 - Creates a new ADNL key automatically unless you pass an existing one with `--adnl` (value must be base64 as returned by `newkey`).
 - Ensures `--add-shard` entries exist in the validator-engine arguments. When the node already monitors shards and `-M` is enabled, the command verifies coverage. Use `--force` to bypass this safety check if you intentionally widen monitoring.
 - Calls the validator console (`add-collator`) for each shard and appends the necessary node arguments via `mytoninstaller set_node_argument`.
-- Logs follow-up commands (`add_collator <ADNL> <SHARD>`) that validators should run to accept the collator.
+- Logs follow-up commands (`add_collator <ADNL_HEX> <WORKCHAIN>:<SHARD_HEX>`) that validators should run to accept the collator.
 
 **Example**
 
@@ -38,7 +51,7 @@ setup_collator 0:2000000000000000 0:4000000000000000
 
 ### `stop_collator`
 
-**Purpose:** Remove one collator or all local collators from validator-console tracking.
+**Purpose:** Remove one collator or all local collators from validator console tracking.
 
 **Syntax**
 
@@ -46,6 +59,10 @@ setup_collator 0:2000000000000000 0:4000000000000000
 stop_collator
 stop_collator <ADNL_HEX> <WORKCHAIN>:<SHARD_HEX>
 ```
+
+Define placeholders (first use):
+- `<ADNL_HEX>` — ADNL address in hexadecimal.
+- `<WORKCHAIN>:<SHARD_HEX>` — shard identifier pair.
 
 **Behavior**
 
@@ -79,13 +96,17 @@ print_local_collators
 
 ### `add_validator_to_collation_wl`
 
-**Purpose:** Enable and populate the validator allowlist that is allowed to receive collated blocks.
+**Purpose:** Enable and populate the validator allowlist to receive collated blocks.
 
 **Syntax**
 
 ```mytonctrl
 add_validator_to_collation_wl <ADNL_HEX> [<ADDITIONAL_ADNL>...]
 ```
+
+Define placeholders (first use):
+- `<ADNL_HEX>` — ADNL address in hexadecimal.
+- `<ADDITIONAL_ADNL>` — additional ADNL addresses in hexadecimal.
 
 **Behavior**
 
@@ -109,10 +130,14 @@ add_validator_to_collation_wl 2F3C7A...B91 6AD1CE...004
 delete_validator_from_collation_wl <ADNL_HEX> [<ADDITIONAL_ADNL>...]
 ```
 
+Define placeholders (first use):
+- `<ADNL_HEX>` — ADNL address in hexadecimal.
+- `<ADDITIONAL_ADNL>` — additional ADNL addresses in hexadecimal.
+
 **Behavior**
 
 - Calls `collator-whitelist-del` for each provided ADNL (hex) and raises an error if any deletion fails.
-- Does not disable the allowlist itself; use `disable_collation_wl` for that.
+- Does not disable the allowlist itself. Use `disable_collation_wl` for that.
 
 **Example**
 
@@ -133,7 +158,7 @@ disable_collation_wl
 **Behavior**
 
 - Sends `collator-whitelist-enable 0` to the validator console.
-- Requires no arguments; prints an error if the console command fails.
+- Requires no arguments. Prints an error if the console command fails.
 
 ### `print_collation_whitelist`
 
@@ -153,7 +178,7 @@ print_collation_whitelist
 
 ### `set_collation_config`
 
-**Purpose:** Store the preferred collator options JSON location and apply it to the validator console.
+**Purpose:** Store the preferred collator options JavaScript Object Notation (JSON) location and apply it to the validator console.
 
 **Syntax**
 
@@ -161,9 +186,12 @@ print_collation_whitelist
 set_collation_config <PATH_OR_URL>
 ```
 
+Define placeholders (first use):
+- `<PATH_OR_URL>` — local filesystem path or an HTTP or HTTPS URL to a JSON document.
+
 **Behavior**
 
-- Accepts either a local filesystem path or an HTTP(S) URL returning JSON.
+- Accepts either a local filesystem path or an HTTP or HTTPS Uniform Resource Locator (URL) returning JSON.
 - Fetches and validates the document, saves the location to the MyTonCtrl database, and calls `setcollatoroptionsjson` on the validator console using a temporary file.
 - Reports detailed errors if the file cannot be loaded or the console rejects the update.
 
