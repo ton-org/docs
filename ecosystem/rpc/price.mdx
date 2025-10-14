@@ -1,0 +1,52 @@
+---
+title: "Jetton prices API"
+---
+
+In this article we will discuss different ways to retrieve Jettons historical prices on Decentralized Exchanges, DEXes.
+
+Each swap operation, either between native asset (Toncoin) and jetton or between two distinct jettons, has its price - fixed exchange rate of one asset to another. This price is calculated by the internal DEX math algorithm, called [AMM](https://www.coinbase.com/learn/advanced-trading/what-is-an-automated-market-maker-amm). Some services require information about previous swaps on the blockchain to use it in their internal business logic or to simply show statistics to users.
+
+## Off-chain API
+
+The most often use case for price API is to fetch jetton info on the web2 backend and use aggregated data inside the service. There are several historical jetton prices providers in TON:
+
+- [dTon](https://docs.dton.io/about-pnl)
+- [CoinGecko](https://www.coingecko.com/en/api/ton)
+- [Dyor.io](https://dyor.io/tonapi)
+
+You can find detailed information about API usage technical details in provider docs.
+
+There is no established solution for real-time jetton swap market data, however one can explore [CoinGecko websocket API](https://docs.coingecko.com/websocket).
+
+## On-chain API
+
+Currently it is not possible to retrieve **historical** jetton prices on-chain - since TON contracts [are limited by storage](/guidebook/from-ethereum#limited-contract-storage) it is quite hard to implement such API fully on-chain. However it is possible to retrieve **current** prices via Request-Response pattern on some DEXes, refer to specific service documentation to learn more about it.
+
+For example, on the [DeDust](https://dedust.io) DEX it is possible to retrieve pool information on-chain using an internal message with the following [TL-B](/language/TL-B/overview) schema:
+
+```tlb
+provide_pool_state#6e24728d query_id:uint64 include_assets:Bool = InMsgBody;
+
+take_pool_state#bddd4954 query_id:uint64 reserve0:Coins reserve1:Coins total_supply:Coins
+                         assets:(Maybe ^[ asset0:Asset asset1:Asset ]) = InMsgBody;
+```
+
+Here is a smart contract snippet in [Tolk](/language/tolk) illustrating how you can send the 'provide' message:
+
+```tolk
+struct (0x6e24728d) ProvideDeDustPool {
+    queryId: uint64
+    doIncludeAssets: bool
+}
+
+fun main() {
+    val requestDeDustPoolInfoMsg = createMessage({
+        body: ProvideDeDustPool { queryId: 1, doIncludeAssets: true },
+        bounce: true,
+        dest: dedustPoolAddress,
+        value: 0,
+    });
+
+    requestDeDustPoolInfoMsg.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+}
+```
