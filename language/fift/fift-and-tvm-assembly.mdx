@@ -1,16 +1,17 @@
 ---
 title: "Fift and TVM assembly"
-noindex: "true"
+noindex: true
 ---
 
-Fift is a stack-based programming language with TON-specific features that can work with cells. TVM assembly is another stack-based language designed for TON that also handles cells. What's the difference between them?
+Fift is a stack-based programming language with The Open Network (TON)-specific features that can work with cells. TON Virtual Machine ([TVM](/ton/glossary#ton-virtual-machine-tvm)) assembly is another stack-based language designed for TON that also handles cells. What's the difference between them?
 
 ## Key differences
 
-Fift executes at **compile-time** - when your compiler builds the smart contract code BOC after processing FunC code. Fift can appear in different forms:
+Fift executes at **compile-time** - when your compiler builds the smart contract code bag of cells (BoC) after processing FunC code. Fift can appear in different forms:
 
 - TVM opcode definitions in `Asm.fif`:
 
+  Not runnable
   ```fift
   // Tuple primitives
   x{6F0} @Defop(4u) TUPLE
@@ -21,6 +22,7 @@ Fift executes at **compile-time** - when your compiler builds the smart contract
 
 - `wallet_v3_r2.fif`:
 
+  Not runnable
   ```fift
   "Asm.fif" include
   <{ SETCP0 DUP IFNOTRET // Return if recv_internal
@@ -52,13 +54,13 @@ The last code fragment resembles TVM assembly because most of it actually is TVM
 
 Imagine explaining programming concepts to a trainee. Your instructions become part of their program, processed twice - similar to how opcodes in capital letters (SETCP0, DUP, etc.) are processed by both Fift and TVM.
 
-Think of Fift as a teaching language where you can introduce high-level concepts to a learner. Just as a trainee programmer gradually absorbs and applies new concepts, Fift allows you to define custom commands and abstractions. The Asm[Tests].fif file demonstrates this perfectly - it's essentially a collection of TVM opcode definitions.
+Think of Fift as a teaching language where you can introduce high-level concepts to a learner. Just as a trainee programmer gradually absorbs and applies new concepts, Fift allows you to define custom commands and abstractions. The `Asm[Tests].fif` file demonstrates this - it's essentially a collection of TVM opcode definitions.
 
 TVM assembly, in contrast, is like the trainee's final working program. While it operates with fewer built-in features (it can't perform cryptographic signing, for instance), it has direct access to the blockchain environment during contract execution. Where Fift works at compile-time to shape the contract's code, TVM assembly runs that code on the actual blockchain.
 
 ## Smart contract usage
 
-### (Fift) Including large BoCs in contracts
+### (Fift) Include large BoCs in contracts
 
 When using `toncli`, you can include large BoCs by:
 
@@ -72,16 +74,18 @@ When using `toncli`, you can include large BoCs by:
       - func/code.fc
   ```
 
-2. Adding the BoC to `fift/blob.boc`
+1. Adding the BoC to `fift/blob.boc`
 
-3. Including this code in `fift/blob.fif`:
+1. Including this code in `fift/blob.fif`:
 
+  Not runnable
   ```fift
   <b 8 4 u, 8 4 u, "fift/blob.boc" file>B B>boc ref, b> <s @Defop LDBLOB
   ```
 
 Now you can access the blob in your contract:
 
+Not runnable
 ```func
 cell load_blob() asm "LDBLOB";
 
@@ -90,10 +94,11 @@ cell load_blob() asm "LDBLOB";
 }
 ```
 
-### (TVM assembly) Converting integers to strings
+### (TVM assembly) Convert integers to strings
 
 Fift primitives can't convert integers to strings at runtime because Fift operates at compile-time. For runtime conversion, use TVM assembly like this solution from TON Smart Challenge 3:
 
+Not runnable
 ```func
 tuple digitize_number(int value)
   asm "NIL WHILE:<{ OVER }>DO<{ SWAP TEN DIVMOD s1 s2 XCHG TPUSH }> NIP";
@@ -112,10 +117,11 @@ builder store_signed(builder msg, int v) inline_ref {
 }
 ```
 
-### (TVM assembly) Efficient modulo multiplication
+### Use efficient modulo multiplication (TVM assembly)
 
 Compare these implementations:
 
+Not runnable
 ```func
 int mul_mod(int a, int b, int m) inline_ref {               ;; 1232 gas units
   (_, int r) = muldivmod(a % m, b % m, m);
@@ -128,4 +134,4 @@ int mul_mod_better(int a, int b, int m) inline_ref {        ;; 1110 gas units
 int mul_mod_best(int a, int b, int m) asm "x{A988} s,";     ;; 65 gas units
 ```
 
-The `x{A988}` opcode implements an optimized division operation with built-in multiplication (as specified in [section 5.2 Division](/tvm/instructions#A988)). This specialized instruction directly computes just the modulo remainder of the operation, skipping unnecessary computation steps. The `s,` suffix then handles the result storage - it takes the resulting slice from the stack's top and efficiently writes it into the target builder. Together, this combination delivers substantial gas savings compared to conventional approaches.
+The `x{A988}` opcode implements an optimized division operation with built-in multiplication (as specified in [instruction A988 (MULMOD)](/tvm/instructions#a988-mulmod)). This specialized instruction directly computes just the modulo remainder of the operation, skipping unnecessary computation steps. The `s,` suffix then handles the result storage - it takes the resulting slice from the stack's top and efficiently writes it into the target builder. Together, this combination delivers substantial gas savings compared to conventional approaches.
