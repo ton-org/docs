@@ -3,14 +3,21 @@ title: "Wallet V5 API"
 sidebarTitle: "How to interact"
 ---
 
+import { Aside } from "/snippets/aside.jsx";
+
 This article provides overview of wallet V5 public interfaces, how to interact with them and serialize used data structures.
+
+<Aside>
+  Note, that many of the things we implement in this article are for education purposes and they might need to be refined before production use.
+
+  Moreover, all these V5 wallet contract interfaces are implemented in [\@ton/ton](https://github.com/ton-org/ton) client library as WalletV5 contract wrapper class.
+</Aside>
 
 There are several ways how you can interact with deployed V5 wallet smart contract:
 
 - Send external signed message
 - Send internal signed message
 - Send internal message from extension
-- Call get-methods
 
 Let's first explore message structure, that is used to perform different actions on wallet contract.
 
@@ -170,6 +177,346 @@ graph LR
 
 ## Examples
 
+Here we will take a look at code examples in Typescript using low level serialization library *\@ton/core*.
+
 ### How to create Inner Request
 
+As per message structure section above, `Inner Request` consists of 2 kinds of actions, basic *send message* actions and *extended actions* that affect contract behavior.
 
+Let's write code that handles packing for extended actions:
+
+```ts expandable
+import {
+    Address,
+    beginCell,
+    Builder,
+    Cell
+} from '@ton/core';
+
+// declare actions as tagged union
+export type OutActionAddExtension = {
+    type: 'addExtension';
+    address: Address;
+}
+
+export type OutActionRemoveExtension = {
+    type: 'removeExtension';
+    address: Address;
+}
+
+export type OutActionSetIsPublicKeyEnabled = {
+    type: 'setIsPublicKeyEnabled';
+    isEnabled: boolean;
+}
+
+export type OutActionExtended = OutActionSetIsPublicKeyEnabled | OutActionAddExtension | OutActionRemoveExtension;
+
+// store each action content as described in its TL-B specification:
+// 8 bits for action tag and then useful payload
+
+const outActionAddExtensionTag = 0x02;
+function storeOutActionAddExtension(action: OutActionAddExtension) {
+    return (builder: Builder) => {
+        builder.storeUint(outActionAddExtensionTag, 8).storeAddress(action.address)
+    }
+}
+
+const outActionRemoveExtensionTag = 0x03;
+function storeOutActionRemoveExtension(action: OutActionRemoveExtension) {
+    return (builder: Builder) => {
+        builder.storeUint(outActionRemoveExtensionTag, 8).storeAddress(action.address)
+    }
+}
+
+const outActionSetIsPublicKeyEnabledTag = 0x04;
+function storeOutActionSetIsPublicKeyEnabled(action: OutActionSetIsPublicKeyEnabled) {
+    return (builder: Builder) => {
+        builder.storeUint(outActionSetIsPublicKeyEnabledTag, 8).storeUint(action.isEnabled ? 1 : 0, 1)
+    }
+}
+
+// entry point for storing any extended action
+export function storeOutActionExtendedV5R1(action: OutActionExtended) {
+    switch (action.type) {
+        case 'setIsPublicKeyEnabled':
+            return storeOutActionSetIsPublicKeyEnabled(action);
+        case 'addExtension':
+            return storeOutActionAddExtension(action);
+        case 'removeExtension':
+            return storeOutActionRemoveExtension(action);
+        default:
+            throw new Error('Unknown action type' + (action as OutActionExtended)?.type);
+    }
+}
+
+// and now the hard part - list snake-cell serialization;
+// we will use this function recursively, to store actions as reference cells one by one
+function packExtendedActionsRec(extendedActions: OutActionExtended[]): Cell {
+    const [first, ...rest] = extendedActions;
+
+    let builder = beginCell()
+        .store(storeOutActionExtendedV5R1(first));
+
+    if (rest.length > 0) {
+        // if there are more actions, store them recursively
+        builder = builder.storeRef(packExtendedActionsRec(rest));
+    }
+
+    return builder.endCell();
+}
+```
+
+Now we have to deal with basic action serialization. However, since these are the messages that are described in [block.tlb](/language/TL-B/overview), we can use contract-agnostic code from serialization library to store them.
+
+Here is an code snippet for storing V5 wallet actions as per `Inner Request` TL-B:
+
+```ts expandable
+import {
+    beginCell,
+    Builder, Cell,
+    loadOutList,
+    OutActionSendMsg, SendMode,
+    Slice,
+    storeOutList
+} from '@ton/core';
+
+// helper functions
+export function isOutActionExtended(action: OutActionSendMsg | OutActionExtended): action is OutActionExtended {
+    return (
+        action.type === 'setIsPublicKeyEnabled' || action.type === 'addExtension' || action.type === 'removeExtension'
+    );
+}
+
+export function isOutActionBasic(action: OutActionSendMsg | OutActionExtended): action is OutActionSendMsg {
+    return !isOutActionExtended(action);
+
+}
+
+// main entrypoint for storing any actions list
+export function storeOutListExtendedV5(actions: (OutActionExtended | OutActionSendMsg)[]) {
+    const extendedActions = actions.filter(isOutActionExtended);
+    const basicActions = actions.filter(isOutActionBasic);
+
+    return (builder: Builder) => {
+        // here we use "storeOutList", serialization function from @ton/core
+        // we reverse the list since cells are stored recursively via snake-cell, so we need the reverse order
+        const outListPacked = basicActions.length ? beginCell().store(storeOutList(basicActions.slice().reverse())) : null;
+        builder.storeMaybeRef(outListPacked);
+
+        if (extendedActions.length === 0) {
+           // has_more_actions flag to false
+            builder.storeUint(0, 1);
+        } else {
+            const [first, ...rest] = extendedActions;
+
+            builder
+            // has_more_actions flag to true
+                .storeUint(1, 1)
+            // here we use our store function from previous code section
+                .store(storeOutActionExtendedV5(first));
+            // if there are more actions - store them one by one
+            if (rest.length > 0) {
+                builder.storeRef(packExtendedActionsRec(rest));
+            }
+        }
+    }
+}
+```
+
+With this, we can serialize and store list of actions, in next section we will learn how to use them to send signed message.
+
+### How to create and send Signed Request
+
+There are several additional arguments that we need to create signed message besides the list of actions from previous section:
+
+- `walletId`
+- `seqno`
+- `privateKey`
+- `validUntil`
+
+You can read more about where to obtain them and what there purpose is in [How it works](/standard/wallets/how-it-works) section.
+
+In this code snippet we will learn how to create signed serialized message.
+
+```ts expandable
+import { sign } from "@ton/crypto";
+
+export type WalletV5BasicSendArgs = {
+    seqno: number;
+    validUntil: number;
+    privateKey: Buffer;
+}
+
+// internal_signed#73696e74 signed:SignedRequest = InternalMsgBody;
+// external_signed#7369676e signed:SignedRequest = ExternalMsgBody;
+export type WalletV5SendArgsSinged = WalletV5BasicSendArgs
+    & { authType?: 'external' | 'internal';};
+
+// internal_extension#6578746e query_id:(## 64) inner:InnerRequest = InternalMsgBody;
+export type Wallet5VSendArgsExtensionAuth = WalletV5BasicSendArgs & {
+    authType: 'extension';
+    queryId?: bigint;
+}
+
+export type WalletV5SendArgs =
+    | WalletV5SendArgsSinged
+    | Wallet5VSendArgsExtensionAuth;
+
+const OpCodes = {
+    authExtension: 0x6578746e,
+    authSignedExternal: 0x7369676e,
+    authSignedInternal: 0x73696e74
+}
+
+export function createWalletTransferV5R1<T extends WalletV5SendArgs>(
+    args: T extends Wallet5VSendArgsExtensionAuth
+    // action types are from Inner Request section
+        ? T & { actions: (OutActionSendMsg | OutActionExtended)[]}
+        : T & { actions: (OutActionSendMsg | OutActionExtended)[], walletId: (builder: Builder) => void }
+): Cell {
+    // Check number of actions
+    if (args.actions.length > 255) {
+        throw Error("Maximum number of OutActions in a single request is 255");
+    }
+
+    // store each message type according to its TL-B
+
+    // internal_extension#6578746e query_id:(## 64) inner:InnerRequest = InternalMsgBody;
+    if (args.authType === 'extension') {
+        return beginCell()
+            .storeUint(OpCodes.authExtension, 32)
+            .storeUint(args.queryId ?? 0, 64)
+            // use storeOutListExtendedV5
+            .store(storeOutListExtendedV5(args.actions))
+            .endCell();
+    }
+
+    // internal_signed#73696e74 signed:SignedRequest = InternalMsgBody;
+    // external_signed#7369676e signed:SignedRequest = ExternalMsgBody;
+    const signingMessage = beginCell()
+        .storeUint(args.authType === 'internal'
+            ? OpCodes.authSignedInternal
+            : OpCodes.authSignedExternal, 32)
+        .store(args.walletId);
+
+
+    // now we store common part for both messages
+    signingMessage.storeUint(args.timeout || Math.floor(Date.now() / 1e3) + 60, 32); // Default timeout: 60 seconds
+
+    signingMessage
+        .storeUint(args.seqno, 32)
+        .store(storeOutListExtendedV5(args.actions));
+
+    // now we need to sign message
+    const signature = sign(signingMessage.endCell().hash(), args.secretKey);
+
+    return beginCell().storeBuilder(signingMessage).storeBuffer(signature).endCell();
+}
+```
+
+Now what is left is sending the message. The way we send created message is dependent on the message type.
+
+#### Sending external_signed message
+
+After obtaining signed message cell we need to serialize it as external message and send it to the blockchain.
+
+```ts
+import {
+    Address,
+    beginCell,
+    Cell,
+    external,
+    storeMessage
+} from '@ton/core';
+
+// with authType = 'external'
+const msgCell = createWalletTransferV5(...);
+
+const v5WalletAddress = Address.parse("EQ....");
+
+const serializedExternal = external({
+  to: v5WalletAddress,
+  body: msgCell
+});
+
+// boc is BoC, bag of cells
+const boc = beginCell()
+  .store(storeMessage(serializedExternal))
+  .endCell()
+  .toBoc();
+```
+
+You can send this BoC to the network in any convenient way, e.g. with API provider like [TonCenter /message](https://toncenter.com/api/v3/index.html#/api%2Fv2/api_v3_post_v2_message) or with your own [liteserver](/ecosystem/node/overview).
+
+#### Sending internal_extension and internal_signed
+
+These two types of messages are internal messages, meaning that they need to come from another contract. However strange thay may sound, the easiest way to send internal message from another contract is to ask another wallet contract to send internal message to our wallet contract with body that will contain our constructed message.
+
+
+```mermaid
+graph LR
+    A["👤 User"] --> B["📱 V4 Wallet Contract<br/>(Sender)"]
+
+    B -->|"Internal message with body:<br/>🔐 internal_signed (#73696e74)<br/>or<br/>🔧 internal_extension (#6578746e)"| C["🏦 V5 Wallet Contract<br/>(Receiver)"]
+
+    C --> D["⚡ Execute Actions<br/>on V5 wallet"]
+
+    classDef user fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef v4wallet fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef v5wallet fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef action fill:#ffebee,stroke:#d32f2f,stroke-width:2px
+
+    class A user
+    class B v4wallet
+    class C v5wallet
+    class D action
+```
+
+For simplicity, we will use wallet V4 contract with existing client serialization library that will take care of all low level stuff.
+
+```ts expandable
+import {beginCell, toNano, TonClient, WalletContractV4, internal, fromNano} from "@ton/ton"
+import {getHttpEndpoint} from "@orbs-network/ton-access"
+import {mnemonicToPrivateKey} from "@ton/crypto"
+
+// v4 wallet mnemonic
+const mnemonics = "dog bacon bread ..."
+
+const endpoint = await getHttpEndpoint({network: 'testnet'})
+const client = new TonClient({
+    endpoint: endpoint,
+})
+const keyPair = await mnemonicToPrivateKey(mnemonics.split(" "))
+const secretKey = keyPair.secretKey
+const workchain = 0 // we are working in basechain.
+const deployerWallet = WalletContractV4.create({
+    workchain: workchain,
+    publicKey: keyPair.publicKey,
+})
+
+const deployerWalletContract = client.open(deployerWallet)
+
+
+// with authType = 'internal' or 'extension'
+const internalMsgBody = createWalletTransferV5(...);
+
+// here we use function from previous section to create V5 wallet message cell
+// next, we will send it as internal message using V4 wallet
+
+// address of our V5 wallet contract
+const v5WalletAddress = Address.parse("EQ....");
+
+const seqnoForV4Wallet: number = await deployerWalletContract.getSeqno()
+
+await deployerWalletContract.sendTransfer({
+    seqno,
+    secretKey,
+    messages: [
+        internal({
+            to: v5WalletAddress,
+            value: toNano("0.05"),
+            body: internalMsgBody,
+        }),
+    ],
+})
+```
