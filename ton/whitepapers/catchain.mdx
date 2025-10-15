@@ -36,12 +36,11 @@ This text aims to describe only the second and the third protocol in this suite,
 
 We would like to point out here that the author of this text, while providing the general guidelines of how this protocol should be designed (on the lines of "let's create a BFT-hardened group broadcast message system, and run a suitably adapted simple two-phase or three-phase commit protocol on top of this system") and participating in several discussions during the development and implementation of the protocol, is definitely not the only designer of this protocol and especially of its current implementation. This is the work of several people.
 
-A few words on the efficiency of the combined Catchain Consensus protocol. Firstly, it is a true Byzantine Fault Tolerant (BFT) protocol, in the sense that it eventually achieves consensus on a valid next block of the blockchain even if some participants (validators) exhibit arbitrarily malicious behavior, provided these malicious participants are less than one third of the total number of the validators. It is well-known that [achieving BFT consensus is impossible if at least one third of participants are malicious](https://dl.acm.org/doi/10.1145/357172.357176), so the Catchain Consensus protocol is as good as theoretically possible in this respect. Secondly, when the Catchain Consensus was first implemented (in December 2018) and tested on up to 300 nodes distributed all over the world, it achieved consensus on a new block in 6 seconds for 300 nodes and in 4–5 seconds for 100 nodes (and in 3 seconds for 10 nodes), even if some of these nodes fail to participate or exhibit incorrect behavior.<sup>[2](#fn2)</sup> 
+A few words on the efficiency of the combined Catchain Consensus protocol. Firstly, it is a true Byzantine Fault Tolerant (BFT) protocol, in the sense that it eventually achieves consensus on a valid next block of the blockchain even if some participants (validators) exhibit arbitrarily malicious behavior, provided these malicious participants are less than one third of the total number of the validators. It is well-known that [achieving BFT consensus is impossible if at least one third of participants are malicious](https://dl.acm.org/doi/10.1145/357172.357176), so the Catchain Consensus protocol is as good as theoretically possible in this respect. Secondly, when the Catchain Consensus was first implemented (in December 2018) and tested on up to 300 nodes distributed all over the world, it achieved consensus on a new block in 6 seconds for 300 nodes and in 4–5 seconds for 100 nodes (and in 3 seconds for 10 nodes), even if some of these nodes fail to participate or exhibit incorrect behavior.<sup>[2](#fn2)</sup>
 
 Since the TON Blockchain task groups are not expected to consist of more than a hundred validators (even if a total of a thousand or ten thousand validators are running, only a hundred of them with the largest stakes will generate new masterchain blocks, and the others will participate only in the creation of new shardchain blocks, each shardchain block generated and validated by 10–30 validators; of course, all numbers given here are [configuration parameters](/ton/ton#2-1-21-configurable-parameters) and [configurable parameters smart contracts](/ton/tblkch#1-6-configurable-parameters-and-smart-contracts) can be adjusted later by a consensus vote of validators if necessary), this means that the TON Blockchain is able to generate new blocks once every 4–5 seconds, as originally planned. This promise has been further tested and found out to be fulfilled with the launch of the Test Network of the TON Blockchain a couple of months later (in March 2019). Therefore, we see that the Catchain Consensus protocol is a new member of the ever-growing family of [practical BFT protocols](http://pmg.csail.mit.edu/papers/osdi99.pdf), even though it is based on slightly different principles.
 
 ---
-
 
 ## 2. Catchain Protocol
 
@@ -129,14 +128,13 @@ If $i$ is the sender of message $m$, and $s$ is the height of message $m$, so th
 
 Note that $m' \preceq m$ iff $D^+_{m'} \subset D^+_m$ iff $\mathbf{VT}^+(m') \leq \mathbf{VT}^+(m)$ in $\mathbb{N}_0^I$, where $m' \preceq m$ means "$m' \prec m$ or $m' = m$". Similarly, $m' \prec m$ iff $D^+_{m'} \subset D_m$ iff $\mathbf{VT}^+(m') \leq \mathbf{VT}(m)$. In other words, **the dependence relation $\prec$ on (some or all) messages is completely determined by the adjusted vector timestamps of these messages.**
 
-
 #### 2.4.8. Using vector timestamps to correctly deliver broadcast messages
 
-Vector timestamps can be used (in non-byzantine settings) to correctly deliver messages broadcast in a process group.<sup>[5](#fn5)</sup> Namely, suppose that every broadcast message $m = m_{i,s}$ contains the index of its sender $i$ and the vector timestamp of this message $\mathbf{VT}(m)$. Then each receiver $j$ knows whether the message can be delivered or not. 
+Vector timestamps can be used (in non-byzantine settings) to correctly deliver messages broadcast in a process group.<sup>[5](#fn5)</sup> Namely, suppose that every broadcast message $m = m_{i,s}$ contains the index of its sender $i$ and the vector timestamp of this message $\mathbf{VT}(m)$. Then each receiver $j$ knows whether the message can be delivered or not.
 
-For this, $j$ keeps track of the cone $C_j$ of all messages delivered so far, for example by maintaining a **current timestamp** $\mathbf{VT}(j)$ equal to $\mathbf{VT}(C_j)$. In other words, $\text{VT}(j)_k$ is the count of messages of sender $k$ processed by $j$ so far. If $\mathbf{VT}(m) \leq \mathbf{VT}(j)$, then the message $m$ is delivered immediately and $\mathbf{VT}(j)$ is updated to $\sup(\mathbf{VT}(j), \mathbf{VT}^+(m))$ afterwards; this is equivalent to increasing $\text{VT}(j)_i$ by one, where $i$ is the original sender of message $m$. 
+For this, $j$ keeps track of the cone $C_j$ of all messages delivered so far, for example by maintaining a **current timestamp** $\mathbf{VT}(j)$ equal to $\mathbf{VT}(C_j)$. In other words, $\text{VT}(j)_k$ is the count of messages of sender $k$ processed by $j$ so far. If $\mathbf{VT}(m) \leq \mathbf{VT}(j)$, then the message $m$ is delivered immediately and $\mathbf{VT}(j)$ is updated to $\sup(\mathbf{VT}(j), \mathbf{VT}^+(m))$ afterwards; this is equivalent to increasing $\text{VT}(j)_i$ by one, where $i$ is the original sender of message $m$.
 
-If this condition is not met, then $m$ may be put into a waiting queue until $\mathbf{VT}(j)$ becomes large enough. Instead of passively waiting for the required broadcasts, $j$ can construct the list of message indices $(i', s')$ that are implicitly mentioned in $\mathbf{VT}(m)$ of some received but not delivered message $m$, and request messages with these indices from the neighbors from which $j$ learned about $m$ and $\mathbf{VT}(m)$; an alternative strategy (actually employed by the current implementation of the Catchain protocol) is to request these messages from randomly chosen neighbors from time to time. 
+If this condition is not met, then $m$ may be put into a waiting queue until $\mathbf{VT}(j)$ becomes large enough. Instead of passively waiting for the required broadcasts, $j$ can construct the list of message indices $(i', s')$ that are implicitly mentioned in $\mathbf{VT}(m)$ of some received but not delivered message $m$, and request messages with these indices from the neighbors from which $j$ learned about $m$ and $\mathbf{VT}(m)$; an alternative strategy (actually employed by the current implementation of the Catchain protocol) is to request these messages from randomly chosen neighbors from time to time.
 
 The latter strategy is simpler because it does not require remembering the immediate sources of all received messages (which may become unavailable anyway).
 
@@ -154,9 +152,9 @@ Catchain protocol uses **SHA-256** hashes of (suitably serialized) messages as t
 
 #### 2.5.3. Message headers
 
-The header of a message $m = m_{i,s}$ inside a catchain (i.e., an instance of the Catchain protocol) always contains the index $i$ of its sender, the height $s$, the [catchain identifier](#2-3-the-genesis-block-and-the-identifier-of-a-catchain) (i.e., the hash of the genesis message) and the set of hashes of maximal elements of the dependence cone of $m$, i.e., the set $\{\text{SHA-256}(m') : m' \in \text{Max}(D_m)\}$. 
+The header of a message $m = m_{i,s}$ inside a catchain (i.e., an instance of the Catchain protocol) always contains the index $i$ of its sender, the height $s$, the [catchain identifier](#2-3-the-genesis-block-and-the-identifier-of-a-catchain) (i.e., the hash of the genesis message) and the set of hashes of maximal elements of the dependence cone of $m$, i.e., the set $\{\text{SHA-256}(m') : m' \in \text{Max}(D_m)\}$.
 
-In particular, the hash SHA-256$(m_{i,s-1})$ of the previous message of the same sender is always included since $m_{i,s-1} \in \text{Max}(D_m)$ if $s > 1$; for performance reasons, there is a separate field in the message header containing SHA-256$(m_{i,s-1})$. 
+In particular, the hash SHA-256$(m_{i,s-1})$ of the previous message of the same sender is always included since $m_{i,s-1} \in \text{Max}(D_m)$ if $s > 1$; for performance reasons, there is a separate field in the message header containing SHA-256$(m_{i,s-1})$.
 
 If $s = 1$, then there is no previous message, so the hash of the genesis message (i.e., [the catchain identifier](#2-3-the-genesis-block-and-the-identifier-of-a-catchain)) is used instead.
 
@@ -180,7 +178,7 @@ Notice that even if the encryption had been absent, this would not violate the B
 
 #### 2.5.6. Alternative perspective: a catchain as a multi-blockchain
 
-Note that all messages created by the same sender $i$ in a catchain turn out to have a simple "blockchain structure", because the header of $m_{i,s+1}$ contains the hash SHA-256$(m_{i,s})$ (among other hashes of messages from $\text{Max}(D_{m_{i,s+1}})$) of the previous message of sender $i$. In this way each process $i$ generates a simple blockchain consisting of its messages, with each "block" of this blockchain corresponding to one message and referring to the previous block by its hash, and sometimes includes references to blocks (i.e., messages) of other processes by mentioning the hashes of these blocks in its blocks. Each block is signed by its creator. The resulting structure is very similar to that of an [asynchronous payment channel](/ton/ton#5-1-5-asynchronous-payment-channel-as-a-virtual-blockchain-with-two-workchains) considered in the TON whitepaper, but with $N$ participants instead of 2.
+Note that all messages created by the same sender $i$ in a catchain turn out to have a simple "blockchain structure", because the header of $m_{i,s+1}$ contains the hash SHA-256$(m_{i,s})$ (among other hashes of messages from $\text{Max}(D_{m_{i,s+1}})$) of the previous message of sender $i$. In this way each process $i$ generates a simple blockchain consisting of its messages, with each "block" of this blockchain corresponding to one message and referring to the previous block by its hash, and sometimes includes references to blocks (i.e., messages) of other processes by mentioning the hashes of these blocks in its blocks. Each block is signed by its creator. The resulting structure is very similar to that of an [asynchronous payment channel considered in the TON whitepaper](/ton/ton#5-1-5-asynchronous-payment-channel-as-a-virtual-blockchain-with-two-workchains), but with $N$ participants instead of 2.
 
 ### 2.6. Message propagation in a catchain
 
@@ -603,26 +601,25 @@ Now we claim that **(each round of) the BCP protocol as described above terminat
 
 ## References
 
-1. **K. Birman**, [*Reliable Distributed Systems: Technologies, Web Services and Applications*](https://link.springer.com/book/10.1007/978-1-4471-2416-0), Springer, 2005.
+1. **K. Birman**, [_Reliable Distributed Systems: Technologies, Web Services and Applications_](https://link.springer.com/book/10.1007/978-1-4471-2416-0), Springer, 2005.
 
-2. **M. Castro, B. Liskov, et al.**, [*Practical byzantine fault tolerance*](http://pmg.csail.mit.edu/papers/osdi99.pdf), Proceedings of the Third Symposium on Operating Systems Design and Implementation (1999), p. 173–186.
+1. **M. Castro, B. Liskov, et al.**, [_Practical byzantine fault tolerance_](http://pmg.csail.mit.edu/papers/osdi99.pdf), Proceedings of the Third Symposium on Operating Systems Design and Implementation (1999), p. 173–186.
 
-3. **N. Durov**, *Telegram Open Network*, 2017.
+1. **N. Durov**, _Telegram Open Network_, 2017.
 
-4. **N. Durov**, *Telegram Open Network Blockchain*, 2018.
+1. **N. Durov**, _Telegram Open Network Blockchain_, 2018.
 
-5. **L. Lamport, R. Shostak, M. Pease**, [*The byzantine generals problem*](https://dl.acm.org/doi/10.1145/357172.357176), ACM Transactions on Programming Languages and Systems, **4/3** (1982), p. 382–401.
+1. **L. Lamport, R. Shostak, M. Pease**, [_The byzantine generals problem_](https://dl.acm.org/doi/10.1145/357172.357176), ACM Transactions on Programming Languages and Systems, **4/3** (1982), p. 382–401.
 
-6. **A. Miller, Yu Xia, et al.**, [*The honey badger of BFT protocols*](https://eprint.iacr.org/2016/199.pdf), Cryptology e-print archive 2016/99, 2016.
+1. **A. Miller, Yu Xia, et al.**, [_The honey badger of BFT protocols_](https://eprint.iacr.org/2016/199.pdf), Cryptology e-print archive 2016/99, 2016.
 
-7. **M. van Steen, A. Tanenbaum**, [*Distributed Systems, 3rd ed.*](https://www.distributed-systems.net/index.php/books/ds3/), 2017.
+1. **M. van Steen, A. Tanenbaum**, [_Distributed Systems, 3rd ed._](https://www.distributed-systems.net/index.php/books/ds3/), 2017.
 
 ---
 
-
 ### Footnotes
 
-<span id="fn1">1.</span> The original name of this protocol used during the initial stage of the research and development phase was *catch-chain* or *catchchain*, because it essentially is a special block*chain* dedicated to *catch*ing all events important for the consensus protocol; after saying and writing this name a lot of times it gradually got contracted to "catchain". [Back ↑](#1-overview)
+<span id="fn1">1.</span> The original name of this protocol used during the initial stage of the research and development phase was _catch-chain_ or _catchchain_, because it essentially is a special bloc&#x6B;_&#x63;hain_ dedicated to _catc&#x68;_&#x69;ng all events important for the consensus protocol; after saying and writing this name a lot of times it gradually got contracted to "catchain". [Back ↑](#1-overview)
 
 <span id="fn2">2.</span> When the ratio of the malicious or non-participating or very slow validators grows up to one third, the protocol exhibits graceful degradation, with the block consensus time growing very slowly—say, by at most half a second—until the critical value of one third is almost achieved. [Back ↑](#1-overview)
 
