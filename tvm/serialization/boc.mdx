@@ -37,6 +37,13 @@ The most used options are:
 
 ### Outline of serialization process
 
+<Note>
+This and the following paragraphs provide a textual description of the Boc serialization process and the specifications of the TL-B schemas 
+associated with it. The specific implementation of the serialization and TL-B schemes is left to the choice of developers.
+
+For a specific example of TL-B schema and pseudocode of related cell serialization, see [TL-B scheme](/tvm/serialization/boc#A-TL-B-scheme).
+</Note>
+
 The serialization process of a BoC `B` consisting of `n` cells can be outlined as follows.
 
 * List the cells from B in a chosen order: `c1, ..., cn`(with `c1, ..., c_k` as root cells, if `B` is a forest).
@@ -53,7 +60,7 @@ The serialization process of a BoC `B` consisting of `n` cells can be outlined a
   loading the entire serialized bag of cells in memory.
 * The serialization of the bag of cells now consists of a magic number
   indicating the precise format of the serialization, followed by integers
-  `s ≥ 0`, `t ≥ 0`, `n ≤ 2^s`, an optional index consisting of $\lceil\frac{(n+1)\*t}{8}\rceil$ bytes,
+  `s ≥ 0`, `t ≥ 0`, `n ≤ 2^s`, an optional index consisting of $\lceil\frac{(n+1)*t}{8}\rceil$ bytes,
   and `Ln` bytes with the cell representations.
 * An optional `CRC32C` may be appended to the serialization for integrity
   verification purposes.
@@ -84,7 +91,7 @@ Each TL-B scheme for a bag of cells must specify the following parameters.
 ## A TL-B scheme
 
 Only one [serialization scheme of BoCs](https://github.com/ton-blockchain/ton/blob/24dc184a2ea67f9c47042b4104bbb4d82289fac1/crypto/tl/boc.tlb#L25)
-is used in TON Blockchain:
+is used in TON Blockchain (there are also two outdated BoC serialization schemes in the file):
 
 ```tlb
 serialized_boc#b5ee9c72 has_idx:(## 1) has_crc32c:(## 1) 
@@ -102,14 +109,38 @@ serialized_boc#b5ee9c72 has_idx:(## 1) has_crc32c:(## 1)
   = BagOfCells;
 ```
 
-Field cells is `n`, `roots` is `k`, `absent` is `l`, and `tot_cells_size` is `Ln` (the total
+Field `cells` is `n`, `roots` is `k`, `absent` is `l`, and `tot_cells_size` is `Ln` (the total
 size of the serialization of all cells in bytes). If an index is present, parameters
 `s/8` and `t/8` are serialized separately as `size` and `off_bytes`, respectively,
 and the flag `has_idx` is set. The index itself is contained in `index`, present
 only if `has_idx` is set. The field `root_list` contains the (zero-based) indices
-of the root nodes of the bag of cells.
+of the root nodes of the bag of cells. Finally, `cell_data` is a sequence of bits that obtained as a concatenation of the cells representations:
 
-There are also two outdated BoC serialization schemes in the same file.
+```c
+// d1
+uint3 level_mask;
+uint1 has_hashes;
+uint1 is_exotic;
+uint3 ref_count;
+
+// d2
+if ref_count < 7 {
+    uint7 byte_size;
+    uint1 has_padding;
+}
+        
+if has_hashes {
+    uint256 hashes[GetLevel(level_mask) + 1];
+    uint16 depths[GetLevel(level_mask) + 1];
+}
+        
+if ref_count < 7 {
+    if byte_size + has_padding != 0 {
+        uint8 data_bits[byte_size + has_padding];
+    }
+    ref refs[ref_count];
+}
+```
 
 ## An example of a manual serialization
 
