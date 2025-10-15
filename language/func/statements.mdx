@@ -4,488 +4,388 @@ sidebarTitle: "Statements"
 noindex: "true"
 ---
 
-This section briefly overviews FunC statements, which form the core of function bodies.
+import { Aside } from '/snippets/aside.jsx';
+
+FunC statements can occur anywhere inside function bodies.
 
 ## Expression statements
-The most common type of statement is the expression statement—an expression followed by `;`. As a rule, all sub-expressions are evaluated from left to right,
-except in cases where [asm stack rearrangement](/language/func/functions#rearranging-stack-entries) explicitly defines the order.
 
-### Variable declaration
-Local variables must be initialized at the time of declaration. Here are some examples:
+The most common type of statement is the expression statement—an expression followed by `;`.
+See the [FunC expressions](./expressions) article for details on the allowed expressions.
 
-```func
-int x = 2;
-var x = 2;
-(int, int) p = (1, 2);
-(int, var) p = (1, 2);
-(int, int, int) (x, y, z) = (1, 2, 3);
-(int x, int y, int z) = (1, 2, 3);
-var (x, y, z) = (1, 2, 3);
-(int x = 1, int y = 2, int z = 3);
-[int, int, int] [x, y, z] = [1, 2, 3];
-[int x, int y, int z] = [1, 2, 3];
-var [x, y, z] = [1, 2, 3];
-```
+## `return` statement
 
+The `return` statement ends function execution and specifies a value to be returned to the function caller.
+Any statement after the `return` statement is not executed.
 
-A variable can be redeclared in the same scope. For example, the following code is valid:
-
-```func
-int x = 2;
-int y = x + 1;
-int x = 3;
-```
-
-In this case,
-the second occurrence of `int x` is not a new declaration but a compile-time check ensuring that `x` has type `int`. The third line is equivalent to `x = 3;`.
-
-
-**Variable redeclaration in nested scopes**
-
-In nested scopes, a new variable with the same name can be declared, just like in C:
-
-```func
-int x = 0;
-int i = 0;
-while (i < 10) {
-  (int, int) x = (i, i + 1);
-  ;; Here x is a variable of type (int, int)
-  i += 1;
-}
-;; Here, x refers to the original variable of type int declared above
-```
-
-However, as mentioned in the [Global variables](/language/func/global-variables/) section,
-global variables **cannot** be redeclared.
-
-
-Since variable declarations are **expression statements**, constructs like `int x = 2;` are valid expressions.
-For instance:
-`int y = (int x = 3) + 1;`
-Here, `x` is declared and assigned `3`, and `y` is assigned `4`.
-
-
-#### Underscore
-
-The underscore `_` is used when a value is not needed.
-For example, if `foo` is a function of type `int -> (int, int, int)`,
-you can retrieve only the first return value while ignoring the rest:
-```func
-(int fst, _, _) = foo(42);
-```
-
-
-
-### Function application
-
-A function call in FunC follows a conventional syntax:
-the function name is followed by its arguments, separated by commas.
-
-```func
-;; Suppose foo has type (int, int, int) -> int
-int x = foo(1, 2, 3);
-```
-
-However, unlike many conventional languages, FunC treats functions as taking a single argument.
-In the example above, `foo` is a function that takes one tuple argument of type `(int, int, int)`.
-
-**Function composition**
-
-To illustrate how function arguments work in FunC, consider a function `bar` of type `int -> (int, int, int)`. Since `foo` expects a single tuple argument, you can pass the entire result of `bar(42)` directly into `foo`:
-
-```func
-int x = foo(bar(42));
-```
-
-This is equivalent to the longer form:
-
-```func
-(int a, int b, int c) = bar(42);
-int x = foo(a, b, c);
-```
-
-
-
-Also Haskell-style calls are possible, but not always (to be fixed later):
-
-FunC also supports **Haskell-style** function application, but with some limitations:
-
-```func
-;; Suppose foo has type int -> int -> int -> int
-;; i.e., it is curried
-(int a, int b, int c) = (1, 2, 3);
-int x = foo a b c; ;; Valid syntax
-```
-However, direct application with literals does not compile:
-
-```func
-;; int y = foo 1 2 3; ERROR: won't compile
-```
-
-Instead, parentheses are required:
-
-```func
-int y = foo (1) (2) (3); ;; Valid syntax
-```
-### Lambda expressions
-Lambda expressions are not yet supported in FunC.
-
-### Methods calls
-
-#### Non-modifying methods
-
-In FunC, a function with at least one argument can be called a non-modifying method using the dot `.` syntax.
-
-For example, the function `store_uint` has the type `(builder, int, int)  → builder`, where:
-- The first argument is a builder object.
-- The second argument is the value to store.
-- The third argument is the bit length.
-
-The function `begin_cell()` creates a new builder.
-These two ways of calling `store_uint` are equivalent:
-
-```func
-builder b = begin_cell();
-b = store_uint(b, 239, 8);
-```
-```func
-builder b = begin_cell();
-b = b.store_uint(239, 8);
-```
-
-The dot `.` syntax allows the first argument of a function to be placed before the function name,
-simplifying the code further:
-
-```func
-builder b = begin_cell().store_uint(239, 8);
-```
-Multiple non-modifying methods can be chained together:
-
-```func
-builder b = begin_cell().store_uint(239, 8)
-                        .store_int(-1, 16)
-                        .store_uint(0xff, 10);
-```
-
-
-
-
-#### Modifying methods
-
-If a function’s first argument is of type `A` and its return value follows the structure `(A, B)`,
-where `B` is an arbitrary type, the function can be used as a modifying method.
-
-A modifying method modifies its first argument by assigning the first component of the returned value to the original variable. These methods may take additional arguments and return extra values, but their primary purpose is to update the first argument.
-
-For example, consider a cell slice `cs` and the function `load_uint`, which has the type: `load_uint(slice, int) → (slice, int)`.
-
-This function takes a cell slice and a number of bits to load, returning the remaining slice and the loaded value. The following three calls are equivalent:
-
-
-```func
-(cs, int x) = load_uint(cs, 8);
-(cs, int x) = cs.load_uint(8);
-int x = cs~load_uint(8);
-```
-
-Without return values
-Sometimes, a function can be used as a modifying method even when it doesn’t return a meaningful value—only modifying its first argument.
-This can be achieved using unit types.
-
-For example, consider an increment function `inc` of type `int -> int`. It should be redefined as a function of type `int -> (int, ())` to use it as a modifying method:
-
-```func
-(int, ()) inc(int x) {
-  return (x + 1, ());
-}
-```
-
-Now, the following code increments `x`:
-
-```func
-x~inc();
-```
-
-#### `.` and `~` in function names
-
-Suppose we want to use `inc` as a non-modifying method. We can write:
-
-```func
-(int y, _) = inc(x);
-```
-
-However, we can also define `inc` as a modifying method:
+In this example, the `return` statement instructs the function to halt execution and produce `x + 1` as a result.
 
 ```func
 int inc(int x) {
   return x + 1;
 }
-(int, ()) ~inc(int x) {
-  return (x + 1, ());
+```
+
+In this example, only the first `return` executes:
+
+```func
+int inc(int x) {
+  return x + 1;
+  return x;
 }
 ```
-Now, we can call it in different ways:
-```func
-x~inc(); ;; Modifies x
-int y = inc(x); ;; Doesn't modify x
-int z = x.inc(); ;; Also doesn't modify x
-```
 
+## Block statement
 
-**How FunC resolves function calls**
-- If a function is called with `.` (e.g., `x.foo()`), the compiler looks for a `.foo` definition.
-- If a function is called with `~` (e.g., `x~foo()`), the compiler looks for a `~foo` definition.
-- If neither `.foo` nor `~foo` is defined, the compiler falls back to the regular `foo` definition.
+A block statement is used to group zero or more statements.
+The block is delimited by a pair of curly braces `{ ... }`.
+A block statement also defines a scope, in which variables defined in the block are accessible only in the block or in nested blocks.
 
-
-
-### Operators
-Note that all the unary and binary operators are currently integer operators. Logical operators are bitwise integer operators (cf. [absence of boolean type](/language/func/types#no-boolean-type)).
-
-
-#### Unary operators
-
-FunC supports two unary operators:
-- `~` is bitwise not (priority 75)
-- `-` is integer negation (priority 20)
-
-These operators must be separated from the arguments:
-- `- x` - Negates x.
-- `-x` - Interpreted as a single identifier, not an operation.
-
-#### Binary operators
-
-With priority 30 (left-associative):
-
-- `*` is integer multiplication
-- `/` is integer division (floor)
-- `~/` is integer division (round)
-- `^/` is integer division (ceil)
-- `%` is integer reduction by modulo (floor)
-- `~%` is integer reduction by modulo (round)
-- `^%` is integer reduction by modulo (ceil)
-- `/%` returns the quotient and the remainder
-- `&` is bitwise AND
-
-With priority 20 (left-associative):
-- `+` is integer addition
-- `-` is integer subtraction
-- `|` is bitwise OR
-- `^` is bitwise XOR
-
-With priority 17 (left-associative):
-- `<<` is bitwise left shift
-- `>>` is bitwise right shift
-- `~>>` is bitwise right shift (round)
-- `^>>` is bitwise right shift (ceil)
-
-With priority 15 (left-associative):
-- `==` is integer equality check
-- `!=` is integer inequality check
-- `<` is integer comparison
-- `<=` is integer comparison
-- `>` is integer comparison
-- `>=` is integer comparison
-- `<=>` is integer comparison (returns -1, 0 or 1)
-
-They also should be separated from the argument:
-- `x + y` -  Proper spacing between operands.
-- `x+y` - Interpreted as a single identifier, not an operation.
-
-#### Conditional operator
-
-FunC supports the standard conditional (ternary) operator with the following syntax:
-```func
-<condition> ? <consequence> : <alternative>
-```
 For example:
+
 ```func
-x > 0 ? x * fac(x - 1) : 1;
+int x = 1;
+int y = 2;
+{ ;; x and y are accessible in this block.
+  int z = x + y;
+  {
+    ;; x, y, and z are accessible in this block.
+    int w = z;    ;; The block declares w, 
+                  ;; which is only accessible in this block.
+  }
+  ;; w is no longer accessible here.
+  ;; x, y, and z are still accessible here.
+}
+;; z is no longer accessible here, but x and y are.
 ```
-Priority 13.
 
-#### Assignments
-Priority 10.
+## Conditional statements
 
-Supports simple assignment `=` and compound assignment operators: `+=`, `-=`, `*=`, `/=`, `~/=`, `^/=`, `%=`, `~%=`, `^%=`, `<<=`, `>>=`, `~>>=`, `^>>=`, `&=`, `|=`, `^=`.
+These statements control the flow of the code based on a condition.
 
+### `if...else` statement
 
+When executing an `if...else` statement, first, the specified condition is evaluated.
+If the condition evaluates to an integer different from `0` (see [absence of boolean type](./types#no-boolean-type)), the block after the condition is executed.
+Otherwise, if the condition evaluates to `0`, the optional `else` block is executed. If the `else` block is missing, nothing happens, and execution continues further.
+
+Examples:
+
+```func
+if (1 < 10) {   ;; The condition evaluates to -1, so the block executes
+  do_something();
+}
+```
+
+```func
+if (11 < 10) {   ;; The condition evaluates to 0, so the block does not execute
+  do_something();
+} 
+;; No else is provided. So, execution continues here, after the block.
+```
+
+```func
+if (11 < 10) {   ;; The condition evaluates to 0, so the block does not execute
+  do_something();
+} else {         ;; else is provided. So, the else block executes.
+  handle_else();
+} 
+```
+
+Curly brackets `{}` are required in each block of an `if...else` statement.
+For example, the following code will not compile:
+
+```func
+if (1 < 10) {
+  do_something();
+} else if (2 > 1) {   ;; else block must have curly brackets
+  do_something2();
+}
+```
+
+because the `else` block must have curly brackets:
+
+```func
+if (1 < 10) {
+  do_something();
+} else {    ;; else block now has curly brackets
+  if (2 > 1) { 
+    do_something2();
+  }
+}
+```
+
+The above example can be written in a simpler form by using the `elseif` keyword, to avoid the need to write
+several nested curly brackets in the `else` case:
+
+```func
+if (1 < 10) {
+  do_something();
+} elseif (2 > 1) { 
+  do_something2();
+}
+```
+
+In general, the `elseif` keyword is useful for stating several alternative cases:
+
+```func
+if (cond) {
+  do_1();
+} elseif (cond2) {
+  do_2();
+} elseif (cond23) {
+  do_3();
+} else {
+  do_4();
+}
+```
+
+The alternative cases can also include the `elseifnot` keyword, which allows the inclusion of [`ifnot` statements](#ifnot%E2%80%A6else-statement) in the alternatives:
+
+```func
+if (cond) {
+  do_1();
+} elseif (cond2) {  ;; if in else case
+  do_2();
+} elseifnot (cond23) {  ;; ifnot in else case
+  do_3();
+} else {
+  do_4();
+}
+```
+
+### `ifnot...else` statement
+
+The `ifnot...else` statement is equivalent to the [`if...else` statement](#if%E2%80%A6else-statement) but with the condition negated using the [bitwise `~` operator](./operators#bitwise-not%2C).
+
+More specifically:
+
+```func
+ifnot (cond) {
+  do_something();
+} else {
+  handle_else();
+}
+```
+
+is equivalent to:
+
+```func
+if (~ cond) {  ;; Standard if..else, with condition negated using ~
+  do_something();
+} else {
+  handle_else();
+}
+```
+
+In other words, if the condition in the `ifnot` evaluates to `0` (see [absence of boolean type](./types#no-boolean-type)), the block after the condition is executed.
+Otherwise, if the condition evaluates to an integer different from `0`, the optional `else` block is executed.
+If the `else` block is missing, nothing happens, and execution continues further.
+
+Examples:
+
+```func
+ifnot (1 > 10) {   ;; The condition evaluates to 0, the block executes
+  do_something();
+}
+```
+
+```func
+ifnot (11 > 10) {   ;; The condition evaluates to -1, the block does not execute
+  do_something();
+} 
+;; No else is provided. Execution continues here, after the block.
+```
+
+```func
+ifnot (11 > 10) {   ;; The condition evaluates to -1, the block does not execute
+  do_something();
+} else {         ;; else is provided. The else block executes.
+  handle_else();
+} 
+```
+
+Similarly to the `if...else`, it is possible to use the keyword `elseifnot` to add several alternative cases:
+
+```func
+ifnot (cond) {
+  do_1();
+} elseifnot (cond2) {
+  do_2();
+} elseifnot (cond23) {
+  do_3();
+} else {
+  do_4();
+}
+```
+
+The alternative cases can also include the `elseif` keyword, which allows the inclusion of standard [`if` statements](#if%E2%80%A6else-statement) in the alternatives:
+
+```func
+ifnot (cond) {      ;; ifnot
+  do_1();
+} elseif (cond2) {  ;; if in else case
+  do_2();
+} elseifnot (cond23) {  ;; ifnot in else case
+  do_3();
+} else {
+  do_4();
+}
+```
 
 ## Loops
+
 FunC supports `repeat`, `while`, and `do { ... } until` loops. The `for` loop is not supported.
 
-### Repeat loop
-The `repeat` loop uses the `repeat` keyword followed by an `int`  expression. It executes the code a specified number of times.
+### `repeat` loop
 
-**Examples:**
+The `repeat` loop executes a block of code a specified number of times.
+The number of repetitions should be given as a positive 32-bit integer in the inclusive range from
+`1` to `2^31 - 1` (i.e., `2,147,483,647`). If the value is greater, an error with [exit code 5](/tvm/exit-codes#5%3A-integer-out-of-expected-range), `Integer out of expected range`, will be thrown.
+
 ```func
 int x = 1;
-repeat(10) { ;;Repeats the block 10 times
-  x *= 2;
+repeat(10) { ;; Repeats the block 10 times.
+  x *= 2;    ;; Each iteration multiplies x by 2.
 }
-;; x = 1024
-```
-```func
-int x = 1, y = 10;
-repeat(y + 6) { ;;Repeats the block 16 times
-  x *= 2;
-}
-;; x = 65536
+;; x has value 1024
 ```
 
-If the repetition count is negative, the loop does not execute:
 ```func
 int x = 1;
-repeat(-1) {
-  x *= 2;
+int y = 10;
+repeat(y + 6) {  ;; Repeats the block 16 times.
+  x *= 2;        ;; Each iteration multiplies x by 2.
 }
-;; x = 1
+;; x has value 65536
 ```
 
-A range check exception is thrown if the repetition count is less than `-2³¹` or greater than `2³¹ - 1`.
-
-### While loop
-
-The `while` loop follows standard syntax:
+If the specified number of repetitions is equal to `0` or any negative number in the inclusive range from `-2^256` to `-1`, it is ignored,
+and the code block is not executed at all.
 
 ```func
-int x = 2;
-while (x < 100) {
-  x = x * x;
+int x = 1;
+repeat(-1) {  ;; Block does not execute.
+  x *= 2;
 }
-;; x = 256
+;; x has value 1
 ```
-Note that the truth value of condition `x < 100` is of type `int` (cf. [absence of boolean type](/language/func/types#no-boolean-type)).
 
+### `while` loop
 
-### Until loop
+The `while` loop continues executing the block of code as long as the given condition evaluates to an integer different from `0`.
+See [absence of boolean type](./types#no-boolean-type).
 
-The `do { ... } until` loop has the following syntax:
+```func
+int x = 5; 
+while (x < 10) {  ;; Executes the block 5 times.
+                  ;; Each iteration increases x by 1.
+                  ;; The loop stops when x becomes 10.
+  x += 1;
+}
+;; x has value 10
+```
+
+### `do...until` loop
+
+The `do...until` loop is a post-test loop that executes the block of code at least once and then continues to execute it until the
+given condition evaluates to an integer different from `0`. See [absence of boolean type](./types#no-boolean-type).
 
 ```func
 int x = 0;
-do {
+do {      ;; The block always executes at least once
   x += 3;
-} until (x % 17 == 0);
-;; x = 51
+} until (x % 9 == 0);  ;; Executes the block 3 times.
+                       ;; Each iteration increases x by 3.
+                       ;; The loop stops when x becomes divisible by 9.
+;; x has value 9
 ```
 
+## `try...catch` statement
 
+_Available in FunC since v0.4.0_
 
+The `try...catch` statement consists of a `try` block and a `catch` block.
+The code in the `try` block is executed first, and if it fails, all changes made within the `try` block are rolled back,
+and the `catch` block is executed instead. The `catch` block has two arguments, which are local to the `catch` block:
 
-## If statements
+- The exception parameter, which can be of any type. Used to provide extra information about the error.
+- The error code, an integer, which identifies the kind of error.
 
-**Examples**
-
-Standard `if` statement:
-```func
-if (flag) {
-  do_something();
-}
-```
-
-Negated condition, which is equivalent to `if` (`~flag`):
-```func
-
-ifnot (flag) {
-  do_something();
-}
-```
-
-`If-else` statement:
-```func
-if (flag) {
-  do_something();
-} else {
-  do_alternative();
-}
-```
-
-```func
-;; Some specific features
-if (flag1) {
-  do_something1();
-} else {
-  do_alternative4();
-}
-```
-
-Curly brackets `{}` are required for `if` statements. The following code will not compile:
-```func
-if (flag1)
-  do_something();
-```
-
-## Try-catch statements
-*Available in FunC since v0.4.0*
-
-The `try` block executes a section of code.
-If an error occurs, all changes made within the `try` block are completely rolled back, and the `catch` block is executed instead. The `catch` block receives two arguments:
-- `x`: the exception parameter, which can be of any type
-- `n`: the error code, an integer
-
-
-Unlike many other languages, in FunC, all changes are **undone** if an error occurs inside the `try` block. These modifications include updates to local and global variables and changes to storage registers (`c4` for storage, `c5`for action/messages, `c7` for context, etc.).
-Any contract storage updates and outgoing messages are also reverted.
-
-However, certain TVM state parameters are not rolled back, such as:
-- Codepage settings
-- Gas counters
-As a result, all gas consumed within the `try` block is still accounted for, and any operations that modify gas limits (e.g., `accept_message` or `set_gas_limit`) will remain in effect.
-
-**Exception parameter handling**
-
-Since the exception parameter can be of any type, which may vary depending on the exception, FunC cannot determine its type at compile time. This requires the developer to manually cast the exception parameter when necessary, as shown in the type-casting example below.
-
-
-**Examples**
-
-Basic `try-catch` usage:
 ```func
 try {
   do_something();
 } catch (x, n) {
+  ;; x is the exception parameter 
+  ;; n is the error code
   handle_exception();
 }
 ```
 
-Casting the exception parameter:
-```func
-forall X -> int cast_to_int(X x) asm "NOP";
-...
-try {
-  throw_arg(-1, 100);
-} catch (x, n) {
-  x.cast_to_int();
-  ;; x = -1, n = 100
-  return x + 1;
-}
-```
+Unlike many other languages, in FunC, all changes are **undone** if an error occurs inside the `try` block. These modifications include updates to
+local and global variables and changes to [control registers](/ton/whitepapers/tvm#1-3-2-list-of-control-registers)
+(for example, `c4` for storage, `c5`for action/messages, `c7` for context, etc.).
+Any contract storage updates and outgoing messages are also reverted.
 
-Variable reset on exception:
+However, certain [TVM state components](/ton/whitepapers/tvm#1-4-total-state-of-tvm-scccg) are **not** rolled back, such as:
+
+- Codepage settings
+- Gas counters
+
+<Aside
+  type="danger"
+>
+  I am not sure if "Codepage settings" and "gas counters" refer to some [TVM state component](/ton/whitepapers/tvm#1-4-total-state-of-tvm-scccg)
+</Aside>
+
+As a result, all gas consumed within the `try` block is still accounted for, and any modifications carried out by operations
+that change gas limits (e.g., [`accept_message`](./stdlib#accept-message) or [`set_gas_limit`](./stdlib#set-gas-limit)) will remain in effect.
+
+In this example,
+
 ```func
 int x = 0;
 try {
-  x += 1;
+  x += 1;     ;; x now has value 1
   throw(100);
-} catch (_, _) {
+} catch (arg, e) {
+  ;; x is rolled back to value 0.
+  x += 2;
 }
+;; Here, x has value 2.
 ```
 
-In this last example, although `x` is incremented inside the `try` block, the modification is **rolled back** due to the exception, so `x` remains `0`.
+although `x` is incremented to `1` inside the `try` block, the modification is **rolled back** due to the exception produced by the [`throw`](./built-ins#throw) function.
+Hence, `x` has value `0` at the moment the `catch` block starts execution. However, the gas consumed inside the `try` block is **not** rolled back when the `catch`
+block starts execution.
 
-## Block statements
+Here is an example which illustrates how to generate and use the exception parameter:
 
-Block statements are supported as well, creating a new nested scope:
 ```func
-int x = 1;
-builder b = begin_cell();
-{
-  builder x = begin_cell().store_uint(0, 8);
-  b = x;
+int x = 10;
+try {
+  throw_arg(-1, 100);    ;; throw an exception with error code 100 
+                         ;; and exception parameter -1
+} catch (arg, e) {
+  if (e == 100) {        ;; Handle exceptions with error code 100
+     arg.cast_to_int();  ;; Tell the type checker that the 
+                         ;; exception parameter is an integer
+                         ;; arg = -1, e = 100
+     x = arg + 1;
+  }
 }
-x += 1;
+;; x has value 0
 ```
 
-In this example, the inner block introduces a new `builder` variable named `x`, which exists only within that scope.
-The outer `x` remains unchanged and can be used after the block ends.
+In the above example, [`throw_arg(-1, 100)`](./built-ins#throw-arg) produces an exception with error code `100` and exception parameter `-1`.
+However, since the exception parameter can be of any type, which may vary depending on the exception,
+FunC cannot determine its type at compile time in the `catch` block.
+
+This requires the developer to manually cast the exception parameter. In the example, casting of the exception parameter is achieved with the
+[assembler](./functions#assembler-function-body-definition) and [polymorphic](./functions#polymorphism-with-forall)
+function `cast_to_int`, which receives an argument of any type and returns the same argument as an integer by wrapping
+the [`NOP` (no operation) TVM instruction](/tvm/instructions#00-nop):
+
+```func
+forall X -> int cast_to_int(X x) asm "NOP";
+```
