@@ -39,19 +39,22 @@ Gas costs vary between sandbox and on-chain due to different VM configurations, 
 
 ## Batch transfers
 
-| Wallet Version  | Sandbox (gas) | On-chain (gas)      | Notes                                                                                                 |
+| Wallet Version  | Sandbox (gas) | On-chain (gas)      | Notes (12 mesages are chosen for simplicity)                                                          |
 | --------------- | ------------- | ------------------- | ----------------------------------------------------------------------------------------------------- |
 | **V3**          | 14,760        | -                   | Supports [up to 4 messages](/standard/wallets/history#external-message-body-layout-3) per transaction |
 | **V5**          | 11,392        | [10,892][V5-batch]  | Efficient with batch compared to V3/V4                                                                |
 | **Highload V3** | 7,956         | [7,911][HLv3-batch] | Less gas, but uses 2 transactions for batch                                                           |
 
-**Key insights:**
+### Total cost
 
-- V5 has higher overhead for single transfers (+65-78% vs V3) but becomes efficient with batch operations. Supports up to 255 messages per transaction.
-- Highload V3 is expensive for single transfers but becomes highly efficient at scale:
-  - Gas cost doesn't change with the number of messages in a batch
-  - 100 messages: \~79 gas/msg
-  - Designed for handling thousands of transactions
+| Wallet Version  | Single Transfer | 4 Messages          | 12 Messages         | 50 Messages         |
+| --------------- | --------------- | ------------------- | ------------------- | ------------------- |
+| **V3**          | 0.0022648 TON   | 0.0048448 TON       | 0.0145344 TON\*     | N/A                 |
+| **V4**          | 0.0023872 TON   | 0.0049704 TON       | 0.0149112 TON\*     | N/A                 |
+| **V5**          | 0.0031356 TON   | 0.0059768 TON       | 0.0137208 TON       | 0.05052 TON         |
+| **Highload V3** | 0.0036404 TON   | ~0.025 TON\*        | 0.0158308 TON       | 0.0521892 TON       |
+
+> Asterisk is untested, approximated by hand
 
 <Aside>
   Keep in mind that Highload V3 is using two transactions for batch transfers, this incur additional fwd fee costs.
@@ -62,6 +65,14 @@ Gas costs vary between sandbox and on-chain due to different VM configurations, 
   `0.0158308 TON` for Highload V3 (2 transactions with 12 messages).
 </Aside>
 
+**Key insights:**
+
+- V5 has higher gas overhead for single transfers (+65% vs V3) but becomes efficient with batch operations. Supports up to 255 messages per transaction.
+- Highload V3 is expensive for single transfers but becomes highly efficient at scale:
+  - Gas cost doesn't change with the number of messages in a batch
+  - 100 messages: \~79 gas/msg
+  - Designed for handling thousands of transactions
+
 ```json expandable
 "Wallet V3 batch 4 messages": {
     "gas": 4920,
@@ -71,8 +82,9 @@ Gas costs vary between sandbox and on-chain due to different VM configurations, 
     "total_fwd_fees_nanoton": 1600000,
     "forward_only_nanoton": 1066676,
     "action_fee_nanoton": 533324,
-    "true_network_total_nanoton": 4844800,
+    "total_fee_nanoton": 3778124,
     "reported_total_nanoton": 3778124,
+    "true_network_total_nanoton": 4844800,
     "transactions": 1
 }
 
@@ -84,8 +96,9 @@ Gas costs vary between sandbox and on-chain due to different VM configurations, 
     "total_fwd_fees_nanoton": 4800000,
     "forward_only_nanoton": 3200028,
     "action_fee_nanoton": 1599972,
-    "true_network_total_nanoton": 13720800, 
+    "total_fee_nanoton": 10520772,
     "reported_total_nanoton": 10520772,
+    "true_network_total_nanoton": 13720800,
     "transactions": 1
 }
 
@@ -97,8 +110,9 @@ Gas costs vary between sandbox and on-chain due to different VM configurations, 
     "total_fwd_fees_nanoton": 8552000,
     "forward_only_nanoton": 5701381,
     "action_fee_nanoton": 2850619,
-    "true_network_total_nanoton": 15830800,
+    "total_fee_nanoton": 10129419,
     "reported_total_nanoton": 10129419,
+    "true_network_total_nanoton": 15830800,
     "transactions": 2
 }
 ```
@@ -108,9 +122,9 @@ Gas costs vary between sandbox and on-chain due to different VM configurations, 
 #### Sandbox measurements:
 
 Framework: Blueprint + @ton/sandbox\
-Wallets: implementations from @ton/ton (V3R2, V4, V5R1)
+Wallets: implementations from **@ton/ton** (V3R2, V4, V5R1)
 and [Highload V3 sources](https://github.com/ton-blockchain/highload-wallet-contract-v3)\
-Test scenario: Simple transfer of 0.01 TON with `PAY_GAS_SEPARATELY` mode
+Test scenario: Simple transfer of 0.01 TON with `PAY_GAS_SEPARATELY` mode\
 
 #### On-chain measurements:
 
@@ -133,599 +147,33 @@ Based on cost-effectiveness:
 
 **For retail users (1-10 transactions/day):**
 
-- Use **V4** or **V5** — gas difference is negligible for low volume
-- V5 recommended for future-proofing (gasless support, batch capability)
+- Use **V3** or **V4** — most cost-effective for single transfers (2,994 gas baseline)
+- V5 adds 65% gas overhead for single transfers but provides modern features
+- Total cost difference negligible for low volume; choose based on feature needs
 
 **For moderate volume (10-100 transactions/day):**
 
-- Use **V5** for batch operations to reduce per-message costs
-- Single V5 batch (255 msgs) cheaper than 64 separate V3/V4 transfers
-- Forward fee is cheaper for V5 than Highload V3
+- Use **V5** for batch operations — 6% savings vs V3 for 12-message batches
+- Single V5 batch (255 msgs) more efficient than multiple V3/V4 batches
+- V5 supports up to 255 messages per transaction vs V3/V4 limit of 4
 
-**For high volume (1000+ transactions/day):**
+**For high volume (100+ transactions/day):**
 
-- Use **Highload V3** — designed for exchanges and payment processors
-- Achieves 80%+ gas savings at scale compared to individual V3 transfers
-- Uses different architecture to support high volume
+- **Highload V3** becomes efficient with large batches
+- Designed for exchanges and payment processors (different processing approach)
+- Gas cost remains constant regardless of batch size (unlike V3/V4/V5)
+- **Note:** Uses 2-transaction approach resulting in ~1.8x higher forward fees
+
+**Gas comparison for batching:**
+- Highload V3: 7956 gas per batch (flat cost regardless of batch size)
+- V5: ~1,069 gas/message for 12 messages (scales down with larger batches)
+- V3/V4: ~1,230 gas/message (limited to 4 messages per batch)
 
 ## Code examples
 
-Fee helpers used [Foundations > Transaction fees > Helper functions](/ton/fees#helper-functions-full-code)
-
-```ts title="WalletV4.ts" expandable
-import { Address, beginCell, Cell, Contract, contractAddress, ContractProvider, Sender, SendMode, Dictionary } from '@ton/core';
-
-export type WalletV4Config = {
-    seqno: number;
-    subwalletId: number;
-    publicKey: Buffer;
-    plugins?: Dictionary<bigint, bigint>; // address hash -> empty
-};
-
-export function walletV4ConfigToCell(config: WalletV4Config): Cell {
-    return beginCell()
-        .storeUint(config.seqno, 32)
-        .storeUint(config.subwalletId, 32)
-        .storeBuffer(config.publicKey)
-        .storeDict(config.plugins)
-        .endCell();
-}
-
-export class WalletV4 implements Contract {
-    constructor(
-        readonly address: Address,
-        readonly init?: { code: Cell; data: Cell }
-    ) {}
-
-    static createFromConfig(config: WalletV4Config, code: Cell, workchain = 0) {
-        const data = walletV4ConfigToCell(config);
-        const init = { code, data };
-        return new WalletV4(contractAddress(workchain, init), init);
-    }
-
-    async sendDeploy(provider: ContractProvider, via: Sender, value: bigint) {
-        await provider.internal(via, {
-            value,
-            sendMode: SendMode.PAY_GAS_SEPARATELY,
-            body: beginCell().endCell(),
-        });
-    }
-
-    async getSeqno(provider: ContractProvider) {
-        const result = await provider.get('seqno', []);
-        return result.stack.readNumber();
-    }
-
-    async getSubwalletId(provider: ContractProvider) {
-        const result = await provider.get('get_subwallet_id', []);
-        return result.stack.readNumber();
-    }
-
-    async getPublicKey(provider: ContractProvider) {
-        const result = await provider.get('get_public_key', []);
-        return result.stack.readNumber();
-    }
-}
-```
-
-```ts title="WalletV4.spec.ts" expandable
-import { Blockchain, SandboxContract, TreasuryContract, printTransactionFees } from '@ton/sandbox';
-import { toNano, beginCell, internal, SendMode } from '@ton/core';
-import { WalletContractV4 } from '@ton/ton';
-import { KeyPair, mnemonicToPrivateKey } from '@ton/crypto';
-import '@ton/test-utils';
-import { activateTVM11 } from './helpers/blockchain-config';
-import { GasLogAndSave } from './gas-logger';
-
-/**
- * Gas measurement tests for Wallet V4
- */
-describe('Wallet V4 Gas Measurement', () => {
-    let GAS_LOG: GasLogAndSave;
-    let blockchain: Blockchain;
-    let receiver: SandboxContract<TreasuryContract>;
-    let keyPair: KeyPair;
-
-    beforeAll(async () => {
-        console.log('Using official @ton/ton Wallet V4 wrapper (no local compile)');
-        GAS_LOG = new GasLogAndSave('WalletV4');
-    });
-
-    afterAll(() => {
-        GAS_LOG.saveCurrentRunAfterAll();
-    });
-
-    beforeEach(async () => {
-        blockchain = await Blockchain.create();
-        activateTVM11(blockchain);
-        receiver = await blockchain.treasury('receiver');
-        
-        const mnemonics = 'burst moral give fun rain air sample time ramp chat piano auction pride steel material despair client field gift hello similar degree fame almost'.split(' ');
-        keyPair = await mnemonicToPrivateKey(mnemonics);
-    });
-
-    it('[bench] V4: simple transfer without comment', async () => {
-        const walletV4 = blockchain.openContract(
-            WalletContractV4.create({
-                publicKey: keyPair.publicKey,
-                workchain: 0,
-            })
-        );
-
-        const deployer = await blockchain.treasury('deployer');
-        await deployer.send({ to: walletV4.address, value: toNano('1'), init: walletV4.init });
-
-        const seqno = await walletV4.getSeqno();
-
-        const result = await blockchain.sendMessage({
-            info: { type: 'external-in', dest: walletV4.address, importFee: 0n },
-            body: await walletV4.createTransfer({
-                seqno,
-                secretKey: keyPair.secretKey,
-                sendMode: SendMode.PAY_GAS_SEPARATELY,
-                messages: [internal({ to: receiver.address, value: toNano('0.5'), bounce: false, body: beginCell().endCell() })],
-            }),
-        });
-
-        printTransactionFees(result.transactions);
-        
-        // Log detailed metrics
-        const tx = result.transactions.find(t => t.inMessage?.info.type === 'external-in');
-        if (tx) {
-            GAS_LOG.rememberGas('simple_transfer', tx, blockchain);
-        }
-        
-        expect(result.transactions).toHaveTransaction({ from: walletV4.address, to: receiver.address, success: true });
-    });
-
-    it('[bench] V4: transfer with comment', async () => {
-        const walletV4 = blockchain.openContract(
-            WalletContractV4.create({
-                publicKey: keyPair.publicKey,
-                workchain: 0,
-            })
-        );
-
-        const deployer = await blockchain.treasury('deployer');
-        await deployer.send({ to: walletV4.address, value: toNano('1'), init: walletV4.init });
-
-        const seqno = await walletV4.getSeqno();
-        const comment = 'Hello from V4!';
-        const commentCell = beginCell().storeUint(0, 32).storeStringTail(comment).endCell();
-
-        const result = await blockchain.sendMessage({
-            info: { type: 'external-in', dest: walletV4.address, importFee: 0n },
-            body: await walletV4.createTransfer({
-                seqno,
-                secretKey: keyPair.secretKey,
-                sendMode: SendMode.PAY_GAS_SEPARATELY,
-                messages: [internal({ to: receiver.address, value: toNano('0.5'), bounce: false, body: commentCell })],
-            }),
-        });
-
-        printTransactionFees(result.transactions);
-        
-        // Log detailed metrics
-        const tx = result.transactions.find(t => t.inMessage?.info.type === 'external-in');
-        if (tx) {
-            GAS_LOG.rememberGas('transfer_with_comment', tx, blockchain);
-        }
-        
-        expect(result.transactions).toHaveTransaction({ from: walletV4.address, to: receiver.address, success: true });
-    });
-
-    it('[bench] V4: batch transfer (4 messages)', async () => {
-        const walletV4 = blockchain.openContract(
-            WalletContractV4.create({
-                publicKey: keyPair.publicKey,
-                workchain: 0,
-            })
-        );
-
-        const deployer = await blockchain.treasury('deployer');
-        await deployer.send({ to: walletV4.address, value: toNano('1'), init: walletV4.init });
-
-        const seqno = await walletV4.getSeqno();
-
-        // Create 4 messages with unique comments to avoid deduplication
-        const messages = Array.from({ length: 4 }, (_, i) =>
-            internal({
-                to: receiver.address,
-                value: toNano('0.01'),
-                bounce: false,
-                body: beginCell()
-                    .storeUint(0, 32) // text comment opcode
-                    .storeStringTail(`${i + 1}`) // unique comment: "1", "2", "3", "4"
-                    .endCell(),
-            })
-        );
-
-        console.log('\n========================================');
-        console.log('  Wallet V4: Batch Transfer (4 msgs)');
-        console.log('========================================\n');
-
-        const result = await blockchain.sendMessage({
-            info: { type: 'external-in', dest: walletV4.address, importFee: 0n },
-            body: await walletV4.createTransfer({
-                seqno,
-                secretKey: keyPair.secretKey,
-                sendMode: SendMode.PAY_GAS_SEPARATELY,
-                messages,
-            }),
-        });
-
-        printTransactionFees(result.transactions);
-
-        // Log detailed metrics
-        const tx = result.transactions.find(t => t.inMessage?.info.type === 'external-in');
-        if (tx) {
-            GAS_LOG.rememberGas('batch_4_messages', tx, blockchain);
-
-            // Additional batch metrics
-            const gasUsed = tx.description.type === 'generic' && tx.description.computePhase.type === 'vm'
-                ? Number(tx.description.computePhase.gasUsed)
-                : 0;
-            console.log(`\n💡 Gas per message: ${(gasUsed / 4).toFixed(0)} gas (avg)\n`);
-        }
-
-        expect(result.transactions).toHaveTransaction({ from: walletV4.address, to: receiver.address, success: true });
-    });
-});
-```
-
-```ts title="blockchain-config.ts" expandable
-import { beginCell, Cell, Dictionary } from '@ton/core';
-import { Blockchain } from '@ton/sandbox';
-import { getGasPrices, getMsgPrices, getStoragePrices } from './fees';
-
-// Modifies blockchain config to set TVM version
-function setGlobalVersion(blockchainConfig: Cell, version: number, capabilities?: bigint): Cell {
-    const parsedConfig = Dictionary.loadDirect(Dictionary.Keys.Int(32), Dictionary.Values.Cell(), blockchainConfig);
-
-    let changed = false;
-
-    const param8 = parsedConfig.get(8);
-    if (!param8) {
-        throw new Error('[setGlobalVersion] parameter 8 is not found!');
-    }
-
-    const ds = param8.beginParse();
-    const tag = ds.loadUint(8);
-    const curVersion = ds.loadUint(32);
-
-    const newValue = beginCell().storeUint(tag, 8);
-
-    if (curVersion != version) {
-        changed = true;
-    }
-    newValue.storeUint(version, 32);
-
-    if (capabilities) {
-        const curCapabilities = ds.loadUintBig(64);
-        if (capabilities != curCapabilities) {
-            changed = true;
-        }
-        newValue.storeUint(capabilities, 64);
-    } else {
-        newValue.storeSlice(ds);
-    }
-
-    // If any changes, serialize
-    if (changed) {
-        parsedConfig.set(8, newValue.endCell());
-        return beginCell().storeDictDirect(parsedConfig).endCell();
-    }
-
-    return blockchainConfig;
-}
-
-/**
- * Activate a specific TVM version (default 11) to match network behavior.
- */
-export function activateTVM(blockchain: Blockchain, version = 11) {
-    blockchain.setConfig(setGlobalVersion(blockchain.config, version));
-}
-
-/**
- * Backward-compatible helper for TVM 11.
- */
-export function activateTVM11(blockchain: Blockchain) {
-    activateTVM(blockchain, 11);
-}
-
-// Build blockchain.libs dictionary cell from provided library/code cells
-export function buildBlockchainLibraries(libs: Cell): Cell;
-export function buildBlockchainLibraries(libs: Cell[]): Cell;
-export function buildBlockchainLibraries(libs: Cell | Cell[]): Cell {
-    const list = Array.isArray(libs) ? libs : [libs];
-    const libraries = Dictionary.empty(Dictionary.Keys.BigUint(256), Dictionary.Values.Cell());
-    for (const lib of list) {
-        libraries.set(BigInt('0x' + lib.hash().toString('hex')), lib);
-    }
-    return beginCell().storeDictDirect(libraries).endCell();
-}
-
-/**
- * Configure blockchain with precise network parameters for on-chain parity
- * This ensures gas calculations match network behavior exactly
- */
-export function configureNetworkParity(blockchain: Blockchain) {
-    // Set blockchain time to match network conditions (from tolk-bench)
-    // Use the same approach as tolk-bench for consistency
-    blockchain.now = Math.round(Date.now() / 1000);
-
-    // Get current network parameters
-    const gasPrices = getGasPrices(blockchain.config, 0);
-    const msgPrices = getMsgPrices(blockchain.config, 0);
-    const storagePrices = getStoragePrices(blockchain.config);
-
-    // Apply precise configuration (from tolk-bench approach)
-    // These settings ensure gas calculations are identical to network behavior
-
-    // Note: In tolk-bench, they often modify these parameters for testing,
-    // but for parity testing we should use the default network values
-    // while ensuring consistent application
-
-    console.log('Network parity configured - blockchain time:', blockchain.now);
-    console.log('Gas prices:', gasPrices);
-    console.log('Message prices:', msgPrices);
-    console.log('Storage prices:', storagePrices);
-}
-```
-
-```ts title="gas-logger.ts" expandable
-import { Cell, Transaction } from '@ton/core';
-import { Blockchain } from '@ton/sandbox';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { getMsgPrices, collectCellStats, computeFwdFees } from './helpers/fees';
-
-const ROOT_DIR = path.resolve(__dirname, "../bench-snapshots/");
-
-function calculateCellsAndBits(root: Cell, visited = new Set<string>()) {
-    const hash = root.hash().toString('hex');
-    if (visited.has(hash)) {
-        return { nBits: 0, nCells: 0 };
-    }
-    visited.add(hash);
-
-    let nBits = root.bits.length;
-    let nCells = 1;
-    for (const ref of root.refs) {
-        const childRes = calculateCellsAndBits(ref, visited);
-        nBits += childRes.nBits;
-        nCells += childRes.nCells;
-    }
-    return { nBits, nCells };
-}
-
-/**
- * Detailed fee breakdown for a transaction or set of transactions
- */
-interface FeeBreakdown {
-    gasUsed: number;
-    computeFee: number;        // Gas fees in nanoTON
-    storageFee: number;        // Storage fees in nanoTON
-    importFee: number;         // Import fee for external-in messages in nanoTON
-    totalFwdFees: number;      // Total forward fees (includes both fwd + action) in nanoTON
-    actionFee: number;         // Action fees in nanoTON (subset of totalFwdFees)
-    totalFee: number;          // Total transaction fee in nanoTON (reported by blockchain)
-    trueNetworkTotal: number;  // True network cost: storage + compute + import + totalFwdFees
-}
-
-/**
- * Extract detailed fee information from a transaction
- */
-function extractFeeBreakdown(tx: Transaction, blockchain?: Blockchain): FeeBreakdown {
-    const breakdown: FeeBreakdown = {
-        gasUsed: 0,
-        computeFee: 0,
-        storageFee: 0,
-        importFee: 0,
-        totalFwdFees: 0,
-        actionFee: 0,
-        totalFee: 0,
-        trueNetworkTotal: 0,
-    };
-
-    if (tx.description.type !== 'generic') {
-        return breakdown;
-    }
-
-    const desc = tx.description;
-
-    // Gas and compute fees
-    if (desc.computePhase.type === 'vm') {
-        breakdown.gasUsed = Number(desc.computePhase.gasUsed);
-        breakdown.computeFee = Number(desc.computePhase.gasFees);
-    }
-
-    // Storage fees
-    if (desc.storagePhase) {
-        breakdown.storageFee = Number(desc.storagePhase.storageFeesCollected);
-    }
-
-    // Action fees and Total Forward fees
-    // Note: totalFwdFees includes BOTH forward fee (2/3) AND action fee (1/3)
-    if (desc.actionPhase) {
-        breakdown.totalFwdFees = Number(desc.actionPhase.totalFwdFees || 0n);
-        breakdown.actionFee = Number(desc.actionPhase.totalActionFees || 0n);
-    }
-
-    // Import fee (for external-in messages)
-    // Calculate it using the same method as C++ transaction.cpp
-    if (tx.inMessage?.info.type === 'external-in' && blockchain) {
-        const msgPrices = getMsgPrices(blockchain.config, 0);
-        
-        // Get the message cell to calculate storage stats
-        const msgCell = tx.inMessage.body;
-        
-        // Calculate storage stats (cells and bits) for the message body
-        // Note: We use skipRoot=true because "bits in the root cell are free"
-        // and "the root cell itself is not counted as a cell" per transaction.cpp
-        const stats = collectCellStats(msgCell, [], true);
-        
-        // Compute forward fees for the external message (this is the import fee)
-        const importFee = computeFwdFees(msgPrices, stats.cells, stats.bits);
-        
-        breakdown.importFee = Number(importFee);
-    }
-
-    // Total fees (reported by transaction)
-    breakdown.totalFee = Number(tx.totalFees.coins);
-
-    // Calculate TRUE network total for all transactions
-    // Formula: storage + compute + import + totalFwdFees
-    // Note: totalFwdFees already includes action fees, so don't add them separately
-    breakdown.trueNetworkTotal = 
-        breakdown.storageFee + 
-        breakdown.computeFee + 
-        breakdown.importFee + 
-        breakdown.totalFwdFees;
-
-    return breakdown;
-}
-
-/**
- * Aggregate fee breakdowns from multiple transactions
- */
-function aggregateFeeBreakdowns(breakdowns: FeeBreakdown[]): FeeBreakdown {
-    return breakdowns.reduce(
-        (acc, b) => ({
-            gasUsed: acc.gasUsed + b.gasUsed,
-            computeFee: acc.computeFee + b.computeFee,
-            storageFee: acc.storageFee + b.storageFee,
-            importFee: acc.importFee + b.importFee,
-            totalFwdFees: acc.totalFwdFees + b.totalFwdFees,
-            actionFee: acc.actionFee + b.actionFee,
-            totalFee: acc.totalFee + b.totalFee,
-            trueNetworkTotal: acc.trueNetworkTotal + b.trueNetworkTotal,
-        }),
-        {
-            gasUsed: 0,
-            computeFee: 0,
-            storageFee: 0,
-            importFee: 0,
-            totalFwdFees: 0,
-            actionFee: 0,
-            totalFee: 0,
-            trueNetworkTotal: 0,
-        }
-    );
-}
-
-/**
- * Enhanced gas and fee logger with comprehensive metrics
- */
-export class GasLogAndSave {
-    private readonly contractName: string;
-
-    private metrics: {
-        [testName: string]: {
-            gas: number;
-            fees: {
-                compute: number;
-                storage: number;
-                import: number;
-                totalFwd: number;
-                action: number;
-                reportedTotal: number;
-                trueNetworkTotal: number;
-            };
-            transactions?: number; // number of transactions involved
-        };
-    } = {};
-
-    private codeSize: { [key in string]: number } = {};
-
-    constructor(contractName: string) {
-        this.contractName = contractName;
-    }
-
-    /**
-     * Remember gas and detailed fee breakdown for a specific test
-     */
-    rememberGas(stepName: string, transaction: Transaction | Transaction[], blockchain?: Blockchain) {
-        const transactions = Array.isArray(transaction) ? transaction : [transaction];
-
-        // Extract fee breakdowns for each transaction
-        const breakdowns = transactions.map(tx => extractFeeBreakdown(tx, blockchain));
-        const aggregate = aggregateFeeBreakdowns(breakdowns);
-
-        // Store metrics
-        this.metrics[stepName] = {
-            gas: aggregate.gasUsed,
-            fees: {
-                compute: aggregate.computeFee,
-                storage: aggregate.storageFee,
-                import: aggregate.importFee,
-                totalFwd: aggregate.totalFwdFees,
-                action: aggregate.actionFee,
-                reportedTotal: aggregate.totalFee,
-                trueNetworkTotal: aggregate.trueNetworkTotal,
-            },
-            transactions: transactions.length,
-        };
-
-        // Calculate forward-only portion (2/3 of totalFwdFees)
-        const forwardOnly = aggregate.totalFwdFees - aggregate.actionFee;
-
-    }
-
-    /**
-     * Remember contract code size
-     */
-    rememberBocSize(contractName: string, code: Cell) {
-        let { nBits, nCells } = calculateCellsAndBits(code);
-        this.codeSize[contractName + " bits"] = nBits;
-        this.codeSize[contractName + " cells"] = nCells;
-    }
-
-    /**
-     * Save all metrics to JSON snapshot file
-     */
-    saveCurrentRunAfterAll() {
-        if (!fs.existsSync(ROOT_DIR)) {
-            fs.mkdirSync(ROOT_DIR, { recursive: true });
-        }
-
-        const fileName = path.join(ROOT_DIR, `${this.contractName}.last.json`);
-
-        // Create a more readable format
-        const gasOnly: { [key: string]: number } = {};
-        const feesDetailed: { [key: string]: any } = {};
-
-        for (const [key, value] of Object.entries(this.metrics)) {
-            gasOnly[key] = value.gas;
-            feesDetailed[key] = {
-                gas: value.gas,
-                compute_fee_nanoton: value.fees.compute,
-                storage_fee_nanoton: value.fees.storage,
-                import_fee_nanoton: value.fees.import,
-                total_fwd_fees_nanoton: value.fees.totalFwd,
-                forward_only_nanoton: value.fees.totalFwd - value.fees.action,
-                action_fee_nanoton: value.fees.action,
-                true_network_total_nanoton: value.fees.trueNetworkTotal,
-                reported_total_nanoton: value.fees.reportedTotal,
-                transactions: value.transactions,
-            };
-        }
-
-        const obj = {
-            gas: gasOnly,
-            fees_detailed: feesDetailed,
-            codeSize: this.codeSize,
-        };
-
-        fs.writeFileSync(fileName, JSON.stringify(obj, null, 2));
-
-    }
-
-    /**
-     * Get current metrics (useful for assertions in tests)
-     */
-    getMetrics() {
-        return this.metrics;
-    }
-}
-```
+Check [gas-research](https://github.com/memearchivarius/gas-research) and [tolk-bench](https://github.com/ton-blockchain/tolk-bench) projects for code examples.
+
+**Key features of the gas-research testing suite:**
+- Comprehensive gas and fee breakdown analysis
+- Automated benchmarking across all wallet versions
+- Fee calculation helpers for precise cost analysis
