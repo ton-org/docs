@@ -106,15 +106,15 @@ of the root nodes of the bag of cells.
 
 There are also two outdated BoC serialization schemes in the same file.
 
-## An example of manual serialization
+## An example of a manual serialization
 
 Let's consider the following example of a tree of cells:
 
 ```json
 01
-  0AAAAA
-  FE
-    0AAAAA
+  0aaaaa
+  fe
+    0aaaaa
 ```
 
 So, there is a 2-bit root cell that references two other cells:
@@ -126,85 +126,81 @@ After identifying of unique cells, we have the following:
 
 ```json
 01
-0AAAAA
-FE
+0aaaaa
+fe
 ```
 
 Next, the unique cells are arranged in a topological order:
 
 ```json
 01     -> index 0 (root cell)
-FE     -> index 1
-0AAAAA -> index 2
+fe     -> index 1
+0aaaaa -> index 2
 ```
 
-Now, let’s calculate the descriptor bytes `b1` and `b2` for each of the three unique cells according to the [cells serialization page](/tvm/serialization/cells#standard-cell-representation-and-its-hash). 
+Now, let’s calculate the descriptor bytes `b1` and `b2` for each of the three unique cells. 
 
 So, we obtain:
 
 ```json
 01     -> 0201
-FE     -> 0102
-0AAAAA -> 0006
+fe     -> 0102
+0aaaaa -> 0006
 ```
 
 Then the data bits are serialized as $\lceil\frac{b}{8}\rceil$ bytes. Remember, if `b` is not a multiple of eight, a binary `1` 
 and up to six binary `0s` are appended to the data bits. After that, the data is split into $\lceil\frac{b}{8}\rceil$ 8-bit groups.
 ```json
 01     -> 01100000 = 0x60
-FE     -> do not change (full groups)
-0AAAAA -> do not change (full groups)
+fe     -> do not change (full groups)
+0aaaaa -> do not change (full groups)
 ```
 
 Next come the depths for the refs in two bytes:
 ```json
 01     -> 0002
-FE     -> 0001
-0AAAAA -> 0000
+fe     -> 0001
+0aaaaa -> 0000
 ```
 
 Now specify which cells each one references:
 ```json
 0: 01     -> 0201: refers to 2 cells with such indexes
-1: FE     -> 02: refers to cells with index 2
-2: 0AAAAA -> no refs
+1: fe     -> 02: refers to cells with index 2
+2: 0aaaaa -> no refs
 ```
-0201600002
 
 For each cell we have its hexadecimal representation:
 ```json
 01     -> 02016000020201
-FE     -> 0102FE000102
-0AAAAA -> 00060AAAAA0000
+fe     -> 0102fe000102
+0aaaaa -> 00060aaaaa0000
 ```
 
-Finally, we concatenate all parts into a single-byte array:
-`020160000202010102FE00010200060AAAAA0000`.
+Finally, we concatenate all parts into a single hexadecimal array:
+`0x020160000202010102fe00010200060aaaaa0000`.
 
 Now that we've serialized our cells into a flat 20-byte array, it's time to pack them into a complete BoC format.
 
 ```
-0xb5ee9c72                   -> id tl-b of the BoC structure
-0b0                          -> does not have indexes
-0b0                          -> does not have CRC32C
-0b0                          -> does not cache bits
-0b00                         -> flags are 0
-0b001                        -> the number of bytes needed to store the number of cells is 1
-0b00000000                   -> we does not inclide indexes, so the off_set is 0
-0b00000011                   -> the number of cells is 3
-0b00000001                   -> the number of roots is 1
-0b00000000                   -> the number of absent cells is 0
-_                            -> tot_cells_size is not serialized since off_set is 0  
-0b00000000                   -> the root list; we have one root with number 0 after the topological sort
-_                            -> the index is not serialized since corresponding flag is 0
-0e                           -> size of serialized cells, 1 byte (size defined above), equal to 14
-00                           -> root cell index, size 1 (determined by 3 size:(## 3) bits from header),
-                                 always 0
-0201c002010101ff0200060aaaaa -> serialized cells
+0xb5ee9c72                                 -> Tl-B id of the BoC structure
+0b1                                        -> has indexes
+0b0                                        -> does not have CRC32C
+0b0                                        -> does not have cache bits
+0b00                                       -> flags are 0
+0b001                                      -> the number of bytes needed to store the number of cells is 1
+0b00000001                                 -> the number of bytes used to represent offset of a serialization is 1
+0b00000011                                 -> the number of cells is 3
+0b00000001                                 -> the number of roots is 1
+0b00000000                                 -> the number of absent cells is 0
+0b00010100                                 -> tot_cells_size is 20 bytes
+0b00000000                                 -> the root list; we have one root with number 0 after the topological sort
+0b000001110000111000010100                 -> the three 8-bits group of indexes for cells accorging to the topological sort
+0x020160000202010102fe00010200060aaaaa0000 -> the cells data
+_                                          -> CRC32C is not serialized
 ```
 
-We now concatenate the header and the serialized cell content:
-`b5ee9c7201010301000e000201c002010101ff0200060aaaaa`
+By combining everything into a single bit string, we get the result of serialization.
 
 ## SDK from @ton/core
 
