@@ -1,24 +1,29 @@
-## MyTonCtrl collator commands
-
-Collator mode lets a node produce blocks for selected shardchains without running the full validator stack. The commands below help you configure local collators, adjust the validator-console allowlist, and manage collator-specific configuration JSON.
+---
+title: "Collator"
+description: "Collator mode lets a node produce blocks for selected shardchains without running the full validator stack. The commands below help you configure local collators, adjust the validator allowlist, and manage collator-specific configuration JSON."
+---
 
 ## Operational notes
+
 - Collator mode cannot be enabled while validator mode is active (`enable_mode collator` requires `disable_mode validator` first).
 - `setup_collator` relies on validator-console RPCs and the underlying node arguments; ensure `mytoninstaller` utilities are present and the node runs with permissions to edit `/etc/ton/validator-engine.conf`.
-- Shard identifiers follow TON conventions: `workchain` is `-1` for masterchain or `0` for basechain, and `<SHARD_HEX>` must be a 16-character hex prefix (e.g. `2000000000000000`).
-- Keep your validator wallet and ADNL keys backed up. Removing collators will delete console mappings but does not revoke keys created with `CreateNewKey`.
+- Shard identifiers follow TON conventions: `workchain` is `-1` for masterchain or `0` for basechain, and `<SHARD_HEX>` must be a 16-character hex prefix (e.g., `2000000000000000`).
+- Keep your validator wallet and ADNL keys backed up. Removing collators will delete console mappings, but does not revoke keys created with `CreateNewKey`.
 
 ## Collator lifecycle commands
 
 ### `setup_collator`
+
 **Purpose:** Register a local collator for one or more shards and update node arguments accordingly.
 
 **Syntax**
+
 ```mytonctrl
 setup_collator [--force] [--adnl <ADNL_ID>] <WORKCHAIN>:<SHARD_HEX> [<ADDITIONAL_SHARDS>...]
 ```
 
 **Behavior**
+
 - Requires at least one shard identifier in `<WORKCHAIN>:<SHARD_HEX>` format (for example `0:2000000000000000`).
 - Creates a new ADNL key automatically unless you pass an existing one with `--adnl` (value must be base64 as returned by `newkey`).
 - Ensures `--add-shard` entries exist in the validator-engine arguments. When the node already monitors shards and `-M` is enabled, the command verifies coverage. Use `--force` to bypass this safety check if you intentionally widen monitoring.
@@ -26,146 +31,174 @@ setup_collator [--force] [--adnl <ADNL_ID>] <WORKCHAIN>:<SHARD_HEX> [<ADDITIONAL
 - Logs follow-up commands (`add_collator <ADNL> <SHARD>`) that validators should run to accept the collator.
 
 **Example**
+
 ```mytonctrl
 setup_collator 0:2000000000000000 0:4000000000000000
 ```
 
 ### `stop_collator`
+
 **Purpose:** Remove one collator or all local collators from validator-console tracking.
 
 **Syntax**
+
 ```mytonctrl
 stop_collator
 stop_collator <ADNL_HEX> <WORKCHAIN>:<SHARD_HEX>
 ```
 
 **Behavior**
-- Without arguments, prompts for confirmation and then deletes every local collator by iterating over the validator configuration.
+
+- Without arguments: prompts for confirmation, then deletes every local collator by iterating over the validator configuration.
 - With specific arguments, targets a single collator. `<ADNL_HEX>` must be the hex-encoded ADNL ID (as shown by `print_local_collators`).
 - Issues `del-collator` commands to the validator console and reports errors if any removal fails.
 
 **Examples**
+
 ```mytonctrl
 stop_collator
 stop_collator 2F3C7A...B91 0:2000000000000000
 ```
 
 ### `print_local_collators`
+
 **Purpose:** List the collators currently registered on this node.
 
 **Syntax**
+
 ```mytonctrl
 print_local_collators
 ```
 
 **Behavior**
+
 - Reads the validator configuration and prints a table with each collator’s ADNL (hex) and shard identifier.
 - Returns “No collators found” when none are configured.
-
 
 ## Collation allowlist management
 
 ### `add_validator_to_collation_wl`
+
 **Purpose:** Enable and populate the validator allowlist that is allowed to receive collated blocks.
 
 **Syntax**
+
 ```mytonctrl
 add_validator_to_collation_wl <ADNL_HEX> [<ADDITIONAL_ADNL>...]
 ```
 
 **Behavior**
+
 - Ensures the allowlist is active (`collator-whitelist-enable 1`) and then adds each ADNL (hex) via `collator-whitelist-add`.
 - Throws an error if the validator console rejects any entry.
 - Accepts one or more ADNL IDs in a single invocation.
 
 **Example**
+
 ```mytonctrl
 add_validator_to_collation_wl 2F3C7A...B91 6AD1CE...004
 ```
 
 ### `delete_validator_from_collation_wl`
+
 **Purpose:** Remove validators from the allowlist.
 
 **Syntax**
+
 ```mytonctrl
 delete_validator_from_collation_wl <ADNL_HEX> [<ADDITIONAL_ADNL>...]
 ```
 
 **Behavior**
+
 - Calls `collator-whitelist-del` for each provided ADNL (hex) and raises an error if any deletion fails.
 - Does not disable the allowlist itself; use `disable_collation_wl` for that.
 
 **Example**
+
 ```mytonctrl
 delete_validator_from_collation_wl 6AD1CE...004
 ```
 
 ### `disable_collation_wl`
+
 **Purpose:** Turn off the allowlist, allowing any validator to accept blocks.
 
 **Syntax**
+
 ```mytonctrl
 disable_collation_wl
 ```
 
 **Behavior**
+
 - Sends `collator-whitelist-enable 0` to the validator console.
 - Requires no arguments; prints an error if the console command fails.
 
-
 ### `print_collation_whitelist`
+
 **Purpose:** Show the current contents of the collation allowlist as reported by the validator console.
 
 **Syntax**
+
 ```mytonctrl
 print_collation_whitelist
 ```
 
 **Behavior**
-- Runs `collator-whitelist-show` and outputs the raw console response, including whether the allowlist is enabled and the listed ADNL IDs.
 
+- Runs `collator-whitelist-show` and outputs the raw console response, including whether the allowlist is enabled and the listed ADNL IDs.
 
 ## Collator configuration JSON commands
 
 ### `set_collation_config`
+
 **Purpose:** Store the preferred collator options JSON location and apply it to the validator console.
 
 **Syntax**
+
 ```mytonctrl
 set_collation_config <PATH_OR_URL>
 ```
 
 **Behavior**
+
 - Accepts either a local filesystem path or an HTTP(S) URL returning JSON.
 - Fetches and validates the document, saves the location to the MyTonCtrl database, and calls `setcollatoroptionsjson` on the validator console using a temporary file.
 - Reports detailed errors if the file cannot be loaded or the console rejects the update.
 
 **Example**
+
 ```mytonctrl
 set_collation_config https://raw.githubusercontent.com/ton-blockchain/ton-blockchain.github.io/main/default_collator_options.json
 ```
 
 ### `update_collation_config`
+
 **Purpose:** Reapply the stored collator options without changing the source location.
 
 **Syntax**
+
 ```mytonctrl
 update_collation_config
 ```
 
 **Behavior**
+
 - Reads the previously saved location (defaulting to `https://raw.githubusercontent.com/ton-blockchain/ton-blockchain.github.io/main/default_collator_options.json` if none was set).
 - Downloads the JSON again and calls `setcollatoroptionsjson` so changes on the remote source take effect.
 
-
 ### `print_collation_config`
+
 **Purpose:** Display the current collator options location and the validator console’s active configuration.
 
 **Syntax**
+
 ```mytonctrl
 print_collation_config
 ```
 
 **Behavior**
+
 - Prints the remembered location, fetches the live configuration with `getcollatoroptionsjson`, and shows the JSON payload formatted for readability.
 - Useful for verifying whether a recent `set_collation_config` or `update_collation_config` call succeeded.
