@@ -1,0 +1,117 @@
+---
+title: "Coming from Ethereum"
+---
+
+import { Aside } from "/snippets/aside.jsx";
+
+Learn how to develop and build on TON coming from the Ethereum (EVM) ecosystem.
+
+## Execution model
+
+### Asynchronous blockchain
+
+One of the biggest stepping stones to learn TON development is the asynchronous execution model. Messages sent by one contract take time to arrive at another, meaning that the resulting transactions for processing incoming messages will occur after the current transaction terminates.
+
+So, compared to Ethereum, where you can have multiple processed messages and state changes on different contracts in the same atomic transaction, a TON transaction represents a state change only for one account and single message processing. That means that a signed, included-in-block unit is called a "transaction" in both chains; however, having the differences in execution models, it has a different impact.
+
+Here is a table for comparison:
+
+| Action description                                                                             | Ethereum                               | TON                              |
+| :--------------------------------------------------------------------------------------------- | -------------------------------------- | -------------------------------- |
+| Single message processing with state change on one contract                                    | Message call or "internal transaction" | Transaction                      |
+| Number of state changes and messages on different accounts produced from initial contract call | Transaction                            | Chain of transactions or "trace" |
+
+Let's explore a practical example, liquidity withdrawal on DEX.
+
+On Ethereum, it will appear as a single atomic transaction with multiple contract calls inside it. You can see that this transaction has a single hash and is included in one block:
+
+![eth-burn](/resources/images/from-ethereum/burn-tx-eth.png)
+
+The same operation on TON will differ, consisting of a sequence of more than 10 transactions. Each arrow on this image represents a distinct finalized transaction, with its own hash, inclusion block, and all the other properties:
+
+![tvm-burn](/resources/images/from-ethereum/burn-tx-ton.png)
+
+If you want to execute a _huge_ transaction on Ethereum (or any other EVM-based blockchain), you will have certain limitations: [EVM call-depth](https://ethereum.org/developers/docs/evm/#evm-instructions) of 1024 nested calls and [block gas limit](https://ethereum.org/developers/docs/blocks/#block-size). With TON's asynchronous execution model, you can have a trace (chain of transactions) of whatever length you want, as long as you have fees to continue it. For example, [trace that resulted from this message](https://tonviewer.com/transaction/e887503f7dac857be80487e3ed0774db962379d1c153e6df7b9b5313c657ab94) consisted of more than 1.5+ million transactions, lasting more than 4000 blocks until its end!
+
+### On-chain get methods
+
+Another radical difference between the two chains is that TON has get methods, which allow data to be retrieved from the contracts without paying any fees. In TON, you _can't_ synchronously retrieve data from another contract - you can't call a get method from another contract during the transaction.
+
+If you wonder how we can make any DeFi protocol or complicated on-chain system work with these limitations, read an article about the on-chain [Request-Response pattern](/patterns/carry-value).
+
+### Account model
+
+There are two types of accounts in Ethereum: externally owned accounts (EOA in short) and contract accounts. EOAs are human-controlled entities, each represented by a private-public key pair. They are used to sign transactions and each has its own balance; they are commonly called "wallets" by the community.
+
+In TON, there is no such separation; every valid address represents an on-chain account, each with its own state and balance, that could be changed through transactions (read more about accounts [here](/foundations/addresses/overview)). This means that "wallets" in TON are smart contracts that operate under the same rules as any other contract on the blockchain.
+
+The TON wallet smart contract uses regular asymmetric cryptography to control message signing, ensuring that the user experience remains essentially unchanged. You can examine [Wallet Standard](/standard/wallets/comparison) implementation code and how it changed through ecosystem development.
+
+### Limited contract storage
+
+In Ethereum, you can store as much data as you want in a single contract. Unbounded maps and arrays are considered a standard practice, and you will probably see them in most of the contract examples. This is not the case with TON - every smart contract on TON blockchain has a storage size upper limit. That means that you can't implement ERC20-like fungible tokens in the same way as in an EVM chain, by using a single map inside one contract.
+
+[The limit](/foundations/config) is 65536 unique cells per message or contract storage. Each cell is up to 1,023 bits, which sets a hard upper limit.
+
+<Aside
+  type="danger"
+>
+  Every map that is expected to grow more than **1000** values is dangerous! Note that in the TVM map, key access is asymptotically logarithmic, meaning that it will continuously cost you more gas to find keys as the map grows.
+</Aside>
+
+Instead, you should use [sharding](/foundations/shards).
+
+You can read more about TON architecture design choices that have led to such differences [here](/standard/overview).
+
+## Ecosystem
+
+### Tooling
+
+<Aside>
+  This section will primarily focus on Typescript tooling since historically this language has been better adopted and well-established in TON.
+</Aside>
+
+Recommended programming language for smart contract development in TON is [Tolk](/languages/tolk). However, there are other established languages in the ecosystem; you can read more about them [here](/languages/tact).
+
+Here is the ecosystem overview table.
+
+| Use case                              | Popular Ethereum tool | TON counterpart                                                                                              |
+| :------------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Blockchain interaction                | Ethers, Web3.js, Viem | [@ton/ton](https://www.npmjs.com/package/@ton/ton), [Asset-sdk](https://github.com/ton-community/assets-sdk) |
+| Wallet connection protocol            | Walletconnect, Wagmi  | [TonConnect](https://github.com/ton-connect)                                                                 |
+| Dev environment framework / scripting | Hardhat, Truffle      | [Blueprint](https://github.com/ton-org/blueprint)                                                            |
+| Simulation engine                     | Revm & Reth           | [Sandbox](https://github.com/ton-org/sandbox)                                                                |
+
+Another essential library to know about is [@ton/core](https://www.npmjs.com/package/@ton/core). This library handles low-level blockchain primitives (de-)serialization; you will probably need it together with any RPC-client or contract interaction library.
+
+### Services
+
+Most web3 developers also have their favorite set of products and services for easier on-chain development. This table showcases some of the use cases that existing TON services can cover.
+
+| Use case                                | Ethereum service | TON service                                                          |
+| --------------------------------------- | ---------------- | -------------------------------------------------------------------- |
+| User-friendly explorer                  | Etherscan        | [Tonviewer](https://tonviewer.com/), [Tonscan](https://tonscan.org/) |
+| Open-source dev explorer                | Blockscout       | [explorer.toncoin.org](https://explorer.toncoin.org/)                |
+| Debugger                                | Remix Debugger   | [TxTracer](https://txtracer.ton.org/)                                |
+| IDE                                     | Remix IDE        | [Web IDE](https://ide.ton.org/)                                      |
+| Asm playground and compilation explorer | Evm.Codes        | [TxTracer](https://txtracer.ton.org/)                                |
+
+If you are looking for commercial RPC and node providers, check our [Providers overview](/ecosystem/rpc/overview) section.
+
+### Standards
+
+This section showcases a match between some of the Ethereum standards and proposals (ERC and EIP) and their counterpart or similar proposals in TON (TEP).
+
+<Aside>
+  Due to significant differences in execution models, most of the standards in TON differ significantly in semantics and general approach compared to their Ethereum analogs.
+</Aside>
+
+| Description                             | Ethereum standard                       | TON Standard (TEP)                                                 |
+| --------------------------------------- | --------------------------------------- | ------------------------------------------------------------------ |
+| Fungible token standard                 | ERC-20                                  | [Jettons (TEP-0074)](/standard/tokens/jettons/overview)            |
+| Non-fungible token standard             | ERC-721                                 | [NFT standard (TEP-0062)](/standard/tokens/nft/overview)           |
+| Token metadata                          | ERC-4955 (Not exactly, but close match) | [Token Data Standard (TEP-0064)](/standard/tokens/metadata)        |
+| NFT royalty standard                    | EIP-2981                                | [NFT Royalty Standard (TEP-0066)](/standard/tokens/nft/comparison) |
+| DNS-like registry                       | ENS (EIP-137)                           | [DNS Standard (TEP-0081)](/services/dns)                           |
+| Soulbound / account-bound token concept | EIP-4973                                | [SBT Standard (TEP-0085)](/standard/tokens/sbt/overview)           |
+| Wallet connection protocol              | WalletConnect / EIP-1193                | [TonConnect (TEP-0115)](/ecosystem/ton-connect)                    |
