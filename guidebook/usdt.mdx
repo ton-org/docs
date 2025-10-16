@@ -2,6 +2,136 @@
 title: "USDT"
 ---
 
-import { Stub } from '/snippets/stub.jsx';
+import { Aside } from '/snippets/aside.jsx';
 
-<Stub issue="191" />
+USDT (Tether USD) is a stablecoin on TON blockchain that represents US dollars. Each USDT token is designed to be worth $1. This guide will help you understand how to work with USDT on TON.
+
+## What is USDT on TON?
+
+USDT on TON is a jetton (TON's token standard, similar to ERC-20 on Ethereum). Like all jettons, USDT has a **Jetton Master contract** that identifies the token.
+
+<Aside type="warning" title="Verify the Jetton Master address!">
+The authentic USDT Jetton Master address is:
+
+```
+EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs
+```
+
+**Any token with a different Jetton Master address is NOT real USDT.** Always verify this address before accepting or purchasing USDT. Scammers can create fake tokens with similar names.
+</Aside>
+
+You can view the official USDT Jetton Master contract on [TON Viewer](https://tonviewer.com/EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs).
+
+## How jettons work
+
+Unlike TON coins, jettons use a distributed architecture:
+
+- **Jetton Master contract**: The main contract that contains metadata and tracks total supply
+- **Jetton Wallet contracts**: Each user has their own jetton wallet contract that holds their balance
+
+When you "have USDT", you actually have a personal USDT wallet contract associated with your regular TON wallet address.
+
+## How to send USDT
+
+Sending USDT requires you to interact with your personal USDT jetton wallet. Here's how:
+
+### Prerequisites
+
+Before sending USDT, make sure you have:
+
+1. USDT balance in your wallet
+2. Some TON coins (approximately 0.1 TON) to pay for transaction fees. Real commission will be lower than that, excess will be returned.
+3. The recipient's TON wallet address
+
+### Using a wallet app
+
+The easiest way to send USDT is through a wallet app like [Tonkeeper](/ecosystem/wallet-apps/tonkeeper) or other [TON wallet apps](/ecosystem/wallet-apps/overview):
+
+1. Open your wallet app
+2. Go to your USDT balance
+3. Tap "Send" or "Transfer"
+4. Enter the recipient's address
+5. Enter the amount of USDT to send
+6. Optionally add a comment/memo
+7. Confirm and sign the transaction
+
+### Programmatic transfer
+
+If you're building an application, you need to send a special message to your jetton wallet.
+To do this, you need to:
+- [Find your USDT jetton wallet address](/standard/tokens/jettons/how-to-find)
+- [Create the correct transfer message](/standard/tokens/jettons/how-to-transfer)
+- Attach sufficient TON for fees
+
+<Aside type="tip">
+If you want to send suggest users to transfer USDT through your dApp, you can use the [TON Connect](/ecosystem/ton-connect). This library allows you to propose a message to user. The user will decide, whether to send it or not.
+</Aside>
+
+### Important notes about sending programmatically
+
+- **Amount format**: USDT uses 6 decimals. To send 1 USDT, use `1000000` (in elementary units).
+- **Gas fees**: Always attach enough TON (~0.1 TON) to cover fees
+- **Forward amount**: You should always set `forward_amount` to a positive number. This amount will be credited to the recipient's TON wallet along with the USDT.
+- **Comments**: You can add a text comment that will be visible to the recipient
+
+## How to receive USDT
+
+Receiving USDT as an end user is straightforward. Share your TON wallet address. However, **programmatically processing incoming USDT payments is more complex than it appears**.
+
+For businesses, exchanges, or services that need to programmatically detect and process incoming USDT payments, refer to the [payment processing guide](/ecosystem/processing/overview).
+
+### Why is receiving complex?
+
+When someone sends you USDT:
+
+1. They send a message to **their** USDT jetton wallet
+2. Their jetton wallet sends a message to **your** USDT jetton wallet
+3. Your jetton wallet may send you a notification message (if forward amount > 0)
+
+This multi-step process requires:
+- Monitoring the correct jetton wallet address
+- Understanding the message chain
+- Parsing jetton transfer notifications
+- Handling edge cases (first-time receives, insufficient gas, etc.)
+
+## How to find your USDT jetton wallet address
+
+Your USDT jetton wallet address is different from your main TON wallet address. To find it:
+
+### Using TON Viewer
+
+1. Go to [TON Viewer](https://tonviewer.com/)
+2. Enter your TON wallet address
+3. Click on the "Tokens" tab
+4. Find USDT in the list
+5. Clicking on USDT will show
+5. Your USDT jetton wallet address will be shown
+
+### Programmatically
+
+You can call the `get_wallet_address` method on the USDT Jetton Master contract:
+
+```typescript
+import { Address } from "@ton/core";
+import { TonClient } from "@ton/ton";
+
+const client = new TonClient({
+  endpoint: 'https://toncenter.com/api/v2/jsonRPC',
+});
+
+const USDT_MASTER = Address.parse('EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs');
+const myWalletAddress = Address.parse('YOUR_TON_WALLET_ADDRESS');
+
+// Call get_wallet_address on the master contract
+const result = await client.runMethod(USDT_MASTER, 'get_wallet_address', [
+  { type: 'slice', cell: beginCell().storeAddress(myWalletAddress).endCell() }
+]);
+
+const myUsdtWalletAddress = result.stack.readAddress();
+console.log('My USDT wallet:', myUsdtWalletAddress.toString());
+```
+
+## Next steps
+
+- Learn more about [jettons and how they work](/standard/tokens/jettons/overview)
+- Explore [TON Connect](/ecosystem/ton-connect) for integrating USDT into your dApp
