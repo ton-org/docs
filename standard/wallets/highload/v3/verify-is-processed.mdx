@@ -1,0 +1,347 @@
+---
+title: "How to verify message is processed"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+This guide shows how to verify that a transfer (single or batch) was fully processed across both transactions.
+
+## Objective
+
+By the end of this guide, you will:
+
+- Verify that both transactions (external and internal) succeeded
+- Calculate how many messages were successfully sent
+- Detect partial failures in batch transfers
+
+## Prerequisites
+
+- Completed [wallet creation](/standard/wallets/highload/v3/create) with funded balance
+- Sent at least one transfer (single or batch)
+- Know the `query_id` and `created_at` values used in the transfer
+
+## Verification overview
+
+Highload Wallet v3 uses a two-transaction pattern. To verify full processing, you need to check both transactions:
+
+1. **External transaction (Transaction 1):** Validates the message and marks `query_id` as processed
+1. **Internal transaction (Transaction 2):** Processes the action list and sends outgoing messages
+
+Even if `processed?` returns `true`, the internal transaction may have failed. Full verification requires checking both transactions.
+
+See [Message sending flow](/standard/wallets/highload/v3/specification#message-sending-flow) for the complete two-transaction pattern.
+
+## Helper functions
+
+Create helper functions for transaction search and parsing:
+
+```typescript
+import { TonClient } from '@ton/ton';
+import { Cell, Transaction, Address } from '@ton/core';
+
+// Retry helper for network requests
+async function retry<T>(fn: () => Promise<T>, options: { retries: number; delay: number }): Promise<T> {
+    let lastError: Error | undefined;
+    for (let i = 0; i < options.retries; i++) {
+        try {
+            return await fn();
+        } catch (e) {
+            if (e instanceof Error) lastError = e;
+            await new Promise((resolve) => setTimeout(resolve, options.delay));
+        }
+    }
+    throw lastError;
+}
+
+// Parse external message to extract query_id and created_at
+function parseExternalMessageBody(body: Cell) {
+    try {
+        const inner = body.refs[0]!.beginParse();
+        inner.skip(32 + 8); // Skip subwalletId and mode
+        const queryId = inner.loadUintBig(23);
+        const createdAt = inner.loadUint(64);
+        
+        return { queryId, createdAt };
+    } catch (e) {
+        return null;
+    }
+}
+
+// Generic transaction finder with pagination
+async function findTransaction(
+    client: TonClient,
+    address: Address,
+    predicate: (tx: Transaction) => boolean
+): Promise<Transaction | null> {
+    let lt: string | undefined = undefined;
+    let hash: string | undefined = undefined;
+    
+    while (true) {
+        const transactions = await retry(
+            () => client.getTransactions(address, {
+                hash,
+                lt,
+                limit: 20,
+                archival: true,
+            }),
+            { delay: 1000, retries: 3 }
+        );
+        
+        if (transactions.length === 0) return null;
+        
+        const found = transactions.find(predicate);
+        if (found) return found;
+        
+        const last = transactions.at(-1)!;
+        lt = last.lt.toString();
+        hash = last.hash().toString('base64');
+    }
+}
+```
+
+## Step 1: Set up and check if processed
+
+Load wallet configuration and check if the `query_id` was marked as processed:
+
+```typescript
+import { mnemonicToPrivateKey } from '@ton/crypto';
+import { HighloadWalletV3 } from './wrappers/HighloadWalletV3';
+import { HighloadQueryId } from './wrappers/HighloadQueryId';
+import * as fs from 'fs';
+
+// Load wallet data
+const walletData = JSON.parse(fs.readFileSync('.wallet.json', 'utf-8'));
+const keyPair = await mnemonicToPrivateKey(walletData.mnemonic.split(' '));
+
+const CODE = Cell.fromBoc(Buffer.from('b5ee9c7241021001000228000114ff00f4a413f4bcf2c80b01020120020d02014803040078d020d74bc00101c060b0915be101d0d3030171b0915be0fa4030f828c705b39130e0d31f018210ae42e5a4ba9d8040d721d74cf82a01ed55fb04e030020120050a02027306070011adce76a2686b85ffc00201200809001aabb6ed44d0810122d721d70b3f0018aa3bed44d08307d721d70b1f0201200b0c001bb9a6eed44d0810162d721d70b15800e5b8bf2eda2edfb21ab09028409b0ed44d0810120d721f404f404d33fd315d1058e1bf82325a15210b99f326df82305aa0015a112b992306dde923033e2923033e25230800df40f6fa19ed021d721d70a00955f037fdb31e09130e259800df40f6fa19cd001d721d70a00937fdb31e0915be270801f6f2d48308d718d121f900ed44d0d3ffd31ff404f404d33fd315d1f82321a15220b98e12336df82324aa00a112b9926d32de58f82301de541675f910f2a106d0d31fd4d307d30cd309d33fd315d15168baf2a2515abaf2a6f8232aa15250bcf2a304f823bbf2a35304800df40f6fa199d024d721d70a00f2649130e20e01fe5309800df40f6fa18e13d05004d718d20001f264c858cf16cf8301cf168e1030c824cf40cf8384095005a1a514cf40e2f800c94039800df41704c8cbff13cb1ff40012f40012cb3f12cb15c9ed54f80f21d0d30001f265d3020171b0925f03e0fa4001d70b01c000f2a5fa4031fa0031f401fa0031fa00318060d721d300010f0020f265d2000193d431d19130e272b1fb00b585bf03', 'hex'))[0];
+
+const client = new TonClient({ 
+    endpoint: 'https://testnet.toncenter.com/api/v2/jsonRPC', // This is TESTNET endpoint
+    // apiKey: 'your-api-key' // Optional: get from @tonapibot or @tontestnetapibot
+});
+
+const highloadWallet = HighloadWalletV3.createFromConfig(
+    {
+        publicKey: keyPair.publicKey,
+        subwalletId: walletData.subwalletId,
+        timeout: walletData.timeout,
+    },
+    CODE
+);
+const wallet = client.open(highloadWallet);
+
+// The query_id and created_at from your transfer
+const queryId = HighloadQueryId.fromSeqno(17n);
+const createdAt = 1759878156; // Your actual created_at timestamp
+
+// Check if processed
+const isProcessed = await wallet.getProcessed(queryId);
+if (!isProcessed) {
+    console.log('❌ Query not processed');
+    return;
+}
+console.log('✓ Query marked as processed');
+```
+
+<Aside type="note">
+  **What `processed?` tells you:** This GET method only confirms that the `query_id` was marked as processed in the wallet's storage. It does **not** confirm that the internal transaction succeeded or that messages were sent.
+
+  See [`processed?` method](/standard/wallets/highload/v3/specification#processed%3F-method-details) in the specification for details.
+</Aside>
+
+## Step 2: Find and verify external transaction
+
+Search transaction history to find the external transaction by `query_id` and `created_at`:
+
+```typescript
+// Find external transaction by query_id + created_at
+async function findHighloadExternalTransaction(
+    client: TonClient,
+    walletAddress: Address,
+    queryId: HighloadQueryId,
+    createdAt: number
+): Promise<Transaction | null> {
+    const targetQueryId = queryId.getQueryId();
+    
+    return findTransaction(client, walletAddress, (tx) => {
+        if (tx.inMessage?.info.type !== 'external-in') return false;
+        if (!tx.inMessage.body) return false;
+        
+        const parsed = parseExternalMessageBody(tx.inMessage.body);
+        if (!parsed) return false;
+        
+        return parsed.queryId === targetQueryId && parsed.createdAt === createdAt;
+    });
+}
+
+const externalTx = await findHighloadExternalTransaction(
+    client,
+    highloadWallet.address,
+    queryId,
+    createdAt
+);
+
+if (!externalTx) {
+    console.log('❌ External transaction not found');
+    return;
+}
+
+// Verify external transaction compute phase
+if (externalTx.description.type !== 'generic') {
+    console.log('❌ Invalid transaction');
+    return;
+}
+
+const externalCompute = externalTx.description.computePhase;
+if (!externalCompute.success || externalCompute.exitCode !== 0) {
+    console.log(`❌ External transaction failed: exit code ${externalCompute.exitCode}`);
+    return;
+}
+
+console.log('✓ External transaction succeeded');
+```
+
+If the external transaction failed, see [Exit codes](/standard/wallets/highload/v3/specification#exit-codes) for troubleshooting.
+
+## Step 3: Find and verify internal transaction
+
+Follow the transaction chain to find and verify Transaction 2:
+
+```typescript
+// Find internal transaction by prevTransactionLt
+async function findHighloadInternalTransaction(
+    client: TonClient,
+    walletAddress: Address,
+    externalLt: string
+): Promise<Transaction | null> {
+    return findTransaction(client, walletAddress, (tx) => 
+        tx.prevTransactionLt.toString() === externalLt
+    );
+}
+
+// Check for outgoing messages
+if (externalTx.outMessagesCount === 0) {
+    console.log('❌ No outgoing messages from external transaction');
+    return;
+}
+
+// Find the internal transaction
+const internalTx = await findHighloadInternalTransaction(
+    client,
+    highloadWallet.address,
+    externalTx.lt.toString()
+);
+
+if (!internalTx || internalTx.description.type !== 'generic') {
+    console.log('❌ Internal transaction not found');
+    return;
+}
+
+// Verify compute phase
+if (internalTx.description.computePhase.type !== 'vm') {
+    console.log('❌ Compute phase skipped');
+    return;
+}
+
+const internalCompute = internalTx.description.computePhase;
+if (!internalCompute.success || internalCompute.exitCode !== 0) {
+    console.log(`❌ Internal transaction failed: exit code ${internalCompute.exitCode}`);
+    return;
+}
+
+// Verify action phase
+if (!internalTx.description.actionPhase) {
+    console.log('❌ No action phase in internal transaction');
+    return;
+}
+
+const action = internalTx.description.actionPhase;
+if (!action.success) {
+    console.log(`❌ Action phase failed: result code ${action.resultCode}`);
+    return;
+}
+
+console.log('✓ Internal transaction succeeded');
+```
+
+<Aside type="note">
+  **Transaction linking:** The external transaction creates an outgoing message with `outMsg.createdLt`. The internal transaction that processes this message has `prevTransactionLt` equal to the external transaction's `lt`. This creates a verifiable chain between the two transactions.
+</Aside>
+
+## Step 4: Calculate sent messages
+
+Calculate how many messages were successfully sent:
+
+```typescript
+// Calculate messages sent (total actions - 1 for set_code)
+const messageActions = action.totalActions - 1;
+const messagesSent = action.messagesCreated;
+const messagesFailed = action.skippedActions;
+
+if (messagesFailed > 0) {
+    console.log(`✅ Sent ${messagesSent}/${messageActions} messages (${messagesFailed} failed)`);
+} else {
+    console.log(`✅ Sent ${messagesSent}/${messageActions} messages`);
+}
+```
+
+<Aside
+  type="caution"
+>
+  **Partial failures:** Even if the action phase succeeds overall, some individual messages may fail. Check `skippedActions` to detect partial failures. If `skippedActions > 0`, some messages in the batch were not sent.
+
+  The `totalActions - 1` calculation accounts for the [`set_code` protection](/standard/wallets/highload/v3/specification#protection-against-set-code) action.
+</Aside>
+
+## Expected outputs
+
+### Full success
+
+```text
+✓ Query marked as processed
+✓ External transaction succeeded
+✓ Internal transaction succeeded
+✅ Sent 10/10 messages
+```
+
+### Partial success
+
+```text
+✓ Query marked as processed
+✓ External transaction succeeded
+✓ Internal transaction succeeded
+✅ Sent 8/10 messages (2 failed)
+```
+
+### External transaction failure
+
+```text
+✓ Query marked as processed
+❌ External transaction failed: exit code 35
+```
+
+The `query_id` is marked as processed, but the transaction failed during validation. See [Exit codes](/standard/wallets/highload/v3/specification#exit-codes) for troubleshooting.
+
+### Internal transaction failure
+
+```text
+✓ Query marked as processed
+✓ External transaction succeeded
+❌ Internal transaction failed: exit code 9
+```
+
+Transaction 1 succeeded (replay protection applied), but Transaction 2 failed. The `query_id` cannot be reused.
+
+### Action phase failure
+
+```text
+✓ Query marked as processed
+✓ External transaction succeeded
+❌ Action phase failed: result code 37
+```
+
+Both transactions were executed, but the action phase failed to send messages.
+
+## Next steps
+
+You can now verify any transfer to ensure it was fully processed. This is especially important for batch transfers where partial failures can occur.
