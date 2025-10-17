@@ -1,0 +1,90 @@
+---
+title: "How to find Jetton wallet"
+---
+
+Some applications may want to be able to discover their own or other contract wallets for a specific Jetton Master.
+For instance, some contracts may want to obtain and store their Jetton wallet for Jetton to handle transfer notifications from it in a specific way.
+
+To compute the address of a Jetton wallet from the address of its owner (a regular user wallet),
+the Jetton master contract provides the `get_wallet_address (slice owner_address)` method.
+
+```typescript
+import { TonClient, Address, beginCell, TupleItemSlice } from "@ton/ton";
+
+async function main() {
+  const client = new TonClient({
+    endpoint: "https://toncenter.com/api/v2/jsonRPC",
+  });
+  const jettonMasterAddress = Address.parse(
+    "put the Jetton master address in any format",
+  );
+  const walletAddress = Address.parse("put owner's address in any format");
+  const walletAddressCell = beginCell().storeAddress(walletAddress).endCell();
+  // forming the required type for the stack
+  const el: TupleItemSlice = {
+    type: "slice",
+    cell: walletAddressCell,
+  };
+  // call the get method with a non-empty stack
+  const data = await client.runMethod(
+    jettonMasterAddress,
+    "get_wallet_address",
+    [el],
+  );
+  // get the Jetton wallet address
+  console.log(data.stack.readAddress());
+}
+
+void main();
+```
+
+Or if you are sure about the structure of Jetton wallet's initial persistent storage and know its code, you
+can also manually create `StateInit` of the Jetton wallet and thus calculate its address.
+
+<Warning>
+  Use this method with great care, as the c4 of Jetton wallet contracts is not specified.
+</Warning>
+
+```typescript
+import {
+  Address,
+  Cell,
+  beginCell,
+  contractAddress,
+  StateInit,
+} from "@ton/core";
+
+// let's choose Thether USDT as an example
+
+const jettonwalletcode = Cell.fromHex(
+  "b5ee9c72010101010023000842028f452d7a4dfd74066b682365177259ed05734435be76b5fd4bd5d8af2b7c3d68",
+);
+
+const masterAddress = Address.parse(
+  "0:b113a994b5024a16719f69139328eb759596c38a25f59028b146fecdc3621dfe",
+);
+const ownerAddress = Address.parse("an address in any format");
+const jettonwalletdata = beginCell()
+  .storeAddress(ownerAddress)
+  .storeAddress(masterAddress)
+  .storeVarUint(0, 16) // the initial value is always zero
+  .endCell();
+
+const jettonWalletStateInit: StateInit = {
+  code: jettonwalletcode,
+  data: jettonwalletdata,
+};
+
+const BASECHAIN = 0; // All Jetton wallet contracts are located in Basechain by default
+const jettonWalletAddress = contractAddress(BASECHAIN, jettonWalletStateInit);
+
+console.log(jettonWalletAddress.toString());
+```
+
+There are also various web services that allow you to call contract's get methods without writing any code.
+For example, let's inspect the [Tether USD](https://tonviewer.com/EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs?section=method) master
+contract page on Tonviewer. Inserting the owner's address in any format and executing the get method, you obtain the Jetton wallet address.
+
+![Tether USDT master contract](/resources/images/methods.png)
+
+Finally, you can use [built-in APIs](/ecosystem/rpc/toncenter).
