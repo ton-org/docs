@@ -2,6 +2,44 @@
 title: "Blockchain sharding"
 ---
 
-import { Stub } from '/snippets/stub.jsx';
+## Infinite Sharding Paradigm
 
-<Stub issue="232" />
+The TON Blockchain is a collection of blockchains which are called _workchains_. Each workchain could have different formats of [account addresses](/foundations/addresses/overview), formats of [transactions](/foundations/transaction), even different virtual machines for smart contracts, and so on.
+One of the main ideas behind the TON Blockchain is the _Infinite Sharding Paradigm_ (ISP). According to ISP, the TON Blockchain can dynamically split its workchains into parts in order to handle an arbitrary high load of transactions and improve efficiency of the whole system. And vise versa, when the load is low enough, these parts can be merged back into one.
+
+Imagine that sharding has been taken to its extreme (became infinite as possible), so that exactly one account or smart contract remains in each part. Then we have a huge
+number of _accountchains_, each describing the state and state transitions of only one account, and sending value-bearing messages to each other to
+transfer value and information. It is impractical to have hundreds of millions of blockchains, with updates (i.e., new blocks) usually appearing quite rarely in each of
+them. In order to implement them more efficiently, these accountchains are grouped into _shardchains_, so that each block of the shardchain is essentially a collection of blocks of account-chains that have been assigned to this shard.
+Thus the account-chains have only a purely virtual or logical existence inside the shardchains.
+
+To sum up, we have the following hierarchy of blockchains according to ISP:
+- workchains;
+- shardchains;
+- accountchains (actually virtual).
+
+<Image
+  src="/resources/images/blockchain_sharding.png"
+  darkSrc="/resources/images/blockchain_sharding.png"
+  alt="Blockchain hyerarchy"
+/>
+
+### Sharding process
+
+Each workchain (the number of which could be up to `2^32`) has its own format of addresses. But a restriction is imposed on all workchains: each account address (after workchain_id) must have at least 64-bit length `account_id` (see [Account id](/foundations/addresses/overview#account-id)).
+
+Each shardchain is identifed by a couple `(workchain_id, shard_prefix)`, where `shard_prefix` is a bit string of length at most `60`, defining the subset of accounts for which this shardchain is responsible. Namely, all accounts with `account_id` starting
+with `shard_prefix` (i.e., having `shard_prefix` as most significant bits) will be assigned to this shardchain.
+
+The need for sharding arises when the load of transactions in already existed shards exceeds some threshold value. In this case validators could decide to split these shards into two new ones or merge some of them, if a load is low enough.
+
+As the simplest case, let's some workchain initially has only one shardchain with `shard_prefix` equal to an empty string (i.e., containing all accounts of that worchain). Then the load exceeded the threshold and the validators decided to split this shardchain into two new ones with `shard_prefix` equal to `0` and `1`, respectively.
+After that, all accounts with `account_id` starting with bit `0` will be assigned to the first shardchain, and all accounts with `account_id` starting with bit `1` will be assigned to the second shardchain.
+
+Analogously, if some shardchain with `shard_prefix` equal to `p` needs to be split, then two new shardchains with `shard_prefix` equal to `p0` and `p1` will be created. 
+When merging is needed, two shardchains with `shard_prefix` equal to `p0` and `p1` could be merged into one shardchain with `shard_prefix` equal to `p`. After the merging, all accounts with `account_id` starting with `p` will be assigned to the new single shardchain.
+
+As a result of sharding process, the number of shardchains in each workchain can vary dynamically from `1` to `2^60`.
+
+## Message delivery and Hypercube Routing
+
