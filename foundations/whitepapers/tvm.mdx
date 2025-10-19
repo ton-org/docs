@@ -8,11 +8,6 @@ description: "Whitepaper by Dr. Nikolai Durov"
 **Date**: March 23, 2020 <br />
 <Icon icon="file-pdf" size={16} />: [Original whitepaper, PDF](/resources/pdfs/tvm.pdf)
 
-
-# Telegram Open Network Virtual Machine
-
-**Nikolai Durov**
-
 ## Abstract
 
 The aim of this text is to provide a description of the Telegram Open Network Virtual Machine (TON VM or TVM), used to execute smart contracts in the TON Blockchain.
@@ -31,11 +26,11 @@ The design of TVM is guided by these requirements. While this document describes
 
 TVM is not intended to be implemented in hardware (e.g., in a specialized microprocessor chip); rather, it should be implemented in software running on conventional hardware. This consideration lets us incorporate some high-level concepts and operations in TVM that would require convoluted microcode in a hardware implementation but pose no significant problems for a software implementation. Such operations are useful for achieving high code density and minimizing the byte (or storage cell) profile of smart-contract code when deployed in the TON Blockchain.
 
-## Chapter 1: Overview
+## 1. Overview
 
 This chapter provides an overview of the main features and design principles of TVM. More detail on each topic is provided in subsequent chapters.
 
-### 1.0 Notation for bitstrings
+### 1.0. Notation for bitstrings
 
 The following notation is used for bit strings (or *bitstrings*)—i.e., finite strings consisting of binary digits (bits), `0` and `1`—throughout this document.
 
@@ -51,11 +46,11 @@ Notice that there are several admissible hexadecimal representations for the sam
 
 For example, `8A` corresponds to binary string `10001010`, while `8A_` and `8A0_` both correspond to `100010`. An empty bitstring may be represented by either '', `8_`, `0_`, `_`, or `00_`.
 
-#### 1.0.3 Emphasizing that a string is a hexadecimal representation of a bitstring
+#### 1.0.3. Emphasizing that a string is a hexadecimal representation of a bitstring
 
 Sometimes we need to emphasize that a string of hexadecimal digits (with or without a `_` at the end) is the hexadecimal representation of a bitstring. In such cases, we either prepend `x` to the resulting string (e.g., `x8A`), or prepend `x{` and append `}` (e.g., `x{2D9_}`, which is `00101101100`). This should not be confused with hexadecimal numbers, usually prepended by `0x` (e.g., `0x2D9` or `0x2d9`, which is the integer 729).
 
-#### 1.0.4 Serializing a bitstring into a sequence of octets
+#### 1.0.4. Serializing a bitstring into a sequence of octets
 
 When a bitstring needs to be represented as a sequence of 8-bit bytes (octets), which take values in integers 0...255, this is achieved essentially in the same fashion as above: we split the bitstring into groups of eight bits and interpret each group as the binary representation of an integer 0...255. If the length of the bitstring is not a multiple of eight, the bitstring is augmented by a binary `1` and up to seven binary `0`s before being split into groups. The fact that such a completion has been applied is usually reflected by a "completion tag" bit.
 
@@ -95,7 +90,7 @@ A preliminary list of value types supported by TVM is as follows:
 
 This list of value types is incomplete and may be extended in future revisions of TVM without breaking the old TVM code, due mostly to the fact that all originally defined primitives accept only values of types known to them and will fail (generate a type-checking exception) if invoked on values of new types. Furthermore, existing value types themselves can also be extended in the future: for example, 257-bit *Integer* might become 513-bit *LongInteger*, with originally defined arithmetic primitives failing if either of the arguments or the result does not fit into the original subtype *Integer*. Backward compatibility with respect to the introduction of new value types and extension of existing value types will be discussed in more detail later (cf. [5.1.4](#5-1-4-changing-the-behavior-of-old-operations)).
 
-### 1.2 Categories of TVM instructions
+### 1.2. Categories of TVM instructions
 
 TVM *instructions*, also called *primitives* and sometimes *(built-in) operations*, are the smallest operations atomically performed by TVM that can be present in the TVM code. They fall into several categories, depending on the types of values (cf. [1.1.3](#1-1-3-preliminary-list-of-value-types)) they work on. The most important of these categories are:
 
@@ -107,17 +102,17 @@ TVM *instructions*, also called *primitives* and sometimes *(built-in) operation
 - *Continuation* and *control flow primitives* — Create and modify *Continuation*s, as well as execute existing *Continuation*s in different ways, including conditional and repeated execution.
 - *Custom* or *application-specific primitives* — Efficiently perform specific high-level actions required by the application (in our case, the TON Blockchain), such as computing hash functions, performing elliptic curve cryptography, sending new blockchain messages, creating new smart contracts, and so on. These primitives correspond to standard library functions rather than microprocessor instructions.
 
-### 1.3 Control registers
+### 1.3. Control registers
 
 While TVM is a stack machine, some rarely changed values needed in almost all functions are better passed in certain special registers, and not near the top of the stack. Otherwise, a prohibitive number of stack reordering operations would be required to manage all these values.
 
 To this end, the TVM model includes, apart from the stack, up to 16 special *control registers*, denoted by `c0` to `c15`, or $\texttt{c}(0)$ to $\texttt{c}(15)$. The original version of TVM makes use of only some of these registers; the rest may be supported later.
 
-#### 1.3.1 Values kept in control registers
+#### 1.3.1. Values kept in control registers
 
 The values kept in control registers are of the same types as those kept on the stack. However, some control registers accept only values of specific types, and any attempt to load a value of a different type will lead to an exception.
 
-#### 1.3.2 List of control registers
+#### 1.3.2. List of control registers
 
 The original version of TVM defines and uses the following control registers:
 
@@ -131,7 +126,7 @@ The original version of TVM defines and uses the following control registers:
 
 More control registers may be defined in the future for specific TON Blockchain or high-level programming language purposes, if necessary.
 
-### 1.4 Total state of TVM (SCCCG)
+### 1.4. Total state of TVM (SCCCG)
 
 The total state of TVM consists of the following components:
 
@@ -145,51 +140,51 @@ Notice that there is no "return stack" containing the return addresses of all pr
 
 Also notice that there are no general-purpose registers, because TVM is a stack machine (cf. [1.1](#1-1-tvm-is-a-stack-machine)). So the above list, which can be summarized as "stack, control, continuation, codepage, and gas" (SCCCG), similarly to the classical SECD machine state ("stack, environment, control, dump"), is indeed the *total* state of TVM.<sup>[5](#fn5)</sup>
 
-### 1.5 Integer arithmetic
+### 1.5. Integer arithmetic
 
 All arithmetic primitives of TVM operate on several arguments of type *Integer*, taken from the top of the stack, and return their results, of the same type, into the stack. Recall that *Integer* represents all integer values in the range $-2^{256}\leq x<2^{256}$, and additionally contains a special value `NaN` ("not-a-number").
 
 If one of the results does not fit into the supported range of integers—or if one of the arguments is a `NaN`—then this result or all of the results are replaced by a `NaN`, and (by default) an integer overflow exception is generated. However, special "quiet" versions of arithmetic operations will simply produce `NaN`s and keep going. If these `NaN`s end up being used in a "non-quiet" arithmetic operation, or in a non-arithmetic operation, an integer overflow exception will occur.
 
-#### 1.5.1 Absence of automatic conversion of integers
+#### 1.5.1. Absence of automatic conversion of integers
 
 Notice that TVM *Integer*s are "mathematical" integers, and not 257-bit strings interpreted differently depending on the primitive used, as is common for other machine code designs. For example, TVM has only one multiplication primitive `MUL`, rather than two (`MUL` for unsigned multiplication and `IMUL` for signed multiplication) as occurs, for example, in the popular x86 architecture.
 
-#### 1.5.2 Automatic overflow checks
+#### 1.5.2. Automatic overflow checks
 
 Notice that all TVM arithmetic primitives perform overflow checks of the results. If a result does not fit into the *Integer* type, it is replaced by a `NaN`, and (usually) an exception occurs. In particular, the result is *not* automatically reduced modulo $2^{256}$ or $2^{257}$, as is common for most hardware machine code architectures.
 
-#### 1.5.3 Custom overflow checks
+#### 1.5.3. Custom overflow checks
 
 In addition to automatic overflow checks, TVM includes custom overflow checks, performed by primitives `FITS` $n$ and `UFITS` $n$, where $1\leq n\leq256$. These primitives check whether the value on (the top of) the stack is an integer $x$ in the range $-2^{n-1}\leq x<2^{n-1}$ or $0\leq x<2^n$, respectively, and replace the value with a `NaN` and (optionally) generate an integer overflow exception if this is not the case. This greatly simplifies the implementation of arbitrary $n$-bit integer types, signed or unsigned: the programmer or the compiler must insert appropriate `FITS` or `UFITS` primitives either after each arithmetic operation (which is more reasonable, but requires more checks) or before storing computed values and returning them from functions. This is important for smart contracts, where unexpected integer overflows happen to be among the most common source of bugs.
 
-#### 1.5.4 Reduction modulo $2^n$
+#### 1.5.4. Reduction modulo $2^n$
 
 TVM also has a primitive `MODPOW2` $n$, which reduces the integer at the top of the stack modulo $2^n$, with the result ranging from $0$ to $2^n-1$.
 
-#### 1.5.5 *Integer* is 257-bit, not 256-bit
+#### 1.5.5. *Integer* is 257-bit, not 256-bit
 
 One can understand now why TVM's *Integer* is (signed) 257-bit, not 256-bit. The reason is that it is the smallest integer type containing both signed 256-bit integers and unsigned 256-bit integers, which does not require automatic reinterpreting of the same 256-bit string depending on the operation used (cf. [1.5.1](#1-5-1-absence-of-automatic-conversion-of-integers)).
 
-#### 1.5.6 Division and rounding
+#### 1.5.6. Division and rounding
 
 The most important division primitives are `DIV`, `MOD`, and `DIVMOD`. All of them take two numbers from the stack, $x$ and $y$ ($y$ is taken from the top of the stack, and $x$ is originally under it), compute the quotient $q$ and remainder $r$ of the division of $x$ by $y$ (i.e., two integers such that $x=yq+r$ and $|r|<|y|$), and return either $q$, $r$, or both of them. If $y$ is zero, then all of the expected results are replaced by `NaN`s, and (usually) an integer overflow exception is generated.
 
 The implementation of division in TVM somewhat differs from most other implementations with regards to rounding. By default, these primitives round to $-\infty$, meaning that $q=\lfloor x/y\rfloor$, and $r$ has the same sign as $y$. (Most conventional implementations of division use "rounding to zero" instead, meaning that $r$ has the same sign as $x$.) Apart from this "floor rounding", two other rounding modes are available, called "ceiling rounding" (with $q=\lceil x/y\rceil$, and $r$ and $y$ having opposite signs) and "nearest rounding" (with $q=\lfloor x/y+1/2\rfloor$ and $|r|\leq|y|/2$). These rounding modes are selected by using other division primitives, with letters `C` and `R` appended to their mnemonics. For example, `DIVMODR` computes both the quotient and the remainder using rounding to the nearest integer.
 
-#### 1.5.7 Combined multiply-divide, multiply-shift, and shift-divide operations
+#### 1.5.7. Combined multiply-divide, multiply-shift, and shift-divide operations
 
 To simplify implementation of fixed-point arithmetic, TVM supports combined multiply-divide, multiply-shift, and shift-divide operations with double-length (i.e., 514-bit) intermediate product. For example, `MULDIVMODR` takes three integer arguments from the stack, $a$, $b$, and $c$, first computes $ab$ using a 514-bit intermediate result, and then divides $ab$ by $c$ using rounding to the nearest integer. If $c$ is zero or if the quotient does not fit into *Integer*, either two `NaN`s are returned, or an integer overflow exception is generated, depending on whether a quiet version of the operation has been used. Otherwise, both the quotient and the remainder are pushed into the stack.
 
-## Chapter 2: The stack
+## 2. The stack
 
 This chapter contains a general discussion and comparison of register and stack machines, expanded further in Appendix [C](#appendix-c-code-density-of-stack-and-register-machines), and describes the two main classes of stack manipulation primitives employed by TVM: the *basic* and the *compound stack manipulation primitives*. An informal explanation of their sufficiency for all stack reordering required for correctly invoking other primitives and user-defined functions is also provided. Finally, the problem of efficiently implementing TVM stack manipulation primitives is discussed in [2.3](#2-3-efficiency-of-stack-manipulation-primitives).
 
-### 2.1 Stack calling conventions
+### 2.1. Stack calling conventions
 
 A stack machine, such as TVM, uses the stack---and especially the values near the top of the stack---to pass arguments to called functions and primitives (such as built-in arithmetic operations) and receive their results. This section discusses the TVM stack calling conventions, introduces some notation, and compares TVM stack calling conventions with those of certain register machines.
 
-#### 2.1.1 Notation for "stack registers"
+#### 2.1.1. Notation for "stack registers"
 
 Recall that a stack machine, as opposed to a more conventional register machine, lacks general-purpose registers. However, one can treat the values near the top of the stack as a kind of "stack registers".
 
@@ -197,7 +192,7 @@ We denote by `s0` or `s(0)` the value at the top of the stack, by `s1` or `s(1)`
 
 A compiler, or a human programmer in "TVM code", would use these "stack registers" to hold all declared variables and intermediate values, similarly to the way general-purpose registers are used on a register machine.
 
-#### 2.1.2 Pushing and popping values
+#### 2.1.2. Pushing and popping values
 
 When a value $x$ is *pushed* into a stack of depth $n$, it becomes the new `s0`; at the same time, the old `s0` becomes the new `s1`, the old `s1`---the new `s2`, and so on. The depth of the resulting stack is $n+1$.
 
@@ -205,21 +200,21 @@ Similarly, when a value $x$ is *popped* from a stack of depth $n\geq1$, it is th
 
 If originally $n=0$, then the stack is *empty*, and a value cannot be popped from it. If a primitive attempts to pop a value from an empty stack, a *stack underflow* exception occurs.
 
-#### 2.1.3 Notation for hypothetical general-purpose registers
+#### 2.1.3. Notation for hypothetical general-purpose registers
 
 In order to compare stack machines with sufficiently general register machines, we will denote the general-purpose registers of a register machine by `r0`, `r1`, and so on, or by `r(0)`, `r(1)`, ..., `r(n-1)`, where $n$ is the total number of registers. When we need a specific value of $n$, we will use $n=16$, corresponding to the very popular x86-64 architecture.
 
-#### 2.1.4 The top-of-stack register `s0` vs. the accumulator register `r0`
+#### 2.1.4. The top-of-stack register `s0` vs. the accumulator register `r0`
 
 Some register machine architectures require one of the arguments for most arithmetic and logical operations to reside in a special register called the *accumulator*. In our comparison, we will assume that the accumulator is the general-purpose register `r0`; otherwise we could simply renumber the registers. In this respect, the accumulator is somewhat similar to the top-of-stack "register" `s0` of a stack machine, because virtually all operations of a stack machine both use `s0` as one of their arguments and return their result as `s0`.
 
-#### 2.1.5 Register calling conventions
+#### 2.1.5. Register calling conventions
 
 When compiled for a register machine, high-level language functions usually receive their arguments in certain registers in a predefined order. If there are too many arguments, these functions take the remainder from the stack (yes, a register machine usually has a stack, too!). Some register calling conventions pass no arguments in registers at all, however, and only use the stack (for example, the original calling conventions used in implementations of Pascal and C, although modern implementations of C use some registers as well).
 
 For simplicity, we will assume that up to $m\leq n$ function arguments are passed in registers, and that these registers are `r0`, `r1`, ..., `r(m-1)`, in that order (if some other registers are used, we can simply renumber them).<sup>[6](#fn6)</sup>
 
-#### 2.1.6 Order of function arguments
+#### 2.1.6. Order of function arguments
 
 If a function or primitive requires $m$ arguments $x_1$, ..., $x_m$, they are pushed by the caller into the stack in the same order, starting from $x_1$. Therefore, when the function or primitive is invoked, its first argument $x_1$ is in `s(m-1)`, its second argument $x_2$ is in `s(m-2)`, and so on. The last argument $x_m$ is in `s0` (i.e., at the top of the stack). It is the called function or primitive's responsibility to remove its arguments from the stack.
 
@@ -227,19 +222,19 @@ In this respect the TVM stack calling conventions---obeyed, at least, by TMV pri
 
 Of course, an implementation of a high-level language for TVM might choose some other calling conventions for its functions, different from the default ones. This might be useful for certain functions---for instance, if the total number of arguments depends on the value of the first argument, as happens for "variadic functions" such as `scanf` and `printf`. In such cases, the first one or several arguments are better passed near the top of the stack, not somewhere at some unknown location deep in the stack.
 
-#### 2.1.7 Arguments to arithmetic primitives on register machines
+#### 2.1.7. Arguments to arithmetic primitives on register machines
 
 On a stack machine, built-in arithmetic primitives (such as `ADD` or `DIVMOD`) follow the same calling conventions as user-defined functions. In this respect, user-defined functions (for example, a function computing the square root of a number) might be considered as "extensions" or "custom upgrades" of the stack machine.
 
 In this respect, register machines are not as easily "upgradable" as stack machines.<sup>[7](#fn7)</sup>
 
-#### 2.1.8 Return values of functions
+#### 2.1.8. Return values of functions
 
 In stack machines such as TVM, when a function or primitive needs to return a result value, it simply pushes it into the stack (from which all arguments to the function have already been removed). Therefore, the caller will be able to access the result value through the top-of-stack "register" `s0`.
 
 This is in complete accordance with Forth calling conventions, but differs slightly from Pascal and C calling conventions, where the accumulator register `r0` is normally used for the return value.
 
-#### 2.1.9 Returning several values
+#### 2.1.9. Returning several values
 
 Some functions might want to return several values $y_1$, ..., $y_k$, with $k$ not necessarily equal to one. In these cases, the $k$ return values are pushed into the stack in their natural order, starting from $y_1$.
 
@@ -249,7 +244,7 @@ In principle, some primitives and user-defined functions might return a variable
 
 In this respect TVM, again, faithfully observes Forth calling conventions.
 
-#### 2.1.10 Stack notation
+#### 2.1.10. Stack notation
 
 When a stack of depth $n$ contains values $z_1$, ..., $z_n$, in that order, with $z_1$ the deepest element and $z_n$ the top of the stack, the contents of the stack are often represented by a list $z_1$ $z_2$ ... $z_n$, in that order. When a primitive transforms the original stack state $S'$ into a new state $S''$, this is often written as $S'$ -- $S''$; this is the so-called *stack notation*. For example, the action of the division primitive `DIV` can be described by $S$ $x$ $y$ -- $S$ $\lfloor x/y\rfloor$, where $S$ is any list of values. This is usually abbreviated as $x$ $y$ -- $\lfloor x/y\rfloor$, tacitly assuming that all other values deeper in the stack remain intact.
 
@@ -257,7 +252,7 @@ Alternatively, one can describe `DIV` as a primitive that runs on a stack $S'$ o
 
 The stack notation is extensively used throughout Appendix [A](#appendix-a-instruction-set), where all currently defined TVM primitives are listed.
 
-#### 2.1.11 Explicitly defining the number of arguments to a function
+#### 2.1.11. Explicitly defining the number of arguments to a function
 
 Stack machines usually pass the current stack in its entirety to the invoked primitive or function. That primitive or function accesses only the several values near the top of the stack that represent its arguments, and pushes the return values in their place, by convention leaving all deeper values intact. Then the resulting stack, again in its entirety, is returned to the caller.
 
@@ -265,11 +260,11 @@ Most TVM primitives behave in this way, and we expect most user-defined function
 
 Such argument-checking mechanisms might be useful, for example, for a library function that calls user-provided functions passed as arguments to it.
 
-### 2.2 Stack manipulation primitives
+### 2.2. Stack manipulation primitives
 
 A stack machine, such as TVM, employs a lot of stack manipulation primitives to rearrange arguments to other primitives and user-defined functions, so that they become located near the top of the stack in correct order. This section discusses which stack manipulation primitives are necessary and sufficient for achieving this goal, and which of them are used by TVM. Some examples of code using these primitives can be found in Appendix [C](#appendix-c-code-density-of-stack-and-register-machines).
 
-#### 2.2.1 Basic stack manipulation primitives
+#### 2.2.1. Basic stack manipulation primitives
 
 The most important stack manipulation primitives used by TVM are the following:
 
@@ -280,7 +275,7 @@ The most important stack manipulation primitives used by TVM are the following:
 
 Some other "unsystematic" stack manipulation operations might be also defined (e.g., `ROT`, with stack notation $a$ $b$ $c$ -- $b$ $c$ $a$). While such operations are defined in stack languages like Forth (where `DUP`, `DROP`, `OVER`, `NIP` and `SWAP` are also present), they are not strictly necessary because the *basic stack manipulation primitives* listed above suffice to rearrange stack registers to allow any arithmetic primitives and user-defined functions to be invoked correctly.
 
-#### 2.2.2 Basic stack manipulation primitives suffice
+#### 2.2.2. Basic stack manipulation primitives suffice
 
 A compiler or a human TVM-code programmer might use the basic stack primitives as follows.
 
@@ -292,7 +287,7 @@ Similarly, if the results returned from a function need to be discarded or moved
 
 Rearranging the result value or values before returning from a function is essentially the same problem as arranging arguments for a function call, and is achieved similarly.
 
-#### 2.2.3 Compound stack manipulation primitives
+#### 2.2.3. Compound stack manipulation primitives
 
 In order to improve the density of the TVM code and simplify development of compilers, compound stack manipulation primitives may be defined, each combining up to four exchange and push or exchange and pop basic primitives. Such compound stack operations might include, for example:
 
@@ -307,7 +302,7 @@ Of course, such operations make sense only if they admit a more compact encoding
 
 These compound stack operations essentially augment other primitives (instructions) in the code with the "true" locations of their operands, somewhat similarly to what happens with two-address or three-address register machine code. However, instead of encoding these locations inside the opcode of the arithmetic or another instruction, as is customary for register machines, we indicate these locations in a preceding compound stack manipulation operation. As already described in [2.1.7](#2-1-7-arguments-to-arithmetic-primitives-on-register-machines), the advantage of such an approach is that user-defined functions (or rarely used specific primitives added in a future version of TVM) can benefit from it as well (cf. Appendix [C](#appendix-c-code-density-of-stack-and-register-machines) for a more detailed discussion with examples).
 
-#### 2.2.4 Mnemonics of compound stack operations
+#### 2.2.4. Mnemonics of compound stack operations
 
 The mnemonics of compound stack operations, some examples of which have been provided in [2.2.3](#2-2-3-compound-stack-manipulation-primitives), are created as follows.
 
@@ -315,7 +310,7 @@ The $\gamma\geq2$ formal arguments `s(i_1)`, ..., `s(i_γ)` to such an operation
 
 As an exception, if a mnemonic would consist of only `PU` or only `XC` strings, so that the compound operation is equivalent to a sequence of $m$ PUSHes or eXCHanGes, the notation `PUSH`$m$ or `XCHG`$m$ is used instead of `PU`$m$ or `XC`$m$.
 
-#### 2.2.5 Semantics of compound stack operations
+#### 2.2.5. Semantics of compound stack operations
 
 Each compound $\gamma$-ary operation $O$ `s(i_1)`,...,`s(i_γ)` is translated into an equivalent sequence of basic stack operations by induction in $\gamma$ as follows:
 
@@ -325,33 +320,33 @@ Each compound $\gamma$-ary operation $O$ `s(i_1)`,...,`s(i_γ)` is translated in
   1. $O$ `s(i_1)`,...,`s(i_γ)`, with $O$=`XC`$O'$, where $O'$ is a compound operation of arity $\gamma-1$ (i.e., the mnemonic of $O'$ consists of $\gamma-1$ strings `XC` and `PU`). Let $\alpha$ be the total quantity of `PU`shes in $O$, and $\beta$ be that of e`XC`hanges, so that $\alpha+\beta=\gamma$. Then the original operation is translated into `XCHG s(β-1),s(i_1)`, followed by the translation of $O'$ `s(i_2)`,...,`s(i_γ)`, defined by the induction hypothesis.
   2. $O$ `s(i_1)`,...,`s(i_γ)`, with $O$=`PU`$O'$, where $O'$ is a compound operation of arity $\gamma-1$. Then the original operation is translated into `PUSH s(i_1)`; `XCHG s(β)`, followed by the translation of $O'$ `s(i_2+1)`,...,`s(i_γ+1)`, defined by the induction hypothesis.<sup>[10](#fn10)</sup>
 
-#### 2.2.6 Stack manipulation instructions are polymorphic
+#### 2.2.6. Stack manipulation instructions are polymorphic
 
 Notice that the stack manipulation instructions are almost the only "polymorphic" primitives in TVM---i.e., they work with values of arbitrary types (including the value types that will appear only in future revisions of TVM). For example, `SWAP` always interchanges the two top values of the stack, even if one of them is an integer and the other is a cell. Almost all other instructions, especially the data processing instructions (including arithmetic instructions), require each of their arguments to be of some fixed type (possibly different for different arguments).
 
-### 2.3 Efficiency of stack manipulation primitives
+### 2.3. Efficiency of stack manipulation primitives
 
 Stack manipulation primitives employed by a stack machine, such as TVM, have to be implemented very efficiently, because they constitute more than half of all the instructions used in a typical program. In fact, TVM performs all these instructions in a (small) constant time, regardless of the values involved (even if they represent very large integers or very large trees of cells).
 
-#### 2.3.1 Implementation of stack manipulation primitives: using references for operations instead of objects
+#### 2.3.1. Implementation of stack manipulation primitives: using references for operations instead of objects
 
 The efficiency of TVM's implementation of stack manipulation primitives results from the fact that a typical TVM implementation keeps in the stack not the value objects themselves, but only the references (pointers) to such objects. Therefore, a `SWAP` instruction only needs to interchange the references at `s0` and `s1`, not the actual objects they refer to.
 
-#### 2.3.2 Efficient implementation of `DUP` and `PUSH` instructions using copy-on-write
+#### 2.3.2. Efficient implementation of `DUP` and `PUSH` instructions using copy-on-write
 
 Furthermore, a `DUP` (or, more generally, `PUSH s(i)`) instruction, which appears to make a copy of a potentially large object, also works in small constant time, because it uses a copy-on-write technique of delayed copying: it copies only the reference instead of the object itself, but increases the "reference counter" inside the object, thus sharing the object between the two references. If an attempt to modify an object with a reference counter greater than one is detected, a separate copy of the object in question is made first (incurring a certain "non-uniqueness penalty" or "copying penalty" for the data manipulation instruction that triggered the creation of a new copy).
 
-#### 2.3.3 Garbage collecting and reference counting
+#### 2.3.3. Garbage collecting and reference counting
 
 When the reference counter of a TVM object becomes zero (for example, because the last reference to such an object has been consumed by a `DROP` operation or an arithmetic instruction), it is immediately freed. Because cyclic references are impossible in TVM data structures, this method of reference counting provides a fast and convenient way of freeing unused objects, replacing slow and unpredictable garbage collectors.
 
-#### 2.3.4 Transparency of the implementation: Stack values are "values", not "references"
+#### 2.3.4. Transparency of the implementation: Stack values are "values", not "references"
 
 Regardless of the implementation details just discussed, all stack values are really "values", not "references", from the perspective of the TVM programmer, similarly to the values of all types in functional programming languages. Any attempt to modify an existing object referred to from any other objects or stack locations will result in a transparent replacement of this object by its perfect copy before the modification is actually performed.
 
 In other words, the programmer should always act as if the objects themselves were directly manipulated by stack, arithmetic, and other data transformation primitives, and treat the previous discussion only as an explanation of the high efficiency of the stack manipulation primitives.
 
-#### 2.3.5 Absence of circular references
+#### 2.3.5. Absence of circular references
 
 One might attempt to create a circular reference between two cells, $A$ and $B$, as follows: first create $A$ and write some data into it; then create $B$ and write some data into it, along with a reference to previously constructed cell $A$; finally, add a reference to $B$ into $A$. While it may seem that after this sequence of operations we obtain a cell $A$, which refers to $B$, which in turn refers to $A$, this is not the case. In fact, we obtain a new cell $A'$, which contains a copy of the data originally stored into cell $A$ along with a reference to cell $B$, which contains a reference to (the original) cell $A$.
 
@@ -359,19 +354,19 @@ In this way the transparent copy-on-write mechanism and the "everything is a val
 
 ---
 
-## Chapter 3: Cells, memory, and persistent storage
+## 3. Cells, memory, and persistent storage
 
 This chapter briefly describes TVM cells, used to represent all data structures inside the TVM memory and its persistent storage, and the basic operations used to create cells, write (or serialize) data into them, and read (or deserialize) data from them.
 
-### 3.1 Generalities on cells
+### 3.1. Generalities on cells
 
 This section presents a classification and general descriptions of cell types.
 
-#### 3.1.1 TVM memory and persistent storage consist of cells
+#### 3.1.1. TVM memory and persistent storage consist of cells
 
 Recall that the TVM memory and persistent storage consist of *(TVM) cells*. Each cell contains up to 1023 bits of data and up to four references to other cells.<sup>[11](#fn11)</sup> Circular references are forbidden and cannot be created by means of TVM (cf. [2.3.5](#2-3-5-absence-of-circular-references)). In this way, all cells kept in TVM memory and persistent storage constitute a directed acyclic graph (DAG).
 
-#### 3.1.2 Ordinary and exotic cells
+#### 3.1.2. Ordinary and exotic cells
 
 Apart from the data and references, a cell has a *cell type*, encoded by an integer $-1$...255. A cell of type $-1$ is called *ordinary*; such cells do not require any special processing. Cells of other types are called *exotic*, and may be *loaded*---automatically replaced by other cells when an attempt to deserialize them (i.e., to convert them into a *Slice* by a `CTOS` instruction) is made. They may also exhibit a non-trivial behavior when their hashes are computed.
 
@@ -379,7 +374,7 @@ The most common use for exotic cells is to represent some other cells---for inst
 
 The type of an exotic cell is stored as the first eight bits of its data. If an exotic cell has less than eight data bits, it is invalid.
 
-#### 3.1.3 The level of a cell
+#### 3.1.3. The level of a cell
 
 Every cell $c$ has another attribute $\text{Lvl}(c)$ called its *(de Brujn) level*, which currently takes integer values in the range 0...3. The level of an ordinary cell is always equal to the maximum of the levels of all its children $c_i$:
 
@@ -389,7 +384,7 @@ for an ordinary cell $c$ containing $r$ references to cells $c_1$, ..., $c_r$. I
 
 A cell's level affects the number of *higher hashes* it has. More precisely, a level $l$ cell has $l$ higher hashes $\text{Hash}_1(c)$, ..., $\text{Hash}_l(c)$ in addition to its representation hash $\text{Hash}(c)=\text{Hash}_\infty(c)$. Cells of non-zero level appear inside *Merkle proofs* and *Merkle updates*, after some branches of the tree of cells representing a value of an abstract data type are pruned.
 
-#### 3.1.4 Standard cell representation
+#### 3.1.4. Standard cell representation
 
 When a cell needs to be transferred by a network protocol or stored in a disk file, it must be *serialized*. The standard representation $\text{CellRepr}(c)=\text{CellRepr}_\infty(c)$ of a cell $c$ as an octet (byte) sequence is constructed as follows:
 
@@ -399,7 +394,7 @@ When a cell needs to be transferred by a network protocol or stored in a disk fi
 
 In this way, $2+\lceil b/8\rceil+32r$ bytes of $\text{CellRepr}(c)$ are obtained.
 
-#### 3.1.5 The representation hash of a cell
+#### 3.1.5. The representation hash of a cell
 
 The 256-bit *representation hash* or simply *hash* $\text{Hash}(c)$ of a cell $c$ is recursively defined as the SHA-256 of the standard representation of the cell $c$:
 
@@ -407,11 +402,11 @@ $$\text{Hash}(c):=\text{SHA-256}\bigl(\text{CellRepr}(c)\bigr)$$
 
 Notice that cyclic cell references are not allowed and cannot be created by means of the TVM (cf. [2.3.5](#2-3-5-absence-of-circular-references)), so this recursion always ends, and the representation hash of any cell is well-defined.
 
-#### 3.1.6 The higher hashes of a cell
+#### 3.1.6. The higher hashes of a cell
 
 Recall that a cell $c$ of level $l$ has $l$ higher hashes $\text{Hash}_i(c)$, $1\leq i\leq l$, as well. Exotic cells have their own rules for computing their higher hashes. Higher hashes $\text{Hash}_i(c)$ of an ordinary cell $c$ are computed similarly to its representation hash, but using the higher hashes $\text{Hash}_i(c_j)$ of its children $c_j$ instead of their representation hashes $\text{Hash}(c_j)$. By convention, we set $\text{Hash}_\infty(c):=\text{Hash}(c)$, and $\text{Hash}_i(c):=\text{Hash}_\infty(c)=\text{Hash}(c)$ for all $i>l$.<sup>[12](#fn12)</sup>
 
-#### 3.1.7 Types of exotic cells
+#### 3.1.7. Types of exotic cells
 
 TVM currently supports the following cell types:
 
@@ -430,25 +425,25 @@ $$\text{Lvl}(c)=\max(\text{Lvl}(c_1)-1,\text{Lvl}(c_2)-1,0)$$
 
 A Merkle update behaves like a Merkle proof for both $c_1$ and $c_2$, and contains $8+256+256$ data bits with $\text{Hash}_1(c_1)$ and $\text{Hash}_1(c_2)$. However, an extra requirement is that *all pruned branch cells $c'$ that are descendants of $c_2$ and are bound by $c$ must also be descendants of $c_1$*.<sup>[13](#fn13)</sup> When a Merkle update cell is loaded, it is replaced by $c_2$.
 
-#### 3.1.8 All values of algebraic data types are trees of cells
+#### 3.1.8. All values of algebraic data types are trees of cells
 
 Arbitrary values of arbitrary algebraic data types (e.g., all types used in functional programming languages) can be serialized into trees of cells (of level 0), and such representations are used for representing such values within TVM. The copy-on-write mechanism (cf. [2.3.2](#2-3-2-efficient-implementation-of-dup-and-push-instructions-using-copy-on-write)) allows TVM to identify cells containing the same data and references, and to keep only one copy of such cells. This actually transforms a tree of cells into a directed acyclic graph (with the additional property that all its vertices be accessible from a marked vertex called the "root"). However, this is a storage optimization rather than an essential property of TVM. From the perspective of a TVM code programmer, one should think of TVM data structures as trees of cells.
 
-#### 3.1.9 TVM code is a tree of cells
+#### 3.1.9. TVM code is a tree of cells
 
 The TVM code itself is also represented by a tree of cells. Indeed, TVM code is simply a value of some complex algebraic data type, and as such, it can be serialized into a tree of cells.
 
 The exact way in which the TVM code (e.g., TVM assembly code) is transformed into a tree of cells is explained later (cf. [4.1.4](#4-1-4-normal-work-of-tvm-or-the-main-loop) and [5.2](#5-2-instruction-encoding)), in sections discussing control flow instructions, continuations, and TVM instruction encoding.
 
-#### 3.1.10 "Everything is a bag of cells" paradigm
+#### 3.1.10. "Everything is a bag of cells" paradigm
 
 As described in [[1](#ref-1)], 2.5.14, all the data used by the TON Blockchain, including the blocks themselves and the blockchain state, can be represented---and are represented---as collections, or "bags", of cells. We see that TVM's structure of data (cf. [3.1.8](#3-1-8-all-values-of-algebraic-data-types-are-trees-of-cells)) and code (cf. [3.1.9](#3-1-9-tvm-code-is-a-tree-of-cells)) nicely fits into this "everything is a bag of cells" paradigm. In this way, TVM can naturally be used to execute smart contracts in the TON Blockchain, and the TON Blockchain can be used to store the code and persistent data of these smart contracts between invocations of TVM. (Of course, both TVM and the TON Blockchain have been designed so that this would become possible.)
 
-### 3.2 Data manipulation instructions and cells
+### 3.2. Data manipulation instructions and cells
 
 The next large group of TVM instructions consists of *data manipulation instructions*, also known as *cell manipulation instructions* or simply *cell instructions*. They correspond to memory access instructions of other architectures.
 
-#### 3.2.1 Classes of cell manipulation instructions
+#### 3.2.1. Classes of cell manipulation instructions
 
 The TVM cell instructions are naturally subdivided into two principal classes:
 
@@ -457,23 +452,23 @@ The TVM cell instructions are naturally subdivided into two principal classes:
 
 Additionally, there are *exotic cell instructions* used to create and inspect exotic cells (cf. [3.1.2](#3-1-2-ordinary-and-exotic-cells)), which in particular are used to represent pruned branches of Merkle proofs and Merkle proofs themselves.
 
-#### 3.2.2 Builder and Slice values
+#### 3.2.2. Builder and Slice values
 
 Cell creation instructions usually work with *Builder* values, which can be kept only in the stack (cf. [1.1.3](#1-1-3-preliminary-list-of-value-types)). Such values represent partially constructed cells, for which fast operations for appending bitstrings, integers, other cells, and references to other cells can be defined. Similarly, cell parsing instructions make heavy use of *Slice* values, which represent either the remainder of a partially parsed cell, or a value (subcell) residing inside such a cell and extracted from it by a parsing instruction.
 
-#### 3.2.3 Builder and Slice values exist only as stack values
+#### 3.2.3. Builder and Slice values exist only as stack values
 
 Notice that *Builder* and *Slice* objects appear only as values in a TVM stack. They cannot be stored in "memory" (i.e., trees of cells) or "persistent storage" (which is also a bag of cells). In this sense, there are far more *Cell* objects than *Builder* or *Slice* objects in a TVM environment, but, somewhat paradoxically, a TVM program sees *Builder* and *Slice* objects in its stack more often than *Cell*s. In fact, a TVM program does not have much use for *Cell* values, because they are immutable and opaque; all cell manipulation primitives require that a *Cell* value be transformed into either a *Builder* or a *Slice* first, before it can be modified or inspected.
 
-#### 3.2.4 TVM has no separate Bitstring value type
+#### 3.2.4. TVM has no separate Bitstring value type
 
 Notice that TVM offers no separate bitstring value type. Instead, bitstrings are represented by *Slice*s that happen to have no references at all, but can still contain up to 1023 data bits.
 
-#### 3.2.5 Cells and cell primitives are bit-oriented, not byte-oriented
+#### 3.2.5. Cells and cell primitives are bit-oriented, not byte-oriented
 
 An important point is that *TVM regards data kept in cells as sequences (strings, streams) of (up to 1023) bits, not of bytes*. In other words, TVM is a *bit-oriented machine*, not a byte-oriented machine. If necessary, an application is free to use, say, 21-bit integer fields inside records serialized into TVM cells, thus using fewer persistent storage bytes to represent the same data.
 
-#### 3.2.6 Taxonomy of cell creation (serialization) primitives
+#### 3.2.6. Taxonomy of cell creation (serialization) primitives
 
 Cell creation primitives usually accept a *Builder* argument and an argument representing the value to be serialized. Additional arguments controlling some aspects of the serialization process (e.g., how many bits should be used for serialization) can be also provided, either in the stack or as an immediate value inside the instruction. The result of a cell creation primitive is usually another *Builder*, representing the concatenation of the original builder and the serialization of the value provided.
 
@@ -492,7 +487,7 @@ The mnemonics of cell serialization primitives usually begin with `ST`. Subseque
 
 This classification scheme is used to create a more complete taxonomy of cell serialization primitives, which can be found in Appendix [A.7.1](#a-7-1-cell-serialization-primitives).
 
-#### 3.2.7 Integer serialization primitives
+#### 3.2.7. Integer serialization primitives
 
 Integer serialization primitives can be classified according to the above taxonomy as well. For example:
 
@@ -503,19 +498,19 @@ Integer serialization primitives can be classified according to the above taxono
 
 Integer serialization instructions have mnemonics like `STU 20` ("store an unsigned 20-bit integer value") or `STIXQ` ("quietly store an integer value of variable length provided in the stack"). The full list of these instructions---including their mnemonics, descriptions, and opcodes---is provided in Appendix [A.7.1](#a-7-1-cell-serialization-primitives).
 
-#### 3.2.8 Integers in cells are big-endian by default
+#### 3.2.8. Integers in cells are big-endian by default
 
 Notice that the default order of bits in *Integer*s serialized into *Cell*s is *big-endian*, not little-endian.<sup>[14](#fn14)</sup> In this respect *TVM is a big-endian machine*. However, this affects only the serialization of integers inside cells. The internal representation of the *Integer* value type is implementation-dependent and irrelevant for the operation of TVM. Besides, there are some special primitives such as `STULE` for (de)serializing little-endian integers, which must be stored into an integral number of bytes (otherwise "little-endianness" does not make sense, unless one is also willing to revert the order of bits inside octets). Such primitives are useful for interfacing with the little-endian world---for instance, for parsing custom-format messages arriving to a TON Blockchain smart contract from the outside world.
 
-#### 3.2.9 Other serialization primitives
+#### 3.2.9. Other serialization primitives
 
 Other cell creation primitives serialize bitstrings (i.e., cell slices without references), either taken from the stack or supplied as literal arguments; cell slices (which are concatenated to the cell builder in an obvious way); other *Builder*s (which are also concatenated); and cell references (`STREF`).
 
-#### 3.2.10 Other cell creation primitives
+#### 3.2.10. Other cell creation primitives
 
 In addition to the cell serialization primitives for certain built-in value types described above, there are simple primitives that create a new empty *Builder* and push it into the stack (`NEWC`), or transform a *Builder* into a *Cell* (`ENDC`), thus finishing the cell creation process. An `ENDC` can be combined with a `STREF` into a single instruction `ENDCST`, which finishes the creation of a cell and immediately stores a reference to it in an "outer" *Builder*. There are also primitives that obtain the quantity of data bits or references already stored in a *Builder*, and check how many data bits or references can be stored.
 
-#### 3.2.11 Taxonomy of cell deserialisation primitives
+#### 3.2.11. Taxonomy of cell deserialisation primitives
 
 Cell parsing, or deserialization, primitives can be classified as described in [3.2.6](#3-2-6-taxonomy-of-cell-creation-serialization-primitives), with the following modifications:
 
@@ -528,11 +523,11 @@ For example, an unsigned big-endian 20-bit integer previously serialized into a 
 
 Again, more detailed information about these instructions is provided in Appendix [A.7.2](#a-7-2-cell-deserialization-primitives).
 
-#### 3.2.12 Other cell slice primitives
+#### 3.2.12. Other cell slice primitives
 
 In addition to the cell deserialisation primitives outlined above, TVM provides some obvious primitives for initializing and completing the cell deserialization process. For instance, one can convert a *Cell* into a *Slice* (`CTOS`), so that its deserialisation might begin; or check whether a *Slice* is empty, and generate an exception if it is not (`ENDS`); or deserialize a cell reference and immediately convert it into a *Slice* (`LDREFTOS`, equivalent to two instructions `LDREF` and `CTOS`).
 
-#### 3.2.13 Modifying a serialized value in a cell
+#### 3.2.13. Modifying a serialized value in a cell
 
 The reader might wonder how the values serialized inside a cell may be modified. Suppose a cell contains three serialized 29-bit integers, $(x,y,z)$, representing the coordinates of a point in space, and we want to replace $y$ with $y'=y+1$, leaving the other coordinates intact. How would we achieve this?
 
@@ -542,27 +537,27 @@ TVM does not offer any ways to modify existing values (cf. [2.3.4](#2-3-4-transp
 2. Increase $y$ by one (e.g., by `SWAP; INC; SWAP`).
 3. Finally, serialize the resulting *Integer*s into a new cell (e.g., by `XCHG s2; NEWC; STI 29; STI 29; STI 29; ENDC`).
 
-#### 3.2.14 Modifying the persistent storage of a smart contract
+#### 3.2.14. Modifying the persistent storage of a smart contract
 
 If the TVM code wants to modify its persistent storage, represented by the tree of cells rooted at `c4`, it simply needs to rewrite control register `c4` by the root of the tree of cells containing the new value of its persistent storage. (If only part of the persistent storage needs to be modified, cf. [3.2.13](#3-2-13-modifying-a-serialized-value-in-a-cell).)
 
-### 3.3 Hashmaps, or dictionaries
+### 3.3. Hashmaps, or dictionaries
 
 *Hashmaps*, or *dictionaries*, are a specific data structure represented by a tree of cells. Essentially, a hashmap represents a map from *keys*, which are bitstrings of either fixed or variable length, into *values* of an arbitrary type $X$, in such a way that fast lookups and modifications be possible. While any such structure might be inspected or modified with the aid of generic cell serialization and deserialization primitives, TVM introduces special primitives to facilitate working with these hashmaps.
 
-#### 3.3.1 Basic hashmap types
+#### 3.3.1. Basic hashmap types
 
 The two most basic hashmap types predefined in TVM are $\text{HashmapE}\ n\ X$ or $\text{HashmapE}(n,X)$, which represents a partially defined map from $n$-bit strings (called *keys*) for some fixed $0\leq n\leq 1023$ into *values* of some type $X$, and $\text{Hashmap}(n,X)$, which is similar to $\text{HashmapE}(n,X)$ but is not allowed to be empty (i.e., it must contain at least one key-value pair).
 
 Other hashmap types are also available---for example, one with keys of arbitrary length up to some predefined bound (up to 1023 bits).
 
-#### 3.3.2 Hashmaps as Patricia trees
+#### 3.3.2. Hashmaps as Patricia trees
 
 The abstract representation of a hashmap in TVM is a *Patricia tree*, or a *compact binary trie*. It is a binary tree with edges labelled by bitstrings, such that the concatenation of all edge labels on a path from the root to a leaf equals a key of the hashmap. The corresponding value is kept in this leaf (for hashmaps with keys of fixed length), or optionally in the intermediate vertices as well (for hashmaps with keys of variable length). Furthermore, any intermediate vertex must have two children, and the label of the left child must begin with a binary zero, while the label of the right child must begin with a binary one. This enables us not to store the first bit of the edge labels explicitly.
 
 It is easy to see that any collection of key-value pairs (with distinct keys) is represented by a unique Patricia tree.
 
-#### 3.3.3 Serialization of hashmaps
+#### 3.3.3. Serialization of hashmaps
 
 The serialization of a hashmap into a tree of cells (or, more generally, into a *Slice*) is defined by the following TL-B scheme:<sup>[15](#fn15)</sup>
 
@@ -591,7 +586,7 @@ true#_ = True;
 _ {n:#} _:(Hashmap n True) = BitstringSet n;
 ```
 
-#### 3.3.4 Brief explanation of TL-B schemes
+#### 3.3.4. Brief explanation of TL-B schemes
 
 A TL-B scheme, like the one above, includes the following components.
 
@@ -611,7 +606,7 @@ A caret (`^`) preceding a type $X$ means that instead of serializing a value of 
 
 Parametrized type `#<= p` with $p$:`#` (this notation means "$p$ of type `#`", i.e., a natural number) denotes the subtype of the natural numbers type `#`, consisting of integers $0$...$p$; it is serialized into $\lceil\log_2(p+1)\rceil$ bits as an unsigned big-endian integer. Type `#` by itself is serialized as an unsigned 32-bit integer. Parametrized type `## b` with $b$:`#<=`31 is equivalent to `#<= 2^b-1` (i.e., it is an unsigned $b$-bit integer).
 
-#### 3.3.5 Application to the serialization of hashmaps
+#### 3.3.5. Application to the serialization of hashmaps
 
 Let us explain the net result of applying the general rules described in [3.3.4](#3-3-4-brief-explanation-of-tl-b-schemes) to the TL-B scheme presented in [3.3.3](#3-3-3-serialization-of-hashmaps).
 
@@ -627,7 +622,7 @@ If $m=0$, a value of type `HashmapNode 0 X` is given by the `hmn_leaf` construct
 
 On the other hand, if $m>0$, a value of type `HashmapNode m X` corresponds to a fork (i.e., an intermediate node) in the Patricia tree, and is given by the `hmn_fork` constructor. Its serialization consists of `left` and `right`, two references to cells containing values of type `Hashmap m-1 X`, which correspond to the left and the right child of the intermediate node in question---or, equivalently, to the two subdictionaries of the original dictionary consisting of key-value pairs with keys beginning with a binary `0` or a binary `1`, respectively. Because the first bit of all keys in each of these subdictionaries is known and fixed, it is removed, and the resulting (necessarily non-empty) subdictionaries are recursively serialized as values of type `Hashmap m-1 X`.
 
-#### 3.3.6 Serialization of labels
+#### 3.3.6. Serialization of labels
 
 There are several ways to serialize a label of length at most $n$, if its exact length is $l\leq n$ (recall that the exact length must be deducible from the serialization of the label itself, while the upper bound $n$ is known before the label is serialized or deserialized). These ways are described by the three constructors `hml_short`, `hml_long`, and `hml_same` of type `HmLabel l^⊥ n`:
 
@@ -639,7 +634,7 @@ Each label can always be serialized in at least two different fashions, using `h
 
 This label encoding scheme has been designed to be efficient for dictionaries with "random" keys (e.g., hashes of some data), as well as for dictionaries with "regular" keys (e.g., big-endian representations of integers in some range).
 
-#### 3.3.7 An example of dictionary serialization
+#### 3.3.7. An example of dictionary serialization
 
 Consider a dictionary with three 16-bit keys 13, 17, and 239 (considered as big-endian integers) and corresponding 16-bit values 169, 289, and 57121.
 
@@ -692,7 +687,7 @@ C_
 
 A total of 93 data bits and 5 references in 6 cells have been used to serialize this dictionary. Notice that a straightforward representation of three 16-bit keys and their corresponding 16-bit values would already require 96 bits (albeit without any references), so this particular serialization turns out to be quite efficient.
 
-#### 3.3.8 Ways to describe the serialization of type $X$
+#### 3.3.8. Ways to describe the serialization of type $X$
 
 Notice that the built-in TVM primitives for dictionary manipulation need to know something about the serialization of type $X$; otherwise, they would not be able to work correctly with $\text{Hashmap}$ $n$ $X$, because values of type $X$ are immediately contained in the Patricia tree leaf cells. There are several options available to describe the serialization of type $X$:
 
@@ -701,11 +696,11 @@ Notice that the built-in TVM primitives for dictionary manipulation need to know
 - A more sophisticated case can be described by four integers $1\leq b_0,b_1\leq 1023$, $0\leq r_0,r_1\leq 4$, with $b_i$ and $r_i$ used when the first bit of the serialization equals $i$. When $b_0=b_1$ and $r_0=r_1$, this case reduces to the previous one.
 - Finally, the most general description of the serialization of a type $X$ is given by a *splitting function* $\text{split}_X$ for $X$, which accepts one *Slice* parameter $s$, and returns two *Slice*s, $s'$ and $s''$, where $s'$ is the only prefix of $s$ that is the serialization of a value of type $X$, and $s''$ is the remainder of $s$. If no such prefix exists, the splitting function is expected to throw an exception. Notice that a compiler for a high-level language, which supports some or all algebraic TL-B types, is likely to automatically generate splitting functions for all types defined in the program.
 
-#### 3.3.9 A simplifying assumption on the serialization of X
+#### 3.3.9. A simplifying assumption on the serialization of X
 
 One may notice that values of type $X$ always occupy the remaining part of an `hm_edge`/`hme_leaf` cell inside the serialization of a $\text{HashmapE}$ $n$ $X$. Therefore, if we do not insist on strict validation of all dictionaries accessed, we may assume that everything left unparsed in an `hm_edge`/`hme_leaf` cell after deserializing its `label` is a value of type $X$. This greatly simplifies the creation of dictionary manipulation primitives, because in most cases they turn out not to need any information about $X$ at all.
 
-#### 3.3.10 Basic dictionary operations
+#### 3.3.10. Basic dictionary operations
 
 Let us present a classification of basic operations with dictionaries (i.e., values $D$ of type $\text{HashmapE}$ $n$ $X$):
 
@@ -732,7 +727,7 @@ Let us present a classification of basic operations with dictionaries (i.e., val
 - $\textsc{TreeReduce}(D,o,f,g)$ --- Given $D$:$\text{HashmapE}(n,X)$, a value $o$:$X$, and two functions $f$:$X\to Y$ and $g$:$Y\times Y\to Y$, performs a "tree reduction" of $D$ by first applying $f$ to all the leaves, and then using $g$ to compute the value corresponding to a fork starting from the values assigned to its children.<sup>[19](#fn19)</sup>
 
 
-#### 3.3.11 Taxonomy of dictionary primitives**
+#### 3.3.11. Taxonomy of dictionary primitives**
 
 The dictionary primitives, described in detail in Appendix [A.10](#a-10-dictionary-manipulation-primitives), can be classified according to the following categories:
 
@@ -746,11 +741,11 @@ In addition, TVM includes special serialization/deserialization primitives, such
 
 ---
 
-### 3.4 Hashmaps with variable-length keys
+### 3.4. Hashmaps with variable-length keys
 
 TVM provides some support for dictionaries, or hashmaps, with variable-length keys, in addition to its support for dictionaries with fixed-length keys (as described in [3.3](#3-3-hashmaps-or-dictionaries) above).
 
-#### 3.4.1 Serialization of dictionaries with variable-length keys
+#### 3.4.1. Serialization of dictionaries with variable-length keys
 
 The serialization of a *VarHashmap* into a tree of cells (or, more generally, into a *Slice*) is defined by a TL-B scheme, similar to that described in [3.3.3](#3-3-3-serialization-of-hashmaps):
 
@@ -773,7 +768,7 @@ vhme_root$1 {n:#} {X:Type} root:^(VarHashmap n X)
             = VarHashmapE n X;
 ```
 
-#### 3.4.2 Serialization of prefix codes
+#### 3.4.2. Serialization of prefix codes
 
 One special case of a dictionary with variable-length keys is that of a *prefix code*, where the keys cannot be prefixes of each other. Values in such dictionaries may occur only in the leaves of a Patricia tree.
 
@@ -1530,7 +1525,7 @@ Most of the instructions listed below push literal slices, continuations, cells,
 
 ## A.5 Arithmetic primitives
 
-### A.5.1 Addition, subtraction, multiplication
+### A.5.1. Addition, subtraction, multiplication
 
 - `A0` — `ADD` ($x$ $y$ -- $x+y$), adds together two integers.
 - `A1` — `SUB` ($x$ $y$ -- $x-y$).
@@ -1542,7 +1537,7 @@ Most of the instructions listed below push literal slices, continuations, cells,
 - `A7cc` — `MULCONST cc` ($x$ -- $x\cdot cc$), $-128\leq cc\leq127$.
 - `A8` — `MUL` ($x$ $y$ -- $xy$).
 
-### A.5.2 Division
+### A.5.2. Division
 
 The general encoding of a `DIV`, `DIVMOD`, or `MOD` operation is `A9mscdf`, with an optional pre-multiplication and an optional replacement of the division or multiplication by a shift. Variable one- or two-bit fields $m$, $s$, $c$, $d$, and $f$ are as follows:
 
@@ -1576,7 +1571,7 @@ Examples:
 - `A9D4tt` — `LSHIFTDIV tt+1` ($x$ $y$ -- $\lfloor 2^{tt+1}x/y\rfloor$).
 - `A9D5tt` — `LSHIFTDIVR tt+1` ($x$ $y$ -- $\lfloor 2^{tt+1}x/y+1/2\rfloor$).
 
-### A.5.3 Shifts, logical operations
+### A.5.3. Shifts, logical operations
 
 - `AAcc` — `LSHIFT cc+1` ($x$ -- $x\cdot2^{cc+1}$), $0\leq cc\leq255$.
 - `AA00` — `LSHIFT 1`, equivalent to `MULCONST 2` or to Forth's `2*`.
@@ -1613,9 +1608,9 @@ Examples:
 - `B7B1` — `QOR` ($x$ $y$ -- $x\vee y$), bitwise "or". If $x=-1$ or $y=-1$, the result is always $-1$, even if the other argument is a `NaN`.
 - `B7B507` — `QUFITS 8` ($x$ -- $x'$), checks whether $x$ is an unsigned byte (i.e., whether $0\leq x<2^8$), and replaces $x$ with a `NaN` if this is not the case; leaves $x$ intact otherwise (i.e., if $x$ is an unsigned byte or a `NaN`).
 
-## A.6 Comparison primitives
+## A.6. Comparison primitives
 
-### A.6.1 Integer comparison
+### A.6.1. Integer comparison
 
 All integer comparison primitives return integer $-1$ ("true") or $0$ ("false") to indicate the result of the comparison. Quiet versions of integer comparison primitives are also available, encoded with the aid of the `QUIET` prefix (`B7`). If any of the integers being compared are `NaN`s, the result of a quiet comparison will also be a `NaN` ("undefined"), instead of a $-1$ ("yes") or $0$ ("no"), thus effectively supporting ternary logic.
 
@@ -1640,7 +1635,7 @@ All integer comparison primitives return integer $-1$ ("true") or $0$ ("false") 
 - `C5` — `CHKNAN` ($x$ -- $x$), throws an arithmetic overflow exception if $x$ is a `NaN`.
 - `C6` — reserved for integer comparison.
 
-### A.6.2 Other comparison
+### A.6.2. Other comparison
 
 Most of these "other comparison" primitives actually compare the data portions of *Slice*s as bitstrings.
 
@@ -1663,11 +1658,11 @@ Most of these "other comparison" primitives actually compare the data portions o
 - `C712` — `SDCNTTRAIL0` ($s$ -- $n$), returns the number of trailing zeroes in $s$.
 - `C713` — `SDCNTTRAIL1` ($s$ -- $n$), returns the number of trailing ones in $s$.
 
-## A.7 Cell primitives
+## A.7. Cell primitives
 
 The cell primitives are mostly either *cell serialization primitives*, which work with *Builder*s, or *cell deserialization primitives*, which work with *Slice*s.
 
-### A.7.1 Cell serialization primitives
+### A.7.1. Cell serialization primitives
 
 All these primitives first check whether there is enough space in the Builder, and only then check the range of the value being serialized.
 
@@ -1743,7 +1738,7 @@ All these primitives first check whether there is enough space in the Builder, a
 - `CFC2` — equivalent to `STREF2CONST`.
 - `CFE2` — `STREF3CONST`.
 
-### A.7.2 Cell deserialization primitives
+### A.7.2. Cell deserialization primitives
 
 - `D0` — `CTOS` ($c$ -- $s$), converts a *Cell* into a *Slice*. Notice that $c$ must be either an ordinary cell, or an exotic cell which is automatically *loaded* to yield an ordinary cell $c'$, converted into a *Slice* afterwards.
 - `D1` — `ENDS` ($s$ -- ), removes a *Slice* $s$ from the stack, and throws an exception if it is not empty.
@@ -1825,9 +1820,9 @@ All these primitives first check whether there is enough space in the Builder, a
 - `D764` — `SDEPTH` ($s$ -- $x$), returns the depth of *Slice* $s$. If $s$ has no references, then $x=0$; otherwise $x$ is one plus the maximum of depths of cells referred to from $s$.
 - `D765` — `CDEPTH` ($c$ -- $x$), returns the depth of *Cell* $c$. If $c$ has no references, then $x=0$; otherwise $x$ is one plus the maximum of depths of cells referred to from $c$. If $c$ is a *Null* instead of a *Cell*, returns zero.
 
-## A.8 Continuation and control flow primitives
+## A.8. Continuation and control flow primitives
 
-### A.8.1 Unconditional control flow primitives
+### A.8.1. Unconditional control flow primitives
 
 - `D8` — `EXECUTE` or `CALLX` ($c$ -- ), *calls* or *executes* continuation $c$ (i.e., ${\tt cc}\leftarrow c\circ_0{\tt cc}$).
 - `D9` — `JMPX` ($c$ -- ), *jumps*, or transfers control, to continuation $c$ (i.e., ${\tt cc}\leftarrow c\circ_0{\tt c0}$, or rather ${\tt cc}\leftarrow(c\circ_0{\tt c0})\circ_1{\tt c1}$). The remainder of the previous current continuation `cc` is discarded.
@@ -1875,7 +1870,7 @@ All these primitives first check whether there is enough space in the Builder, a
 - `E3D_n` — `IFBITJMPREF n` ($x$ -- $x$), performs a `JMPREF` if bit $0\leq n\leq 31$ is set in integer $x$.
 - `E3F_n` — `IFNBITJMPREF n` ($x$ -- $x$), performs a `JMPREF` if bit $0\leq n\leq 31$ is not set in integer $x$.
 
-### A.8.3 Control flow primitives: loops
+### A.8.3. Control flow primitives: loops
 
 - `E4` — `REPEAT` ($n$ $c$ -- ), executes continuation $c$ $n$ times, if integer $n$ is non-negative. If $n\geq2^{31}$ or $n<-2^{31}$, generates a range check exception.
 - `E5` — `REPEATEND` ($n$ -- ), similar to `REPEAT`, but it is applied to the current continuation `cc`.
@@ -1894,7 +1889,7 @@ All these primitives first check whether there is enough space in the Builder, a
 - `E31A` — `AGAINBRK` ($c$ -- ), similar to `AGAIN`, but also modifies `c1` in the same way as `REPEATBRK`.
 - `E31B` — `AGAINENDBRK` ( -- ), equivalent to `SAMEALTSAVE`; `AGAINEND`.
 
-### A.8.4 Manipulating the stack of continuations
+### A.8.4. Manipulating the stack of continuations
 
 - `ECrn` — `SETCONTARGS r,n` ($x_1$ $x_2$\dots$x_r$ $c$ -- $c'$), similar to `SETCONTARGS r`, but sets $c.{\tt nargs}$ to the final size of the stack of $c'$ plus $n$. In other words, transforms $c$ into a *closure* or a *partially applied function*, with $0\leq n\leq 14$ arguments missing.
 - `EC0n` — `SETNUMARGS n` or `SETCONTARGS 0,n` ($c$ -- $c'$), sets $c.{\tt nargs}$ to $n$ plus the current depth of $cs stack, where $0\leq n\leq 14$.
@@ -1904,14 +1899,14 @@ All these primitives first check whether there is enough space in the Builder, a
 - `ED11` — `SETCONTVARARGS` ($x_1$ $x_2$\dots$x_r$ $c$ $r$ $n$ -- $c'$), similar to `SETCONTARGS`, but with $0\leq r\leq 255$ and $-1\leq n\leq 255$ taken from the stack.
 - `ED12` — `SETNUMVARARGS` ($c$ $n$ -- $c'$), where $-1\leq n\leq 255$. If $n=-1$, this operation does nothing ($c'=c$).
 
-### A.8.5 Creating simple continuations and closures
+### A.8.5. Creating simple continuations and closures
 
 - `ED1E` — `BLESS` ($s$ -- $c$), transforms a *Slice* $s$ into a simple ordinary continuation $c$, with $c.{\tt code}=s$ and an empty stack and savelist.
 - `ED1F` — `BLESSVARARGS` ($x_1$\dots$x_r$ $s$ $r$ $n$ -- $c$), equivalent to `ROT`; `BLESS`; `ROTREV`; `SETCONTVARARGS`.
 - `EErn` — `BLESSARGS r,n` ($x_1$\dots$x_r$ $s$ -- $c$), where $0\leq r\leq 15$, $-1\leq n\leq 14$, equivalent to `BLESS`; `SETCONTARGS r,n`.
 - `EE0n` — `BLESSNUMARGS n` or `BLESSARGS 0,n` ($s$ -- $c$), also transforms a *Slice* $s$ into a *Continuation* $c$, but sets $c.{\tt nargs}$ to $0\leq n\leq 14$.
 
-### A.8.6 Operations with continuation savelists and control registers
+### A.8.6. Operations with continuation savelists and control registers
 
 - `ED4i` — `PUSH c(i)` or `PUSHCTR c(i)` ( -- $x$), pushes the current value of control register `c(i)`.
 - `ED44` — `PUSH c4` or `PUSHROOT`, pushes the "global data root" cell reference, thus enabling access to persistent smart-contract data.
@@ -1949,7 +1944,7 @@ All these primitives first check whether there is enough space in the Builder, a
 
 ## A.9 Exception generating and handling primitives
 
-### A.9.1 Throwing exceptions
+### A.9.1. Throwing exceptions
 
 - `F22_nn` — `THROW nn` ( -- $0$ $nn$), throws exception $0\leq nn\leq 63$ with parameter zero. In other words, it transfers control to the continuation in `c2`, pushing $0$ and $nn$ into its stack, and discarding the old stack altogether.
 - `F26_nn` — `THROWIF nn` ($f$ -- ), throws exception $0\leq nn\leq 63$ with parameter zero only if integer $f\neq0$.
@@ -1967,21 +1962,21 @@ All these primitives first check whether there is enough space in the Builder, a
 - `F2F4` — `THROWANYIFNOT` ($n$ $f$ -- ), throws exception $0\leq n<2^{16}$ with parameter zero only if $f=0$.
 - `F2F5` — `THROWARGANYIFNOT` ($x$ $n$ $f$ -- ), throws exception $0\leq n<2^{16}$ with parameter $x$ only if $f=0$.
 
-### A.9.2 Catching and handling exceptions
+### A.9.2. Catching and handling exceptions
 
 - `F2FF` — `TRY` ($c$ $c'$ -- ), sets `c2` to $c'$, first saving the old value of `c2` both into the savelist of $c'$ and into the savelist of the current continuation, which is stored into $c.\texttt{c0}$ and $c'.\texttt{c0}$. Then runs $c$ similarly to `EXECUTE`. If $c$ does not throw any exceptions, the original value of `c2` is automatically restored on return from $c$. If an exception occurs, the execution is transferred to $c'$, but the original value of `c2` is restored in the process, so that $c'$ can re-throw the exception by `THROWANY` if it cannot handle it by itself.
 - `F3pr` — `TRYARGS p,r` ($c$ $c'$ -- ), similar to `TRY`, but with `CALLARGS p,r` internally used instead of `EXECUTE`. In this way, all but the top $0\leq p\leq 15$ stack elements will be saved into current continuation's stack, and then restored upon return from either $c$ or $c'$, with the top $0\leq r\leq 15$ values of the resulting stack of $c$ or $c'$ copied as return values.
 
 ---
 
-## A.10 Dictionary manipulation primitives
+## A.10. Dictionary manipulation primitives
 
-### A.10.1 Dictionary creation
+### A.10.1. Dictionary creation
 
 - `6D` — `NEWDICT` ( -- $D$), returns a new empty dictionary. It is an alternative mnemonics for `PUSHNULL`, cf. [A.3.1](#a-3-1-null-primitives).
 - `6E` — `DICTEMPTY` ($D$ -- $?$), checks whether dictionary $D$ is empty, and returns $-1$ or $0$ accordingly. It is an alternative mnemonics for `ISNULL`, cf. [A.3.1](#a-3-1-null-primitives).
 
-### A.10.2 Dictionary serialization and deserialization
+### A.10.2. Dictionary serialization and deserialization
 
 - `CE` — `STDICTS` ($s$ $b$ -- $b'$), stores a Slice-represented dictionary $s$ into Builder $b$. It is actually a synonym for `STSLICE`.
 - `F400` — `STDICT` or `STOPTREF` ($D$ $b$ -- $b'$), stores dictionary $D$ into Builder $b$, returning the resulting Builder $b'$. In other words, if $D$ is a cell, performs `STONE` and `STREF`; if $D$ is Null, performs `NIP` and `STZERO`; otherwise throws a type checking exception.
@@ -2002,7 +1997,7 @@ All these primitives first check whether there is enough space in the Builder, a
 - `F40E` — `DICTUGET` ($i$ $D$ $n$ -- $x$ $-1$ or $0$), similar to `DICTIGET`, but with unsigned (big-endian) $n$-bit Integer $i$ used as a key.
 - `F40F` — `DICTUGETREF` ($i$ $D$ $n$ -- $c$ $-1$ or $0$), similar to `DICTIGETREF`, but with an unsigned $n$-bit Integer key $i$.
 
-### A.10.4 Set/Replace/Add dictionary operations
+### A.10.4. Set/Replace/Add dictionary operations
 
 The mnemonics of the following dictionary primitives are constructed in a systematic fashion according to the regular expression `DICT[I,U](SET,REPLACE,ADD)[GET][REF]` depending on the type of the key used (a Slice or a signed or unsigned Integer), the dictionary operation to be performed, and the way the values are accepted and returned (as Cells or as Slices). Therefore, we provide a detailed description only for some primitives, assuming that this information is sufficient for the reader to understand the precise action of the remaining primitives.
 
@@ -2043,7 +2038,7 @@ The mnemonics of the following dictionary primitives are constructed in a system
 - `F43E` — `DICTUADDGET` ($x$ $i$ $D$ $n$ -- $D'$ $-1$ or $D$ $y$ $0$).
 - `F43F` — `DICTUADDGETREF` ($c$ $i$ $D$ $n$ -- $D'$ $-1$ or $D$ $c'$ $0$).
 
-### A.10.5 Builder-accepting variants of Set dictionary operations
+### A.10.5. Builder-accepting variants of Set dictionary operations
 
 The following primitives accept the new value as a Builder $b$ instead of a Slice $x$, which often is more convenient if the value needs to be serialized from several components computed in the stack. (This is reflected by appending a `B` to the mnemonics of the corresponding Set primitives that work with Slices.) The net effect is roughly equivalent to converting $b$ into a Slice by `ENDC`; `CTOS` and executing the corresponding primitive listed in [A.10.4](#a-10-4-set-replace-add-dictionary-operations).
 
@@ -2066,7 +2061,7 @@ The following primitives accept the new value as a Builder $b$ instead of a Slic
 - `F456` — `DICTIADDGETB` ($b$ $i$ $D$ $n$ -- $D'$ $-1$ or $D$ $y$ $0$).
 - `F457` — `DICTUADDGETB` ($b$ $i$ $D$ $n$ -- $D'$ $-1$ or $D$ $y$ $0$).
 
-### A.10.6 Delete dictionary operations
+### A.10.6. Delete dictionary operations
 
 - `F459` — `DICTDEL` ($k$ $D$ $n$ -- $D'$ $-1$ or $D$ $0$), deletes $n$-bit key, represented by a Slice $k$, from dictionary $D$. If the key is present, returns the modified dictionary $D'$ and the success flag $-1$. Otherwise, returns the original dictionary $D$ and $0$.
 - `F45A` — `DICTIDEL` ($i$ $D$ $n$ -- $D'$ $?$), a version of `DICTDEL` with the key represented by a signed $n$-bit Integer $i$. If $i$ does not fit into $n$ bits, simply returns $D$ $0$ ("key not found, dictionary unmodified").
@@ -2078,7 +2073,7 @@ The following primitives accept the new value as a Builder $b$ instead of a Slic
 - `F466` — `DICTUDELGET` ($i$ $D$ $n$ -- $D'$ $x$ $-1$ or $D$ $0$), a variant of primitive `DICTDELGET` with unsigned $n$-bit integer $i$ as a key.
 - `F467` — `DICTUDELGETREF` ($i$ $D$ $n$ -- $D'$ $c$ $-1$ or $D$ $0$), a variant of primitive `DICTUDELGET` returning a Cell instead of a Slice.
 
-### A.10.7 "Maybe reference" dictionary operations
+### A.10.7. "Maybe reference" dictionary operations
 
 The following operations assume that a dictionary is used to store values $c^?$ of type $\textit{Cell}^?$ ("Maybe Cell"), which can be used in particular to store dictionaries as values in other dictionaries. The representation is as follows: if $c^?$ is a Cell, it is stored as a value with no data bits and exactly one reference to this Cell. If $c^?$ is Null, then the corresponding key must be absent from the dictionary altogether.
 
@@ -2102,7 +2097,7 @@ Some Get operations for prefix code dictionaries may be found in [A.10.11](#a-10
 
 These primitives are completely similar to their non-prefix code counterparts `DICTSET` etc (cf. [A.10.4](#a-10-4-set-replace-add-dictionary-operations)), with the obvious difference that even a Set may fail in a prefix code dictionary, so a success flag must be returned by `PFXDICTSET` as well.
 
-### A.10.9 Variants of GetNext and GetPrev operations
+### A.10.9. Variants of GetNext and GetPrev operations
 
 - `F474` — `DICTGETNEXT` ($k$ $D$ $n$ -- $x'$ $k'$ $-1$ or $0$), computes the minimal key $k'$ in dictionary $D$ that is lexicographically greater than $k$, and returns $k'$ (represented by a Slice) along with associated value $x'$ (also represented by a Slice).
 - `F475` — `DICTGETNEXTEQ` ($k$ $D$ $n$ -- $x'$ $k'$ $-1$ or $0$), similar to `DICTGETNEXT`, but computes the minimal key $k'$ that is lexicographically greater than or equal to $k$.
@@ -2117,7 +2112,7 @@ These primitives are completely similar to their non-prefix code counterparts `D
 - `F47E` — `DICTUGETPREV` ($i$ $D$ $n$ -- $x'$ $i'$ $-1$ or $0$).
 - `F47F` — `DICTUGETPREVEQ` ($i$ $D$ $n$ -- $x'$ $i'$ $-1$ or $0$).
 
-### A.10.10 GetMin, GetMax, RemoveMin, RemoveMax operations
+### A.10.10. GetMin, GetMax, RemoveMin, RemoveMax operations
 
 - `F482` — `DICTMIN` ($D$ $n$ -- $x$ $k$ $-1$ or $0$), computes the minimal key $k$ (represented by a Slice with $n$ data bits) in dictionary $D$, and returns $k$ along with the associated value $x$.
 - `F483` — `DICTMINREF` ($D$ $n$ -- $c$ $k$ $-1$ or $0$), similar to `DICTMIN`, but returns the only reference in the value as a Cell $c$.
@@ -2144,7 +2139,7 @@ These primitives are completely similar to their non-prefix code counterparts `D
 - `F49E` — `DICTUREMMAX` ($D$ $n$ -- $D'$ $x$ $i$ $-1$ or $D$ $0$).
 - `F49F` — `DICTUREMMAXREF` ($D$ $n$ -- $D'$ $c$ $i$ $-1$ or $D$ $0$).
 
-### A.10.11 Special Get dictionary and prefix code dictionary operations, and constant dictionaries
+### A.10.11. Special Get dictionary and prefix code dictionary operations, and constant dictionaries
 
 - `F4A0` — `DICTIGETJMP` ($i$ $D$ $n$ -- ), similar to `DICTIGET` (cf. [A.10.3](#a-10-3-get-dictionary-operations)), but with $x$ `BLESS`ed into a continuation with a subsequent `JMPX` to it on success. On failure, does nothing. This is useful for implementing `switch`/`case` constructions.
 - `F4A1` — `DICTUGETJMP` ($i$ $D$ $n$ -- ), similar to `DICTIGETJMP`, but performs `DICTUGET` instead of `DICTIGET`.
@@ -2180,7 +2175,7 @@ Some of the primitives listed below pretend to produce some externally visible a
 
 Most of the primitives listed below use 16-bit opcodes.
 
-### A.11.2 Gas-related primitives
+### A.11.2. Gas-related primitives
 
 Of the following primitives, only the first two are "pure" in the sense that they do not use `c5` or `c7`.
 
@@ -2192,7 +2187,7 @@ Of the following primitives, only the first two are "pure" in the sense that the
 - `F806`--`F80E` — Reserved for gas-related primitives.
 - `F80F` — `COMMIT` ( -- ), commits the current state of registers `c4` ("persistent data") and `c5` ("actions") so that the current execution is considered "successful" with the saved values even if an exception is thrown later.
 
-### A.11.3 Pseudo-random number generator primitives
+### A.11.3. Pseudo-random number generator primitives
 
 The pseudo-random number generator uses the random seed (parameter #6), an unsigned 256-bit Integer, and (sometimes) other data kept in `c7`. The initial value of the random seed before a smart contract is executed in TON Blockchain is a hash of the smart contract address and the global block random seed. If there are several runs of the same smart contract inside a block, then all of these runs will have the same random seed. This can be fixed, for example, by running `LTIME`; `ADDRAND` before using the pseudo-random number generator for the first time.
 
@@ -2202,7 +2197,7 @@ The pseudo-random number generator uses the random seed (parameter #6), an unsig
 - `F815` — `ADDRAND` ($x$ -- ), mixes unsigned 256-bit Integer $x$ into the random seed $r$ by setting the random seed to $\text{sha256}$ of the concatenation of two 32-byte strings: the first with the big-endian representation of the old seed $r$, and the second with the big-endian representation of $x$.
 - `F810`--`F81F` — Reserved for pseudo-random number generator primitives.
 
-### A.11.4 Configuration primitives
+### A.11.4. Configuration primitives
 
 The following primitives read configuration data provided in the Tuple stored in the first component of the Tuple at `c7`. Whenever TVM is invoked for executing TON Blockchain smart contracts, this Tuple is initialized by a SmartContractInfo structure; configuration primitives assume that it has remained intact.
 
@@ -2219,7 +2214,7 @@ The following primitives read configuration data provided in the Tuple stored in
 - `F833` — `CONFIGOPTPARAM` ($i$ -- $c^?$), returns the value of the global configuration parameter with integer index $i$ as a Maybe Cell $c^?$. Equivalent to `CONFIGDICT`; `DICTIGETOPTREF`.
 - `F820`---`F83F` — Reserved for configuration primitives.
 
-### A.11.5 Global variable primitives
+### A.11.5. Global variable primitives
 
 The "global variables" may be helpful in implementing some high-level smart-contract languages. They are in fact stored as components of the Tuple at `c7`: the $k$-th global variable simply is the $k$-th component of this Tuple, for $1\leq k\leq 254$. By convention, the $0$-th component is used for the "configuration parameters", so it is not available as a global variable.
 
@@ -2228,7 +2223,7 @@ The "global variables" may be helpful in implementing some high-level smart-cont
 - `F860` — `SETGLOBVAR` ($x$ $k$ -- ), assigns $x$ to the $k$-th global variable for $0\leq k<255$. Equivalent to `PUSH c7`; `ROTREV`; `SETINDEXVARQ`; `POP c7`.
 - `F87_k` — `SETGLOB k` ($x$ -- ), assigns $x$ to the $k$-th global variable for $1\leq k\leq 31$. Equivalent to `PUSH c7`; `SWAP`; `SETINDEXQ k`; `POP c7`.
 
-### A.11.6 Hashing and cryptography primitives
+### A.11.6. Hashing and cryptography primitives
 
 - `F900` — `HASHCU` ($c$ -- $x$), computes the representation hash of a Cell $c$ and returns it as a 256-bit unsigned integer $x$. Useful for signing and checking signatures of arbitrary entities represented by a tree of cells.
 - `F901` — `HASHSU` ($s$ -- $x$), computes the hash of a Slice $s$ and returns it as a 256-bit unsigned integer $x$. The result is the same as if an ordinary cell containing only data and references from $s$ had been created and its hash computed by `HASHCU`.
@@ -2237,7 +2232,7 @@ The "global variables" may be helpful in implementing some high-level smart-cont
 - `F911` — `CHKSIGNS` ($d$ $s$ $k$ -- $?$), checks whether $s$ is a valid Ed25519-signature of the data portion of Slice $d$ using public key $k$, similarly to `CHKSIGNU`. If the bit length of Slice $d$ is not divisible by eight, throws a cell underflow exception. The verification of Ed25519 signatures is the standard one, with $\text{sha256}$ used to reduce $d$ to the 256-bit number that is actually signed.
 - `F912`--`F93F` — Reserved for hashing and cryptography primitives.
 
-### A.11.7 Miscellaneous primitives
+### A.11.7. Miscellaneous primitives
 
 - `F940` — `CDATASIZEQ` ($c$ $n$ -- $x$ $y$ $z$ $-1$ or $0$), recursively computes the count of distinct cells $x$, data bits $y$, and cell references $z$ in the dag rooted at Cell $c$, effectively returning the total storage used by this dag taking into account the identification of equal cells. The values of $x$, $y$, and $z$ are computed by a depth-first traversal of this dag, with a hash table of visited cell hashes used to prevent visits of already-visited cells. The total count of visited cells $x$ cannot exceed non-negative Integer $n$; otherwise the computation is aborted before visiting the $(n+1)$-st cell and a zero is returned to indicate failure. If $c$ is Null, returns $x=y=z=0$.
 - `F941` — `CDATASIZE` ($c$ $n$ -- $x$ $y$ $z$), a non-quiet version of `CDATASIZEQ` that throws a cell overflow exception (8) on failure.
@@ -2245,7 +2240,7 @@ The "global variables" may be helpful in implementing some high-level smart-cont
 - `F943` — `SDATASIZE` ($s$ $n$ -- $x$ $y$ $z$), a non-quiet version of `SDATASIZEQ` that throws a cell overflow exception (8) on failure.
 - `F944`--`F97F` — Reserved for miscellaneous TON-specific primitives that do not fall into any other specific category.
 
-### A.11.8 Currency manipulation primitives
+### A.11.8. Currency manipulation primitives
 
 - `FA00` — `LDGRAMS` or `LDVARUINT16` ($s$ -- $x$ $s'$), loads (deserializes) a `Gram` or `VarUInteger 16` amount from CellSlice $s$, and returns the amount as Integer $x$ along with the remainder $s'$ of $s$. The expected serialization of $x$ consists of a 4-bit unsigned big-endian integer $l$, followed by an $8l$-bit unsigned big-endian representation of $x$. The net effect is approximately equivalent to `LDU 4`; `SWAP`; `LSHIFT 3`; `LDUX`.
 - `FA01` — `LDVARINT16` ($s$ -- $x$ $s'$), similar to `LDVARUINT16`, but loads a signed Integer $x$. Approximately equivalent to `LDU 4`; `SWAP`; `LSHIFT 3`; `LDIX`.
@@ -2257,7 +2252,7 @@ The "global variables" may be helpful in implementing some high-level smart-cont
 - `FA07` — `STVARINT32` ($b$ $x$ -- $b'$), serializes an Integer $-2^{247}\leq x<2^{247}$ as a `VarInteger 32`.
 - `FA08`--`FA1F` — Reserved for currency manipulation primitives.
 
-### A.11.9 Message and address manipulation primitives
+### A.11.9. Message and address manipulation primitives
 
 The message and address manipulation primitives listed below serialize and deserialize values according to a TL-B scheme. A deserialized `MsgAddress` is represented by a Tuple $t$ as follows:
 
@@ -2288,16 +2283,16 @@ The following primitives, which use the above conventions, are defined:
 - `FB07` — `CHANGELIB` ($h$ $x$ -- ), creates an output action similarly to `SETLIBCODE`, but instead of the library code accepts its hash as an unsigned 256-bit integer $h$. If $x\neq0$ and the library with hash $h$ is absent from the library collection of this smart contract, this output action will fail.
 - `FB08`--`FB3F` — Reserved for output action primitives.
 
-## A.12 Debug primitives
+## A.12. Debug primitives
 
 Opcodes beginning with `FE` are reserved for the debug primitives. These primitives have known fixed operation length, and behave as (multibyte) NOP operations. In particular, they never change the stack contents, and never throw exceptions, unless there are not enough bits to completely decode the opcode. However, when invoked in a TVM instance with debug mode enabled, these primitives can produce specific output into the text debug log of the TVM instance, never affecting the TVM state (so that from the perspective of TVM the behavior of debug primitives in debug mode is exactly the same). For instance, a debug primitive might dump all or some of the values near the top of the stack, display the current state of TVM and so on.
 
-### A.12.1 Debug primitives as multibyte NOPs
+### A.12.1. Debug primitives as multibyte NOPs
 
 - `FEnn` — `DEBUG nn`, for $0\leq nn<240$, is a two-byte NOP.
 - `FEFnssss` — `DEBUGSTR ssss`, for $0\leq n<16$, is an $(n+3)$-byte NOP, with the $(n+1)$-byte "contents string" $ssss$ skipped as well.
 
-### A.12.2 Debug primitives as operations without side-effect
+### A.12.2. Debug primitives as operations without side-effect
 
 Next we describe the debug primitives that might (and actually are) implemented in a version of TVM. Notice that another TVM implementation is free to use these codes for other debug purposes, or treat them as multibyte NOPs. Whenever these primitives need some arguments from the stack, they inspect these arguments, but leave them intact in the stack. If there are insufficient values in the stack, or they have incorrect types, debug primitives may output error messages into the debug log, or behave as NOPs, but they cannot throw exceptions.
 
@@ -2321,7 +2316,7 @@ Next we describe the debug primitives that might (and actually are) implemented 
 
 ---
 
-## A.13 Codepage primitives
+## A.13. Codepage primitives
 
 The following primitives, which begin with byte `FF`, typically are used at the very beginning of a smart contract's code or a library subroutine to select another TVM codepage. Notice that we expect all codepages to contain these primitives with the same codes, otherwise switching back to another codepage might be impossible.
 
@@ -2332,7 +2327,7 @@ The following primitives, which begin with byte `FF`, typically are used at the 
 
 ---
 
-# Appendix B: Formal properties and specifications of TVM
+# B. Formal properties and specifications of TVM
 
 This appendix discusses certain formal properties of TVM that are necessary for executing smart contracts in the TON Blockchain and validating such executions afterwards.
 
@@ -2477,7 +2472,7 @@ This bootstrapping process could be iterated even further, by providing an emula
 ---
 
 
-# Appendix C: Code density of stack and register machines
+# C. Code density of stack and register machines
 
 This appendix extends the general consideration of stack manipulation primitives provided in [2.1](#2-1-stack-calling-conventions), explaining the choice of such primitives for TVM, with a comparison of stack machines and register machines in terms of the quantity of primitives used and the code density. We do this by comparing the machine code that might be generated by an optimizing compiler for the same source files, for different (abstract) stack and register machines.
 
@@ -3143,7 +3138,7 @@ This code uses only 20 instructions, 9 stack-related and 11 control flow-related
 
 ---
 
-## C.3 Sample non-leaf function
+## C.3. Sample non-leaf function
 
 This section compares the machine code for different register machines for a sample non-leaf function. Again, we assume that either $m=0$, $m=8$, or $m=16$ registers are preserved by called functions, with $m=8$ representing the compromise made by most modern compilers and operating systems.
 
@@ -3454,7 +3449,7 @@ JMP r_div      // x y
 
 This code uses only 20 instructions, 9 stack-related and 11 control flow-related (`CALL` and `JMP`), for a total of 48 bytes.
 
-## C.4 Comparison of machine code for sample non-leaf function
+## C.4. Comparison of machine code for sample non-leaf function
 
 Table 5 summarizes the properties of machine code corresponding to the same source file provided in [C.3.1](#c-3-1-sample-source-code-for-a-non-leaf-function). We consider only the "realistically" encoded three-address machines. Three-address and two-address machines have the same code density properties, but differ in the utilization of opcode space. The one-address machine, somewhat surprisingly, managed to produced shorter code than the two-address and three-address machines, at the expense of using up more than half of all opcode space. The stack machine is the obvious winner in this code density contest, without compromizing its excellent extendability (measured in opcode space used for arithmetic and other data transformation instructions).
 
