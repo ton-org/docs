@@ -18,7 +18,7 @@ The aim of this text is to provide a detailed description of the Telegram Open N
 
 This document provides a detailed description of the TON Blockchain, including its precise block format, validity conditions, TON Virtual Machine (TVM) invocation details, smart-contract creation process, and cryptographic signatures. In this respect it is a continuation of the TON whitepaper (cf. [[3](#ref-3)]), so we freely use the terminology introduced in that document.
 
-[Chapter 1](#1-overview) provides a general overview of the TON Blockchain and its design principles, with particular attention to the introduction of compatibility and validity conditions and the implementation of message delivery guarantees. More detailed information, such as the TL-B schemes that describe the serialization of all required data structures into trees or collections ("bags") of cells, is provided in subsequent chapters, culminating in a complete description of the TON Blockchain (shardchain and masterchain) block layout in [Chapter 4](#4-block-layout).
+[Chapter 1](#1-overview) provides a general overview of the TON Blockchain and its design principles, with particular attention to the introduction of compatibility and validity conditions and the implementation of message delivery guarantees. More detailed information, such as the TL-B schemes that describe the serialization of all required data structures into trees or collections ("bags") of cells, is provided in subsequent chapters, culminating in a complete description of the TON Blockchain (shardchain and masterchain) block layout in [Chapter 4](#4-accounts-and-transactions).
 
 A detailed description of the elliptic curve cryptography used for signing blocks and messages, also accessible through TVM primitives, is provided in [Appendix A](#a-elliptic-curve-cryptography). TVM itself is described in a separate document (cf. [[4](#ref-4)]).
 
@@ -27,6 +27,10 @@ Some subjects have intentionally been left out of this document. One is the Byza
 Similarly, this document does not provide the complete source code of the masterchain smart contracts used to elect the validators, change the configurable parameters or get their current values, or punish the validators for their misbehavior, even though these smart contracts form an important part of the total blockchain state and of the masterchain block zero. Instead, this document describes the location of these smart contracts and their formal interfaces.<sup>[2](#fn2)</sup> The source code of these smart contracts will be provided separately as downloadable files with comments.
 
 Please note that the current version of this document describes a preliminary test version of the TON Blockchain; some minor details are likely to change prior to launch during the development, testing, and deployment phases.
+
+# 1. Overview
+
+This chapter provides an overview of the main features and design principles of the TON Blockchain. More detail on each topic is provided in subsequent chapters.
 
 ## 1.1. Everything is a bag of cells
 
@@ -585,7 +589,7 @@ Notice that even if the library code becomes unavailable—for example, because 
 
 ---
 
-## 2. Message forwarding and delivery guarantees
+# Chapter 2. Message forwarding and delivery guarantees
 
 This chapter discusses the forwarding of messages inside the TON Blockchain, including the Hypercube Routing (HR) and Instant Hypercube Routing (IHR) protocols. It also describes the provisions required to implement the message delivery guarantees and the FIFO ordering guarantee.
 
@@ -879,17 +883,17 @@ Notice that this condition nicely aligns with the modified algorithm described i
 
 ---
 
-## 3. Messages, message descriptors, and queues
+# Chapter 3. Messages, message descriptors, and queues
 
 This chapter presents the internal layout of individual messages, message descriptors (such as InMsgDescr or OutMsgDescr), and message queues (such as OutMsgQueue). Enveloped messages (cf. [2.1.16](#2-1-16-message-envelopes)) are also discussed here.
 
 Notice that most general conventions related to messages must be obeyed by all shardchains, even if they do not belong to the basic shardchain; otherwise, messaging and interaction between different workchains would not be possible. It is the interpretation of the message contents and the processing of messages, usually by some transactions, that differs between workchains.
 
-### 3.1. Address, currency, and message layout
+## 3.1. Address, currency, and message layout
 
 This chapter begins with some general definitions, followed by the precise layout of addresses used for serializing source and destination addresses in a message.
 
-#### 3.1.1. Some standard definitions
+### 3.1.1. Some standard definitions
 
 For the reader's convenience, we reproduce here several general TL-B definitions.<sup>[22](#fn22)</sup> These definitions are used below in the discussion of address and message layout, but otherwise are not related to the TON Blockchain.
 
@@ -908,7 +912,7 @@ pair$_ {X:Type} {Y:Type} first:X second:Y = Both X Y;
 bit$_ _:(## 1) = Bit;
 ```
 
-#### 3.1.2. TL-B scheme for addresses
+### 3.1.2. TL-B scheme for addresses
 
 The serialization of source and destination addresses is defined by the following TL-B scheme:
 
@@ -931,7 +935,7 @@ The two last lines define type `MsgAddress` to be the internal union of types `M
 
 The first two constructors, `addr_none` and `addr_extern`, are used for source addresses of "messages from nowhere" (inbound external messages), and for destination addresses of "messages to nowhere" (outbound external messages). The `addr_extern` constructor defines an "external address", which is ignored by the TON Blockchain software altogether (which treats `addr_extern` as a longer variant of `addr_none`), but may be used by external software for its own purposes. For example, a special external service may inspect the destination address of all outbound external messages found in all blocks of the TON Blockchain, and, if a special magic number is present in the `external_address` field, parse the remainder as an IP address and UDP port or a (TON Network) ADNL address, and send a datagram with a copy of the message to the network address thus obtained.
 
-#### 3.1.4 Internal addresses
+### 3.1.4 Internal addresses
 
 The two remaining constructors, `addr_std` and `addr_var`, represent internal addresses. The first of them, `addr_std`, represents a signed 8-bit $\text{workchainid}$ (sufficient for the masterchain and for the basic workchain) and a 256-bit internal address in the selected workchain. The second of them, `addr_var`, represents addresses in workchains with a "large" $\text{workchainid}$, or internal addresses of length not equal to 256. Both of these constructors have an optional `anycast` value, absent by default, which enables "address rewriting" when present.<sup>[23](#fn23)</sup>
 
@@ -939,7 +943,7 @@ The validators must use `addr_std` instead of `addr_var` whenever possible, but 
 
 Notice that $\text{workchainid}$ must be a valid workchain identifier enabled in the current masterchain configuration, and the length of the internal address must be in the range allowed for the indicated workchain. For example, one cannot use $\text{workchainid}=0$ (basic workchain) or $\text{workchainid}=-1$ (masterchain) with addresses that are not exactly 256 bits long.
 
-#### 3.1.5. Representing Gram currency amounts
+### 3.1.5. Representing Gram currency amounts
 
 Amounts of Grams are expressed with the aid of two types representing variable-length unsigned or signed integers, plus a type `Grams` explicitly dedicated to representing non-negative amounts of nanograms, as follows:
 
@@ -972,7 +976,7 @@ The value attached to an internal message is represented by a value of the `Curr
 
 Notice that if no additional currencies are required, `other` reduces to just one zero bit.
 
-#### 3.1.7. Message layout
+### 3.1.7. Message layout
 
 A message consists of its header followed by its body, or payload. The body is essentially arbitrary, to be interpreted by the destination smart contract. The message header is standard and is organized as follows:
 
@@ -1001,43 +1005,43 @@ The meaning of this scheme is as follows.
 
 Type `Message X` describes a message with the body (or payload) of type $X$. Its serialization starts with `info` of type `CommonMsgInfo`, which comes in three flavors: for internal messages, inbound external messages, and outbound external messages, respectively. All of them have a source address `src` and destination address `dest`, which are external or internal according to the chosen constructor. Apart from that, an internal message may bear some `value` in Grams and other defined currencies (cf. [3.1.6](#3-1-6-representing-collections-of-arbitrary-currencies)), and all messages generated inside the TON Blockchain have a logical creation time `created_lt` (cf. [1.4.6](#1-4-6-logical-time-in-the-ton-blockchain)) and creation unixtime `created_at`, both automatically set by the generating transaction. The creation unixtime equals the creation unixtime of the block containing the generating transaction.
 
-#### 3.1.8. Forwarding and IHR fees. Total value of an internal message
+### 3.1.8. Forwarding and IHR fees. Total value of an internal message
 
 Internal messages define an `ihr_fee` in Grams, which is subtracted from the value attached to the message and awarded to the validators of the destination shardchain if they include the message by the IHR mechanism. The `fwd_fee` is the original total forwarding fee paid for using the HR mechanism; it is automatically computed from some configuration parameters and the size of the message at the time the message is generated.
 
 Notice that the total value carried by a newly-created internal outbound message equals the sum of `value`, `ihr_fee`, and `fwd_fee`. This sum is deducted from the balance of the source account. Of these components, only `value` is always credited to the destination account on message delivery. The `fwd_fee` is collected by the validators on the HR path from the source to the destination, and the `ihr_fee` is either collected by the validators of the destination shardchain (if the message is delivered via IHR), or credited to the destination account.
 
-#### 3.1.9. Code and data portions contained in a message
+### 3.1.9. Code and data portions contained in a message
 
 Apart from the common message information stored in `info`, a message can contain portions of the destination smart contract's code and data. This feature is used, for instance, in the so-called constructor messages (cf. [1.7.3](#1-7-3-initializing-smart-contracts-by-constructor-messages)), which are simply internal or inbound external messages with `code` and possibly `data` fields defined in their `init` portions. If the hash of these fields is correct, and the destination smart contract has no code or data, the values from the message are used instead.<sup>[24](#fn24)</sup>
 
-#### 3.1.10 Using code and data for other purposes
+### 3.1.10 Using code and data for other purposes
 
 Workchains other than the masterchain and the basic workchain are free to use the trees of cells referred to in the `code`, `data`, and `library` fields for their own purposes. The messaging system itself makes no assumptions about their contents; they become relevant only when a message is processed by a transaction.
 
-#### 3.1.11. Absence of an explicit gas price and gas limit
+### 3.1.11. Absence of an explicit gas price and gas limit
 
 Notice that messages do not have an explicit gas price and gas limit. Instead, the gas price is set globally by the validators for each workchain (it is a special configurable parameter), and the gas limit for each transaction has also a default value, which is a configurable parameter; the smart contract itself may lower the gas limit during its execution if so desired.
 
 For internal messages, the initial gas limit cannot exceed the Gram value of the message divided by the current gas price. For inbound external messages, the initial gas limit is very small, and the true gas limit is set by the receiving smart contract itself, when it accepts the inbound message by the corresponding TVM primitive.
 
-#### 3.1.12. Deserialization of a message payload
+### 3.1.12. Deserialization of a message payload
 
 The payload, or body, of a message is deserialized by the receiving smart contract when executed by TVM. The messaging system itself makes no assumptions about the internal format of the payload. However, it makes sense to describe the serialization of supported inbound messages by TL or TL-B schemes with 32-bit constructor tags, so that the developers of other smart contracts will know the interface supported by a specific smart contract.
 
 A message is always serialized inside the blockchain as the last field in a cell. Therefore, the blockchain software may assume that whatever bits and references left unparsed after parsing the fields of a `Message` preceding `body` belong to the payload `body:X`, without knowing anything about the serialization of the type $X$.
 
-#### 3.1.13. Messages with empty payloads
+### 3.1.13. Messages with empty payloads
 
 The payload of a message may happen to be an empty cell slice, having no data bits and no references. By convention, such messages are used for simple value transfers. The receiving smart contract is normally expected to process such messages quietly and to terminate successfully (with a zero exit code), although some smart contracts may perform non-trivial actions even when receiving a message with empty payload. For example, a smart contract may check the resulting balance, and, if it becomes sufficient for a previously postponed action, trigger this action. Alternatively, the smart contract might want to remember in its persistent storage the amount received and the corresponding sender, in order, for instance, to distribute some tokens later to each sender proportionally to the funds transferred.
 
 Notice that even if a smart contract makes no special provisions for messages with empty payloads and throws an exception while processing such messages, the received value (minus the gas payment) will still be added to the balance of the smart contract.
 
-#### 3.1.14. Message source address and logical creation time determine its generating block
+### 3.1.14. Message source address and logical creation time determine its generating block
 
 Notice that the source address and the logical creation time of an internal or an outbound external message uniquely determine the block in which the message has been generated. Indeed, the source address determines the source shardchain, and the blocks of this shardchain are assigned non-intersecting logical time intervals, so only one of them may contain the indicated logical creation time. This is the reason why no explicit mention of the generating block is needed in messages.
 
-#### 3.1.15. Enveloped messages
+### 3.1.15. Enveloped messages
 
 Message envelopes are used for attaching routing information, such as the current (transit) address and the next-hop address, to inbound, transit, and outbound messages (cf. [2.1.16](#2-1-16-message-envelopes)). The message itself is kept in a separate cell and referred to from the message envelope by a cell reference.
 
@@ -1263,7 +1267,7 @@ Several internal consistency conditions are imposed on OutMsg instances present 
 
 You're right! Let me search for the remaining subsections of 4.1:Perfect! Now let me create the complete Section 4.1 with all subsections:
 
-# Chapter 4: Accounts and transactions
+# Chapter 4. Accounts and transactions
 
 This chapter discusses the layout of accounts (or smart contracts) and their state in the TON Blockchain. It also considers transactions, which are the only way to modify the state of an account, and to process inbound messages and generate new outbound messages.
 
@@ -1891,7 +1895,7 @@ action_set_code#ad4de08e new_code:^Cell = OutAction;
 
 ---
 
-# 5. Block layout
+# Chapter 5. Block layout
 
 This chapter presents the block layout used by the TON Blockchain, combining the data structures described separately in previous chapters to produce a complete description of a shardchain block. In addition to the TL-B schemes that define the representation of a shardchain block by a tree of cells, this chapter describes exact serialization formats for the resulting bags (collections) of cells, which are necessary to represent a shardchain block as a file.
 
