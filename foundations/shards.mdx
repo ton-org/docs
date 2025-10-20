@@ -14,6 +14,7 @@ them. In order to implement them more efficiently, these accountchains are group
 Thus the accountchains have only a purely virtual or logical existence inside the shardchains.
 
 To sum up, we have the following hierarchy of blockchains according to ISP:
+
 - workchains;
 - shardchains;
 - accountchains (actually virtual).
@@ -28,15 +29,15 @@ To sum up, we have the following hierarchy of blockchains according to ISP:
 
 Each workchain (the number of which could be up to `2^32`) has its own format of addresses. But a restriction is imposed on all workchains: each account address (after `workchain_id`) must have at least 64-bit length `account_id` (see [Account id](/foundations/addresses/overview#account-id)).
 
-Each shardchain is identifed by a couple `(workchain_id, shard_prefix)`, where `shard_prefix` is a bit string of length at most `60`, defining the subset of accounts for which this shardchain is responsible. Namely, all accounts with `account_id` starting
+Each shardchain is identified by a couple `(workchain_id, shard_prefix)`, where `shard_prefix` is a bit string of length at most `60`, defining the subset of accounts for which this shardchain is responsible. Namely, all accounts with `account_id` starting
 with `shard_prefix` (having `shard_prefix` as most significant bits) will be assigned to this shardchain.
 
 The need for sharding arises when the load of transactions in already existed shards exceeds some threshold value. In this case validators could decide to split these shards into two new ones or merge some of them, if a load is low enough.
 
-As the simplest case, let's some workchain initially has only one shardchain with `shard_prefix` equal to an empty string (i.e., containing all accounts of that worchain). Then the load exceeded the threshold and the validators decided to split this shardchain into two new ones with `shard_prefix` equal to `0` and `1`, respectively.
+As the simplest case, let's some workchain initially has only one shardchain with `shard_prefix` equal to an empty string (i.e., containing all accounts of that workchain). Then the load exceeded the threshold and the validators decided to split this shardchain into two new ones with `shard_prefix` equal to `0` and `1`, respectively.
 After that, all accounts with `account_id` starting with bit `0` will be assigned to the first shardchain, and all accounts with `account_id` starting with bit `1` will be assigned to the second shardchain.
 
-Analogously, if some shardchain with `shard_prefix` equal to `p` needs to be split, then two new shardchains with `shard_prefix` equal to `p0` and `p1` will be created. 
+Analogously, if some shardchain with `shard_prefix` equal to `p` needs to be split, then two new shardchains with `shard_prefix` equal to `p0` and `p1` will be created.
 When merging is needed, two shardchains with `shard_prefix` equal to `p0` and `p1` could be merged into one shardchain with `shard_prefix` equal to `p`. After the merging, all accounts with `account_id` starting with `p` will be assigned to the new single shardchain.
 
 As a result of sharding process, the number of shardchains in each workchain can vary dynamically from `1` to `2^60`.
@@ -48,31 +49,32 @@ workchain, or of different workchains.
 
 ### Input and output queues
 
-Each shardchain block contains specific describtions (layouted as hashmaps with appropriate keys) of all inbound and outbound messages of all accounts assigned to this shardchain.
+Each shardchain block contains specific descriptions (as hashmaps with appropriate keys) of all inbound and outbound messages of all accounts assigned to this shardchain.
 The key idea is that all messages **received** by a blockchain are immediately delivered. Therefore, there is no "input queue"
-as such and a shardchain block stores the describtions of only inbound messages that it recieved. Instead, if not all messages destined for a specific 
-shardchain can be processed because of limitations on the total size of blocks and gas usage, some messages are simply left to accumulate in 
+as such and a shardchain block stores the descriptions of only inbound messages that it received. Instead, if not all messages destined for a specific
+shardchain can be processed because of limitations on the total size of blocks and gas usage, some messages are simply left to accumulate in
 "output queues" of the originating shardchains.
 
-Thus, each shardchain must always observe the output queue of other shardchains in order to receive the message intended for it. 
-But it would require prohibitive amounts of computing power and network bandwidth as the total quantity of shardchains grows, thus limiting 
+Thus, each shardchain must always observe the output queue of other shardchains in order to receive the message intended for it.
+But it would require prohibitive amounts of computing power and network bandwidth as the total quantity of shardchains grows, thus limiting
 the scalability of the system. Therefore, it is not possible to deliver messages directly from any shard to every other. Instead, a special routing mechanism is used to deliver messages between shardchains.
-
 
 ### Intermediate addresses
 
-Each message has _source_ and _destination_ address fields that respesent the addresses of sender and recipent accounts.
-If the source and destination account bleong to different sharcshains, the message need to travel through several intermediate shardchains on its way to the destination account.
+Each message has _source_ and _destination_ address fields that represent the addresses of sender and recipient accounts.
+If the source and destination account belong to different shardchains, the message need to travel through several intermediate shardchains on its way to the destination account.
 So, it is also assigned _transit_ and _next-hope_ addresses which are used for routing the message through intermediate shardchains.
 These addresses are defined as follows:
+
 - **transit address** is an address of some account in intermediate shardchain as if belonging to a special message-relay smart contract whose only job is
-to relay the unchanged message to the next shardchain on the route;
+  to relay the unchanged message to the next shardchain on the route;
 - **next-hope address** is the address in a shardchain (or, on some rare occasions, in the same shardchain) to which the message needs to be relayed.
 
 For example, if a message needs to be sent from shardchain `A` to shardchain `D` in the same workchain, and the route is `A -> B -> C -> D`, then:
+
 - when the message is created in shardchain `A`, its source address and initial transit address are the sender account address;
 - its destination address is the recipient account in shardchain `D`;
-- its initial next-hope address is some virtual message-relay account adrress in shardchain `B` obtained according to the routing algorithm;
+- its initial next-hope address is some virtual message-relay account address in shardchain `B` obtained according to the routing algorithm;
 - when the message occurs in shardchain `B`, its transit address is the message-relay account in shardchain `B`, and its next-hope address is some special message-relay account address in shardchain `C`;
 - the same happens in shardchain `C`, and finally the message reaches its destination address in shardchain `D`.
 
@@ -80,49 +82,50 @@ For example, if a message needs to be sent from shardchain `A` to shardchain `D`
 
 The next-hop address is computed from the transit address (originally equal to the source address) as follows:
 
-- If transit and destination adrreses workchains are different, then the next-hope address is just the transit address in which `worchain_id` is replaced by the destination `workchain_id`.
-- If the `workchain_id` parts of the transit and destination addresses match, then a similar process is applied to the `account_id` parts of the 
-addresses: the first (most significant) `64` bits of `account_id`, are split into groups of four bits starting from the most significant bit, 
-and are compared starting from the left. The first group that differs is replaced in the transit address with its
-value in the destination address to compute the next-hop address.
+- If transit and destination addreses workchains are different, then the next-hope address is just the transit address in which `worchain_id` is replaced by the destination `workchain_id`.
+- If the `workchain_id` parts of the transit and destination addresses match, then a similar process is applied to the `account_id` parts of the
+  addresses: the first (most significant) `64` bits of `account_id`, are split into groups of four bits starting from the most significant bit,
+  and are compared starting from the left. The first group that differs is replaced in the transit address with its
+  value in the destination address to compute the next-hop address.
 - If the first `64` bits of the `account_id` parts of the transit and destination addresses match as well, then the destination account belongs
-to the current shardchain, and the message should not be forwarded outside the current shardchain at all. Instead, it must be processed by
-a transaction inside it.
+  to the current shardchain, and the message should not be forwarded outside the current shardchain at all. Instead, it must be processed by
+  a transaction inside it.
 
 For example, suppose that a message has source (hence, first transit) address with `workchain_id` equal to `0` and `account_id` equal to `0x1234567890ABCDEF...`, and destination address with `workchain_id` equal to `0` and `account_id` equal to `0x12345678FEDCBA98...`.
 Then the first next-hop address will have `workchain_id` equal to `0` and `account_id` equal to `0x12345678F0ABCDEF...`.
 
-Here comes an key definition for routing protocol: two shardchains are said to be _neighbors_, or _neighboring shardchains_, 
+Here comes an key definition for routing protocol: two shardchains are said to be _neighbors_, or _neighboring shardchains_,
 if one of them contains a next-hop address for at least one combination of allowed source and destination addresses, while the other
 contains the transit address for the same combination. In other words, two shardchains are neighbors if a message can be forwarded directly from one
 of them into the other via routing algorithm.
 
 For instance, the shardchains from the previous example that contains the addresses `0:1234567890ABCDEF...` and `0:12345678F0ABCDEF...` are neighbors, because a message with source address `0:1234567890ABCDEF...` and destination address `0:12345678FEDCBA98...`
-will be rorwarded directly from the first shardchain into the second one.
+will be forwarded directly from the first shardchain into the second one.
 
 <Note>
-Regarding the definition, each sharcshain is a neigbor of itself and the single shardchain in the masterchain is a neigbor for every shardchain.
+  Regarding the definition, each shardchain is a neighbor of itself and the single shardchain in the masterchain is a neighbor for every shardchain.
 </Note>
 
 ### Hypercube routing protocol
 
-Let's consider the set of all shardchains in some workchain. According to the definition of neighboring shardchains, we can construct a _hypercube_ 
+Let's consider the set of all shardchains in some workchain. According to the definition of neighboring shardchains, we can construct a _hypercube_
 where each vertex corresponds to a shardchain, and two vertices are connected by an edge if the corresponding shardchains are neighbors.
 Thus, the full configuration of shardchains consists of such hypercubes with some edges connecting them (these edges correspond to messages being sent between different workchains).
 
 The idea of the _hypercube routing (HR) protocol_ is to deliver messages between shardchains by moving them along the edges of these hypercubes.
 At each step, a message is forwarded from the current shardchain to one of its neighboring shardchain (according to the computed next-hope address).
 
-For successful routing, the validators of each shardchain must constantly inspect the output queues of all neighboring shardchains. 
-Messages are stored in the queue using keys obtained from the hash of the message and the next-hope address, which allows validators of neighboring shardchains to 
+For successful routing, the validators of each shardchain must constantly inspect the output queues of all neighboring shardchains.
+Messages are stored in the queue using keys obtained from the hash of the message and the next-hope address, which allows validators of neighboring shardchains to
 quickly receive information about messages that will be transmitted to them.
 
 Omitting some technical details, HR can be outlined as follows:
-1. When a message is created in some shardchain and populated to the output queue, its initial transit address is set to the source address, and the next-hope address is computed.
-2. The validators of the next-hope shardchain inspect the output queue of the shardchain containing the message, and find out that there is a message to be forwarded to the next-hope shardchain (by checking the next-hope address).
-3. The message is then included in the new block of the neighboring shardchain, where it either reaches its destination by a new transaction (if the destination address belongs to this shardchain) or is forwarded further by inserting a message into the output queue of the new shradchain.
-4. The message information is deleted from the output queue of the original shardchain by a special transaction.
-5. The process continues until the message reaches its destination address.
 
-The HR protocol also has some additional mechanisms to ensure reliability and efficiency of message delivery, such as preventing double delivery of messages, 
+1. When a message is created in some shardchain and populated to the output queue, its initial transit address is set to the source address, and the next-hope address is computed.
+1. The validators of the next-hope shardchain inspect the output queue of the shardchain containing the message, and find out that there is a message to be forwarded to the next-hope shardchain (by checking the next-hope address).
+1. The message is then included in the new block of the neighboring shardchain, where it either reaches its destination by a new transaction (if the destination address belongs to this shardchain) or is forwarded further by inserting a message into the output queue of the new shardchain.
+1. The message information is deleted from the output queue of the original shardchain by a special transaction.
+1. The process continues until the message reaches its destination address.
+
+The HR protocol also has some additional mechanisms to ensure reliability and efficiency of message delivery, such as preventing double delivery of messages,
 processing messages in order of their logical time creation, and so on. For a detailed acquaintance with these processes, the reader can refer to the [TON Blockchain whitepaper](/foundations/whitepapers/tblkch#2-2-hypercube-routing-protocol).
