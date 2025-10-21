@@ -27,6 +27,8 @@ All other behavior is implementation‑specific. This includes any kind of modif
 | Deploy batch of items, `op=2` (inbound internal message, owner-only) | Optional                                       |
 | Change owner, `op=3` (inbound internal message, owner-only)          | Optional                                       |
 
+Here, `op` means a 32‑bit operation code placed at the start of an internal message body. Contracts use it to dispatch messages to different handlers. The numeric values are local to this contract; they just need to be unique within its dispatcher. See the [Messages overview](/foundations/messages/overview) for more background.
+
 ### Storage
 
 The storage scheme itself is not defined by these standards, so it can be arbitrary. The reference collection contract contains 5 fields: `owner_address`, `next_item_index`, `content`, `nft_item_code`, and `royalty_params`. Some of them are self-explanatory, while `content` and `royalty_params` need additional explanation below.
@@ -103,6 +105,40 @@ slice calculate_nft_item_address(int wc, cell state_init) {
   send_raw_message(msg.end_cell(), 1); ;; pay transfer fees separately, revert on errors
 }
 ```
+
+Note on `.store_uint(0x18, 6)` and `.store_uint(0x10, 6)`:
+
+- These 6 leading bits encode the start of `CommonMsgInfo` for an internal message: `int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress …` (see [message layout](/ton/tblkch#3-1-7-message-layout)). Concretely, the 6 bits are:
+  - `tag` = `0` — selects `int_msg_info$0` (internal message info).
+  - `ihr_disabled` — set to `1` to disable IHR (Instant Hypercube Routing). IHR is a legacy delivery mode and is not used in TON; contracts should always keep it disabled. See [Hypercube routing](/foundations/hypercube-routing).
+  - `bounce` — if `1`, the message will bounce back on errors during compute/action phases; if `0`, it will not bounce. We use `bounce=1` (0x18) for deploys to child items so the collection gets its funds back on failure, and `bounce=0` (0x10) for royalty replies to avoid bounces and ensure crediting wallets/uninitialized addresses. See [Bounce phase](/foundations/phases#bounce-phase).
+  - `bounced` — set to `0` in outbound messages you build. This bit is meaningful only for inbound messages: when the blockchain generates a bounce, the inbound copy has `bounced=1`. Validators construct such bounce messages themselves; your outbound value does not make a message “bounced”. In normal sends, keep it `0`.
+  - `src` — we serialize `addr_none` (the `00` tag). Validators replace it with the current contract address during the action phase, so you don’t need to spend bits storing the full source address. See [`send_raw_message`](/languages/func/stdlib#send-raw-message).
+
+  Therefore:
+  - `.store_uint(0x18, 6)` → `011000`: `ihr_disabled=1`, `bounce=1` (bounceable), `bounced=0`, `src=addr_none`. Used for deploy messages to child items.
+  - `.store_uint(0x10, 6)` → `010000`: `ihr_disabled=1`, `bounce=0` (non‑bounceable), `bounced=0`, `src=addr_none`. Used for replies like `report_royalty_params` to avoid bounces.
+
+  The destination comes next (`.store_slice(nft_address)`), followed by `value`, fees, timestamps, and optionally `StateInit` and body, as detailed below.
+
+Note on `.store_uint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)`:
+
+- The right‑hand argument (bit width) is the total size of the remaining header fields we serialize in one shot, in this order (mapped to the TL‑B schema):
+  - `1` — `ExtraCurrencyCollection` presence bit inside `value:CurrencyCollection` (see [`CurrencyCollection`](/foundations/whitepapers/tblkch#3-1-6-representing-collections-of-arbitrary-currencies) and the [credit phase](/foundations/whitepapers/tblkch#4-3-4-description-of-a-credit-phase)).
+  - `4` — length prefix for `ihr_fee:Grams` (encoded as `VarUInteger 16`: 4‑bit length `len` then `len` bytes; writing `0000` here encodes zero). See [`LDGRAMS`](/tvm/instructions#ldgrams).
+  - `4` — length prefix for `fwd_fee:Grams` (same `VarUInteger 16` rule; `0000` means zero). See [`LDGRAMS`](/tvm/instructions#ldgrams).
+  - `64` — `created_lt:uint64` from `CommonMsgInfo` (we write `0`; validators rewrite the actual logical time). See [message layout](/ton/tblkch#3-1-7-message-layout).
+  - `32` — `created_at:uint32` from `CommonMsgInfo` (we write `0`; validators rewrite the block Unix time). See [message layout](/ton/tblkch#3-1-7-message-layout).
+  - `1` — `init:(Maybe (Either StateInit ^StateInit))` presence flag (0 = no `StateInit`, 1 = present). See [message layout](/ton/tblkch#3-1-7-message-layout).
+  - `1` — selector for the `Either` inside `init` (0 = inline `StateInit` follows, 1 = `^StateInit` by reference). In our case it is `1`, and `.store_ref(state_init)` follows. See [message layout](/ton/tblkch#3-1-7-message-layout).
+  - `1` — selector for `body:(Either X ^X)` (0 = inline body follows, 1 = body is provided by reference). In our case it is `1`, and `.store_ref(nft_content)` follows. See [message layout](/ton/tblkch#3-1-7-message-layout).
+
+- The left‑hand value `4 + 2 + 1` sets the three one‑bit selectors at the end of this header block to `1` (while earlier bits remain `0`). In order, they encode:
+  - `init` is present (`Maybe …` = 1),
+  - `init` is stored by reference (`Either StateInit ^StateInit` = 1),
+  - body is stored by reference (`Either X ^X` = 1). See [message layout](/ton/tblkch#3-1-7-message-layout).
+
+This idiom is a terse way to zero‑initialize the residual CommonMsgInfo/Message fields and set only the required selector bits, instead of writing several consecutive `.store_uint(0, …)` calls followed by individual one‑bit writes.
 
 These three functions are used for minting new items and returning item addresses in get‑methods.
 
