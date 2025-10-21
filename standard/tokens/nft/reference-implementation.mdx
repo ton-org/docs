@@ -5,7 +5,7 @@ sidebarTitle: "Reference implementation"
 
 The NFT standard ([TEP-62](https://github.com/ton-blockchain/TEPs/blob/0d7989fba6f2d9cb08811bf47263a9b314dc5296/text/0062-nft-standard.md)) describes the required messages and get-methods. The NFT royalty standard ([TEP-66](https://github.com/ton-blockchain/TEPs/blob/0d7989fba6f2d9cb08811bf47263a9b314dc5296/text/0066-nft-royalty-standard.md)) describes a standard way to implement royalty information for NFT sales. The token data standard ([TEP-64](https://github.com/ton-blockchain/TEPs/blob/0d7989fba6f2d9cb08811bf47263a9b314dc5296/text/0064-token-data-standard.md)) describes available formats for metadata of tokens. A widely used [reference implementation](https://github.com/ton-blockchain/token-contract/tree/1182ad99413242f09925d50e70ccb7e0e09f94d4/nft) follows these standards for simple NFTs with only the essential mechanics. This page explains the reference implementation, what you can extend, and what must remain unchanged.
 
-The implementation contains multiple smart contracts written in FunC language, including additional ones for NFT sales. This page describes the collection and item smart contracts, as they are the only necessary ones per standard.
+The implementation contains multiple smart contracts written in [FunC](/languages/func) language, including additional ones for NFT sales. This page describes the collection and item smart contracts, as they are the only necessary ones per standard.
 
 ## Collection
 
@@ -23,7 +23,7 @@ All other behavior is implementation‑specific. This includes any kind of modif
 | `royalty_params` (get-method)                                        | Required by TEP-66                             |
 | `get_royalty_params` (inbound internal message)                      | Required by TEP-66                             |
 | `report_royalty_params` (outbound internal message)                  | Required by TEP-66                             |
-| Deploy singe item, `op=1` (inbound internal message, owner-only)     | Optional                                       |
+| Deploy single item, `op=1` (inbound internal message, owner-only)    | Optional                                       |
 | Deploy batch of items, `op=2` (inbound internal message, owner-only) | Optional                                       |
 | Change owner, `op=3` (inbound internal message, owner-only)          | Optional                                       |
 
@@ -56,7 +56,7 @@ Storage loading and saving is implemented with simple functions `load_data` and 
 }
 ```
 
-The `content` cell in this contract contains 2 cells in references: `collection_content` containing metadata of the collection itself, and `common_content` containing the common prefix for individual items' metadata.
+The `content` [cell](/tvm/serialization/cells) in this contract contains 2 cells in [references](/tvm/serialization/cells): `collection_content` containing metadata of the collection itself, and `common_content` containing the common prefix for individual items' metadata.
 
 The `royalty_params` cell contains 3 values: `royalty_factor` which is a numerator, `royalty_base` which is a denominator, and `royalty_address` which is the address where royalties are sent.
 
@@ -66,7 +66,7 @@ The collection and item contracts implement a classic pattern of parent–child 
 
 The contract uses helper functions to compose [`StateInit`](/ton/tblkch#3-1-7-message-layout), calculate addresses, and send deploy messages for NFT items.
 
-First, `calculate_nft_item_state_init` composes a `StateInit` cell of an NFT item with a given `item_index`. It composes a data cell following the expected storage schema of the item contract. Then the data and code cells are placed in a final `StateInit` cell following the format required by the TON blockchain. It uses the `store_dict` builder to encode optional refs; it does not store dictionaries. This can be replaced with a more self‑explanatory [`store_maybe_ref`](/language/func/stdlib/#store-maybe-ref) builder which does the same thing. It stores a single bit `0` in a builder if the cell is null, otherwise bit `1` and a cell as a reference.
+First, `calculate_nft_item_state_init` composes a `StateInit` cell of an NFT item with a given `item_index`. It composes a data cell following the expected storage schema of the item contract. Then the data and code cells are placed in a final `StateInit` cell following the format required by the TON blockchain. It uses the `store_dict` builder to encode optional references; it does not store dictionaries. This can be replaced with a more self‑explanatory [`store_maybe_ref`](/language/func/stdlib/#store-maybe-ref) builder which does the same thing. It stores a single bit `0` in a builder if the cell is null, otherwise bit `1` and a cell as a reference.
 
 ```func
 cell calculate_nft_item_state_init(int item_index, cell nft_item_code) {
@@ -87,7 +87,7 @@ slice calculate_nft_item_address(int wc, cell state_init) {
 }
 ```
 
-`deploy_nft_item` builds the `StateInit`, derives the address, and sends the deploy message. It calls `calculate_nft_item_state_init` to compose the `StateInit`, then `calculate_nft_item_address` with `workchain()` to derive the contract's workchain (reference implementation uses `0` for basechain), and finally composes and sends the deploy message with the `StateInit` and content (using [`send_raw_message`](/language/func/stdlib/#send-raw-message)).
+`deploy_nft_item` builds the `StateInit`, derives the address, and sends the deploy message. It calls `calculate_nft_item_state_init` to compose the `StateInit`, then `calculate_nft_item_address` with `workchain()` to derive the contract's workchain (reference implementation uses `0` for [BaseChain](/foundations/addresses/overview#workchain-id)), and finally composes and sends the deploy message with the `StateInit` and content (using [`send_raw_message`](/language/func/stdlib/#send-raw-message)).
 
 ```func
 () deploy_nft_item(int item_index, cell nft_item_code, int amount, cell nft_content) impure {
@@ -143,7 +143,7 @@ Then it parses `op` and `query_id` from incoming message body, and loads the sto
 
 #### Request royalty parameters
 
-The `get_royalty_params` message is the only inbound message handling required by TEP-66. On receipt, the contract sends a `report_royalty_params` message back to the sender with the `royalty_params` field from storage. The helper `send_royalty_params` is mostly boilerplate: it sends a non‑bounceable message with a body following the standard and carries the value of the incoming message.
+The `get_royalty_params` message is the only inbound message handling required by TEP-66. On receipt, the contract sends a `report_royalty_params` message back to the sender with the `royalty_params` field from storage. The helper `send_royalty_params` is mostly boilerplate: it sends a [non‑bounceable](/foundations/addresses/formats) message (see [bounce behavior](/foundations/phases#bounce-phase)) with a body following the standard and carries the value of the incoming message.
 
 ```func
 () send_royalty_params(slice to_address, int query_id, slice data) impure inline {
@@ -168,7 +168,7 @@ The `get_royalty_params` message is the only inbound message handling required b
 }
 ```
 
-The contract implements several owner‑only features and verifies ownership first:
+The contract implements several owner-only features and verifies ownership first:
 
 ```func
 () recv_internal(cell in_msg_full, slice in_msg_body) impure {
@@ -182,7 +182,7 @@ Then there are 3 features: deploy single item (opcode `1`), deploy a batch of it
 
 #### Deploy single item
 
-It parses the incoming message and expects it to contain 3 values: `item_index:uint64`, `amount:Coins`, and `content:^Cell`. It checks the item index to be less than or equal to the `next_item_index` from storage. Then it calls a helper function `deploy_nft_item`, which deploys the new NFT item. Lastly, if the item index equals `next_item_index`, it increments `next_item_index` to update the last item index.
+It parses the incoming message and expects it to contain 3 values: `item_index:uint64`, `amount:Coins`, and `content:^Cell` ([TL‑B](/languages/TL-B/overview) notation — the `^` means this field is stored in a separate referenced cell, i.e., the message carries a reference to a child [cell](/tvm/serialization/cells) that contains the content). It checks the item index to be less than or equal to the `next_item_index` from storage. Then it calls a helper function `deploy_nft_item`, which deploys the new NFT item. Lastly, if the item index equals `next_item_index`, it increments `next_item_index` to update the last item index.
 
 ```func
 () recv_internal(cell in_msg_full, slice in_msg_body) impure {
@@ -204,7 +204,7 @@ It parses the incoming message and expects it to contain 3 values: `item_index:u
 
 #### Batch deploy items
 
-This feature is useful when you need to deploy many NFTs at once, for example when minting some initial items. It takes a single `deploy_list` dictionary from the message where keys are item indices and values are cells containing amounts of TON to attach to deployment, and content cells, similar to the values parsed by the singular deploy feature above. It traverses the dictionary in ascending order of indices and limits the batch to ≤249 items to stay under the 254‑message [action list limit](/tvm/exit-codes#33%3A-action-list-is-too-long). This reference contract chooses a lower limit than the maximum as a safe margin.
+This feature is useful when you need to deploy many NFTs at once, for example when minting some initial items. It takes a single `deploy_list` dictionary from the message where keys are item indices and values are cells containing amounts of TON to attach to deployment, and content cells, similar to the values parsed by the singular deploy feature above. It traverses the dictionary in ascending order of indices and limits the batch to ≤249 items to stay comfortably under the [action list limit](/foundations/limits#message-and-transaction-limits) of 255 actions per transaction. This reference contract chooses a lower cap than the maximum as a safety margin.
 
 The logic is straightforward. The loop uses [`~udict::delete_get_min(64)`](/language/func/stdlib/#dict-delete-get-min) to get and delete the item with the minimum unsigned 64‑bit key. It does that on each iteration and increments `counter` each iteration to avoid exceeding the action list limit. The deployment logic is the same as for the singular deployment feature above.
 
