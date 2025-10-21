@@ -62,9 +62,9 @@ The `royalty_params` cell contains 3 values: `royalty_factor` which is a numerat
 
 ### Child contracts
 
-The collection and item contracts implement a classic pattern of parent–child contracts, where the collection acts as the parent and items are children. Therefore, the collection implements functionality to deploy its children, and the contract keeps the `nft_item_code` field in storage.
+The collection and item contracts implement a classic [parent–child pattern](/patterns/contract-sharding), where the collection acts as the parent and items are children. Therefore, the collection implements functionality to deploy its children, and the contract keeps the `nft_item_code` field in storage.
 
-The contract uses helper functions to compose [`StateInit`](/ton/tblkch#3-1-7-message-layout), calculate addresses, and send deploy messages for NFT items.
+The contract uses helper functions to compose [`StateInit`](/ton/tblkch#3-1-7-message-layout) — roughly, the package that holds a contract’s initial code and data used to derive its address and deploy it — calculate addresses, and send deploy messages for NFT items.
 
 First, `calculate_nft_item_state_init` composes a `StateInit` cell of an NFT item with a given `item_index`. It composes a data cell following the expected storage schema of the item contract. Then the data and code cells are placed in a final `StateInit` cell following the format required by the TON blockchain. It uses the `store_dict` builder to encode optional references; it does not store dictionaries. This can be replaced with a more self‑explanatory [`store_maybe_ref`](/language/func/stdlib/#store-maybe-ref) builder which does the same thing. It stores a single bit `0` in a builder if the cell is null, otherwise bit `1` and a cell as a reference.
 
@@ -144,6 +144,8 @@ Then it parses `op` and `query_id` from incoming message body, and loads the sto
 #### Request royalty parameters
 
 The `get_royalty_params` message is the only inbound message handling required by TEP-66. On receipt, the contract sends a `report_royalty_params` message back to the sender with the `royalty_params` field from storage. The helper `send_royalty_params` is mostly boilerplate: it sends a [non‑bounceable](/foundations/addresses/formats) message (see [bounce behavior](/foundations/phases#bounce-phase)) with a body following the standard and carries the value of the incoming message.
+
+Why non‑bounceable? The reply can go to any sender, including wallets or even uninitialized accounts. Making the response non‑bounceable ensures the value forwarded with `mode = 64` credits the requester even if it cannot execute code. It also avoids accidental bounces.
 
 ```func
 () send_royalty_params(slice to_address, int query_id, slice data) impure inline {
