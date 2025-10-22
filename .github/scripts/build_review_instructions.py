@@ -64,7 +64,18 @@ Goal: deliver exhaustive, high-confidence feedback that brings these TON Docs ch
 """
     )
 
-    print(style_block + body)
+    link_rules = textwrap.dedent(
+        """
+        
+        LINK FORMATTING — REQUIRED (overrides earlier bullets):
+        - Style‑guide citations: use a compact Markdown link with a short label, e.g. [Style rule — <short title>](contribute/style-guide-extended.mdx?plain=1#L<start>-L<end>). Verify the exact line range first (e.g., `rg "<term>" contribute/style-guide-extended.mdx` or `sed -n '<start>,<end>p'`).
+        - General code/location references: output a plain repo‑relative link on its own line, with no Markdown/backticks/prefix text so GitHub renders a rich preview. Example line:
+          pending/discover/web3-basics/glossary.mdx?plain=1#L10-L12
+        - Do not use https:// prefixes for repo‑relative links.
+        """
+    )
+
+    print(style_block + body + link_rules)
 
 
 if __name__ == "__main__":
