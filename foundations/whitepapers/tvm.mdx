@@ -121,7 +121,7 @@ The original version of TVM defines and uses the following control registers:
 - `c0` — Contains the *next continuation* or *return continuation* (similar to the subroutine return address in conventional designs). This value must be a *Continuation*.
 - `c1` — Contains the *alternative (return) continuation*; this value must be a *Continuation*. It is used in some (experimental) control flow primitives, allowing TVM to define and call "subroutines with two exit points".
 - `c2` — Contains the *exception handler*. This value is a *Continuation*, invoked whenever an exception is triggered.
-- `c3` — Contains the *current dictionary*, essentially a hashmap containing the code of all functions used in the program. For reasons explained later in [4.6](#4-6-functions-recursion-and-dictionaries), this value is also a *Continuation*, not a *Cell* as one might expect.
+- `c3` — Contains the *current dictionary*, essentially a hashmap containing the code of all functions used in the program. For reasons explained later in [4.6](#4-6-functions%2C-recursion%2C-and-dictionarie), this value is also a *Continuation*, not a *Cell* as one might expect.
 - `c4` — Contains the *root of persistent data*, or simply the *data*. This value is a *Cell*. When the code of a smart contract is invoked, `c4` points to the root cell of its persistent data kept in the blockchain state. If the smart contract needs to modify this data, it changes `c4` before returning.
 - `c5` — Contains the *output actions*. It is also a *Cell* initialized by a reference to an empty cell, but its final value is considered one of the smart contract outputs. For instance, the `SENDMSG` primitive, specific for the TON Blockchain, simply inserts the message into a list stored in the output actions.
 - `c7` — Contains the *root of temporary data*. It is a *Tuple*, initialized by a reference to an empty *Tuple* before invoking the smart contract and discarded after its termination.<sup>[4](#fn4)</sup>
@@ -138,7 +138,7 @@ The total state of TVM consists of the following components:
 - *Current codepage `cp`* — A special signed 16-bit integer value that selects the way the next TVM opcode will be decoded. For example, future versions of TVM might use different codepages to add new opcodes while preserving backward compatibility.
 - *Gas limits `gas`* — Contains four signed 64-bit integers: the current gas limit $g_l$, the maximal gas limit $g_m$, the remaining gas $g_r$, and the gas credit $g_c$. Always $0\leq g_l\leq g_m$, $g_c\geq0$, and $g_r\leq g_l+g_c$; $g_c$ is usually initialized by zero, $g_r$ is initialized by $g_l+g_c$ and gradually decreases as the TVM runs. When $g_r$ becomes negative or if the final value of $g_r$ is less than $g_c$, an *out of gas* exception is triggered.
 
-Notice that there is no "return stack" containing the return addresses of all previously called but unfinished functions. Instead, only control register `c0` is used. The reason for this will be explained later in [4.1.9](#4-1-9-subroutine-calls-callx-or-execute-primitives).
+Notice that there is no "return stack" containing the return addresses of all previously called but unfinished functions. Instead, only control register `c0` is used. The reason for this will be explained later in [4.1.9](#4-1-9-subroutine-calls%3A-callx-or-execute-primitives).
 
 Also notice that there are no general-purpose registers, because TVM is a stack machine (cf. [1.1](#1-1-tvm-is-a-stack-machine)). So the above list, which can be summarized as "stack, control, continuation, codepage, and gas" (SCCCG), similarly to the classical SECD machine state ("stack, environment, control, dump"), is indeed the *total* state of TVM.<sup>[5](#fn5)</sup>
 
@@ -260,19 +260,19 @@ When a stack of depth $n$ contains values $z_1$, ..., $z_n$, in that order, with
 
 Alternatively, one can describe `DIV` as a primitive that runs on a stack $S'$ of depth $n\geq2$, divides `s1` by `s0`, and returns the floor-rounded quotient as `s0` of the new stack $S''$ of depth $n-1$. The new value of `s(i)` equals the old value of `s(i+1)` for $1\leq i<n-1$. These descriptions are equivalent, but saying that `DIV` transforms $x$ $y$ into $\lfloor x/y\rfloor$, or ... $x$ $y$ into ... $\lfloor x/y\rfloor$, is more concise.
 
-The stack notation is extensively used throughout Appendix [A](#appendix-a-instruction-set), where all currently defined TVM primitives are listed.
+The stack notation is extensively used throughout Appendix [A](#a-instructions-and-opcodes), where all currently defined TVM primitives are listed.
 
 #### 2.1.11. Explicitly defining the number of arguments to a function
 
 Stack machines usually pass the current stack in its entirety to the invoked primitive or function. That primitive or function accesses only the several values near the top of the stack that represent its arguments, and pushes the return values in their place, by convention leaving all deeper values intact. Then the resulting stack, again in its entirety, is returned to the caller.
 
-Most TVM primitives behave in this way, and we expect most user-defined functions to be implemented under such conventions. However, TVM provides mechanisms to specify how many arguments must be passed to a called function (cf. [4.1.9](#4-1-9-subroutine-calls-callx-or-execute-primitives)). When these mechanisms are employed, the specified number of values are moved from the caller's stack into the (usually initially empty) stack of the called function, while deeper values remain in the caller's stack and are inaccessible to the callee. The caller can also specify how many return values it expects from the called function.
+Most TVM primitives behave in this way, and we expect most user-defined functions to be implemented under such conventions. However, TVM provides mechanisms to specify how many arguments must be passed to a called function (cf. [4.1.10](#4-1-10-determining-the-number-of-arguments-passed-to-and%2For-return-values-accepted-from-a-subroutine)). When these mechanisms are employed, the specified number of values are moved from the caller's stack into the (usually initially empty) stack of the called function, while deeper values remain in the caller's stack and are inaccessible to the callee. The caller can also specify how many return values it expects from the called function.
 
 Such argument-checking mechanisms might be useful, for example, for a library function that calls user-provided functions passed as arguments to it.
 
 ### 2.2. Stack manipulation primitives
 
-A stack machine, such as TVM, employs a lot of stack manipulation primitives to rearrange arguments to other primitives and user-defined functions, so that they become located near the top of the stack in correct order. This section discusses which stack manipulation primitives are necessary and sufficient for achieving this goal, and which of them are used by TVM. Some examples of code using these primitives can be found in Appendix [C](#appendix-c-code-density-of-stack-and-register-machines).
+A stack machine, such as TVM, employs a lot of stack manipulation primitives to rearrange arguments to other primitives and user-defined functions, so that they become located near the top of the stack in correct order. This section discusses which stack manipulation primitives are necessary and sufficient for achieving this goal, and which of them are used by TVM. Some examples of code using these primitives can be found in Appendix [C](#c-code-density-of-stack-and-register-machines).
 
 #### 2.2.1. Basic stack manipulation primitives
 
@@ -310,7 +310,7 @@ In order to improve the density of the TVM code and simplify development of comp
 
 Of course, such operations make sense only if they admit a more compact encoding than the equivalent sequence of basic operations. For example, if all top-of-stack exchanges, `XCHG s1,s(i)` exchanges, and push and pop operations admit one-byte encodings, the only compound stack operations suggested above that might merit inclusion in the set of stack manipulation primitives are `PUXC`, `XCHG3`, and `PUSH3`.
 
-These compound stack operations essentially augment other primitives (instructions) in the code with the "true" locations of their operands, somewhat similarly to what happens with two-address or three-address register machine code. However, instead of encoding these locations inside the opcode of the arithmetic or another instruction, as is customary for register machines, we indicate these locations in a preceding compound stack manipulation operation. As already described in [2.1.7](#2-1-7-arguments-to-arithmetic-primitives-on-register-machines), the advantage of such an approach is that user-defined functions (or rarely used specific primitives added in a future version of TVM) can benefit from it as well (cf. Appendix [C](#appendix-c-code-density-of-stack-and-register-machines) for a more detailed discussion with examples).
+These compound stack operations essentially augment other primitives (instructions) in the code with the "true" locations of their operands, somewhat similarly to what happens with two-address or three-address register machine code. However, instead of encoding these locations inside the opcode of the arithmetic or another instruction, as is customary for register machines, we indicate these locations in a preceding compound stack manipulation operation. As already described in [2.1.7](#2-1-7-arguments-to-arithmetic-primitives-on-register-machines), the advantage of such an approach is that user-defined functions (or rarely used specific primitives added in a future version of TVM) can benefit from it as well (cf. Appendix [C](#c-code-density-of-stack-and-register-machines) for a more detailed discussion with examples).
 
 #### 2.2.4. Mnemonics of compound stack operations
 
@@ -487,7 +487,7 @@ Notice that *Builder* and *Slice* objects appear only as values in a TVM stack. 
 
 #### 3.2.4. TVM has no separate Bitstring value type
 
-Notice that TVM offers no separate bitstring value type. Instead, bitstrings are represented by *Slice*s that happen to have no references at all, but can still contain up to 1023 data bits.
+Notice that TVM offers no separate bitstring value type. Instead, bitstrings are represented by *Slices* that happen to have no references at all, but can still contain up to 1023 data bits.
 
 #### 3.2.5. Cells and cell primitives are bit-oriented, not byte-oriented
 
@@ -525,21 +525,21 @@ Integer serialization instructions have mnemonics like `STU 20` ("store an unsig
 
 #### 3.2.8. Integers in cells are big-endian by default
 
-Notice that the default order of bits in *Integer*s serialized into *Cell*s is *big-endian*, not little-endian.<sup>[14](#fn14)</sup> In this respect *TVM is a big-endian machine*. However, this affects only the serialization of integers inside cells. The internal representation of the *Integer* value type is implementation-dependent and irrelevant for the operation of TVM. Besides, there are some special primitives such as `STULE` for (de)serializing little-endian integers, which must be stored into an integral number of bytes (otherwise "little-endianness" does not make sense, unless one is also willing to revert the order of bits inside octets). Such primitives are useful for interfacing with the little-endian world---for instance, for parsing custom-format messages arriving to a TON Blockchain smart contract from the outside world.
+Notice that the default order of bits in *Integers* serialized into *Cells* is *big-endian*, not little-endian.<sup>[14](#fn14)</sup> In this respect *TVM is a big-endian machine*. However, this affects only the serialization of integers inside cells. The internal representation of the *Integer* value type is implementation-dependent and irrelevant for the operation of TVM. Besides, there are some special primitives such as `STULE` for (de)serializing little-endian integers, which must be stored into an integral number of bytes (otherwise "little-endianness" does not make sense, unless one is also willing to revert the order of bits inside octets). Such primitives are useful for interfacing with the little-endian world---for instance, for parsing custom-format messages arriving to a TON Blockchain smart contract from the outside world.
 
 #### 3.2.9. Other serialization primitives
 
-Other cell creation primitives serialize bitstrings (i.e., cell slices without references), either taken from the stack or supplied as literal arguments; cell slices (which are concatenated to the cell builder in an obvious way); other *Builder*s (which are also concatenated); and cell references (`STREF`).
+Other cell creation primitives serialize bitstrings (i.e., cell slices without references), either taken from the stack or supplied as literal arguments; cell slices (which are concatenated to the cell builder in an obvious way); other *Builders* (which are also concatenated); and cell references (`STREF`).
 
 #### 3.2.10. Other cell creation primitives
 
 In addition to the cell serialization primitives for certain built-in value types described above, there are simple primitives that create a new empty *Builder* and push it into the stack (`NEWC`), or transform a *Builder* into a *Cell* (`ENDC`), thus finishing the cell creation process. An `ENDC` can be combined with a `STREF` into a single instruction `ENDCST`, which finishes the creation of a cell and immediately stores a reference to it in an "outer" *Builder*. There are also primitives that obtain the quantity of data bits or references already stored in a *Builder*, and check how many data bits or references can be stored.
 
-#### 3.2.11. Taxonomy of cell deserialisation primitives
+#### 3.2.11. Taxonomy of cell deserialization primitives
 
 Cell parsing, or deserialization, primitives can be classified as described in [3.2.6](#3-2-6-taxonomy-of-cell-creation-serialization-primitives), with the following modifications:
 
-- They work with *Slice*s (representing the remainder of the cell being parsed) instead of *Builder*s.
+- They work with *Slices* (representing the remainder of the cell being parsed) instead of *Builders*.
 - They return deserialized values instead of accepting them as arguments.
 - They may come in two flavors, depending on whether they remove the deserialized portion from the *Slice* supplied ("fetch operations") or leave it unmodified ("prefetch operations").
 - Their mnemonics usually begin with `LD` (or `PLD` for prefetch operations) instead of `ST`.
@@ -550,7 +550,7 @@ Again, more detailed information about these instructions is provided in Appendi
 
 #### 3.2.12. Other cell slice primitives
 
-In addition to the cell deserialisation primitives outlined above, TVM provides some obvious primitives for initializing and completing the cell deserialization process. For instance, one can convert a *Cell* into a *Slice* (`CTOS`), so that its deserialisation might begin; or check whether a *Slice* is empty, and generate an exception if it is not (`ENDS`); or deserialize a cell reference and immediately convert it into a *Slice* (`LDREFTOS`, equivalent to two instructions `LDREF` and `CTOS`).
+In addition to the cell deserialization primitives outlined above, TVM provides some obvious primitives for initializing and completing the cell deserialization process. For instance, one can convert a *Cell* into a *Slice* (`CTOS`), so that its deserialization might begin; or check whether a *Slice* is empty, and generate an exception if it is not (`ENDS`); or deserialize a cell reference and immediately convert it into a *Slice* (`LDREFTOS`, equivalent to two instructions `LDREF` and `CTOS`).
 
 #### 3.2.13. Modifying a serialized value in a cell
 
@@ -787,7 +787,7 @@ In addition, TVM includes special serialization/deserialization primitives, such
 
 ### 3.4. Hashmaps with variable-length keys
 
-TVM provides some support for dictionaries, or hashmaps, with variable-length keys, in addition to its support for dictionaries with fixed-length keys (as described in [3.3](#3-3-hashmaps-or-dictionaries) above).
+TVM provides some support for dictionaries, or hashmaps, with variable-length keys, in addition to its support for dictionaries with fixed-length keys (as described in [3.3](#3-3-hashmaps%2C-or-dictionaries) above).
 
 #### 3.4.1. Serialization of dictionaries with variable-length keys
 
@@ -835,13 +835,13 @@ phme_root$1 {n:#} {X:Type} root:^(PfxHashmap n X)
 ---
 
 
-# 4. Control flow, continuations, and exceptions
+## 4. Control flow, continuations, and exceptions
 
 This chapter describes *continuations*, which may represent execution tokens and exception handlers in TVM. Continuations are deeply involved with the control flow of a TVM program; in particular, subroutine calls and conditional and iterated execution are implemented in TVM using special primitives that accept one or more continuations as their arguments.
 
 We conclude this chapter with a discussion of the problem of recursion and of families of mutually recursive functions, exacerbated by the fact that cyclic references are not allowed in TVM data structures (including TVM code).
 
-## 4.1. Continuations and subroutines
+### 4.1. Continuations and subroutines
 
 Recall (cf. [1.1.3](#1-1-3-preliminary-list-of-value-types)) that *Continuation* values represent "execution tokens" that can be executed later—for example, by `EXECUTE`=`CALLX` ("execute" or "call indirect") or `JMPX` ("jump indirect") primitives. As such, the continuations are responsible for the execution of the program, and are heavily used by control flow primitives, enabling subroutine calls, conditional expressions, loops, and so on.
 
@@ -867,7 +867,7 @@ The "current continuation" `cc` is an important part of the total state of TVM, 
 
 TVM usually performs the following operations:
 
-If the current continuation `cc` is an ordinary one, it decodes the first instruction from the *Slice* `code`, similarly to the way other cells are deserialized by TVM `LD*` primitives (cf. [3.2](#3-2-data-manipulation-instructions-and-cells) and [3.2.11](#3-2-11-taxonomy-of-cell-deserialisation-primitives)): it decodes the opcode first, and then the parameters of the instruction (e.g., 4-bit fields indicating "stack registers" involved for stack manipulation primitives, or constant values for "push constant" or "literal" primitives). The remainder of the *Slice* is then put into the `code` of the new `cc`, and the decoded operation is executed on the current stack. This entire process is repeated until there are no operations left in `cc.code`.
+If the current continuation `cc` is an ordinary one, it decodes the first instruction from the *Slice* `code`, similarly to the way other cells are deserialized by TVM `LD*` primitives (cf. [3.2](#3-2-data-manipulation-instructions-and-cells) and [3.2.11](#3-2-11-taxonomy-of-cell-deserialization-primitives)): it decodes the opcode first, and then the parameters of the instruction (e.g., 4-bit fields indicating "stack registers" involved for stack manipulation primitives, or constant values for "push constant" or "literal" primitives). The remainder of the *Slice* is then put into the `code` of the new `cc`, and the decoded operation is executed on the current stack. This entire process is repeated until there are no operations left in `cc.code`.
 
 If the `code` is empty (i.e., contains no bits of data and no references), or if a (rarely needed) explicit subroutine return (`RET`) instruction is encountered, the current continuation is discarded, and the "return continuation" from control register `c0` is loaded into `cc` instead (this process is discussed in more detail starting in [4.1.6](#4-1-6-switching-to-another-continuation-jmp-and-ret)).<sup>[20](#fn20)</sup> Then the execution continues by parsing operations from the new current continuation.
 
@@ -878,7 +878,7 @@ In addition to the ordinary continuations considered so far (cf. [4.1.1](#4-1-1-
 - The continuation `ec_quit` with its parameter set to zero, which represents the end of the work of TVM. This continuation is the original value of `c0` when TVM begins executing the code of a smart contract.
 - The continuation `ec_until`, which contains references to two other continuations (ordinary or not) representing the body of the loop being executed and the code to be executed after the loop.
 
-Execution of an extraordinary continuation by TVM depends on its specific class, and differs from the operations for ordinary continuations described in [4.1.4](#4-1-4-normal-work-of-tvm-or-the-main-loop).<sup>[21](#fn21)</sup>
+Execution of an extraordinary continuation by TVM depends on its specific class, and differs from the operations for ordinary continuations described in [4.1.4](#4-1-4-normal-work-of-tvm%2C-or-the-main-loop).<sup>[21](#fn21)</sup>
 
 #### 4.1.6. Switching to another continuation: JMP and RET
 
@@ -923,7 +923,7 @@ Such forms of `CALLX` and `RET` are mostly intended for library functions that a
 
 Notice that TVM supports a form of the "call with current continuation" primitive. Namely, primitive `CALLCC` is similar to `CALLX` or `JMPX` in that it takes a continuation $c$ from the stack and switches to it; however, `CALLCC` does not discard the previous current continuation $c'$ (as `JMPX` does) and does not write $c'$ to `c0` (as `CALLX` does), but rather pushes $c'$ into the (new) stack as an extra argument to $c$. The primitive `JMPXDATA` does a similar thing, but pushes only the (remainder of the) code of the previous current continuation as a *Slice*.
 
-## 4.2. Control flow primitives: conditional and iterated execution
+### 4.2. Control flow primitives: conditional and iterated execution
 
 #### 4.2.1. Conditional execution: IF, IFNOT, IFELSE
 
@@ -947,7 +947,7 @@ The simplest of these primitives is `PUSHCONT`, which has an immediate argument 
 
 Because constant continuations are very often used as arguments to conditional or iterated execution primitives, combined versions of these primitives (e.g., `IFCONT` or `UNTILREFCONT`) may be defined in a future revision of TVM, which combine a `PUSHCONT` or `PUSHREFCONT` with another primitive. If one inspects the resulting code, `IFCONT` looks very much like the more customary "conditional-branch-forward" instruction.
 
-## 4.3. Operations with continuations
+### 4.3. Operations with continuations
 
 #### 4.3.1. Continuations are opaque
 
@@ -1088,7 +1088,7 @@ The conditional and iterated execution primitives described in [4.2](#4-2-contro
 
 One way of dealing with the problem of recursion is by passing a copy of the continuation representing the body of a recursive function as an extra argument to itself. Consider, for example, the following code for a factorial function:
 
-```
+```asm
 71      PUSHINT 1
 9C      PUSHCONT {
 22        PUSH s2
@@ -1124,7 +1124,7 @@ $$
 
 is as follows:
 
-```
+```asm
 9D      PUSHCONT {
 21        OVER
 C102      LESSINT 2
@@ -1150,7 +1150,7 @@ This definition of the factorial function is two bytes shorter than the previous
 
 Incidentally, a non-recursive definition of the factorial with the aid of a `REPEAT` loop is also possible, and it is much shorter than both recursive definitions:
 
-```
+```asm
 71      PUSHINT 1
 01      SWAP
 20      DUP
@@ -1182,7 +1182,7 @@ However, even if we use one of the two previous approaches to combine all functi
 
 #### 4.6.9. Special register c3 for the selector function
 
-In fact, TVM uses a dedicated register `c3` to keep the continuation representing the current or global "selector function", which can be used to invoke any of a family of mutually recursive functions. Special primitives `CALL $nn$` or `CALLDICT $nn$` (cf. Appendix C.8.7) are equivalent to `PUSHINT $nn$`; `PUSH c3`; `EXECUTE`, and similarly `JMP $nn$` or `JMPDICT $nn$` are equivalent to `PUSHINT $nn$`; `PUSH c3`; `JMPX`. In this way a TVM program, which ultimately is a large collection of mutually recursive functions, may initialize `c3` with the correct selector function representing the family of all the functions in the program, and then use `CALL $nn$` to invoke any of these functions by its index (sometimes also called the *selector* of a function).
+In fact, TVM uses a dedicated register `c3` to keep the continuation representing the current or global "selector function", which can be used to invoke any of a family of mutually recursive functions. Special primitives `CALL $nn$` or `CALLDICT $nn$` (cf. Appendix [A.8.7](#a-8-7-dictionary-subroutine-calls-and-jumps)) are equivalent to `PUSHINT $nn$`; `PUSH c3`; `EXECUTE`, and similarly `JMP $nn$` or `JMPDICT $nn$` are equivalent to `PUSHINT $nn$`; `PUSH c3`; `JMPX`. In this way a TVM program, which ultimately is a large collection of mutually recursive functions, may initialize `c3` with the correct selector function representing the family of all the functions in the program, and then use `CALL $nn$` to invoke any of these functions by its index (sometimes also called the *selector* of a function).
 
 #### 4.6.10. Initialization of c3
 
@@ -1196,17 +1196,17 @@ Another instruction, useful for the implementation of sum-product types, is `PLD
 
 #### 4.6.12. Alternative: using a hashmap to select the correct function
 
-Yet another alternative is to use a *Hashmap* (cf. [3.3](#3-3-hashmaps-or-dictionaries)) to hold the "collection" or "dictionary" of the code of all functions in a program, and use the hashmap lookup primitives (cf. [A.10](#a-10-dictionary-manipulation-primitives)) to select the code of the required function, which can then be `BLESS`ed into a continuation (cf. [A.8.5](#a-8-5-creating-simple-continuations-and-closures)) and executed. Special combined "lookup, bless, and execute" primitives, such as `DICTIGETJMP` and `DICTIGETEXEC`, are also available (cf. [A.10.3](#a-10-3-get-dictionary-operations)). This approach may be more efficient for larger programs and `switch` statements.
+Yet another alternative is to use a *Hashmap* (cf. [3.3](#3-3-hashmaps%2C-or-dictionaries)) to hold the "collection" or "dictionary" of the code of all functions in a program, and use the hashmap lookup primitives (cf. [A.10](#a-10-dictionary-manipulation-primitives)) to select the code of the required function, which can then be `BLESS`ed into a continuation (cf. [A.8.5](#a-8-5-creating-simple-continuations-and-closures)) and executed. Special combined "lookup, bless, and execute" primitives, such as `DICTIGETJMP` and `DICTIGETEXEC`, are also available (cf. [A.10.11](#a-10-11-special-get-dictionary-and-prefix-code-dictionary-operations%2C-and-constant-dictionaries)). This approach may be more efficient for larger programs and `switch` statements.
 
 ---
 
-# 5. Codepages and instruction encoding
+## 5. Codepages and instruction encoding
 
 This chapter describes the codepage mechanism, which allows TVM to be flexible and extendable while preserving backward compatibility with respect to previously generated code.
 
 We also discuss some general considerations about instruction encodings (applicable to arbitrary machine code, not just TVM), as well as the implications of these considerations for TVM and the choices made while designing TVM's (experimental) codepage zero. The instruction encodings themselves are presented later in Appendix [A](#a-instructions-and-opcodes).
 
-## 5.1. Codepages and interoperability of different TVM versions
+### 5.1. Codepages and interoperability of different TVM versions
 
 The *codepages* are an essential mechanism of backward compatibility and of future extensions to TVM. They enable transparent execution of code written for different revisions of TVM, with transparent interaction between instances of such code. The mechanism of the codepages, however, is general and powerful enough to enable some other originally unintended applications.
 
@@ -1248,13 +1248,13 @@ Another potential application of multiple codepages inside the same revision of 
 
 For example, imagine a version of TVM that uses two new codepages, 2 and 3. Most operations do not change the current codepage. However, the integer comparison operations will switch to codepage 2 if the condition is false, and to codepage 3 if it is true. Furthermore, a new operation `?EXECUTE`, similar to `EXECUTE`, will indeed be equivalent to `EXECUTE` in codepage 3, but will instead be a `DROP` in codepage 2. Such a trick effectively uses bit 0 of the current codepage as a status flag.
 
-Alternatively, one might create a couple of codepages—say, 4 and 5—which differ only in their cell deserialisation primitives. For instance, in codepage 4 they might work as before, while in codepage 5 they might deserialize data not from the beginning of a *Slice*, but from its end. Two new instructions—say, `CLD` and `STD`—might be used for switching to codepage 4 or codepage 5. Clearly, we have now described a status flag, affecting the execution of some instructions in a certain new manner.
+Alternatively, one might create a couple of codepages—say, 4 and 5—which differ only in their cell deserialization primitives. For instance, in codepage 4 they might work as before, while in codepage 5 they might deserialize data not from the beginning of a *Slice*, but from its end. Two new instructions—say, `CLD` and `STD`—might be used for switching to codepage 4 or codepage 5. Clearly, we have now described a status flag, affecting the execution of some instructions in a certain new manner.
 
 #### 5.1.8. Setting the codepage in the code itself
 
 For convenience, we reserve some opcode in all codepages—say, `FF n`—for the instruction `SETCP n`, with $n$ from 0 to 255 (cf. [A.13](#a-13-codepage-primitives)). Then by inserting such an instruction into the very beginning of (the main function of) a program (e.g., a TON Blockchain smart contract) or a library function, we can ensure that the code will always be executed in the intended codepage.
 
-## 5.2. Instruction encoding
+### 5.2. Instruction encoding
 
 This section discusses the general principles of instruction encoding valid for all codepages and all versions of TVM. Later, [5.3](#5-3-instruction-encoding-in-codepage-zero) discusses the choices made for the experimental "codepage zero".
 
@@ -1268,7 +1268,7 @@ As a consequence of this encoding method, any binary string admits at most one p
 
 #### 5.2.3. Invalid opcode
 
-If no prefix of `cc.code` encodes a valid instruction in the current codepage, an *invalid opcode exception* is generated (cf. [4.5.7](#4-5-7-list-of-standard-exceptions)). However, the case of an empty `cc.code` is treated separately as explained in [4.1.4](#4-1-4-normal-work-of-tvm-or-the-main-loop) (the exact behavior may depend on the current codepage).
+If no prefix of `cc.code` encodes a valid instruction in the current codepage, an *invalid opcode exception* is generated (cf. [4.5.7](#4-5-7-list-of-predefined-exceptions)). However, the case of an empty `cc.code` is treated separately as explained in [4.1.4](#4-1-4-normal-work-of-tvm%2C-or-the-main-loop) (the exact behavior may depend on the current codepage).
 
 #### 5.2.4. Special case: end-of-code padding
 
@@ -1280,7 +1280,7 @@ Such a padding may be useful, for example, if the `PUSHCONT` primitive (cf. [4.2
 
 #### 5.2.5. TVM code is a bitcode, not a bytecode
 
-Recall that TVM is a bit-oriented machine in the sense that its *Cell*s (and *Slice*s) are naturally considered as sequences of bits, not just of octets (bytes), cf. [3.2.5](#3-2-5-cells-consist-of-bits-not-octets). Because the TVM code is also kept in cells (cf. [3.1.9](#3-1-9-tvm-code-and-data-represented-by-trees-of-cells-or-by-dags) and [4.1.4](#4-1-4-normal-work-of-tvm-or-the-main-loop)), there is no reason to use only bitstrings of length divisible by eight as encodings of complete instructions. In other words, generally speaking, *the TVM code is a bitcode, not a bytecode*.
+Recall that TVM is a bit-oriented machine in the sense that its *Cell*s (and *Slice*s) are naturally considered as sequences of bits, not just of octets (bytes), cf. [3.2.5](#3-2-5-cells-and-cell-primitives-are-bit-oriented%2C-not-byte-oriented). Because the TVM code is also kept in cells (cf. [3.1.9](#3-1-9-tvm-code-is-a-tree-of-cells) and [4.1.4](#4-1-4-normal-work-of-tvm%2C-or-the-main-loop)), there is no reason to use only bitstrings of length divisible by eight as encodings of complete instructions. In other words, generally speaking, *the TVM code is a bitcode, not a bytecode*.
 
 That said, some codepages (such as our experimental codepage zero) may opt to use a bytecode (i.e., to use only encodings consisting of an integral number of bytes)—either for simplicity, or for the ease of debugging and of studying memory (i.e., cell) dumps.<sup>[27](#fn27)</sup>
 
@@ -1320,7 +1320,7 @@ One might construct optimally dense binary code for the set of all complete inst
 
 In practice, instruction encodings used in TVM and other virtual machines offer a compromise between code density and ease of encoding and decoding. Such a compromise may be achieved by selecting simple encodings (cf. [5.2.11](#5-2-11-simple-encodings-of-instructions)) for all instructions (maybe with separate simple encodings for some often used variants, such as `XCHG s0,s(i)` among all `XCHG s(i),s(j)`), and allocating opcode space for such simple encodings using the heuristics outlined in [5.2.9](#5-2-9-almost-optimal-encodings) and [5.2.10](#5-2-10-example-stack-manipulation-primitives); this is the approach currently used in TVM.
 
-## 5.3. Instruction encoding in codepage zero
+### 5.3. Instruction encoding in codepage zero
 
 This section provides details about the experimental instruction encoding for codepage zero, as described elsewhere in this document (cf. Appendix [A](#a-instructions-and-opcodes)) and used in the preliminary test version of TVM.
 
@@ -2592,7 +2592,7 @@ We assume (cf. [2.1](#2-1-stack-calling-conventions)) that the register machines
 
 The machine code (or rather the corresponding assembly code) for a three-address register machine (cf. [2.1.7](#2-1-7-arguments-to-arithmetic-primitives-on-register-machines)) might look as follows:
 
-```
+```asm
 IMUL r6,r0,r3  // r6 := r0 * r3 = ad
 IMUL r7,r1,r2  // r7 := bc
 SUB r6,r6,r7   // r6 := ad-bc = D
@@ -2615,7 +2615,7 @@ We have used 12 operations and at least 23 bytes (each operation uses $3\times 4
 
 The machine code for a two-address register machine might look as follows:
 
-```
+```asm
 MOV r6,r0   // r6 := r0 = a
 MOV r7,r1   // r7 := b
 IMUL r6,r3  // r6 := r6*r3 = ad
@@ -2640,7 +2640,7 @@ We have used 16 operations; optimistically assuming each of them (with the excep
 
 The machine code for a one-address register machine might look as follows:
 
-```
+```asm
 MOV r8,r0  // r8 := r0 = a
 XCHG r1    // r0 <-> r1; r0 := b, r1 := a
 MOV r6,r0  // r6 := b
@@ -2672,7 +2672,7 @@ We have used 23 operations; if we assume one-byte encoding for all arithmetic op
 
 The machine code for a stack machine equipped with basic stack manipulation primitives described in [2.2.1](#2-2-1-basic-stack-manipulation-primitives) might look as follows:
 
-```
+```asm
 PUSH s5    // a b c d e f a
 PUSH s3    // a b c d e f a d
 IMUL       // a b c d e f ad
@@ -2714,7 +2714,7 @@ The code presented above might have been produced by a rather unsophisticated co
 
 A stack machine with compound stack primitives (cf. [2.2.3](#2-2-3-compound-stack-manipulation-primitives)) would not significantly improve code density of the code presented above, at least in terms of bytes used. The only difference is that, if we were not allowed to use commutativity of multiplication, the extra `XCHG s1` inserted before the third `IMUL` might be combined with two previous operations `XCHG s3`, `PUSH s2` into one compound operation `PUXC s2,s3`; we provide the resulting code below. To make this less redundant, we show a version of the code that computes subexpression $af$ before $ec$ as specified in the original source file. We see that this replaces six operations (starting from line 15) with five other operations, and disables the `ROT` optimization:
 
-```
+```asm
 PUSH s5    // a b c d e f a
 PUSH s3    // a b c d e f a d
 IMUL       // a b c d e f ad
@@ -3315,7 +3315,7 @@ By contrast, the heavily optimized (with respect to size) code for register mach
 
 <span id="fn19">**19**</span> Versions of this operation may be introduced where $f$ and $g$ receive an additional bitstring argument, equal to the key (for leaves) or to the common prefix of all keys (for forks) in the corresponding subtree. [Back ↑](#3-3-10-basic-dictionary-operations)
 
-<span id="fn20">**20**</span> If there are no bits of data left in `code`, but there is still exactly one reference, an implicit `JMP` to the cell at that reference is performed instead of an implicit `RET`. [Back ↑](#4-1-4-normal-work-of-tvm-or-the-main-loop)
+<span id="fn20">**20**</span> If there are no bits of data left in `code`, but there is still exactly one reference, an implicit `JMP` to the cell at that reference is performed instead of an implicit `RET`. [Back ↑](#4-1-4-normal-work-of-tvm%2C-or-the-main-loop)
 
 <span id="fn21">**21**</span> Technically, TVM may simply invoke a virtual method `run()` of the continuation currently in `cc`. [Back ↑](#4-1-5-extraordinary-continuations)
 
