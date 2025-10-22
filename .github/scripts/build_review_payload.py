@@ -199,7 +199,6 @@ def _build_from_sidecar(sidecar: dict, *, repo: str, sha: str, repo_root: Path) 
             title = str(it.get("title") or "").strip()
             desc = str(it.get("desc") or "").strip()
             sugg = it.get("suggestion") or {}
-            kind = str(sugg.get("kind") or "none").strip().lower()
             code = str(sugg.get("code") or "")
         except Exception:
             continue
@@ -216,18 +215,29 @@ def _build_from_sidecar(sidecar: dict, *, repo: str, sha: str, repo_root: Path) 
                     continue
             except Exception:
                 pass
-        # Build comment body
-        # Required: inline comment body should be ONLY the GH suggestion fence when available
-        body_text = ""
-        if code.strip() and kind in {"gh", "replacement"}:
-            repl = sanitize_code_for_gh_suggestion(code)
-            body_text = "```suggestion\n" + repl + "\n```"
-        else:
-            # No auto-apply suggestion available; keep a minimal note without code fences
-            body_text = (desc or title or "Suggestion")
+        # Build comment body with title + description + suggestion fence
+        code = code.rstrip("\n")
+        if not code:
+            # Skip items with no replacement text
+            continue
+        repl = sanitize_code_for_gh_suggestion(code)
+        parts: List[str] = []
+        # Prefer including severity in heading when present in sidecar
+        sev = (it.get("severity") or "").strip().upper()
+        if title:
+            heading = f"### [{sev}] {title}".strip()
+            parts.append(heading)
+        if desc:
+            parts.append("")
+            parts.append(desc)
+        parts.append("")
+        parts.append("```suggestion")
+        parts.append(repl)
+        parts.append("```")
+        body_text = "\n".join(parts).strip()
         body_text = _absolutize_location_links(body_text, repo or None, sha or None)
 
-        c: Dict[str, object] = {"path": path, "side": "RIGHT", "body": body_text}
+        c: Dict[str, object] = {"path": path, "side": "RIGHT", "body": body_text, "commit_id": sha}
         if start == end:
             c["line"] = end
         else:
