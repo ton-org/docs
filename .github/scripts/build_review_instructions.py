@@ -35,6 +35,7 @@ Review protocol:
 - When a style rule applies, cite it using contribute/style-guide-extended.mdx?plain=1#L<start>-L<end>. Only add the citation after running a verification command such as `rg "<term>" contribute/style-guide-extended.mdx` or `sed -n '<start>,<end>p'` and inspecting the output to confirm the line range.
 - If no style rule applies (e.g., factual error, typo), explain the issue clearly without a style link.
 - Keep findings direct, professional, and concise. Suggestions must describe the required fix.
+- Code identifiers: if the issue is lack of code font, preserve the token’s original case and wrap it in backticks. Only change case when the style guide explicitly mandates a canonical case for that exact identifier and you cite the relevant line range.
 - Do not speculate about Mintlify runtime behavior or external systems; rely solely on repository content.
 
 Severity policy:
