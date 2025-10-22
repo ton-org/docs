@@ -2,46 +2,112 @@
 title: "How to transfer Jettons"
 ---
 
-Jetton transfer is an operation specified in [TEP 0074](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md#internal-message-handlers). Its implementation must comply with this standard,
-and Jetton wallet contracts must support the logic described there. The Jetton transfer message is
-also specified and must comply with the corresponding TL-B scheme. This scheme involves, among other things,
+import { Aside } from '/snippets/aside.jsx';
 
-- `forward_ton_amount`: the amount of nanotons to be sent to the destination address;
-- `forward_payload`: optional custom data that should be sent to the destination address.
+[TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md#internal-message-handlers) standard specifies that Jetton wallets must support `transfer` operation. 
 
-If `forward_ton_amount > 0`, then `forward_payload` must comply with one of the [standard formats](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md#forward_payload-format).
-We present here only the simple comment format.
+To attach a comment, the message has to encode it in `forward_payload` field, and `forward_ton_amount` is some amount of toncoin attached to let the receiving wallet process the message.
 
-First, you can use web services as [TON MINTER](https://minter.ton.org/) and avoid writing code, just follow the guides.
-Or you can do it manually. For this you may also need information on how [to get the address of your Jetton wallet](/standard/tokens/jettons/how-to-find).
-Below there are two illustrative examples:
+Format of `forward_payload` for comments and other kinds of attached data can be found in [the API section](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md#forward_payload-format). If `forward_ton_amount` is `0`, `forward_payload` doesn't have to comply with the schema.
 
-```typescript
+A single manual transfer can be done with a web service (for example, [Minter](https://minter.ton.org/)).
+
+A programmatic transfer is usually done with an SDK (for example, [`assets-sdk`](https://github.com/ton-community/assets-sdk)) that handles low-level message serialization details. The provided example uses [TON Center API](/ecosystem/rpc/toncenter/overview) that might [require a key](/ecosystem/rpc/toncenter/get-api-key). Also you'll need a mnemonic of a wallet that will pay for the transfer.
+
+<Aside type="danger" title="Funds at risk">
+    Beware that API keys and mnemonic must not be committed or shared publicly.
+
+    A better approach is to use a `.env` file that is excluded from repository with `.gitignore`. For Github CI purposes, consult [their documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
+</Aside>
+
+```ts expandable
+import { Address, toNano, WalletContractV5R1, TonClient } from "@ton/ton";
+import { mnemonicToPrivateKey } from "@ton/crypto";
+import { AssetsSDK, createApi } from "@ton-community/assets-sdk";
+
+const network = "testnet";
+// a list of 24 space-separated words
+const mnemonic = "foo bar baz";
+const apiKey = "<API key>";
+const jettonMasterAddress = Address.parse("...");
+const receiverAddress = Address.parse("...");
+
+async function main() {
+    // create an RPC client that will send network requests
+    const client = new TonClient({
+        endpoint: "https://toncenter.com/api/v2/jsonRPC",
+        apiKey,
+    });
+
+    // extract private and public keys from the mnemonic
+    const keyPair = await mnemonicToPrivateKey(mnemonic.split(" "));
+
+    // create a client for TON wallet
+    const wallet = WalletContractV5R1.create({
+        workchain: 0,
+        // public key is required to deploy a new wallet
+        // if it wasn't deployed yet
+        publicKey: keyPair.publicKey,
+    });
+
+    const provider = client.provider(wallet.address);
+
+    // sender is an object used by assets-sdk to send messages
+    // private key is used to sign messages sent to a wallet
+    const sender = wallet.sender(provider, keyPair.secretKey);
+
+    // create an assets-sdk client 
+    const api = await createApi(network);
+    const sdk = AssetsSDK.create({ api, sender });
+
+    // create a client for interacting with jettons of a
+    // certain type
+    const jetton = await sdk.openJetton(jettonMasterAddress);
+
+    // create a client for the sender's Jetton wallet
+    const jettonWallet = await jetton.getWallet(sdk.sender!.address!);
+
+    // tell sender's Jetton wallet to transfer Jettons
+    await jettonWallet.send(sender, receiverAddress, toNano(10));
+}
+
+void main();
+```
+
+For reference, here's a low-level example of the process, where message serialization is done manually.
+
+```ts expandable
 import { Address, beginCell, internal, SendMode, toNano } from "@ton/core";
 import { TonClient, WalletContractV5R1, TupleItemSlice } from "@ton/ton";
 import { mnemonicToPrivateKey } from "@ton/crypto";
 
-async function main() {
-    // We will use Jetton master contract to find users's Jetton wallet
-    const jettonMasterAddress = Address.parse("put the Jetton master address");
-    const senderRegularWalletAddress = Address.parse(
-        "put your regular wallet address",
-    );
-    const destinationAddress = Address.parse("put destination wallet address");
-    // The wallet address used to return remaining Toncoin through the excesses message.
-    const responseDestinationAddress = Address.parse(
-        "put response destination address",
-    );
+// a list of 24 space-separated words
+const mnemonic = "foo bar baz";
+const apiKey = "<API key>";
+const jettonMasterAddress = Address.parse(
+    "<Jetton master address>",
+);
+const receiverAddress = Address.parse('...');
+const senderRegularWalletAddress = Address.parse(
+    "<sender's regular wallet address>",
+);
+const destinationAddress = Address.parse(
+    "<destination wallet address>",
+);
+// The wallet address used to return remaining Toncoin through the excesses message.
+const responseDestinationAddress = Address.parse(
+    "<response destination address>",
+);
 
+async function main() {
     // connect to your regular walletV5
     const client = new TonClient({
         endpoint: "https://toncenter.com/api/v2/jsonRPC",
-        apiKey: "your api_key here, see https://beta-docs.ton.org/ecosystem/rpc/toncenter/get-api-key"
+        apiKey,
     });
     const provider = client.provider(senderRegularWalletAddress);
 
-    const your_mnemonic = "put your mnemonic here, ...";
-    const keyPair = await mnemonicToPrivateKey(your_mnemonic.split(" "));
+    const keyPair = await mnemonicToPrivateKey(mnemonic.split(" "));
     const walletContract = WalletContractV5R1.create({
         workchain: 0,
         publicKey: keyPair.publicKey,
@@ -69,14 +135,22 @@ async function main() {
         .endCell();
 
     const messageBody = beginCell()
-        .storeUint(0x0f8a7ea5, 32) // opcode for jetton transfer
-        .storeUint(0, 64) // query id
-        .storeCoins(toNano(5)) // jetton amount, amount * 10^9
-        .storeAddress(destinationAddress) // the address of the new jetton owner
-        .storeAddress(responseDestinationAddress) // response destination
-        .storeBit(0) // no custom payload
-        .storeCoins(toNano("0.02")) // forward amount - if >0, will send notification message
-        .storeBit(1) // store forwardPayload as a reference
+        // opcode for jetton transfer
+        .storeUint(0x0f8a7ea5, 32)
+        // query id
+        .storeUint(0, 64)
+        // jetton amount, amount * 10^9
+        .storeCoins(toNano(5))
+        // the address of the new jetton owner
+        .storeAddress(destinationAddress)
+        // response destination
+        .storeAddress(responseDestinationAddress)
+        // no custom payload
+        .storeBit(0)
+        // forward amount - if >0, will send notification message
+        .storeCoins(toNano("0.02"))
+        // store forwardPayload as a reference
+        .storeBit(1)
         .storeRef(forwardPayload)
         .endCell();
 
@@ -95,55 +169,6 @@ async function main() {
         messages: [transferMessage],
         sendMode: SendMode.PAY_GAS_SEPARATELY,
     });
-}
-
-void main();
-```
-
-However, there is an [SDK](https://github.com/ton-community/assets-sdk) that allows you to avoid manually creating all the necessary messages.
-An example of how it can be used to send the transfer message is provided below:
-
-```typescript
-import { Address, toNano, WalletContractV5R1, TonClient } from "@ton/ton";
-
-import { mnemonicToPrivateKey } from "@ton/crypto";
-
-import {
-    AssetsSDK,
-    createApi,
-} from "@ton-community/assets-sdk";
-
-async function main() {
-    const client = new TonClient({
-        endpoint: "https://toncenter.com/api/v2/jsonRPC",
-        apiKey: "your api_key here, see https://beta-docs.ton.org/ecosystem/rpc/toncenter/get-api-key",
-    });
-
-    const your_mnemonic = "put your mnemonic here, ...";
-    const keyPair = await mnemonicToPrivateKey(your_mnemonic.split(" "));
-
-    const wallet = WalletContractV5R1.create({
-        workchain: 0,
-        publicKey: keyPair.publicKey,
-    });
-
-    const provider = client.provider(wallet.address);
-    const sender = wallet.sender(provider, keyPair.secretKey);
-
-    const NETWORK = "testnet";
-    const api = await createApi(NETWORK);
-
-    const sdk = AssetsSDK.create({
-        api,
-        sender,
-    });
-
-    const JETTON_ADDRESS = Address.parse('MY_JETTON_ADDRESS');
-    const jetton = await sdk.openJetton(JETTON_ADDRESS);
-
-    const RECEIVER_ADDRESS = Address.parse('RECEIVER_ADDRESS');
-    const myJettonWallet = await jetton.getWallet(sdk.sender!.address!);
-    await myJettonWallet.send(sender, RECEIVER_ADDRESS, toNano(10));
 }
 
 void main();
