@@ -237,7 +237,7 @@ def _build_from_sidecar(sidecar: dict, *, repo: str, sha: str, repo_root: Path) 
         body_text = "\n".join(parts).strip()
         body_text = _absolutize_location_links(body_text, repo or None, sha or None)
 
-        c: Dict[str, object] = {"path": path, "side": "RIGHT", "body": body_text, "commit_id": sha}
+        c: Dict[str, object] = {"path": path, "side": "RIGHT", "body": body_text}
         if start == end:
             c["line"] = end
         else:
