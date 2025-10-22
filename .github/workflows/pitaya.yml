@@ -2,7 +2,7 @@ name: AI Review
 
 on:
   pull_request:
-    types: [opened, ready_for_review]
+    types: [opened, ready_for_review, synchronize]
   issue_comment:
     types: [created]
 
@@ -17,11 +17,12 @@ jobs:
     # - PR events when ready_for_review or opened as non‑draft
     # - Issue comments only when it's a PR thread, command is /review, and commenter is trusted
     if: |
-      (github.event_name == 'pull_request' && ((github.event.action == 'ready_for_review') || (github.event.action == 'opened' && github.event.pull_request.draft == false))) ||
+      (github.event_name == 'pull_request' && ((github.event.action == 'ready_for_review') || (github.event.action == 'opened' && github.event.pull_request.draft == false) || (github.event.action == 'synchronize'))) ||
       (
         github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
-        (github.event.comment.body == '/review' || startsWith(github.event.comment.body, '/review '))
+        (github.event.comment.body == '/review' || startsWith(github.event.comment.body, '/review ')) &&
+        (github.event.sender.association == 'MEMBER' || github.event.sender.association == 'OWNER' || github.event.sender.association == 'COLLABORATOR')
       )
     runs-on: ubuntu-latest
     env:
@@ -191,17 +192,6 @@ jobs:
 
           REVIEW_INSTRUCTIONS=$(python3 "$GITHUB_WORKSPACE/.github/scripts/build_review_instructions.py")
 
-          COMPOSER_INSTRUCTIONS=$(cat <<'TXT'
-          Your job is to turn the reviewers’ findings into a single clear comment.
-          - Start with a short, friendly thank-you and include one sentence about whether fixes are needed.
-          - Treat every finding as already validated; only rewrite wording for clarity if needed. Do not change the meaning or drop details.
-          - All links must remain repo-relative (e.g., pending/discover/...#L10-L12). Only edit a link to fix formatting issues (such as an https:// prefix or missing `?plain=1`); keep the same path and line numbers.
-          - If the reviewer provided a suggested change, include it exactly; otherwise do not fabricate one.
-          - Include only HIGH‑severity findings. Style‑guide [HIGH] items take precedence. Non‑style blockers (e.g., incorrect calculation, unsafe step) are acceptable only when the reviewer shows repo‑based proof. Do not include MEDIUM/LOW items.
-          TXT
-          )
-
-
           uv run pitaya "Review this pull request" \
             --repo "$GITHUB_WORKSPACE" \
             --base-branch pr_head \
@@ -210,7 +200,6 @@ jobs:
             -S ci_fail_policy=never \
             -S include_branches="$BASE_REF" \
             -S review_instructions="$REVIEW_INSTRUCTIONS" \
-            -S composer_instructions="$COMPOSER_INSTRUCTIONS" \
             --plugin codex \
             --model "openai/gpt-5" \
             --no-tui
@@ -229,13 +218,29 @@ jobs:
             exit 1
           fi
 
+          # Sidecar must exist and contain a non-empty composer selection
+          SIDECAR="$RUN_DIR/review/index.json"
+          if [ ! -f "$SIDECAR" ]; then
+            echo "Sidecar not found: $SIDECAR" >&2
+            exit 1
+          fi
+          if [ "$(jq '.selected_ids | length' "$SIDECAR")" -eq 0 ]; then
+            echo "No composer selection in sidecar; aborting." >&2
+            exit 1
+          fi
+          COMMIT_ID="$(jq -r '.commit_id // empty' "$SIDECAR")"
+          if [ -z "$COMMIT_ID" ]; then
+            echo "commit_id missing in sidecar; aborting." >&2
+            exit 1
+          fi
+
           # Build review payload (summary + inline comments)
           INLINE_SEVERITIES="${INLINE_SEVERITIES:-HIGH}"  # comma-separated; default HIGH only
           MAX_COMMENTS="${MAX_COMMENTS:-40}"
           python3 "$GITHUB_WORKSPACE/.github/scripts/build_review_payload.py" \
             --run-dir "$RUN_DIR" \
             --repo "${{ github.repository }}" \
-            --sha "${PR_HEAD_SHA:-}" \
+            --sha "$COMMIT_ID" \
             --severities "${INLINE_SEVERITIES}" \
             --max-comments "${MAX_COMMENTS}" > review_payload.json
 

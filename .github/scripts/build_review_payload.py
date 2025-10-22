@@ -175,12 +175,27 @@ def _build_from_sidecar(sidecar: dict, *, repo: str, sha: str, repo_root: Path) 
         sha = commit_id
     items = sidecar.get("selected_details") or []
     comments: List[Dict[str, object]] = []
+    def sanitize_code_for_gh_suggestion(code: str) -> str:
+        # Remove diff headers and convert +added lines to plain text; drop -removed lines.
+        out: List[str] = []
+        for ln in code.splitlines():
+            if ln.startswith('--- ') or ln.startswith('+++ ') or ln.startswith('@@'):
+                continue
+            if ln.startswith('+') and not ln.startswith('++'):
+                out.append(ln[1:])
+                continue
+            if ln.startswith('-') and not ln.startswith('--'):
+                # Skip removed lines in GH suggestion body
+                continue
+            out.append(ln)
+        return "\n".join(out).rstrip("\n")
+
     for it in items:
         try:
             path = str(it.get("path") or "").strip()
             start = int(it.get("start") or 0)
             end = int(it.get("end") or 0)
-            sev = str(it.get("severity") or "").strip().upper()
+            # severity is not required for comment body; skip storing it
             title = str(it.get("title") or "").strip()
             desc = str(it.get("desc") or "").strip()
             sugg = it.get("suggestion") or {}
@@ -202,18 +217,14 @@ def _build_from_sidecar(sidecar: dict, *, repo: str, sha: str, repo_root: Path) 
             except Exception:
                 pass
         # Build comment body
-        parts: List[str] = [f"### [{sev}] {title}"]
-        if desc:
-            parts += ["", "Description:", desc]
-        submitted_suggestion = False
-        if kind == "replacement" and code.strip():
-            # Trust strategy: replacement is full-line coverage; still basic sanity on counts
-            repl = code.rstrip("\n")
-            parts += ["", "```suggestion", repl, "```"]
-            submitted_suggestion = True
-        if not submitted_suggestion and code.strip():
-            parts += ["", "Suggestion:", code.strip()]
-        body_text = "\n".join(parts).strip()
+        # Required: inline comment body should be ONLY the GH suggestion fence when available
+        body_text = ""
+        if code.strip() and kind in {"gh", "replacement"}:
+            repl = sanitize_code_for_gh_suggestion(code)
+            body_text = "```suggestion\n" + repl + "\n```"
+        else:
+            # No auto-apply suggestion available; keep a minimal note without code fences
+            body_text = (desc or title or "Suggestion")
         body_text = _absolutize_location_links(body_text, repo or None, sha or None)
 
         c: Dict[str, object] = {"path": path, "side": "RIGHT", "body": body_text}
