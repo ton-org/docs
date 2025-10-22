@@ -110,14 +110,22 @@ def _absolutize_location_links(body: str, repo: Optional[str], sha: Optional[str
 
     rewritten = "\n".join(lines)
 
-    # 2) Convert any bare relative doc links like path/to/file.mdx?plain=1#L10-L20 anywhere in text
+    # 2) Convert any doc links like path/to/file.mdx?plain=1#L10-L20 anywhere in text
+    #    Avoid variable-width lookbehinds; match optional scheme as a capture and skip when present.
     if repo:
-        generic_pattern = re.compile(r"(?<!https?://)(?P<path>[A-Za-z0-9_./\-]+\.(?:md|mdx))\?plain=1#L\d+(?:-L\d+)?")
+        generic_pattern = re.compile(
+            r"(?P<prefix>https?://)?(?P<path>[A-Za-z0-9_./\-]+\.(?:md|mdx|json))\?plain=1#L\d+(?:-L\d+)?"
+        )
 
         def repl(match: re.Match[str]) -> str:
+            if match.group("prefix"):
+                # Already absolute; leave as-is
+                return match.group(0)
             p = match.group("path").lstrip("./")
             base = style_blob_prefix if p.startswith(style_rel) else doc_blob_prefix
-            return f"{base}{p}{match.group(0)[len(match.group('path')):]}"
+            # Append the anchor part after the path
+            suffix = match.group(0)[len(match.group("path")) :]
+            return f"{base}{p}{suffix}"
 
         rewritten = generic_pattern.sub(repl, rewritten)
 
