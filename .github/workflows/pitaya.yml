@@ -167,6 +167,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: tact-lang/pitaya
+          ref: pr-review-upgrade
           path: pitaya-src
 
       - name: Install Pitaya deps via uv
@@ -214,7 +215,7 @@ jobs:
             --model "openai/gpt-5" \
             --no-tui
 
-      - name: Submit GitHub PR Comment
+      - name: Submit GitHub PR Review
         if: env.DOCS_CHANGED == 'true'
         working-directory: pitaya-src
         env:
@@ -228,46 +229,55 @@ jobs:
             exit 1
           fi
 
-          COMPOSER_META="$(grep -rl '"role": "composer"' "$RUN_DIR/instances" | head -n1)"
-          if [ -z "${COMPOSER_META:-}" ]; then
-            echo "No composer metadata found in $RUN_DIR" >&2
-            exit 1
-          fi
+          # Build review payload (summary + inline comments)
+          INLINE_SEVERITIES="${INLINE_SEVERITIES:-HIGH}"  # comma-separated; default HIGH only
+          MAX_COMMENTS="${MAX_COMMENTS:-40}"
+          python3 "$GITHUB_WORKSPACE/.github/scripts/build_review_payload.py" \
+            --run-dir "$RUN_DIR" \
+            --repo "${{ github.repository }}" \
+            --sha "${PR_HEAD_SHA:-}" \
+            --severities "${INLINE_SEVERITIES}" \
+            --max-comments "${MAX_COMMENTS}" > review_payload.json
 
-          BODY=$(jq -r '.final_message // ""' "$COMPOSER_META")
-          if [ -z "$BODY" ]; then
-            echo "Composer final_message is empty" >&2
-            exit 1
-          fi
+          API="https://api.github.com/repos/${{ github.repository }}/pulls/${PR_NUMBER}/reviews"
 
-          if [ -n "${PR_HEAD_SHA:-}" ]; then
-            BODY=$(printf '%s\n' "$BODY" | python3 "$GITHUB_WORKSPACE/.github/scripts/rewrite_review_links.py")
-          fi
-
-          # Prepare issue comment body (composer already produces a friendly intro; no verdict line)
-          COMMENT_BODY="$BODY"
-          API="https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments"
-          jq -n --arg body "$COMMENT_BODY" '{body:$body}' > payload.json
-
-          echo "Submitting PR comment..."
+          echo "Submitting PR review..."
           echo "Endpoint: $API"
-          echo "Body (first 200 chars):"; echo "$COMMENT_BODY" | head -c 200; echo; echo
+          echo "Event:"; jq -r '.event' review_payload.json || true
+          echo "Body (first 200 chars):"; jq -r '.body' review_payload.json | head -c 200; echo; echo
+          echo "Inline comments count:"; jq -r '.comments | length' review_payload.json || true
 
           HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" -X POST "$API" \
                -H "Authorization: Bearer ${GITHUB_TOKEN}" \
                -H "Accept: application/vnd.github+json" \
                -H "X-GitHub-Api-Version: 2022-11-28" \
                -H "Content-Type: application/json" \
-               -d @payload.json || true)
+               -d @review_payload.json || true)
 
           echo "GitHub API HTTP: $HTTP_CODE"
           echo "Response body:"; cat response.json || true; echo
 
           if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ] && jq -e '.id' response.json >/dev/null 2>&1; then
-            echo "Comment submitted successfully."
+            echo "Review submitted successfully."
           else
-            echo "Failed to submit comment (HTTP $HTTP_CODE). See response above." >&2
-            exit 1
+            echo "::warning::Failed to submit review (HTTP $HTTP_CODE). Falling back to timeline comment." >&2
+            # Fallback: post the body as a regular PR comment so authors still see the summary
+            COMMENT_API="https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments"
+            jq -n --arg body "$(jq -r '.body' review_payload.json)" '{body:$body}' > payload.json
+            HTTP_CODE2=$(curl -sS -o response2.json -w "%{http_code}" -X POST "$COMMENT_API" \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -H "Content-Type: application/json" \
+              -d @payload.json || true)
+            echo "Fallback GitHub API HTTP: $HTTP_CODE2"
+            echo "Response body:"; cat response2.json || true; echo
+            if [ "$HTTP_CODE2" -ge 200 ] && [ "$HTTP_CODE2" -lt 300 ] && jq -e '.id' response2.json >/dev/null 2>&1; then
+              echo "Fallback comment submitted successfully."
+            else
+              echo "Failed to submit fallback comment (HTTP $HTTP_CODE2)." >&2
+              exit 1
+            fi
           fi
 
       - name: Collect Pitaya logs
