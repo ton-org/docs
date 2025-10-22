@@ -48,11 +48,11 @@ For example, `8A` corresponds to binary string `10001010`, while `8A_` and `8A0_
 
 #### 1.0.3. Emphasizing that a string is a hexadecimal representation of a bitstring
 
-Sometimes we need to emphasize that a string of hexadecimal digits (with or without a `_` at the end) is the hexadecimal representation of a bitstring. In such cases, we either prepend `x` to the resulting string (e.g., `x8A`), or prepend `x{` and append `}` (e.g., `x{2D9_}`, which is `00101101100`). This should not be confused with hexadecimal numbers, usually prepended by `0x` (e.g., `0x2D9` or `0x2d9`, which is the integer 729).
+Sometimes we need to emphasize that a string of hexadecimal digits (with or without a `_` at the end) is the hexadecimal representation of a bitstring. In such cases, we either prepend `x` to the resulting string (e.g., `x8A`), or prepend `x{` and append `}` (e.g., `x{2D9_}`, which is `00101101100`). This should not be confused with hexadecimal numbers, usually prepended by `0x` (e.g., `0x2D9` or `0x2d9`, which is the integer `729`).
 
 #### 1.0.4. Serializing a bitstring into a sequence of octets
 
-When a bitstring needs to be represented as a sequence of 8-bit bytes (octets), which take values in integers 0...255, this is achieved essentially in the same fashion as above: we split the bitstring into groups of eight bits and interpret each group as the binary representation of an integer 0...255. If the length of the bitstring is not a multiple of eight, the bitstring is augmented by a binary `1` and up to seven binary `0`s before being split into groups. The fact that such a completion has been applied is usually reflected by a "completion tag" bit.
+When a bitstring needs to be represented as a sequence of 8-bit bytes (octets), which take values in integers `0...255`, this is achieved essentially in the same fashion as above: we split the bitstring into groups of eight bits and interpret each group as the binary representation of an integer `0...255`. If the length of the bitstring is not a multiple of eight, the bitstring is augmented by a binary `1` and up to seven binary `0`s before being split into groups. The fact that such a completion has been applied is usually reflected by a "completion tag" bit.
 
 For instance, `00101101100` corresponds to the sequence of two octets (`0x2d`, `0x90`) (hexadecimal), or (45,144) (decimal), along with a completion tag bit equal to `1` (meaning that the completion has been applied), which must be stored separately.
 
@@ -66,11 +66,13 @@ Most operations and user-defined functions take their arguments from the top of 
 
 #### 1.1.1 TVM values
 
-The entities that can be stored in the TVM stack will be called *TVM values*, or simply *values* for brevity. They belong to one of several predefined *value types*. Each value belongs to exactly one value type.
+The entities that can be stored in the TVM stack will be called *TVM values*, or simply *values* for brevity. They belong to one of several predefined *value types*. Each value belongs to exactly one value type. The values are always kept on the stack along with tags uniquely determining their types, and all built-in TVM operations (or *primitives*) only accept values of predefined types.
+
+For example, the integer addition primitive `ADD` accepts only two integer values, and returns one integer value as a result. One cannot supply `ADD` with two strings instead of two integers expecting it to concatenate these strings or to implicitly transform the strings into their decimal integer values; any attempt to do so will result in a run-time type-checking exception.
 
 #### 1.1.2 Static typing, dynamic typing, and run-time type checking
 
-An important design decision for TVM was whether to make it statically or dynamically typed. It turns out that any attempt to statically type TVM leads to problems. One cannot create references to dynamically-sized data portions of cells (i.e., slices) without adding dependent types. Continuations are also hard to type statically. Furthermore, the existence of type-parametric (or polymorphic) primitives, such as stack and tuple manipulation primitives, would lead to a necessity of introducing a sufficiently complicated compile-time type system.
+In some respects TVM performs a kind of dynamic typing using run-time type checking. However, this does not make the TVM code a "dynamically typed language" like PHP or Javascript, because all primitives accept values and return results of predefined (value) types, each value belongs to strictly one type, and values are never implicitly converted from one type to another. If, on the other hand, one compares the TVM code to the conventional microprocessor machine code, one sees that the TVM mechanism of value tagging prevents, for example, using the address of a string as a number---or, potentially even more disastrously, using a number as the address of a string---thus eliminating the possibility of all sorts of bugs and security vulnerabilities related to invalid memory accesses, usually leading to memory corruption and segmentation faults. This property is highly desirable for a VM used to execute smart contracts in a blockchain. In this respect, TVM's insistence on tagging all values with their appropriate types, instead of reinterpreting the bit sequence in a register depending on the needs of the operation it is used in, is just an additional run-time type-safety mechanism.
 
 An alternative would be to somehow analyze the smart-contract code for type correctness and type safety before allowing its execution in the VM, or even before allowing it to be uploaded into the blockchain as the code of a smart contract. Such a static analysis of code for a Turing-complete machine appears to be a time-consuming and non-trivial problem (likely to be equivalent to the stopping problem for Turing machines), something we would rather avoid in a blockchain smart-contract context.
 
@@ -224,9 +226,17 @@ Of course, an implementation of a high-level language for TVM might choose some 
 
 #### 2.1.7. Arguments to arithmetic primitives on register machines
 
-On a stack machine, built-in arithmetic primitives (such as `ADD` or `DIVMOD`) follow the same calling conventions as user-defined functions. In this respect, user-defined functions (for example, a function computing the square root of a number) might be considered as "extensions" or "custom upgrades" of the stack machine.
+On a stack machine, built-in arithmetic primitives (such as `ADD` or `DIVMOD`) follow the same calling conventions as user-defined functions. In this respect, user-defined functions (for example, a function computing the square root of a number) might be considered as "extensions" or "custom upgrades" of the stack machine. This is one of the clearest advantages of stack machines (and of stack programming languages such as Forth) compared to register machines.
 
-In this respect, register machines are not as easily "upgradable" as stack machines.<sup>[7](#fn7)</sup>
+In contrast, arithmetic instructions (built-in operations) on register machines usually get their parameters from general-purpose registers encoded in the full opcode. A binary operation, such as `SUB`, thus requires two arguments, $\texttt{r}(i)$ and $\texttt{r}(j)$, with $i$ and $j$ specified by the instruction. A register $\texttt{r}(k)$ for storing the result also must be specified. Arithmetic operations can take several possible forms, depending on whether $i$, $j$, and $k$ are allowed to take arbitrary values:
+
+- Three-address form --- Allows the programmer to arbitrarily choose not only the two source registers $\texttt{r}(i)$ and $\texttt{r}(j)$, but also a separate destination register $\texttt{r}(k)$. This form is common for most RISC processors, and for the XMM and AVX SIMD instruction sets in the x86-64 architecture.
+
+- Two-address form --- Uses one of the two operand registers (usually $\texttt{r}(i)$) to store the result of an operation, so that $k=i$ is never indicated explicitly. Only $i$ and $j$ are encoded inside the instruction. This is the most common form of arithmetic operations on register machines, and is quite popular on microprocessors (including the x86 family).
+
+- One-address form --- Always takes one of the arguments from the accumulator `r0`, and stores the result in `r0` as well; then $i=k=0$, and only $j$ needs to be specified by the instruction. This form is used by some simpler microprocessors (such as Intel 8080).
+
+Note that this flexibility is available only for built-in operations, but not for user-defined functions. In this respect, register machines are not as easily "upgradable" as stack machines.<sup>[7](#fn7)</sup>
 
 #### 2.1.8. Return values of functions
 
@@ -279,9 +289,9 @@ Some other "unsystematic" stack manipulation operations might be also defined (e
 
 A compiler or a human TVM-code programmer might use the basic stack primitives as follows.
 
-Suppose that the function or primitive to be invoked is to be passed, say, three arguments $x$, $y$, and $z$, currently located in stack registers `s(i)`, `s(j)`, and `s(k)`. In this circumstance, the compiler (or programmer) might issue operation `PUSH s(i)` (if a copy of $x$ is needed after the call to this primitive) or `XCHG s(i)` (if it will not be needed afterwards) to put the first argument $x$ into the top of the stack. Then, the compiler (or programmer) could use either `PUSH s(j')` or `XCHG s(j')`, where $j'=j$ or $j+1$, to put $y$ into the new top of the stack.<sup>[8](#fn8)</sup> Proceeding in this manner, we see that we can put the original values of $x$, $y$, and $z$---or their copies, if needed---into locations `s2`, `s1`, and `s0`, using a sequence of push and exchange operations (cf. [2.2.4](#2-2-4-mnemonics-of-compound-stack-operations) and [2.2.5](#2-2-5-semantics-of-compound-stack-operations) for a more detailed explanation).
+Suppose that the function or primitive to be invoked is to be passed, say, three arguments $x$, $y$, and $z$, currently located in stack registers `s(i)`, `s(j)`, and `s(k)`. In this circumstance, the compiler (or programmer) might issue operation `PUSH s(i)` (if a copy of $x$ is needed after the call to this primitive) or `XCHG s(i)` (if it will not be needed afterwards) to put the first argument $x$ into the top of the stack. Then, the compiler (or programmer) could use either `PUSH s(j')` or `XCHG s(j')`, where $j'=j$ or $j+1$, to put $y$ into the new top of the stack.<sup>[8](#fn8)</sup> 
 
-In order to generate this sequence, the compiler will need to know only the three values $i$, $j$ and $k$, describing the old locations of variables or temporary values in question, and some flags describing whether each value will be needed thereafter or is needed only for this primitive or function call. The locations of other variables and temporary values will be affected in the process, but a compiler (or a human programmer) can easily track their new locations.
+Proceeding in this manner, we see that we can put the original values of $x$, $y$, and $z$---or their copies, if needed---into locations `s2`, `s1`, and `s0`, using a sequence of push and exchange operations (cf. [2.2.4](#2-2-4-mnemonics-of-compound-stack-operations) and [2.2.5](#2-2-5-semantics-of-compound-stack-operations) for a more detailed explanation). In order to generate this sequence, the compiler will need to know only the three values $i$, $j$ and $k$, describing the old locations of variables or temporary values in question, and some flags describing whether each value will be needed thereafter or is needed only for this primitive or function call. The locations of other variables and temporary values will be affected in the process, but a compiler (or a human programmer) can easily track their new locations.
 
 Similarly, if the results returned from a function need to be discarded or moved to other stack registers, a suitable sequence of exchange and pop operations will do the job. In the typical case of one return value in `s0`, this is achieved either by an `XCHG s(i)` or a `POP s(i)` (in most cases, a `DROP`) operation.<sup>[9](#fn9)</sup>
 
@@ -312,13 +322,17 @@ As an exception, if a mnemonic would consist of only `PU` or only `XC` strings, 
 
 #### 2.2.5. Semantics of compound stack operations
 
-Each compound $\gamma$-ary operation $O$ `s(i_1)`,...,`s(i_γ)` is translated into an equivalent sequence of basic stack operations by induction in $\gamma$ as follows:
+Each compound $\gamma$-ary operation $O$ `s`$(i_1)$,\dots,`s`$(i_\gamma)$ is translated into an equivalent sequence of basic stack operations by induction in $\gamma$ as follows:
 
 - As a base of induction, if $\gamma=0$, the only nullary compound stack operation corresponds to an empty sequence of basic stack operations.
-- Equivalently, we might begin the induction from $\gamma=1$. Then `PU s(i)` corresponds to the sequence consisting of one basic operation `PUSH s(i)`, and `XC s(i)` corresponds to the one-element sequence consisting of `XCHG s(i)`.
+
+- Equivalently, we might begin the induction from $\gamma=1$. Then `PU s`$(i)$ corresponds to the sequence consisting of one basic operation `PUSH s`$(i)$, and `XC s`$(i)$ corresponds to the one-element sequence consisting of `XCHG s`$(i)$.
+
 - For $\gamma\geq1$ (or for $\gamma\geq2$, if we use $\gamma=1$ as induction base), there are two subcases:
-  1. $O$ `s(i_1)`,...,`s(i_γ)`, with $O$=`XC`$O'$, where $O'$ is a compound operation of arity $\gamma-1$ (i.e., the mnemonic of $O'$ consists of $\gamma-1$ strings `XC` and `PU`). Let $\alpha$ be the total quantity of `PU`shes in $O$, and $\beta$ be that of e`XC`hanges, so that $\alpha+\beta=\gamma$. Then the original operation is translated into `XCHG s(β-1),s(i_1)`, followed by the translation of $O'$ `s(i_2)`,...,`s(i_γ)`, defined by the induction hypothesis.
-  2. $O$ `s(i_1)`,...,`s(i_γ)`, with $O$=`PU`$O'$, where $O'$ is a compound operation of arity $\gamma-1$. Then the original operation is translated into `PUSH s(i_1)`; `XCHG s(β)`, followed by the translation of $O'$ `s(i_2+1)`,...,`s(i_γ+1)`, defined by the induction hypothesis.<sup>[10](#fn10)</sup>
+
+  1. $O$ `s`$(i_1),\ldots,$`s`$(i_\gamma)$, with $O=$`XC`$O'$, where $O'$ is a compound operation of arity $\gamma-1$ (i.e., the mnemonic of $O'$ consists of $\gamma-1$ strings `XC` and `PU`). Let $\alpha$ be the total quantity of `PU`shes in $O$, and $\beta$ be that of e`XC`hanges, so that $\alpha+\beta=\gamma$. Then the original operation is translated into `XCHG s`$(\beta-1)$`,s`$(i_1)$, followed by the translation of $O'$ `s`$(i_2),\ldots,$`s`$(i_\gamma)$, defined by the induction hypothesis.
+
+  2. $O$ `s`$(i_1),\ldots,$`s`$(i_\gamma)$, with $O=$`PU`$O'$, where $O'$ is a compound operation of arity $\gamma-1$. Then the original operation is translated into `PUSH s`$(i_1)$; `XCHG s`$(\beta)$, followed by the translation of $O'$ `s`$(i_2+1),\ldots,$`s`$(i_\gamma+1)$, defined by the induction hypothesis.<sup>[10](#fn10)</sup>
 
 #### 2.2.6. Stack manipulation instructions are polymorphic
 
@@ -378,52 +392,63 @@ The type of an exotic cell is stored as the first eight bits of its data. If an 
 
 Every cell $c$ has another attribute $\text{Lvl}(c)$ called its *(de Brujn) level*, which currently takes integer values in the range 0...3. The level of an ordinary cell is always equal to the maximum of the levels of all its children $c_i$:
 
-$$\text{Lvl}(c)=\max_{1\leq i\leq r}\text{Lvl}(c_i)$$
+$$
+\text{LVL}(c)=\max_{1\leq i\leq r}\text{LVL}(c_i) \tag{1}
+$$
 
-for an ordinary cell $c$ containing $r$ references to cells $c_1$, ..., $c_r$. If $r=0$, $\text{Lvl}(c)=0$. Exotic cells may have different rules for setting their level.
+for an ordinary cell $c$ containing $r$ references to cells $c_1$, \dots, $c_r$. If $r=0$, $\text{LVL}(c)=0$. Exotic cells may have different rules for setting their level.
 
-A cell's level affects the number of *higher hashes* it has. More precisely, a level $l$ cell has $l$ higher hashes $\text{Hash}_1(c)$, ..., $\text{Hash}_l(c)$ in addition to its representation hash $\text{Hash}(c)=\text{Hash}_\infty(c)$. Cells of non-zero level appear inside *Merkle proofs* and *Merkle updates*, after some branches of the tree of cells representing a value of an abstract data type are pruned.
+A cell's level affects the number of *higher hashes* it has. More precisely, a level $l$ cell has $l$ higher hashes $\text{HASH}_1(c)$, \dots, $\text{HASH}_l(c)$ in addition to its representation hash $\text{HASH}(c)=\text{HASH}_\infty(c)$. Cells of non-zero level appear inside *Merkle proofs* and *Merkle updates*, after some branches of the tree of cells representing a value of an abstract data type are pruned.
 
 #### 3.1.4. Standard cell representation
 
-When a cell needs to be transferred by a network protocol or stored in a disk file, it must be *serialized*. The standard representation $\text{CellRepr}(c)=\text{CellRepr}_\infty(c)$ of a cell $c$ as an octet (byte) sequence is constructed as follows:
+When a cell needs to be transferred by a network protocol or stored in a disk file, it must be *serialized*. The standard representation $\text{CELLREPR}(c)=\text{CELLREPR}_\infty(c)$ of a cell $c$ as an octet (byte) sequence is constructed as follows:
 
 1. Two descriptor bytes $d_1$ and $d_2$ are serialized first. Byte $d_1$ equals $r+8s+32l$, where $0\leq r\leq 4$ is the quantity of cell references contained in the cell, $0\leq l\leq 3$ is the level of the cell, and $0\leq s\leq 1$ is 1 for exotic cells and 0 for ordinary cells. Byte $d_2$ equals $\lfloor b/8\rfloor+\lceil b/8\rceil$, where $0\leq b\leq 1023$ is the quantity of data bits in $c$.
 2. Then the data bits are serialized as $\lceil b/8\rceil$ 8-bit octets (bytes). If $b$ is not a multiple of eight, a binary `1` and up to six binary `0`s are appended to the data bits. After that, the data is split into $\lceil b/8\rceil$ eight-bit groups, and each group is interpreted as an unsigned big-endian integer 0...255 and stored into an octet.
 3. Finally, each of the $r$ cell references is represented by 32 bytes containing the 256-bit *representation hash* $\text{Hash}(c_i)$, explained below in [3.1.5](#3-1-5-the-representation-hash-of-a-cell), of the cell $c_i$ referred to.
 
-In this way, $2+\lceil b/8\rceil+32r$ bytes of $\text{CellRepr}(c)$ are obtained.
+In this way, $2+\lceil b/8\rceil+32r$ bytes of $\text{CELLREPR}(c)$ are obtained.
 
 #### 3.1.5. The representation hash of a cell
 
-The 256-bit *representation hash* or simply *hash* $\text{Hash}(c)$ of a cell $c$ is recursively defined as the SHA-256 of the standard representation of the cell $c$:
+The 256-bit *representation hash* or simply *hash* $\text{HASH}(c)$ of a cell $c$ is recursively defined as the SHA256 of the standard representation of the cell $c$:
 
-$$\text{Hash}(c):=\text{SHA-256}\bigl(\text{CellRepr}(c)\bigr)$$
+$$
+\text{HASH}(c):=\text{SHA256}\bigl(\text{CELLREPR}(c)\bigr) \tag{2}
+$$
 
 Notice that cyclic cell references are not allowed and cannot be created by means of the TVM (cf. [2.3.5](#2-3-5-absence-of-circular-references)), so this recursion always ends, and the representation hash of any cell is well-defined.
 
 #### 3.1.6. The higher hashes of a cell
 
-Recall that a cell $c$ of level $l$ has $l$ higher hashes $\text{Hash}_i(c)$, $1\leq i\leq l$, as well. Exotic cells have their own rules for computing their higher hashes. Higher hashes $\text{Hash}_i(c)$ of an ordinary cell $c$ are computed similarly to its representation hash, but using the higher hashes $\text{Hash}_i(c_j)$ of its children $c_j$ instead of their representation hashes $\text{Hash}(c_j)$. By convention, we set $\text{Hash}_\infty(c):=\text{Hash}(c)$, and $\text{Hash}_i(c):=\text{Hash}_\infty(c)=\text{Hash}(c)$ for all $i>l$.<sup>[12](#fn12)</sup>
+Recall that a cell $c$ of level $l$ has $l$ higher hashes $\text{HASH}_i(c)$, $1\leq i\leq l$, as well. Exotic cells have their own rules for computing their higher hashes. Higher hashes $\text{HASH}_i(c)$ of an ordinary cell $c$ are computed similarly to its representation hash, but using the higher hashes $\text{HASH}_i(c_j)$ of its children $c_j$ instead of their representation hashes $\text{HASH}(c_j)$. By convention, we set $\text{HASH}_\infty(c):=\text{HASH}(c)$, and $\text{HASH}_i(c):=\text{HASH}_\infty(c)=\text{HASH}(c)$ for all $i>l$.<sup>[12](#fn12)</sup>
 
 #### 3.1.7. Types of exotic cells
 
 TVM currently supports the following cell types:
 
 - Type $-1$: *Ordinary cell* --- Contains up to 1023 bits of data and up to four cell references.
-- Type 1: *Pruned branch cell $c$* --- May have any level $1\leq l\leq 3$. It contains exactly $8+256l$ data bits: first an 8-bit integer equal to 1 (representing the cell's type), then its $l$ higher hashes $\text{Hash}_1(c)$, ..., $\text{Hash}_l(c)$. The level $l$ of a pruned branch cell may be called its *de Brujn index*, because it determines the outer Merkle proof or Merkle update during the construction of which the branch has been pruned. An attempt to load a pruned branch cell usually leads to an exception.
-- Type 2: *Library reference cell* --- Always has level 0, and contains $8+256$ data bits, including its 8-bit type integer 2 and the representation hash $\text{Hash}(c')$ of the library cell being referred to. When loaded, a library reference cell may be transparently replaced by the cell it refers to, if found in the current *library context*.
+
+- Type 1: *Pruned branch cell $c$* --- May have any level $1\leq l\leq 3$. It contains exactly $8+256l$ data bits: first an 8-bit integer equal to 1 (representing the cell's type), then its $l$ higher hashes $\text{HASH}_1(c)$, \dots, $\text{HASH}_l(c)$. The level $l$ of a pruned branch cell may be called its *de Brujn index*, because it determines the outer Merkle proof or Merkle update during the construction of which the branch has been pruned. An attempt to load a pruned branch cell usually leads to an exception.
+
+- Type 2: *Library reference cell* --- Always has level 0, and contains $8+256$ data bits, including its 8-bit type integer 2 and the representation hash $\text{HASH}(c')$ of the library cell being referred to. When loaded, a library reference cell may be transparently replaced by the cell it refers to, if found in the current *library context*.
+
 - Type 3: *Merkle proof cell $c$* --- Has exactly one reference $c_1$ and level $0\leq l\leq 3$, which must be one less than the level of its only child $c_1$:
 
-$$\text{Lvl}(c)=\max(\text{Lvl}(c_1)-1,0)$$
+  $$
+  \text{LVL}(c)=\max(\text{LVL}(c_1)-1,0) \tag{3}
+  $$
 
-The $8+256$ data bits of a Merkle proof cell contain its 8-bit type integer 3, followed by $\text{Hash}_1(c_1)$ (assumed to be equal to $\text{Hash}(c_1)$ if $\text{Lvl}(c_1)=0$). The higher hashes $\text{Hash}_i(c)$ of $c$ are computed similarly to the higher hashes of an ordinary cell, but with $\text{Hash}_{i+1}(c_1)$ used instead of $\text{Hash}_i(c_1)$. When loaded, a Merkle proof cell is replaced by $c_1$.
+  The $8+256$ data bits of a Merkle proof cell contain its 8-bit type integer 3, followed by $\text{HASH}_1(c_1)$ (assumed to be equal to $\text{HASH}(c_1)$ if $\text{LVL}(c_1)=0$). The higher hashes $\text{HASH}_i(c)$ of $c$ are computed similarly to the higher hashes of an ordinary cell, but with $\text{HASH}_{i+1}(c_1)$ used instead of $\text{HASH}_i(c_1)$. When loaded, a Merkle proof cell is replaced by $c_1$.
 
 - Type 4: *Merkle update cell $c$* --- Has two children $c_1$ and $c_2$. Its level $0\leq l\leq 3$ is given by
 
-$$\text{Lvl}(c)=\max(\text{Lvl}(c_1)-1,\text{Lvl}(c_2)-1,0)$$
+  $$
+  \text{LVL}(c)=\max(\text{LVL}(c_1)-1,\text{LVL}(c_2)-1,0) \tag{4}
+  $$
 
-A Merkle update behaves like a Merkle proof for both $c_1$ and $c_2$, and contains $8+256+256$ data bits with $\text{Hash}_1(c_1)$ and $\text{Hash}_1(c_2)$. However, an extra requirement is that *all pruned branch cells $c'$ that are descendants of $c_2$ and are bound by $c$ must also be descendants of $c_1$*.<sup>[13](#fn13)</sup> When a Merkle update cell is loaded, it is replaced by $c_2$.
+  A Merkle update behaves like a Merkle proof for both $c_1$ and $c_2$, and contains $8+256+256$ data bits with $\text{HASH}_1(c_1)$ and $\text{HASH}_1(c_2)$. However, an extra requirement is that *all pruned branch cells $c'$ that are descendants of $c_2$ and are bound by $c$ must also be descendants of $c_1$.*<sup>[13](#fn13)</sup> When a Merkle update cell is loaded, it is replaced by $c_2$.
 
 #### 3.1.8. All values of algebraic data types are trees of cells
 
@@ -433,11 +458,11 @@ Arbitrary values of arbitrary algebraic data types (e.g., all types used in func
 
 The TVM code itself is also represented by a tree of cells. Indeed, TVM code is simply a value of some complex algebraic data type, and as such, it can be serialized into a tree of cells.
 
-The exact way in which the TVM code (e.g., TVM assembly code) is transformed into a tree of cells is explained later (cf. [4.1.4](#4-1-4-normal-work-of-tvm-or-the-main-loop) and [5.2](#5-2-instruction-encoding)), in sections discussing control flow instructions, continuations, and TVM instruction encoding.
+The exact way in which the TVM code (e.g., TVM assembly code) is transformed into a tree of cells is explained later (cf. [4.1.4](#4-1-4-normal-work-of-tvm%2C-or-the-main-loop) and [5.2](#5-2-instruction-encoding)), in sections discussing control flow instructions, continuations, and TVM instruction encoding.
 
 #### 3.1.10. "Everything is a bag of cells" paradigm
 
-As described in [[1](#ref-1)], 2.5.14, all the data used by the TON Blockchain, including the blocks themselves and the blockchain state, can be represented---and are represented---as collections, or "bags", of cells. We see that TVM's structure of data (cf. [3.1.8](#3-1-8-all-values-of-algebraic-data-types-are-trees-of-cells)) and code (cf. [3.1.9](#3-1-9-tvm-code-is-a-tree-of-cells)) nicely fits into this "everything is a bag of cells" paradigm. In this way, TVM can naturally be used to execute smart contracts in the TON Blockchain, and the TON Blockchain can be used to store the code and persistent data of these smart contracts between invocations of TVM. (Of course, both TVM and the TON Blockchain have been designed so that this would become possible.)
+As described in [[1](#ref-1), 2.5.14], all the data used by the TON Blockchain, including the blocks themselves and the blockchain state, can be represented---and are represented---as collections, or "bags", of cells. We see that TVM's structure of data (cf. [3.1.8](#3-1-8-all-values-of-algebraic-data-types-are-trees-of-cells)) and code (cf. [3.1.9](#3-1-9-tvm-code-is-a-tree-of-cells)) nicely fits into this "everything is a bag of cells" paradigm. In this way, TVM can naturally be used to execute smart contracts in the TON Blockchain, and the TON Blockchain can be used to store the code and persistent data of these smart contracts between invocations of TVM. (Of course, both TVM and the TON Blockchain have been designed so that this would become possible.)
 
 ### 3.2. Data manipulation instructions and cells
 
@@ -547,7 +572,7 @@ If the TVM code wants to modify its persistent storage, represented by the tree 
 
 #### 3.3.1. Basic hashmap types
 
-The two most basic hashmap types predefined in TVM are $\text{HashmapE}\ n\ X$ or $\text{HashmapE}(n,X)$, which represents a partially defined map from $n$-bit strings (called *keys*) for some fixed $0\leq n\leq 1023$ into *values* of some type $X$, and $\text{Hashmap}(n,X)$, which is similar to $\text{HashmapE}(n,X)$ but is not allowed to be empty (i.e., it must contain at least one key-value pair).
+The two most basic hashmap types predefined in TVM are *HashmapE* $n$ $X$ or *HashmapE*$(n,X)$, which represents a partially defined map from $n$-bit strings (called *keys*) for some fixed $0\leq n\leq 1023$ into *values* of some type $X$, and *Hashmap*$(n,X)$, which is similar to *HashmapE*$(n,X)$ but is not allowed to be empty (i.e., it must contain at least one key-value pair).
 
 Other hashmap types are also available---for example, one with keys of arbitrary length up to some predefined bound (up to 1023 bits).
 
@@ -702,32 +727,51 @@ One may notice that values of type $X$ always occupy the remaining part of an `h
 
 #### 3.3.10. Basic dictionary operations
 
-Let us present a classification of basic operations with dictionaries (i.e., values $D$ of type $\text{HashmapE}$ $n$ $X$):
+Let us present a classification of basic operations with dictionaries (i.e., values $D$ of type *HashmapE* $n$ $X$):
 
-- $\textsc{Get}(D,k)$ --- Given $D$:$\text{HashmapE}(n,X)$ and a key $k$:$n\cdot$`bit`, returns the corresponding value $D[k]$:$X^?$ kept in $D$.
-- $\textsc{Set}(D,k,x)$ --- Given $D$:$\text{HashmapE}(n,X)$, a key $k$:$n\cdot$`bit`, and a value $x$:$X$, sets $D'[k]$ to $x$ in a copy $D'$ of $D$, and returns the resulting dictionary $D'$ (cf. [2.3.4](#2-3-4-transparency-of-the-implementation-stack-values-are-values-not-references)).
-- $\textsc{Add}(D,k,x)$ --- Similar to $\textsc{Set}$, but adds the key-value pair $(k,x)$ to $D$ only if key $k$ is absent in $D$.
-- $\textsc{Replace}(D,k,x)$ --- Similar to $\textsc{Set}$, but changes $D'[k]$ to $x$ only if key $k$ is already present in $D$.
-- $\textsc{GetSet}$, $\textsc{GetAdd}$, $\textsc{GetReplace}$ --- Similar to $\textsc{Set}$, $\textsc{Add}$, and $\textsc{Replace}$, respectively, but returns the old value of $D[k]$ as well.
-- $\textsc{Delete}(D,k)$ --- Deletes key $k$ from dictionary $D$, and returns the resulting dictionary $D'$.
-- $\textsc{GetMin}(D)$, $\textsc{GetMax}(D)$ --- Gets the minimal or maximal key $k$ from dictionary $D$, along with the associated value $x$:$X$.
-- $\textsc{RemoveMin}(D)$, $\textsc{RemoveMax}(D)$ --- Similar to $\textsc{GetMin}$ and $\textsc{GetMax}$, but also removes the key in question from dictionary $D$, and returns the modified dictionary $D'$. May be used to iterate over all elements of $D$, effectively using (a copy of) $D$ itself as an iterator.
-- $\textsc{GetNext}(D,k)$ --- Computes the minimal key $k'>k$ (or $k'\geq k$ in a variant) and returns it along with the corresponding value $x'$:$X$. May be used to iterate over all elements of $D$.
-- $\textsc{GetPrev}(D,k)$ --- Computes the maximal key $k'<k$ (or $k'\leq k$ in a variant) and returns it along with the corresponding value $x'$:$X$.
-- $\textsc{Empty}(n)$ --- Creates an empty dictionary $D$:$\text{HashmapE}(n,X)$.
-- $\textsc{IsEmpty}(D)$ --- Checks whether a dictionary is empty.
-- $\textsc{Create}(n,\{(k_i,x_i)\})$ --- Given $n$, creates a dictionary from a list $\{(k_i,x_i)\}$ of key-value pairs passed in stack.
-- $\textsc{GetSubdict}(D,l,k_0)$ --- Given $D$:$\text{HashmapE}(n,X)$ and some $l$-bit string $k_0$:$l\cdot$`bit` for $0\leq l\leq n$, returns subdictionary $D'=D/k_0$ of $D$, consisting of keys beginning with $k_0$. The result $D'$ may be of either type $\text{HashmapE}(n,X)$ or type $\text{HashmapE}(n-l,X)$.
-- $\textsc{ReplaceSubdict}(D,l,k_0,D')$ --- Given $D$:$\text{HashmapE}(n,X)$, $0\leq l\leq n$, $k_0$:$l\cdot$`bit`, and $D'$:$\text{HashmapE}(n-l,X)$, replaces with $D'$ the subdictionary $D/k_0$ of $D$ consisting of keys beginning with $k_0$, and returns the resulting dictionary $D''$:$\text{HashmapE}(n,X)$. Some variants of $\textsc{ReplaceSubdict}$ may also return the old value of the subdictionary $D/k_0$ in question.
-- $\textsc{DeleteSubdict}(D,l,k_0)$ --- Equivalent to $\textsc{ReplaceSubdict}$ with $D'$ being an empty dictionary.
-- $\textsc{Split}(D)$ --- Given $D$:$\text{HashmapE}(n,X)$, returns $D_0:=D/0$ and $D_1:=D/1$:$\text{HashmapE}(n-1,X)$, the two subdictionaries of $D$ consisting of all keys beginning with 0 and 1, respectively.
-- $\textsc{Merge}(D_0,D_1)$ --- Given $D_0$ and $D_1$:$\text{HashmapE}(n-1,X)$, computes $D$:$\text{HashmapE}(n,X)$, such that $D/0=D_0$ and $D/1=D_1$.
-- $\textsc{Foreach}(D,f)$ --- Executes a function $f$ with two arguments $k$ and $x$, with $(k,x)$ running over all key-value pairs of a dictionary $D$ in lexicographical order.<sup>[18](#fn18)</sup>
-- $\textsc{ForeachRev}(D,f)$ --- Similar to $\textsc{Foreach}$, but processes all key-value pairs in reverse order.
-- $\textsc{TreeReduce}(D,o,f,g)$ --- Given $D$:$\text{HashmapE}(n,X)$, a value $o$:$X$, and two functions $f$:$X\to Y$ and $g$:$Y\times Y\to Y$, performs a "tree reduction" of $D$ by first applying $f$ to all the leaves, and then using $g$ to compute the value corresponding to a fork starting from the values assigned to its children.<sup>[19](#fn19)</sup>
+- GET$(D,k)$ --- Given $D:$*HashmapE*$(n,X)$ and a key $k:n\cdot$`bit`, returns the corresponding value $D[k]:X^?$ kept in $D$.
 
+- SET$(D,k,x)$ --- Given $D:$*HashmapE*$(n,X)$, a key $k:n\cdot$`bit`, and a value $x:X$, sets $D'[k]$ to $x$ in a copy $D'$ of $D$, and returns the resulting dictionary $D'$ (cf. [2.3.4](#2-3-4-transparency-of-the-implementation-stack-values-are-values-not-references)).
 
-#### 3.3.11. Taxonomy of dictionary primitives**
+- ADD$(D,k,x)$ --- Similar to SET, but adds the key-value pair $(k,x)$ to $D$ only if key $k$ is absent in $D$.
+
+- REPLACE$(D,k,x)$ --- Similar to SET, but changes $D'[k]$ to $x$ only if key $k$ is already present in $D$.
+
+- GETSET, GETADD, GETREPLACE --- Similar to SET, ADD, and REPLACE, respectively, but returns the old value of $D[k]$ as well.
+
+- DELETE$(D,k)$ --- Deletes key $k$ from dictionary $D$, and returns the resulting dictionary $D'$.
+
+- GETMIN$(D)$, GETMAX$(D)$ --- Gets the minimal or maximal key $k$ from dictionary $D$, along with the associated value $x:X$.
+
+- REMOVEMIN$(D)$, REMOVEMAX$(D)$ --- Similar to GETMIN and GETMAX, but also removes the key in question from dictionary $D$, and returns the modified dictionary $D'$. May be used to iterate over all elements of $D$, effectively using (a copy of) $D$ itself as an iterator.
+
+- GETNEXT$(D,k)$ --- Computes the minimal key $k'>k$ (or $k'\geq k$ in a variant) and returns it along with the corresponding value $x':X$. May be used to iterate over all elements of $D$.
+
+- GETPREV$(D,k)$ --- Computes the maximal key $k'<k$ (or $k'\leq k$ in a variant) and returns it along with the corresponding value $x':X$.
+
+- EMPTY$(n)$ --- Creates an empty dictionary $D:$*HashmapE*$(n,X)$.
+
+- ISEMPTY$(D)$ --- Checks whether a dictionary is empty.
+
+- CREATE$(n,\{(k_i,x_i)\})$ --- Given $n$, creates a dictionary from a list $(k_i,x_i)$ of key-value pairs passed in stack.
+
+- GETSUBDICT$(D,l,k_0)$ --- Given $D:$*HashmapE*$(n,X)$ and some $l$-bit string $k_0:l\cdot$`bit` for $0\leq l\leq n$, returns subdictionary $D'=D/k_0$ of $D$, consisting of keys beginning with $k_0$. The result $D'$ may be of either type *HashmapE*$(n,X)$ or type *HashmapE*$(n-l,X)$.
+
+- REPLACESUBDICT$(D,l,k_0,D')$ --- Given $D:$*HashmapE*$(n,X)$, $0\leq l\leq n$, $k_0:l\cdot$`bit`, and $D':$*HashmapE*$(n-l,X)$, replaces with $D'$ the subdictionary $D/k_0$ of $D$ consisting of keys beginning with $k_0$, and returns the resulting dictionary $D'':$*HashmapE*$(n,X)$. Some variants of REPLACESUBDICT may also return the old value of the subdictionary $D/k_0$ in question.
+
+- DELETESUBDICT$(D,l,k_0)$ --- Equivalent to REPLACESUBDICT with $D'$ being an empty dictionary.
+
+- SPLIT$(D)$ --- Given $D:$*HashmapE*$(n,X)$, returns $D_0:=D/0$ and $D_1:=D/1:$*HashmapE*$(n-1,X)$, the two subdictionaries of $D$ consisting of all keys beginning with $0$ and $1$, respectively.
+
+- MERGE$(D_0,D_1)$ --- Given $D_0$ and $D_1:$*HashmapE*$(n-1,X)$, computes $D:$*HashmapE*$(n,X)$, such that $D/0=D_0$ and $D/1=D_1$.
+
+- FOREACH$(D,f)$ --- Executes a function $f$ with two arguments $k$ and $x$, with $(k,x)$ running over all key-value pairs of a dictionary $D$ in lexicographical order.<sup>[18](#fn18)</sup>
+
+- FOREACHREV$(D,f)$ --- Similar to FOREACH, but processes all key-value pairs in reverse order.
+
+- TREEREDUCE$(D,o,f,g)$ --- Given $D:$*HashmapE*$(n,X)$, a value $o:X$, and two functions $f:X\to Y$ and $g:Y\times Y\to Y$, performs a "tree reduction" of $D$ by first applying $f$ to all the leaves, and then using $g$ to compute the value corresponding to a fork starting from the values assigned to its children.<sup>[19](#fn19)</sup>
+
+#### 3.3.11. Taxonomy of dictionary primitives
 
 The dictionary primitives, described in detail in Appendix [A.10](#a-10-dictionary-manipulation-primitives), can be classified according to the following categories:
 
@@ -1074,7 +1118,9 @@ The recursion is then implemented with the aid of the `DUP`; `EXECUTE` construct
 
 Another way of recursively computing the factorial, more closely following the classical recursive definition
 
-$$\textit{fact}(n):=\begin{cases}1&\quad\text{if $n<2$},\\n\cdot\textit{fact}(n-1)&\quad\text{otherwise}\end{cases}$$
+$$
+\textit{fact}(n):=\begin{cases}1&\quad\text{if }n<2,\\n\cdot\textit{fact}(n-1)&\quad\text{otherwise}\end{cases} \tag{5}
+$$
 
 is as follows:
 
@@ -1208,8 +1254,6 @@ Alternatively, one might create a couple of codepages—say, 4 and 5—which dif
 
 For convenience, we reserve some opcode in all codepages—say, `FF n`—for the instruction `SETCP n`, with $n$ from 0 to 255 (cf. [A.13](#a-13-codepage-primitives)). Then by inserting such an instruction into the very beginning of (the main function of) a program (e.g., a TON Blockchain smart contract) or a library function, we can ensure that the code will always be executed in the intended codepage.
 
-**[IMAGE: Diagram showing the codepage mechanism - how different TVM versions use different codepages while maintaining backward compatibility]**
-
 ## 5.2. Instruction encoding
 
 This section discusses the general principles of instruction encoding valid for all codepages and all versions of TVM. Later, [5.3](#5-3-instruction-encoding-in-codepage-zero) discusses the choices made for the experimental "codepage zero".
@@ -1221,8 +1265,6 @@ All complete instructions (i.e., instructions along with all their parameters, s
 #### 5.2.2. Determining the first instruction from a code stream
 
 As a consequence of this encoding method, any binary string admits at most one prefix, which is an encoding of some complete instruction. In particular, the code `cc.code` of the current continuation (which is a *Slice*, and thus a bitstring along with some cell references) admits at most one such prefix, which corresponds to the (uniquely determined) instruction that TVM will execute first. After execution, this prefix is removed from the code of the current continuation, and the next instruction can be decoded.
-
-**[IMAGE: Illustration of instruction encoding as a binary prefix code, showing how instructions are decoded from a bitstream]**
 
 #### 5.2.3. Invalid opcode
 
@@ -1255,8 +1297,6 @@ The above terminology is extended to instructions (considered with all admissibl
 A useful approximation of the above definitions is as follows: Consider all 256 possible values for the first byte of an instruction encoding. Suppose that $k$ of these values correspond to the specific instruction or class of instructions we are considering. Then this instruction or class of instructions occupies approximately the portion $k/256$ of the opcode space.
 
 This approximation shows why all instructions cannot occupy together more than the portion $256/256=1$ of the opcode space, at least without compromising the uniqueness of instruction decoding.
-
-**[IMAGE: Visual representation of opcode space allocation - showing how different instruction classes occupy portions of the 256-byte space]**
 
 #### 5.2.9. Almost optimal encodings
 
