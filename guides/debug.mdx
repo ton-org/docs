@@ -1,0 +1,156 @@
+---
+title: "Hands-on debugging"
+---
+
+import {Aside} from "/snippets/aside.jsx";
+
+<Aside>
+  This guide assumes you use [Blueprint](/ecosystem/blueprint/overview) with [`@ton/sandbox`](/ecosystem/blueprint/testing/reference). These are common tools for debugging smart contracts.
+</Aside>
+
+<Aside>
+  All examples from this article are available on [Github](https://github.com/ton-org/docs-examples/tree/main/guidebook/debug)
+</Aside>
+
+# Debugging smart contracts
+
+It's a common situation when you encounter an error in your smart contract. In some cases, you will see that an unexpected exit code is returned. This can be a sign of a bug in your contract. There are several techniques to debug your contract.
+
+## Log to the console
+
+A straightforward and effective technique. The most common values to print are transactions and get‑method results.
+
+There are helper functions that let you inspect transactions in a developer‑friendly way.
+
+```ts TypeScript
+import { toNano } from '@ton/core';
+import { Blockchain } from '@ton/sandbox';
+import '@ton/test-utils';
+import { Test } from './output/sample_Test';
+import { findTransaction, flattenTransaction } from '@ton/test-utils';
+
+const setup = async () => {
+    const blockchain = await Blockchain.create();
+    const owner = await blockchain.treasury('deployer');
+    const contract = blockchain.openContract(await Test.fromInit());
+    const deployResult = await contract.send(owner.getSender(), { value: toNano(0.5), bounce: true }, null);
+
+    return { blockchain, owner, contract, deployResult };
+};
+
+it('should deploy correctly', async () => {
+    const { contract, deployResult } = await setup();
+
+    const txToInspect = findTransaction(deployResult.transactions, {
+        to: contract.address,
+        deploy: true,
+    });
+    if (txToInspect == undefined) {
+        throw new Error('Requested tx was not found.');
+    }
+    // User-friendly output
+    console.log(flattenTransaction(txToInspect));
+    // Verbose output
+    console.log(txToInspect);
+});
+```
+
+## Dump values from a contract
+
+Three TVM debug [instructions](/tvm/instructions#fe-debug) exist:
+
+Availability depends on the language you use.
+
+- In Tolk, use functions from the globally available `debug` object.
+- In FunC, these methods are available globally in `stdlib.fc`.
+- In Tact, use `dumpStack` for `DUMPSTK` and [dump function](https://docs.tact-lang.org/ref/core-debug/#dump) for the other two. Tact also prints the exact line where `dump` is called, so you can quickly find it in your code.
+
+<Aside
+  type="caution"
+>
+  Debug instructions consume gas and change measured gas usage. Remove them before deploying and compare gas without debug calls.
+</Aside>
+
+## Explore TVM logs
+
+```ts TypeScript
+const blockchain = await Blockchain.create();
+blockchain.verbosity.vmLogs = "vm_logs";
+```
+
+There are multiple verbosity levels; two are most useful:
+
+- `vm_logs` — outputs VM logs for each transaction; includes executed instructions and occurred exceptions.
+- `vm_logs_full` — outputs full VM logs for each transaction; includes executed instructions with binary offsets, the current stack for each instruction, and gas used by each instruction.
+
+Typical output for `vm_logs` looks like this:
+
+```text
+...
+execute SWAP
+execute PUSHCONT x30
+execute IFJMP
+execute LDU 64
+handling exception code 9: cell underflow
+default exception handler, terminating vm with exit code 9
+```
+
+The contract tries to load a 64‑bit integer (`LDU 64`) from the slice, but there is not enough data, so [exit code 9](/tvm/exit-codes#9%3A-cell-underflow) occurs.
+
+Inspect the same code with the `vm_logs_full` verbosity level. (Output is heavily truncated from the top)
+
+```text
+...
+execute PUSHCONT x30
+gas remaining: 999018
+stack: [ 500000000 CS{Cell{02b168008d0d4580cd8f09522be7c0390a7a632bda4a99291c435b767c95367ebe78e9af0023d36bc5f97853f4c898f868f95b035ae8f555a321d0ffce8d9f6165e2252d7a9077359400060e9fc800000000003d0902d1b85b3919} bits: 711..711; refs: 2..2} 0 Cont{vmc_std} ]
+code cell hash: F9EAC82B7999AEEF696D592FE2469B9069FB05ED35C92213D7EE516F45AB97CA offset: 344
+execute IFJMP
+gas remaining: 999000
+stack: [ 500000000 CS{Cell{02b168008d0d4580cd8f09522be7c0390a7a632bda4a99291c435b767c95367ebe78e9af0023d36bc5f97853f4c898f868f95b035ae8f555a321d0ffce8d9f6165e2252d7a9077359400060e9fc800000000003d0902d1b85b3919} bits: 711..725; refs: 2..2} ]
+code cell hash: F9EAC82B7999AEEF696D592FE2469B9069FB05ED35C92213D7EE516F45AB97CA offset: 352
+execute LDU 64
+handling exception code 9: cell underflow
+default exception handler, terminating vm with exit code 9
+```
+
+<Aside type="tip">
+  If you want to dive deep into the error, you can search the TVM source code for the `LDU` instruction. Note that some instructions in TVM are implemented as instruction groups. For example, [LDU](/tvm/instructions#d3-ldu) (`load_uint`), [LDI](/tvm/instructions#d2-ldi) (`load_int`), it's preload versions `(`preload\_uint`and`preload\_int\`).
+</Aside>
+
+Stack is printed as `[bottom, ..., top]`, where `top` is the top of the stack.
+
+Here, the stack contains two values:
+
+- Slice being read
+- Integer (`500000000`)
+
+However, the slice has only **725** bits, and **711** bits were already read, as were both references. The contract tried to read **64** bits, but there was not enough data in the slice.
+
+You should locate the `load_uint(64)` call that causes the issue and ensure enough bits are available or adjust the read width.
+
+<Aside
+  type="warning"
+>
+  Note that TVM debug output is limited to
+</Aside>
+
+## Explore the transaction tree
+
+For simple transaction trees, print all transactions and inspect them.
+
+```ts TypeScript
+const deployRes = await contract.send(owner.getSender(), { value: toNano(0.5), bounce: true }, null);
+for (const tx of deployRes.transactions) {
+    console.log(flattenTransaction(tx));
+}
+```
+
+For complex trees, use a GUI tool.
+
+Two tools are commonly used:
+
+- [TonDevWallet trace view](/ecosystem/wallet-apps/dev) — requires the TonDevWallet application; does not require a custom `@ton/sandbox`; requires the `@tondevwallet/traces` package.
+- [TxTracer Sandbox](https://txtracer.ton.org/sandbox/) — requires a custom `@ton/sandbox` package; runs in your browser.
+
+Also, these tools allow you to explore each transaction's separate logs.
