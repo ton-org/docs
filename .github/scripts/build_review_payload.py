@@ -234,6 +234,8 @@ def _build_from_sidecar(sidecar: dict, *, repo: str, sha: str, repo_root: Path) 
         parts.append("```suggestion")
         parts.append(repl)
         parts.append("```")
+        parts.append("")
+        parts.append("Please leave a reaction 👍/👎 to this suggestion to improve future reviews for everyone!")
         body_text = "\n".join(parts).strip()
         body_text = _absolutize_location_links(body_text, repo or None, sha or None)
 
