@@ -21,8 +21,8 @@ The [basic configuration earlier](./init#initialization) is enough to outline ne
 
    - `network` — TON Blockchain network, either `CHAIN.MAINNET` or `CHAIN.TESTNET`.
    - `client` — API client to communicate with TON Blockchain. In most cases, the client of the initialized kit via `kit.getApiClient()` would suffice.
-   - `walletId` — optional identifier of the new wallet.
-   - `workchain` — either `0` for the basechain, or `-1` for the masterchain.
+   - `walletId` — identifier of the new wallet, which is used to make its smart contract address unique.
+   - `workchain` — either `0` for the basechain (default), or `-1` for the masterchain.
 
    ```ts title="TypeScript"
    import {
@@ -37,9 +37,16 @@ The [basic configuration earlier](./init#initialization) is enough to outline ne
    const walletAdapter = await WalletV5R1Adapter.create(signer, {
      network: CHAIN.TESTNET,
      client: kit.getApiClient(),
-     workchain: 0, // basechain
+
+     // Either 0 for the basechain (default),
+     // or -1 for the masterchain
+     workchain: 0,
+
      // Specify an ID for this wallet when you plan
-     // on adding more than one wallet to the kit.
+     // on adding more than one wallet to the kit,
+     // since it is used to make their addresses unique.
+     // Same IDs will lead to the wallets of the same address,
+     // i.e., to being the same smart contract.
      walletId: 0,
    });
    ```
@@ -117,7 +124,6 @@ const signer = await Signer.fromMnemonic(
 const walletAdapter = await WalletV5R1Adapter.create(signer, {
   network: CHAIN.TESTNET,
   client: kit.getApiClient(),
-  workchain: 0, // basechain
 });
 
 // 3.
@@ -184,7 +190,6 @@ const signer = await Signer.fromPrivateKey(
 const walletAdapter = await WalletV5R1Adapter.create(signer, {
   network: CHAIN.TESTNET,
   client: kit.getApiClient(),
-  workchain: 0, // basechain
 });
 
 // 3.
@@ -203,15 +208,13 @@ The signer object has to have two fields:
   type ISigner = (bytes: Iterable<number>) => Promise<Hex>;
   ```
 
-- Relevant public key of type `Hex`.
+- Relevant Ed25519 public key of type `Hex`.
 
   ```ts title="TypeScript"
   type Hex = `0x${string}`;
   ```
 
 A custom signer is useful to maintain complete control over the signing process, such as when using a hardware wallet or signing data on the backend.
-
-This approach is useful if you want to maintain full control over the signing process, such as when using a hardware wallet or signing data on the backend.
 
 ```ts title="TypeScript" expandable
 import {
@@ -227,6 +230,7 @@ import {
   type Hex,
 } from '@ton/walletkit';
 
+// A Ed25519 key pair from a mnemonic
 const keyPair = await MnemonicToKeyPair(
   // The following value assumes a corresponding MNEMONIC environment variable
   // that contains 24 space-separated seed phrase words as a single string:
@@ -234,6 +238,7 @@ const keyPair = await MnemonicToKeyPair(
   'ton',
 );
 
+// Utility function to convert an array of bytes into a string of type Hex
 const arrayToHex = (data: Iterable<number>) => {
   return "0x" +
   Array.from(data)
@@ -244,7 +249,7 @@ const arrayToHex = (data: Iterable<number>) => {
 // 1.
 const signer: WalletSigner = {
   // The following is a simple demo of a signing function.
-  // Make sure to replace it with a production-ready one.
+  // Make sure to replace it with a production-ready one!
   sign: async (bytes: Iterable<number>): Promise<Hex> => arrayToHex(bytes),
 
   // Public key as a Hex
@@ -255,7 +260,6 @@ const signer: WalletSigner = {
 const walletAdapter = await WalletV5R1Adapter.create(signer, {
   network: CHAIN.TESTNET,
   client: kit.getApiClient(),
-  workchain: 0, // basechain
 });
 
 // 3.
@@ -264,7 +268,7 @@ const wallet = await kit.addWallet(walletAdapter);
 
 ### Multiple wallets
 
-Add multiple TON wallets to WalletKit and switch between them as needed.
+You can add multiple TON wallets to WalletKit and switch between them as needed.
 
 ```ts title="TypeScript"
 const wallet1 = await kit.addWallet(walletAdapter1);
@@ -272,6 +276,10 @@ const wallet2 = await kit.addWallet(walletAdapter2);
 // ...
 const walletN = await kit.addWallet(walletAdapterN);
 ```
+
+When creating many wallet adapters, remember to specify a different `walletId` for each. This is because on TON, addresses are deterministically derived from a smart contract's initial code and data.
+
+Setting unique IDs for the wallet's initial data is essential to prevent address collisions, which would result in you creating the same contract repeatedly.
 
 ## Methods
 
@@ -295,12 +303,10 @@ wallets.forEach(w => console.log('TON wallet address:', w.getAddress()));
 
 ### Remove a single wallet
 
-To remove a single wallet by its address or its respective adapter, use the `removeWallet()` method of the initialized kit.
+To remove a single wallet by its address, use the `removeWallet()` method of the initialized kit.
 
 ```ts title="TypeScript"
 await kit.removeWallet(wallet.getAddress());
-// or
-await kit.removeWallet(walletAdapter);
 ```
 
 ### Clear all wallets
