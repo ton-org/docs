@@ -1,8 +1,145 @@
 ---
 title: "Start here"
-icon: rocket
 ---
 
-import { Stub } from '/snippets/stub.jsx';
+This is an absolute minimum of knowledge you'll need to make sense of the rest of this documentation.
 
-<Stub issue="79" />
+_TON_ is a [blockchain](https://en.wikipedia.org/wiki/Blockchain). It provides a distributed platform for hosting applications. Roughly, it works as if it was a single server executing all the code. Such applications are called _smart-contracts_.
+
+Platform is running on a set of servers, _validators_, owned by individuals or organizations having a large stake in TON, and greatly interested to keep the platform safe, fair, and operational.
+
+_Toncoin_ is TON's primary [cryptocurrency](https://en.wikipedia.org/wiki/Cryptocurrency). It's used to pay for execution of smart-contracts, storage of their data, and network traffic. Such payments are called fees.
+
+There are two official copies of TON blockchain: mainnet and testnet.
+
+_Mainnet_ is the "real" network. It's where actual payments in Toncoin are made. Applications use mainnet by default, and some don't even have an option to use other networks.
+
+The other network is _testnet_, and it's used by TON developers to check their applications work correctly before deploying them to mainnet. It uses "test coins" for payments that barely have any value.
+
+(Nodes)
+
+![Statuses overview](/resources/images/states.png)
+
+It's easiest to visualize the blockchain as a set of _accounts_. Each account has an address and status.
+
+Over lifetime account changes its _status_ between four values:
+
+- `nonexist`: There wasn't a single operation with an account, or it was removed. It has neither balance, nor code.
+- `uninit`: If some toncoin is transferred to an account, it now exists, but there's still no smart contract code on it. Now it has balance.
+- `active`: After a deploy message (see below) with code and initial data is sent to an account, it becomes active, and can process other messages. Now it has balance, code, and internal state.
+- `frozen`: If account is overdue on its storage fees, it will become frozen until they're either paid, or it goes completely bankrupt, is removed, and ceases to exist.
+
+The _code_ on an active account is a (copy of a) smart contract. The term _"contract"_ is often used for the account that holds the code.
+
+_Internal address_ is a 256-bit number of an account, and is usually formatted like this: `EQDKbjIcfM6ezt8KjKJJLshZJJSqX7XOA4ff-W72r5gqPrHF`.
+
+There are also _external addresses_ for things outside of blockchain. In any situation where an external address is involved, a special "none" address might be provided.
+
+![Blockchain overview](/resources/images/blockchain.png)
+
+Addresses are used to tell where _messages_ should go. There are three types of messages:
+
+- _internal_ messages are sent between accounts;
+- _incoming external_ messages are sent from code outside the blockchain to a contract;
+- _outgoing external_ messages are broadcasted to the outside network, and can be read by anyone.
+
+Every internal message should have some Toncoin attached to it, so that it can pay for
+the cost of handling it. External messages cannot have Toncoin attached to them, because
+they spend some of the time outside the blockchain, and only blockchain can prove correct
+transfer of Toncoin.
+
+Incoming external messages come from an external address, and outgoing external messages are sent to an external address.
+
+_State_ of the account only changes when it handles messages. Also messages change the balance
+on the account. To have a state and a balance, and to handle messages, account must be active.
+
+Formally message is only an intent: it has a destination, probably some Toncoin and data. After the message was handled, and all the necessary changes were made to blockchain, message is packed along with description of those changes into a single packet of data, _transaction_.
+
+A message might also be a _deploy message_ if it has contract code and its initial state (`StateInit`) attached. When such message is sent, a hash of code and initial state should match a destination address. If they do, code and state are stored into an account at that address, and the account becomes active. Both code and state stored in the account might change in the future, but its address will stay the same as computed when it was deployed.
+
+Internal and incoming external messages execute code of the account. Code is interpreted by _TON Virtual Machine_ (TVM). It's written in _bitcode_, a binary format specific to TVM.
+
+(Tolk is main language + compiler is included into blueprint + link to IDE and blueprint overview)
+
+When execution starts, the message and current account state are provided to the code. By the end of execution, destination account might change its state or code, or send some internal or outgoing external messages.
+
+The execution follows a procedure, its steps are called _phases_. _Fees_ are deducted during this process. Fee might be deducted from account's balance and/or from the message, depending on the _mode_ of the message.
+
+Execution cost is first measured in _gas_ units, then converted to Toncoin. This unit is separate, so that if code execution becomes computationally cheaper (or more expensive), validators could vote to change the price of gas in Toncoin.
+
+If something went wrong, a non-zero _exit code_ might be returned, no changes to state or code are saved, and no further messages are sent.
+
+![Trace overview](/resources/images/trace.png)
+
+The only reason any code can be executed is when some account have got the message. Internal message can only be sent by another contract executing some code, and that contract had to get a message from somewhere too. In the end, every message can be considered a part of some _trace_: a tree of messages between accounts that starts with an incoming external message, continues with internal messages, and possibly ends with some outgoing external messages.
+
+If some external service needs to extract data from blockchain, they can call a _get method_: a handler of incoming external messages in the code of some account. It's called a "method" because it acts like one: the message provides its parameters, and its execution returns a value. Get methods cannot do any changes to the blockchain.
+
+The other source is a _wallet_. Wallet is an account with a specific kind of smart contract deployed on it that can handle _transfer_ incoming external messages: requests to send an internal message to another account. There are several [implementations]() of wallets, with varying [extra functionality]() and protection. `V5R1` is the latest official general-purpose wallet. Further text describes only the functionality common to most wallets.
+
+A transfer message consists of a destination address and, optionally, an internal message, both serialized and signed with some private key. Wallet stores a public key, and uses it to check that a transfer message was signed with a corresponding private key. If the check succeeds, it sends that internal message to a destination address. This ensures only the user (or a service) who knows the private key can use the wallet.
+
+Private and public keys are generated in a program or service outside of blockchain, and determine the address of the wallet account. Their text representation is called a _mnemonic_.
+
+Before the code of the wallet can be deployed on an account with an incoming external message, some other account have to transfer toncoins to the wallet account. External messages cannot have any Toncoin attached to them, and otherwise there won't be enough funds to pay fees to handle the message that deploys a wallet. This transfer to a new wallet account usually comes from an exchange or another user. In testnet, there is a bot that sends test coins to an account for free.
+
+Usually transfer message is sent without an internal message, and only tells to transfer some Toncoin to a destination address. This is the reason this type of smart contract is called a wallet.
+
+Internal message might be a request to some other contract, or even be a deploy message that deploys code on other accounts. In this way, wallet acts as a proxy between a user (or an external service) and the rest of the blockchain.
+
+End users usually use _wallet apps_ to create and use wallets. An exchange would usually create a wallet for a user too.
+
+(Jetton, NFT, SBT)
+
+_Explorer_ is a kind of web app that displays information about current state of accounts (including wallets) and history of transactions.
+
+- what is on-chain/off-chain
+- contracts
+    - which states there are
+        + https://docs.ton.org/v3/guidelines/quick-start/getting-started#address-states
++ deploy
+    + hashing a StateInit
+    + https://helloworld.tonstudio.io/02-contract/ Step 7
+    + https://docs.ton.org/v3/guidelines/quick-start/developing-smart-contracts/func-tolk-folder/deploying-to-network#address-and-initial-state
++ messages and transactions
+    - https://docs.ton.org/v3/guidelines/quick-start/blockchain-interaction/reading-from-network#what-is-a-message
+    - https://docs.ton.org/v3/guidelines/quick-start/blockchain-interaction/reading-from-network#what-is-a-transaction
+    - internal/external
+        - https://docs.ton.org/v3/guidelines/quick-start/developing-smart-contracts/func-tolk-folder/processing-messages#internal-messages
+        - https://docs.ton.org/v3/guidelines/smart-contracts/get-methods#invoking-get-methods-from-other-contracts
++ wallet
+    - how to create
+        - https://helloworld.tonstudio.io/01-wallet/ Step 1-3
+        - https://docs.ton.org/v3/guidelines/quick-start/getting-started#step-1-create-a-new-wallet-using-an-app
+        - https://docs.ton.org/v3/guidelines/quick-start/getting-started#step-3-creating-a-testnet-wallet
+    - what happens when it's created
+        - https://docs.ton.org/v3/guidelines/quick-start/blockchain-interaction/writing-to-network#sending-ton
+    - mnemonic
+    - how to get TONs on testnet
+        - https://helloworld.tonstudio.io/01-wallet/ Step 4
+        - https://docs.ton.org/v3/guidelines/quick-start/getting-started#getting-funds
+    - wallets contract
+        - https://helloworld.tonstudio.io/01-wallet/ Step 5
+        - v5 и subwallet id
+            - https://docs.ton.org/v3/guidelines/quick-start/developing-smart-contracts/func-tolk-folder/deploying-to-network#magic-storage-member
+    - wallet app
+- nodes and api
+    - https://docs.ton.org/v3/guidelines/dapps/apis-sdks/api-keys
+    - https://docs.ton.org/v3/guidelines/dapps/apis-sdks/getblock-ton-api
+- explorer
+    - https://docs.ton.org/v3/guidelines/quick-start/getting-started#step-4-exploring-ton-blockchain
+    - https://ton.app/explorers
+    - https://docs.ton.org/v3/guidelines/smart-contracts/get-methods#how-to-work-with-get-methods
+- what are jetton, nft, ...
+    - reference is linked here
+- prepare for development
+    - https://helloworld.tonstudio.io/01-wallet/ Step 6
+    - https://helloworld.tonstudio.io/02-contract/ Step 2
+    - how to install node, typescript
+        - https://docs.ton.org/v3/guidelines/quick-start/developing-smart-contracts/setup-environment#step-1-install-nodejs
+    - how to set up vscode
+        - https://docs.ton.org/v3/documentation/smart-contracts/tolk/overview#tooling-around-tolk
+    - what's blueprint
+        - https://docs.ton.org/v3/guidelines/quick-start/developing-smart-contracts/setup-environment#step-3-set-up-blueprint
+        - https://docs.ton.org/v3/guidelines/quick-start/developing-smart-contracts/func-tolk-folder/blueprint-sdk-overview
+        - tolk is included in blueprint
