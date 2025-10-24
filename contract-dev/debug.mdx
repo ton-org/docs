@@ -13,10 +13,10 @@ Use debugging methods to locate and fix the issue.
 
 ## Log to the console
 
-Print common values, such as transactions and get-method results to debug the contract.
+Print common values — such as transactions and get-method results — to debug your contract.
 
-- `findTransaction()` function helps you find a transaction by its properties.
-- `flattenTransaction()` function helps to inspect transactions in a developer-friendly format.
+- Use `findTransaction()` to find a transaction by its properties.
+- Use `flattenTransaction()` to inspect transactions in a developer-friendly format.
 
 ```ts TypeScript
 import { toNano } from '@ton/core';
@@ -61,7 +61,7 @@ These instructions are wrapped in functions with different names in each languag
 
 - In Tolk, use functions from the globally available `debug` object.
 - In FunC, these methods are available globally in `stdlib.fc`.
-- In Tact, use `dumpStack` for `DUMPSTK` and [dump function](https://docs.tact-lang.org/ref/core-debug/#dump) for the other two. Tact also prints the exact line where `dump` is called, so you can quickly find it in your code.
+- In Tact, use `dumpStack` for `DUMPSTK` and the [dump function](https://docs.tact-lang.org/ref/core-debug/#dump) for the other two. Tact also prints the exact line where `dump` is called, so you can quickly find it in your code.
 
 <Aside
   type="caution"
@@ -93,9 +93,10 @@ handling exception code 9: cell underflow
 default exception handler, terminating vm with exit code 9
 ```
 
-The contract tries to load a 64‑bit integer from the slice, using `LDU 64`. There is not enough data, so [exit code 9](/tvm/exit-codes#9%3A-cell-underflow) occurs.
+The contract attempts to load a 64-bit integer from the slice using `LDU 64.`
+Since there is not enough data, [exit code 9](/tvm/exit-codes#9%3A-cell-underflow) is triggered.
 
-Inspect the same code with the `vm_logs_full` verbosity level. Output is heavily truncated from the top.
+Inspect the same code with the `vm_logs_full` verbosity level. The output is heavily truncated at the top.
 
 ```text
 ...
@@ -113,19 +114,20 @@ default exception handler, terminating vm with exit code 9
 ```
 
 <Aside type="tip">
-  To investigate the error in more detail, examine the source code of TVM for the `LDU` instruction.
-  Sometimes several instructions are implemented in a single exec_* method, e.g. [LDU](/tvm/instructions#d3-ldu) (`load_uint`), [LDI](/tvm/instructions#d2-ldi) (`load_int`) and it's preload versions `(`preload\_uint`and`preload\_int\`).
-  See, how `LDU` [is implemented](https://github.com/ton-blockchain/ton/blob/34823b1ea378edbe3bc59f3bcc48126480a0b768/crypto/vm/cellops.cpp#L981)
+  To investigate the error in more detail, examine the TVM source code for the `LDU` instruction.
+  Sometimes several instructions are implemented within a single `exec_*` method. For example, [LDU](/tvm/instructions#d3-ldu) (`load_uint`), [LDI](/tvm/instructions#d2-ldi) (`load_int`) and it's preload versions (`preload_uint`and`preload_int`).
+
+  Check how `LDU` [is implemented](https://github.com/ton-blockchain/ton/blob/34823b1ea378edbe3bc59f3bcc48126480a0b768/crypto/vm/cellops.cpp#L981).
 </Aside>
 
 Stack is printed as `[bottom, ..., top]`, where `top` is the top of the stack.
 
 Here, the stack contains two values:
 
-- The slice being read (`CS{Cell{...} bits: 711..725; refs: 2..2}`)
-- Integer (`500000000`)
+- **Top:** the slice from which data is being read — `CS{Cell{...} bits: 711..725; refs: 2..2}`
+- **Bottom:** an integer value — `500000000`
 
-However, the slice has only **725** bits, and **711** bits were already read, as were both [references](/tvm/serialization/cells). The contract tried to read **64** bits, but there was not enough data in the slice.
+However, the slice contains only **725** bits, of which **711** bits and both [references](/tvm/serialization/cells) have already been read. The contract attempted to read **64** more bits, but the slice did not contain enough remaining data.
 
 In FunC, locate the `load_uint(64)` call causing the issue and ensure enough bits are available or adjust the read width.
 
@@ -160,3 +162,23 @@ For complex traces, use a GUI tool. Two tools are commonly used:
 - [TxTracer Sandbox](https://txtracer.ton.org/sandbox/) — requires a custom `@ton/sandbox` package; runs in your browser.
 
 Also, these tools allow you to explore each transaction's logs.
+
+## Debugging with TVM Retracer
+
+Even when a contract executes successfully (exit code = `0`) with no errors, the actions may not produce the expected on-chain result. [TVM Retracer](https://retracer.ton.org/) lets you replay the transaction and inspect VM-level execution.
+
+### Scenarios for retracing
+
+- All [execution phases](/foundations/phases) complete without errors, yet the expected outcome is missing.
+- An action is skipped, or a transfer does not reach its destination.
+- You need a step-by-step view of how the TVM executed your contract logic.
+
+### How to analyze a transaction
+
+1. Obtain the transaction hash from a [blockchain explorer](/ecosystem/explorers/overview).
+1. Open [TVM Retracer](https://retracer.ton.org/) and enter the transaction hash.
+1. Review the execution:
+
+- Inspect **Logs section** for executed instructions and exceptions.
+- Examine **Actions cell (C5)** to review data passed between contracts.
+- Check **message modes** — some modes can suppress errors, causing actions to be skipped.
