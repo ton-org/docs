@@ -1,0 +1,132 @@
+---
+title: "API"
+---
+
+This page describes all messages and methods related to NFT processing that are specified in TEPs.
+
+## [TEP-62](https://github.com/ton-blockchain/TEPs/blob/master/text/0062-nft-standard.md)
+
+### NFT Item
+
+#### Transfer message layout
+
+| Field                  | Type                | Description                                                                                                             |
+| ---------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `transfer`             | `0x5fcc3d14`        | tag                                                                                                                     |
+| `query_id`             | `uint64`            | arbitrary request number                                                                                                |
+| `new_owner`            | `MsgAddress`        | address of the new owner of the NFT item                                                                                |
+| `response_destination` | `MsgAddress`        | address where to send a response with confirmation of a successful transfer and the rest of the incoming message coins |
+| `custom_payload`       | `Maybe ^Cell`       | optional custom data                                                                                                    |
+| `forward_amount`       | `VarUInteger 16`    | the amount of nanotons to be sent to the new owner                                                                      |
+| `forward_payload`      | `Either Cell ^Cell` | optional custom data that should be sent to the new owner                                                               |
+
+#### Forward payload formats
+
+If you want to send a simple comment in the `forward_payload`, then the `forward_payload` must start with `0x00000000` (32-bit unsigned integer equals to zero) and the comment is contained in the remainder of the `forward_payload`.
+
+If the comment does not begin with the byte `0xff`, the comment is a text one; it can be displayed "as is" to the end user of a wallet (after filtering invalid and control characters and checking that it is a valid UTF-8 string). For instance, users may indicate the purpose ("for coffee") of a simple transfer from their wallet to the wallet of another user in this text field.
+
+On the other hand, if the comment begins with the byte `0xff`, the remainder is a "binary comment", which should not be displayed to the end user as text (only as a hex dump if necessary). The intended use of "binary comments" is, e.g., to contain a purchase identifier for payments in a store, to be automatically generated and processed by the store's software.
+
+If the `forward_payload` contains a binary message for interacting with the destination smart contract (for example, with DEX), then there are no prefixes.
+
+#### Ownership assigned message layout
+
+| Field             | Type                | Description                                          |
+| ----------------- | ------------------- | ---------------------------------------------------- |
+| `ownership_assigned` | `0x05138d91`     | tag                                                  |
+| `query_id`        | `uint64`            | should be equal with request's `query_id`            |
+| `prev_owner`      | `MsgAddress`        | address of the previous owner of this NFT item       |
+| `forward_payload` | `Either Cell ^Cell` | should be equal with request's `forward_payload`     |
+
+#### Excesses message layout
+
+| Field      | Type         | Description                               |
+| ---------- | ------------ | ----------------------------------------- |
+| `excesses` | `0xd53276db` | tag                                       |
+| `query_id` | `uint64`     | should be equal with request's `query_id` |
+
+#### Get static data message layout
+
+| Field             | Type         | Description                  |
+| ----------------- | ------------ | ---------------------------- |
+| `get_static_data` | `0x2fcb26a2` | tag                          |
+| `query_id`        | `uint64`     | arbitrary request number     |
+
+#### Report static data message layout
+
+| Field                | Type         | Description                                                                 |
+| -------------------- | ------------ | --------------------------------------------------------------------------- |
+| `report_static_data` | `0x8b771735` | tag                                                                         |
+| `query_id`           | `uint64`     | should be equal with request's `query_id`                                   |
+| `index`              | `uint256`    | numerical index of this NFT in the collection                               |
+| `collection`         | `MsgAddress` | address of the smart contract of the collection to which this NFT belongs   |
+
+#### get_nft_data()
+
+No arguments. Outputs:
+
+| Field               | Type         | Description                                                                     |
+| ------------------- | ------------ | ------------------------------------------------------------------------------- |
+| `init?`             | `int`        | if not zero, then this NFT is fully initialized and ready for interaction       |
+| `index`             | `int`        | numerical index of this NFT in the collection                                   |
+| `collection_address`| `MsgAddress` | address of the smart contract of the collection to which this NFT belongs       |
+| `owner_address`     | `MsgAddress` | address of the current owner of this NFT                                        |
+| `individual_content`| `Cell`       | individual NFT content in any format                                            |
+
+### NFT Collection
+
+#### get_collection_data()
+
+No arguments. Outputs:
+
+| Field              | Type         | Description                                                              |
+| ------------------ | ------------ | ------------------------------------------------------------------------ |
+| `next_item_index`  | `int`        | the count of currently deployed NFT items in collection                  |
+| `collection_content` | `Cell`     | collection content in a format that complies with TEP-64                 |
+| `owner_address`    | `MsgAddress` | collection owner address, zero address if no owner                       |
+
+#### get_nft_address_by_index()
+
+Argument: `index` as `int`.
+
+Output: `address` as `MsgAddress`.
+
+#### get_nft_content()
+
+Arguments:
+- `index` as `int`
+- `individual_content` as `Cell`
+
+Output: `full_content` as `Cell`.
+
+## [TEP-66](https://github.com/ton-blockchain/TEPs/blob/master/text/0066-nft-royalty-standard.md)
+
+### Get royalty params message layout
+
+| Field                | Type         | Description              |
+| -------------------- | ------------ | ------------------------ |
+| `get_royalty_params` | `0x693d3950` | tag                      |
+| `query_id`           | `uint64`     | arbitrary request number |
+
+### Report royalty params message layout
+
+| Field                   | Type         | Description                               |
+| ----------------------- | ------------ | ----------------------------------------- |
+| `report_royalty_params` | `0xa8cb00ad` | tag                                       |
+| `query_id`              | `uint64`     | should be equal with request's `query_id` |
+| `numerator`             | `uint16`     | royalty numerator                         |
+| `denominator`           | `uint16`     | royalty denominator                       |
+| `destination`           | `MsgAddress` | address to send royalty                   |
+
+### royalty_params()
+
+No arguments. Outputs:
+
+| Field         | Type         | Description                                                   |
+| ------------- | ------------ | ------------------------------------------------------------- |
+| `numerator`   | `int`        | royalty numerator (e.g., 11)                                  |
+| `denominator` | `int`        | royalty denominator (e.g., 1000)                              |
+| `destination` | `MsgAddress` | address to send royalty                                       |
+
+Royalty share is `numerator / denominator`. For example, if `numerator = 11` and `denominator = 1000`, then royalty share is `11 / 1000 * 100% = 1.1%`.

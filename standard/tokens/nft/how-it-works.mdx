@@ -15,7 +15,7 @@ Standardized NFTs on TON are implemented using a set of smart contracts, includi
 - NFT collection smart contract
 - NFT item smart contract
 
-It is important to keep in mind that the NFT standard provides only a general interaction scheme, leaving specific implementation details to developers.
+The NFT standard provides only a general interaction scheme, leaving specific implementation details to developers.
 
 <Image
   src="/resources/images/nft/collection_light.svg"
@@ -42,20 +42,13 @@ Each NFT item is its own smart contract account ([Explanation of why one item eq
 The current owner sends a transfer message to the NFT item contract. The item updates its owner field and, optionally, sends a notification and/or excess Toncoin to the specified addresses.
 
 ```mermaid
-sequenceDiagram
-  participant S as Sender (Current Owner)
-  participant N as NFT item
-  participant R as Recipient (New Owner)
-  participant RD as Response Destination
-
-  S->>N: transfer request
-  N->>N: owner = new_owner
-  alt forward_amount > 0
-    N->>R: ownership_assigned
-  else forward_amount == 0
-    Note over N,R: No notification is sent
-  end
-  N->>RD: excesses(query_id)
+flowchart TD
+    A[Current Owner sends transfer \nrequest] --> B[NFT item updates owner field]
+    B --> C{forward_amount > 0?}
+    C -->|Yes| D[Send ownership_assigned to new owner]
+    C -->|No| E[Skip notification]
+    D --> F[Send excesses to response_destination]
+    E --> F
 ```
 
 Transfer message body contains the following data:
@@ -64,19 +57,28 @@ Transfer message body contains the following data:
 | ---------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
 | `query_id`             | `uint 64`          | Links transfer, ownership notification, and excesses together.                                                                   |
 | `new_owner`            | `MsgAddress`       | Address that should receive ownership.                                                                                           |
-| `response_destination` | `maybe MsgAddress` | Optional address to receive an excess Toncoin message, usually the sender's address.                                             |
-| `custom_payload`       | `maybe Cell`       | Optional custom data passed to the NFT, can be used by higher‑level protocols. Typically, the NFT item does not read this field. |
+| `response_destination` | `Maybe MsgAddress` | Optional address to receive an excess Toncoin message, usually the sender's address.                                             |
+| `custom_payload`       | `Maybe Cell`       | Optional custom data passed to the NFT, can be used by higher‑level protocols. Typically, the NFT item does not read this field. |
 | `forward_amount`       | `VarUInteger 16`   | Toncoin amount to forward to the new owner. If `> 0`, a notification with `forward_payload` will be sent.                        |
-| `forward_payload`      | `maybe Cell`       | Optional payload delivered with the ownership notification.                                                                      |
+| `forward_payload`      | `Maybe Cell`       | Optional payload delivered with the ownership notification.                                                                      |
+
+```tlb TL-B
+transfer#5fcc3d14 query_id:uint64 
+                  new_owner:MsgAddress 
+                  response_destination:MsgAddress 
+                  custom_payload:(Maybe ^Cell) 
+                  forward_amount:(VarUInteger 16) 
+                  forward_payload:(Either Cell ^Cell) 
+                  = InternalMsgBody;
+```
 
 Notes:
-
-- If `forward_amount > 0`, the item sends an ownership notification (often named `ownership_assigned`) to `new_owner`.
+- If `forward_amount > 0`, the item sends an ownership notification (named `ownership_assigned`) to `new_owner`.
 - If there is remaining Toncoin after fees, the item sends an `excesses(query_id)` message to `response_destination` (if provided).
 
 Forward payload formatting:
 
-- If the first 32 bits of `forward_payload` equal `0x00000000`, the remainder is a text comment that wallets may display.
+- If the first 32 bits of `forward_payload` equal to `0x00000000`, the remainder is a text comment that wallets may display.
 - If the comment begins with byte `0xff`, it is considered a binary comment and should not be displayed as plain text.
 - If `forward_payload` carries a binary message for interaction with another contract (e.g. DEX), there are no special prefixes.
 
@@ -88,19 +90,33 @@ Ownership notification message body (`ownership_assigned`) contains the followin
 | `prev_owner`      | `MsgAddress` | Address of the previous owner of this NFT item.                        |
 | `forward_payload` | `Cell`       | Optional data for the recipient. The same formatting rules as above apply. |
 
+```tl-b TL-B 
+ownership_assigned query_id:uint64 
+                   prev_owner:MsgAddress 
+                   forward_payload:(Either Cell ^Cell) 
+                   = InternalMsgBody;
+
+```
+
 Excess message body (`excesses`) contains the following data:
 
 | Name       | Type      | Description                                                    |
 | ---------- | --------- | -------------------------------------------------------------- |
 | `query_id` | `uint 64` | Links transfer, ownership notification, and excesses together. |
 
-Note: `forward_amount` in NFTs is analogous in meaning to jetton’s `forward_ton_amount` (different name, same idea: Toncoin forwarded with the notification).
+``` tl-b TL-B 
+excesses query_id:uint64 = InternalMsgBody;
+```
+
+<Aside type="note">
+`forward_amount` in NFTs is analogous in meaning to jetton’s `forward_ton_amount` (different name, same idea: Toncoin forwarded with the notification).
+</Aside>
 
 The transfer must be rejected if:
 
 1. The inbound message is not from the current owner.
 1. There are not enough coins (considering storage fee guidelines) to process the operation and send `forward_amount`.
-1. The contract cannot guarantee sending to `response_destination`.
+1. The contract cannot guarantee sending message to `response_destination`.
 
 Otherwise, the contract:
 
