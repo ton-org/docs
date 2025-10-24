@@ -605,63 +605,118 @@ set_data(begin_cell().store_dict(dictionary_cell).end_cell());
 
 ### How to iterate dictionaries
 
-Dictionaries are useful for managing large datasets. 
-The built-in methods `dict_get_min?` and `dict_get_max` retrieve the minimum and maximum key values, while `dict_get_next?` allows dictionary iteration.
+To iterate a dictionary from the smallest to biggest key, first call a [`dict_get_min?` primitive](./stdlib/#dict-get-min%3F) to obtain the smallest key in the dictionary,
+and then call a [`dict_get_next?` primitive](./stdlib/#dict-get-next%3F) inside a loop while checking a flag for existence of further key-value pairs to process.
+
+Similarly, to iterate a dictionary from the biggest to smallest key, first call a [`dict_get_max?` primitive](./stdlib/#dict-get-max%3F) to obtain the biggest key in the dictionary,
+and then call a [`dict_get_prev?` primitive](./stdlib/#dict-get-prev%3F) inside a loop while checking a flag for existence of further key-value pairs to process.
 
 ```func
 ;; Initialize an example dictionary.
-;; keys will be unsigned 256-bit integers.
-;; Values are slices 
+;; keys will be unsigned 256-bit integers. Values are slices.
+;; Since keys are unsigned, 
+;; we should use 'unsigned' versions of the 
+;; dict_set, dict_get_min?, dict_get_max?, 
+;; dict_get_next?, and dict_get_prev? primitives.
 cell d = new_dict();
 d~udict_set(256, 1, "value 1");   ;; Map key 1 to a slice containing string "value 1"
 d~udict_set(256, 5, "value 2");   ;; Map key 5 to a slice containing string "value 2"
 d~udict_set(256, 12, "value 3");  ;; Map key 12 to a slice containing string "value 3"
 
-;; iterate keys from small to big
-(int key, slice val, int flag) = d.udict_get_min?(256);
-while (flag) {
-    ;; do something with pair key->val
+;; First, we iterate from smallest to biggest key:
 
+;; Obtain the smallest key.
+(int key, slice val, int flag) = d.udict_get_min?(256);   
+
+;; Repeat while there are keys to iterate, indicated by "flag".
+while (flag) {  
+    ;; do something with "key" and "val".
+
+    ;; Obtain the smallest key bigger than "key".
+    ;; i.e., the one next to "key" in numerical value.
+    ;; "flag" will indicate if such key exists.
     (key, val, flag) = d.udict_get_next?(256, key);
+}
+
+;; Now, we iterate from biggest to smallest key:
+
+;; Obtain the biggest key.
+(key, val, flag) = d.udict_get_max?(256);   
+
+;; Repeat while there are keys to iterate, indicated by "flag".
+while (flag) {  
+    ;; do something with "key" and "val".
+
+    ;; Obtain the biggest key smaller than "key",
+    ;; i.e., the one previous to "key" in numerical value.
+    ;; "flag" will indicate if there is a previous key.
+    (key, val, flag) = d.udict_get_prev?(256, key);
 }
 ```
 
 **References:**
 
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- [Modifying notation using ~](./expressions#modifying-notation)
 - [`"<ascii string>"` compile-time builtin](./literals#string-without-suffix), where `<ascii string>` is an ASCII string.
-- [`Dictonaries primitives`](./stdlib/#dictionaries-primitives)
-- [`dict_get_max?()`](./stdlib/#dict_get_max)
-- [`dict_get_min?()`](./stdlib/#dict_get_min)
-- [`dict_get_next?()`](./stdlib/#dict_get_next)
-- [`dict_set()`](./stdlib/#dict_set)
+- [`new_dict`](./stdlib/#new-dict)
+- [`dict_set` primitives](./stdlib/#dict-set)
+- [`dict_get_min?` primitives](./stdlib/#dict-get-min%3F)
+- [`dict_get_max?` primitives](./stdlib/#dict-get-max%3F)
+- [`dict_get_next?` primitives](./stdlib/#dict-get-next%3F)
+- [`dict_get_prev?` primitives](./stdlib/#dict-get-prev%3F)
 
-### How to delete value from dictionaries
+### How to delete a value from a dictionary
+
+Use the [`dict_delete?` primitives](./stdlib/#dict-delete%3F) to delete keys in a dictionary.
 
 ```func
+;; Initialize an example dictionary.
+;; keys will be unsigned 256-bit integers. Values are slices.
+;; Since keys are unsigned, 
+;; we should use 'unsigned' versions of the 
+;; dict_set, dict_delete?, dict_get? primitives.
 cell names = new_dict();
-names~udict_set(256, 27, "Alice");
+names~udict_set(256, 27, "Alice");  ;; Map key 27 to a slice containing string "Alice"
 names~udict_set(256, 25, "Bob");
 
-names~udict_delete?(256, 27);
+;; Delete key-value pair with key 27
+;; This mutates "names" dictionary, because 
+;; udict_delete? is called using ~
+names~udict_delete?(256, 27);   
 
-(slice val, int key) = names.udict_get?(256, 27);
-~dump(val); ;; null() -> means that key was not found in a dictionary
+;; Look up the key 27
+;; since it was deleted, the "found" flag returns 0 
+(slice val, int found) = names.udict_get?(256, 27);
+~dump(found);   ;; 0, means that key was not found in the dictionary
 ```
+
+**References:**
+
+- [`"<ascii string>"` compile-time builtin](./literals#string-without-suffix), where `<ascii string>` is an ASCII string.
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- [Modifying notation using ~](./expressions#modifying-notation)
+- [`new_dict`](./stdlib/#new-dict)
+- [`dict_set` primitives](./stdlib/#dict-set)
+- [`dict_delete?` primitives](./stdlib/#dict-delete%3F)
+- [`dict_get?` primitives](./stdlib/#dict-get%3F)
 
 ### How to determine if a tuple is empty
 
-When working with `tuples`, checking for existing values before extracting them is crucial. Extracting a value from an empty tuple will result in an error: ["not a tuple of valid size" - `exit code 7`](/tvm/exit-codes#7).
+When working with `tuples`, checking for existing values before extracting them is crucial. 
+Extracting a value from an empty tuple will result in an error: ["not a tuple of valid size" - `exit code 7`](/tvm/exit-codes#7).
 
 ```func
-;; Declare tlen function because it's not presented in stdlib
-(int) tlen (tuple t) asm "TLEN";
+;; Declare the tlen assembler function because it's not present in stdlib
+;; tlen determines the length of a tuple
+int tlen (tuple t) asm "TLEN";
 
 () main () {
-    tuple t = empty_tuple();
-    t~tpush(13);
-    t~tpush(37);
+    tuple t = empty_tuple();  ;; t is []
+    t~tpush(13);              ;; t is [13]
+    t~tpush(37);              ;; t is [13, 37]
 
-    if (t.tlen() == 0) {
+    if (t.tlen() == 0) {   ;; Evaluates to false
         ;; tuple is empty
     }
     else {
@@ -670,138 +725,28 @@ When working with `tuples`, checking for existing values before extracting them 
 }
 ```
 
-**Note:**
-We are defining the `tlen` assembly function. You can find more details [here](/languages/func/functions#assembler-function-body-definition) and a see a [list of assembler commands](/tvm/instructions).
+The `tlen` assembler function uses the [TVM instruction `TLEN`](/tvm/instructions#6f88-tlen) to determine the number of elements in the tuple. 
+The `tpush` function appends an element to the tuple, so that it becomes the last element.
 
 **References:**
 
-- [`empty_tuple?()`](/languages/func/stdlib#empty_tuple)
-- [`tpush()`](/languages/func/stdlib/#tpush)
-- [`Exit codes`](/tvm/exit-codes)
-
-### How to determine if a lisp-style list is empty
-
-We can use the [cons](/languages/func/stdlib#cons) function to add an element to determine if a lisp-style list is empty. For example, adding 100 to the list ensures it is not empty.
-
-```func
-tuple numbers = null();
-numbers = cons(100, numbers);
-
-if (numbers.null?()) {
-    ;; list-style list is empty
-} else {
-    ;; list-style list is not empty
-}
-```
-
-### How to iterate through lisp-style list
-
-A tuple can hold up to 255 values. If more space is needed, a lisp-style list can be used by nesting tuples within tuples, effectively bypassing the limit.
-
-```func
-forall X -> int is_null (X x) asm "ISNULL";
-forall X -> (tuple, ()) push_back (tuple tail, X head) asm "CONS";
-forall X -> (tuple, (X)) pop_back (tuple t) asm "UNCONS";
-
-() main () {
-    ;; some example list
-    tuple l = null();
-    l~push_back(1);
-    l~push_back(2);
-    l~push_back(3);
-
-    ;; iterating through elements
-    ;; note that this iteration is in reversed order
-    while (~ l.is_null()) {
-        var x = l~pop_back();
-
-        ;; do something with x
-    }
-}
-```
-
-**References:**
-
-- [`Lisp-style lists`](./stdlib/#lisp-style-lists)
-- [`null()`](./stdlib/#null)
-
-
-### How to iterate tuples (both directions)
-
-When working with arrays or stacks in FunC, tuples are essential. The first step is learning how to iterate through tuple values for processing.
-
-```func
-(int) tlen (tuple t) asm "TLEN";
-forall X -> (tuple) to_tuple (X x) asm "NOP";
-
-() main () {
-    tuple t = to_tuple([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    int len = t.tlen();
-
-    int i = 0;
-    while (i < len) {
-        int x = t.at(i);
-        ;; do something with x
-        i = i + 1;
-    }
-
-    i = len - 1;
-    while (i >= 0) {
-        int x = t.at(i);
-        ;; do something with x
-        i = i - 1;
-    }
-}
-```
-
-**Note:**
-
-- The `tlen` assembly function is declared [here](./functions#assembler-function-body-definition). You can read more about it and explore a [list of all assembler commands](/tvm/instructions).
-- The `to_tuple` function is also declared. This function converts any input into a tuple, so use it carefully.
-
-### Iterating n-nested tuples
-
-Sometimes, we need to iterate through nested tuples. The following example iterates through a tuple formatted as: `[[2,6],[1,[3,[3,5]]], 3]` starting from the head.
-
-```func
-int tuple_length (tuple t) asm "TLEN";
-forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
-forall X -> int is_tuple (X x) asm "ISTUPLE";
-forall X -> tuple cast_to_tuple (X x) asm "NOP";
-forall X -> int cast_to_int (X x) asm "NOP";
-forall X -> (tuple) to_tuple (X x) asm "NOP";
-
-;; Define a global variable
-global int max_value;
-
-() iterate_tuple (tuple t) impure {
-    repeat (t.tuple_length()) {
-        var value = t~tpop();
-        if (is_tuple(value)) {
-            tuple tuple_value = cast_to_tuple(value);
-            iterate_tuple(tuple_value);
-        }
-        else {
-            if(value > max_value) {
-                max_value = value;
-            }
-        }
-    }
-}
-
-() main () {
-    tuple t = to_tuple([[2,6], [1, [3, [3, 5]]], 3]);
-    int len = t.tuple_length();
-    max_value = 0; ;; Reset max_value;
-    iterate_tuple(t); ;; Iterate tuple and find max value
-    ~dump(max_value); ;; 6
-}
-```
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- [Modifying notation using ~](./expressions#modifying-notation)
+- Assembler functions
+- [`empty_tuple`](./stdlib#empty-tuple)
+- [`tpush`](./stdlib/#tpush)
+- [TVM Exit codes](/tvm/exit-codes)
+- [TVM instructions](/tvm/instructions)
 
 ### Basic operations with tuples
 
 ```func
-(int) tlen (tuple t) asm "TLEN";
+;; tlen determines the length of a tuple
+int tlen (tuple t) asm "TLEN";
+
+;; tpop removes the last element in the tuple and 
+;; returns the mutated tuple and the element.
+;; The type of the returned element is arbitrary.
 forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
 
 () main () {
@@ -809,30 +754,195 @@ forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
     tuple names = empty_tuple();
 
     ;; push new items
-    names~tpush("Naito Narihira");
-    names~tpush("Shiraki Shinichi");
-    names~tpush("Akamatsu Hachemon");
-    names~tpush("Takaki Yuichi");
+    ;; Each element is a slice storing an ASCII string
+    names~tpush("Naito");
+    names~tpush("Shiraki");
+    names~tpush("Akamatsu");
+    names~tpush("Takaki");
 
-    ;; pop last item
+    ;; names is ["Naito", "Shiraki", "Akamatsu", "Takaki"]
+
+    ;; pop last item, "Takaki"
     slice last_name = names~tpop();
 
-    ;; get first item
+    ;; get first item, "Naito"
     slice first_name = names.first();
 
-    ;; get an item by index
+    ;; get an item by index, "Akamatsu"
+    ;; First element has index 0
     slice best_name = names.at(2);
 
-    ;; getting the length of the list
+    ;; getting the length of the tuple
+    ;; returns 3, because "Takaki" was popped
     int number_names = names.tlen();
 }
 ```
 
+The `tlen` assembler function uses the [TVM instruction `TLEN`](/tvm/instructions#6f88-tlen) to determine the number of elements in the tuple.
+
+The `tpop` assembler function uses the [TVM instruction `TPOP`](/tvm/instructions#6f8d-tpop) to detach the last element from the tuple, and 
+it returns the mutated tuple and the detached element.
+
 **References:**
 
-- [`global variables`](./global-variables)
-- [`~dump`](./built-ins#dump-variable)
-- [`TVM instructions`](/tvm/instructions)
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- [Modifying notation using ~](./expressions#modifying-notation)
+- Assembler functions
+- Polymorphic functions
+- [`empty_tuple`](./stdlib#empty-tuple)
+- [`tpush`](./stdlib/#tpush)
+- [`first`](./stdlib/#first)
+- [`at`](./built-ins/#at)
+- [TVM instructions](/tvm/instructions)
+
+### How to iterate tuples (both directions)
+
+When working with arrays or stacks in FunC, tuples are essential. The first step is learning how to iterate through tuple values for processing.
+
+```func
+;; tlen determines the length of a tuple
+int tlen (tuple t) asm "TLEN";
+
+;; Casts any type into a tuple
+forall X -> tuple to_tuple (X x) asm "NOP";
+
+() main () {
+    ;; Cast the fixed length tuple to an arbitrary length tuple.
+    ;; This is necessary, because in FunC, fixed-length tuples 
+    ;; like [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] cannot be assigned
+    ;; directly to arbitrary length tuples.
+    ;; Hence, this does NOT compile:
+    ;; tuple t = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    tuple t = to_tuple([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    int len = t.tlen();   ;; 10
+
+    ;; Iterate tuple starting from index 0  
+    ;; up to index 9
+
+    int i = 0;
+    while (i < len) {
+        int x = t.at(i);    ;; Obtain the i-th element 
+        ;; do something with x
+        i = i + 1;
+    }
+
+    ;; Iterate tuple starting from index 9  
+    ;; down to index 0
+
+    i = len - 1;   ;; 9
+    while (i >= 0) {
+        int x = t.at(i);    ;; Obtain the i-th element 
+        ;; do something with x
+        i = i - 1;
+    }
+}
+```
+
+The `tlen` assembler function uses the [TVM instruction `TLEN`](/tvm/instructions#6f88-tlen) to determine the number of elements in the tuple.
+
+The `to_tuple` casts **any** type into an arbitrary length tuple, which leads to run-time errors if `to_tuple` is used to cast non-tuple types. 
+Be careful to only cast fixed-length tuples, like `[1, 2]`. The `to_tuple` is essentially a dummy function that does nothing,
+because it uses the [No operation `NOP`](/tvm/instructions#00-nop) instruction. The only purpose of `to_tuple` is to tell the type-checker
+to accept the input to `to_tuple` as a `tuple`.
+
+**References:**
+
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- Assembler functions
+- Polymorphic functions
+- [`at`](./built-ins/#at)
+- [TVM instructions](/tvm/instructions)
+
+### Iterating n-nested tuples
+
+Sometimes, we need to iterate through nested tuples. 
+The following example iterates through a tuple starting from the last index,
+and finds the biggest number, irrespective if there are nested tuples.
+
+For example, in the tuple `[[2,6],[1,[3,[3,5]]], 3]`, the example finds `6` as the biggest number.
+
+```func
+;; Determines the number of elements in a tuple.
+int tuple_length (tuple t) asm "TLEN";
+
+;; Removes the last element in the tuple and 
+;; returns the mutated tuple and the element.
+;; The type of the returned element is arbitrary.
+forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
+
+;; Checks if the given argument is a tuple
+forall X -> int is_tuple (X x) asm "ISTUPLE";
+
+;; Casts the given argument to an arbitrary length tuple.
+forall X -> tuple to_tuple (X x) asm "NOP";
+
+;; Casts the given argument to an int.
+forall X -> int to_int (X x) asm "NOP";
+
+;; Define a global variable.
+;; It will store the biggest number found.
+global int max_value;
+
+() iterate_tuple (tuple t) impure {
+    repeat (t.tuple_length()) {
+        ;; Remove the last element in the tuple.
+        var value = t~tpop();    
+        if (is_tuple(value)) {
+            ;; If the element is a tuple, cast it to a tuple.
+            tuple tuple_value = to_tuple(value);
+            ;; And then, recursively iterate the element.
+            iterate_tuple(tuple_value);
+        } else {
+            ;; The element is not a tuple, so it must be an int.
+            ;; Cast it to an int.
+            int int_value = to_int(value);
+            if (int_value > max_value) {
+                ;; Remember the value in the global variable 
+                ;; because it is the biggest so far.
+                max_value = int_value;
+            }
+        }
+    }
+}
+
+() main () {
+    ;; Create an example tuple
+    tuple t = to_tuple([[2,6], [1, [3, [3, 5]]], 3]);
+
+    ;; Determine the length of the tuple
+    int len = t.tuple_length();
+
+    ;; Set the maximum so far to 0
+    max_value = 0; 
+
+    ;; Find the maximum value in the tuple
+    iterate_tuple(t);
+
+    ~dump(max_value);    ;; 6
+}
+```
+
+The `tuple_length` assembler function uses the [TVM instruction `TLEN`](/tvm/instructions#6f88-tlen) to determine the number of elements in the tuple.
+
+The `tpop` assembler function uses the [TVM instruction `TPOP`](/tvm/instructions#6f8d-tpop) to detach the last element from the tuple, and 
+it returns the mutated tuple and the detached element.
+
+The `is_tuple` assembler function uses the [TVM instruction `ISTUPLE`](/tvm/instructions#6f8a-istuple) to determine if the argument is a tuple or not.
+
+The `to_tuple` and `to_int` cast **any** type into an arbitrary length tuple and integer, respectively. This leads to run-time errors if 
+`to_tuple` and `to_int` are used to cast non-tuple and non-integer types, respectively. The `to_tuple` and `to_int` are essentially dummy functions that do nothing,
+because they use the [No operation `NOP`](/tvm/instructions#00-nop) instruction. The only purpose of `to_tuple` and `to_int` is to tell the type-checker
+to accept the input to `to_tuple` as a `tuple`, and the input to `to_int` as an `int`.
+
+**References:**
+
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- [Modifying notation using ~](./expressions#modifying-notation)
+- Assembler functions
+- Polymorphic functions
+- [Global Variables](./global-variables)
+- [TVM instructions](/tvm/instructions)
+
 
 ### Casting types in tuples
 
@@ -890,43 +1000,86 @@ forall X -> () resolve_type (X value) impure {
 
 ### Reversing tuples
 
-Since tuples behave as stacks in FunC, sometimes we need to **reverse** them to access data from the opposite end.
+The following example reverses any tuple. For example, given the input `[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]`,
+the `reverse_tuple` produces the output `[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]`.
 
 ```func
-forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
+;; Determines the number of elements in a tuple.
 int tuple_length (tuple t) asm "TLEN";
-forall X -> (tuple) to_tuple (X x) asm "NOP";
 
-(tuple) reverse_tuple (tuple t1) {
+;; Removes the last element in the tuple and 
+;; returns the mutated tuple and the element.
+;; The type of the returned element is arbitrary.
+forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
+
+;; Casts the given argument to an arbitrary length tuple.
+forall X -> tuple to_tuple (X x) asm "NOP";
+
+tuple reverse_tuple (tuple t1) {
+    ;; Create an initially empty tuple.
+    ;; This variable will be the accumulated result.
     tuple t2 = empty_tuple();
+
     repeat (t1.tuple_length()) {
-        var value = t1~tpop();
+        ;; Take the last element in the original tuple.
+        var value = t1~tpop();  
+        ;; And append it to the new tuple.
         t2~tpush(value);
     }
     return t2;
 }
 
 () main () {
+    ;; Create an example tuple.
     tuple t = to_tuple([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+
+    ;; Reverse the tuple.
     tuple reversed_t = reverse_tuple(t);
+
     ~dump(reversed_t); ;; [10 9 8 7 6 5 4 3 2 1]
 }
 ```
 
-**Reference:** [`tpush()`](./stdlib/#tpush)
+The `tuple_length` assembler function uses the [TVM instruction `TLEN`](/tvm/instructions#6f88-tlen) to determine the number of elements in the tuple.
 
-### How to remove an item with a certain index from the list
+The `tpop` assembler function uses the [TVM instruction `TPOP`](/tvm/instructions#6f8d-tpop) to detach the last element from the tuple, and 
+it returns the mutated tuple and the detached element.
+
+The `to_tuple` casts **any** type into an arbitrary length tuple, which leads to run-time errors if `to_tuple` is used to cast non-tuple types. 
+The `to_tuple` is essentially a dummy function that does nothing,
+because it uses the [No operation `NOP`](/tvm/instructions#00-nop) instruction. The only purpose of `to_tuple` is to tell the type-checker
+to accept the input to `to_tuple` as a `tuple`.
+
+**References:** 
+
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- [Modifying notation using ~](./expressions#modifying-notation)
+- Assembler functions
+- Polymorphic functions
+- [`empty_tuple`](./stdlib#empty-tuple)
+- [`tpush`](./stdlib/#tpush)
+- [TVM instructions](/tvm/instructions)
+
+### How to remove an item with a certain index from a tuple
 
 ```func
+;; Determines the number of elements in a tuple.
 int tlen (tuple t) asm "TLEN";
 
 (tuple, ()) remove_item (tuple old_tuple, int place) {
+
+    ;; The result tuple so far. Initially it is empty.
     tuple new_tuple = empty_tuple();
 
     int i = 0;
     while (i < old_tuple.tlen()) {
         int el = old_tuple.at(i);
+        ;; When we reach the place to delete, we skip
+        ;; that element by not pushing it to the result tuple.
         if (i != place) {
+            ;; Since the current index i is not equal to 
+            ;; the place to delete, push the element to 
+            ;; the end of the result tuple.
             new_tuple~tpush(el);
         }
         i += 1;
@@ -935,13 +1088,15 @@ int tlen (tuple t) asm "TLEN";
 }
 
 () main () {
+    ;; Create an example tuple, intially empty
     tuple numbers = empty_tuple();
 
+    ;; Insert some integers to the tuple
     numbers~tpush(19);
     numbers~tpush(999);
     numbers~tpush(54);
 
-    ~dump(numbers); ;; [19 999 54]
+    ~dump(numbers);   ;; [19 999 54]
 
     numbers~remove_item(1);
 
@@ -949,7 +1104,19 @@ int tlen (tuple t) asm "TLEN";
 }
 ```
 
-### Determine if the tuples are equal
+The `tlen` assembler function uses the [TVM instruction `TLEN`](/tvm/instructions#6f88-tlen) to determine the number of elements in the tuple.
+
+**References:** 
+
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- [Modifying notation using ~](./expressions#modifying-notation)
+- Assembler functions
+- [`empty_tuple`](./stdlib#empty-tuple)
+- [`at`](./built-ins/#at)
+- [`tpush`](./stdlib/#tpush)
+- [TVM instructions](/tvm/instructions)
+
+### Determine if tuples are equal
 
 A more advanced approach involves iterating through tuples and comparing each value recursively. Since tuples can contain different data types, we must check and cast values dynamically.
 
@@ -1032,6 +1199,74 @@ int are_cells_equal? (cell a, cell b) {
 - [`cell_hash()`](./stdlib/#cell_hash)
 - [`TVM instructions`](/tvm/instructions)
 
+### Basic operations in lisp-style lists
+
+[Lisp-style lists](./stdlib#lisp-style-lists) are represented as nested tuples. For example, the list `1, 2, 3` is represented as the 
+nested tuple `[1, [2, [3, null]]]`, where the value `null` acts as a marker for the end of the list.
+
+You can use the [`cons`](./stdlib#cons) function to add an element at the front of the list.
+The [`null?`](./built-ins#null%3F) function checks if the provided argument is the `null` value.
+
+```func
+;; An initially empty list. 
+;; "null" marks the end of the list.
+;; The null value is obtained by calling the null() function.
+tuple numbers = null();
+
+;; Attach 100 as first element of the list
+numbers = cons(100, numbers);
+;; Attach 200 as first element of the list,
+;; now 100 is the second element of the list
+numbers = cons(200, numbers);
+;; numbers is the list: 200, 100
+
+;; Is the list null or equivalently, empty?
+if (numbers.null?()) { 
+    ;; list-style list is empty
+} else {
+    ;; list-style list is not empty
+}
+```
+
+**References:**
+
+- [Lisp-style lists](./stdlib#lisp-style-lists)
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- [`cons`](./stdlib#cons)
+- [`null`](./stdlib#null)
+- [`null?`](./built-ins#null%3F)
+
+### How to iterate through lisp-style list
+
+This example is confusing. Needs reworking of the entire code.
+
+A tuple can hold up to 255 values. If more space is needed, a lisp-style list can be used by nesting tuples within tuples, effectively bypassing the limit.
+
+```func
+forall X -> (tuple, ()) push_back (tuple tail, X head) asm "CONS";
+forall X -> (tuple, X) pop_back (tuple t) asm "UNCONS";
+
+() main () {
+    ;; some example list
+    tuple l = null();
+    l~push_back(1);
+    l~push_back(2);
+    l~push_back(3);
+
+    ;; iterating through elements
+    ;; note that this iteration is in reversed order
+    while (~ l.null?()) {
+        var x = l~pop_back();
+
+        ;; do something with x
+    }
+}
+```
+
+**References:**
+
+- [`Lisp-style lists`](./stdlib/#lisp-style-lists)
+- [`null()`](./stdlib/#null)
 
 ## Contracts 
 
