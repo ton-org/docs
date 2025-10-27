@@ -4,7 +4,7 @@ title: "How to transfer Jettons"
 
 import { Aside } from '/snippets/aside.jsx';
 
-[TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md#internal-message-handlers) standard specifies that Jetton wallets must support `transfer` operation. 
+[TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md#internal-message-handlers) standard specifies that Jetton wallets must support `transfer` operation.
 
 To attach a comment, the message has to encode it in `forward_payload` field, and `forward_ton_amount` is some amount of toncoin attached to let the receiving wallet process the message.
 
@@ -14,10 +14,13 @@ A single manual transfer can be done with a web service (for example, [Minter](h
 
 A programmatic transfer is usually done with an SDK (for example, [`assets-sdk`](https://github.com/ton-community/assets-sdk)) that handles low-level message serialization details. The provided example uses [TON Center API](/ecosystem/rpc/toncenter/overview) that might [require a key](/ecosystem/rpc/toncenter/get-api-key). Also you'll need a mnemonic of a wallet that will pay for the transfer.
 
-<Aside type="danger" title="Funds at risk">
-    Beware that API keys and mnemonic must not be committed or shared publicly.
+<Aside
+  type="danger"
+  title="Funds at risk"
+>
+  Beware that API keys and mnemonic must not be committed or shared publicly.
 
-    A better approach is to use a `.env` file that is excluded from repository with `.gitignore`. For Github CI purposes, consult [their documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
+  A better approach is to use a `.env` file that is excluded from repository with `.gitignore`. For Github CI purposes, consult [their documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
 </Aside>
 
 ```ts expandable
@@ -30,7 +33,7 @@ const network = "testnet";
 const mnemonic = "foo bar baz";
 const apiKey = "<API key>";
 const jettonMasterAddress = Address.parse("...");
-const receiverAddress = Address.parse("...");
+const destinationRegularWalletAddress = Address.parse("...");
 
 async function main() {
     // create an RPC client that will send network requests
@@ -68,7 +71,7 @@ async function main() {
     const jettonWallet = await jetton.getWallet(sdk.sender!.address!);
 
     // tell sender's Jetton wallet to transfer Jettons
-    await jettonWallet.send(sender, receiverAddress, toNano(10));
+    await jettonWallet.send(sender, destinationRegularWalletAddress, toNano(10));
 }
 
 void main();
@@ -87,16 +90,8 @@ const apiKey = "<API key>";
 const jettonMasterAddress = Address.parse(
     "<Jetton master address>",
 );
-const receiverAddress = Address.parse('...');
-const senderRegularWalletAddress = Address.parse(
-    "<sender's regular wallet address>",
-);
-const destinationAddress = Address.parse(
+const destinationRegularWalletAddress = Address.parse(
     "<destination wallet address>",
-);
-// The wallet address used to return remaining Toncoin through the excesses message.
-const responseDestinationAddress = Address.parse(
-    "<response destination address>",
 );
 
 async function main() {
@@ -105,7 +100,6 @@ async function main() {
         endpoint: "https://toncenter.com/api/v2/jsonRPC",
         apiKey,
     });
-    const provider = client.provider(senderRegularWalletAddress);
 
     const keyPair = await mnemonicToPrivateKey(mnemonic.split(" "));
     const walletContract = WalletContractV5R1.create({
@@ -113,9 +107,12 @@ async function main() {
         publicKey: keyPair.publicKey,
     });
 
+    const provider = client.provider(walletContract.address);
+
+
     // Find your Jetton wallet Address
     const walletAddressCell = beginCell()
-        .storeAddress(senderRegularWalletAddress)
+        .storeAddress(walletContract.address)
         .endCell();
     const el: TupleItemSlice = {
         type: "slice",
@@ -142,9 +139,9 @@ async function main() {
         // jetton amount, amount * 10^9
         .storeCoins(toNano(5))
         // the address of the new jetton owner
-        .storeAddress(destinationAddress)
-        // response destination
-        .storeAddress(responseDestinationAddress)
+        .storeAddress(destinationRegularWalletAddress)
+        // response destination (in this case, the destination wallet)
+        .storeAddress(destinationRegularWalletAddress)
         // no custom payload
         .storeBit(0)
         // forward amount - if >0, will send notification message
