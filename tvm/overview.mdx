@@ -21,7 +21,7 @@ TVM is invoked in three common scenarios:
      In both cases, execution happens on‑chain, gas is paid, and effects may modify persistent state and enqueue outbound actions/messages.
 
 1. Off‑chain get‑methods:
-   - Run outside the blockchain (locally by a node/client). Gas is free, but the state is read‑only: you cannot write persistent state and cannot produce real outbound messages. Get-methods used as an API to access contract storage.
+   - Run outside the blockchain (locally by a node/client). Gas is free, but the state is read‑only: you cannot write persistent state and cannot produce real outbound messages. Get methods used as an API to access contract storage.
 
 ## TVM data types
 
@@ -35,7 +35,7 @@ Values you’ll see on the stack and inside registers:
 - **Continuation** — executable Slice consisting of instructions bitcode; callable like a function.
 - **Null** — empty value.
 
-<Aside type="tip">The most important types: **Slice** (to read incoming messages and storage), **Builder** (to write outcoming messages and to update storage), **Cell** (store/transport).</Aside>
+<Aside type="tip">The most important types: **Slice** (to read incoming messages and storage), **Builder** (to write outgoing messages and to update storage), **Cell** (store/transport).</Aside>
 
 ## TVM state
 
@@ -53,45 +53,45 @@ A small fixed set of special registers, denoted as `c0`, `c1`, ..., `c5`, and `c
 
 ### Current codepage (`cp`)
 
-Current codepage determines, how to decode the next instruction in `cc`. Different codepages may implement different instruction sets, allowing to add new features to TVM without affecting old smart contracts. Currently, only codepage `0` (`cp0`) is implemented.
+The current codepage determines how to decode the next instruction in `cc`. Different codepages may implement different instruction sets, allowing for adding new features to TVM without affecting old smart contracts. Currently, only codepage `0` (`cp0`) is implemented.
 
 Smart contract runs [`SETCP0`](./instructions#ff-setcp) instruction to explicitly use codepage `0`.
 
 ### Current continuation (`cc`)
 
-Special register which stores a list of the next instructions to execute. Similar to instruction pointer in traditional architectures.
+A special register that stores a list of the next instructions to execute. Similar to the instruction pointer in traditional architectures.
 
 ### Gas counter
 
-Tracks remaining computation budget. Each instruction decrements gas; on zero/negative, an exception is raised and the run aborts.
+Tracks remaining computation budget. Each instruction decrements gas; on zero/negative, an exception is raised, and the run aborts.
 
 <Aside type="tip">Look at [TVM > Gas](./gas) for more info about gas usage</Aside>
 
 ## Example of a smart contract: counter
 
-Here is a simple contract, written in Fift-ASM (TVM assembler). It accepts an internal message with a 32-bit number, checks that it equal to 32-bit number stored in `c4`, increments it and saves back to `c4`.
+Here is a simple contract, written in Fift-ASM (TVM assembler). It accepts an internal message with a 32-bit number, checks that it is equal to the 32-bit number stored in `c4`, increments it, and saves it back to `c4`.
 
-TVM stack initialized with values describing the event occurred (e.g. receiving a message) and current balance of the contract:
+TVM stack initialized with values describing the event that occurred (e.g., receiving a message) and the current balance of the contract:
 
-1. `s0` (top of stack) - function selector. It is the id of a function to call. Transaction executor passes `0` when we received internal message, `-1` in case of external message, and `-2` in case of tick-tock event. Ids greater than `0x10000` are for get methods.
+1. `s0` (top of stack) - function selector. It is the ID of a function to call. Transaction executor passes `0` when we received an internal message, `-1` in case of an external message, and `-2` in case of a tick-tock event. IDs greater than `0x10000` are for get methods.
 1. `s1` - message body. This is an arbitrary payload of a message, which can be used for text comments (when sending TONs from one wallet to another) or for smart contract commands (that is our case).
 1. `s2` - message cell. Cell containing message metadata (sender, receiver, amount) as well as message body.
-1. `s3` - message value. Amount of TONs we received. Both message body and value are provided for convenience, so we do not need to parse message cell every time.
+1. `s3` - message value. Amount of TONs we received. Both the message body and value are provided for convenience, so we do not need to parse the message cell every time.
 1. `s4` - contract balance.
 
 <Aside type="tip">Look at [TVM > Initialization](./initialization) for more info about initial stack values</Aside>
 
-In this contract, we will use only two top values (message body and function selector), other three we will not take into account. After finishing execution, TVM silently drops all remaining values. In comments, we will represent stack values from the bottom to the top (e.g. `s2 s1 s0`, where s0 is the top of stack) to understand current stack layout.
+In this contract, we will use only two top values (message body and function selector); the other three we will not take into account. After finishing execution, TVM silently drops all remaining values. In comments, we will represent stack values from the bottom to the top (e.g., `s2 s1 s0`, where s0 is the top of the stack) to understand the current stack layout.
 
 ```fift Fift
 <{
     // initial stack: msg_body selector
 
     // use codepage 0 (just pick the single instruction set available now)
-    // this instruction does not affect stack
+    // this instruction does not affect the stack
     SETCP0
 
-    // consume `selector` from the top of stack
+    // consume `selector` from the top of the stack
     // stop execution if `selector != 0`
     IFRET
     // => continue execution if we received an internal message
@@ -99,14 +99,14 @@ In this contract, we will use only two top values (message body and function sel
     // current stack: msg_body
 
     // load (LD) unsigned (U) 32-bit integer from a slice
-    // this instruction consumes a slice from stack, pushes an integer and then pushes a new slice
+    // this instruction consumes a slice from the stack, pushes an integer, and then pushes a new slice
     32 LDU
     // current stack: msg_counter msg_body'
-    // msg_body' is a slice which read cursor was moved by 32 bits when we loaded 32-bit integer
-    // for example: if we had slice x{00000001} on stack and then invoked 32 LDU, there will be integer `1` and `x{}` (empty slice) on the stack
+    // msg_body' is a slice whose read cursor was moved by 32 bits when we loaded a 32-bit integer
+    // for example: if we had slice x{00000001} on the stack and then invoked 32 LDU, there will be integer `1` and `x{}` (empty slice) on the stack
 
     // assert the END of a slice (S)
-    // this instructions consumes a slice and checks that it is empty (no more data to read)
+    //these instructions consume a slice and check that it is empty (no more data to read)
     // otherwise it throws an exception, because there was more data than we expected
     ENDS
     // current stack: msg_counter
