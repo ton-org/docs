@@ -1,0 +1,107 @@
+---
+title: "Reserve coins"
+---
+
+_Reserving coins_ is one of the four actions that a smart contract can perform during the [action phase](). In TVM it is implemented via the `RAWRESERVE` 
+instruction that takes from the stack an `amount` of nonatoncoins to reserve and an integer `mode` specifying a way of the reservation. 
+The reservation action is queued to the _output action list_ of a smart contract, which contains other actions such as _message sends_.  
+
+Roughly speaking,  the `RAWRESERVE` instruction is equivalent to creating an outbound message carrying the specified `amount` of nanotoncoin to oneself. 
+But unlike a regular message send, the reservation action does not create a new message and does not incur any action costs. 
+Its primary goal is to reduce the amount of toncoins that can be spent by subsequent actions.
+
+The `mode` parameter is a bitmask that specifies how the reservation amount is calculated. The resulting mode value can have the following base modes:
+
+Mode value | Сonvenient name               | Description
+---------: | :---------------------------- | -----------
+$0$        | `ReserveExact`                | Reserves exactly the specified `amount` of nanotoncoin.
+$1$        | `ReserveAllExcept`            | Reserves all but the specified `amount` of nanotoncoin.
+$2$        | `ReserveAtMost`               | Reserves at most the specified `amount` of nanotoncoin.
+
+Additionally, the resulting `mode` can have the following optional flags added:
+
+Flag value | Сonvenient name                    | Description
+---------: | :--------------------------------- | -----------
+$+4$       | `ReserveAddOriginalBalance`        | Increases the `amount` by the original balance (i.e. without incoming message value) of the current account before the compute phase.
+$+8$       | `ReserveInvertSign`                | Negates the `amount` value before performing the reservation.
+$+16$      | `ReserveBounceIfActionFail`        | Bounces the transaction if the reservation fails.
+
+In the two following sections we describe how the reservation action is implemented and provide some best practices for using it.
+If you just want to see examples when the reservation is used in practice and how to solve related tasks, go to the [best practices](/patterns/reserve#best-practices) section bypassing the implementation one.
+
+## Implementation
+
+The [current implemetation](https://github.com/ton-blockchain/ton/blob/4ebd7412c52248360464c2df5f434c8aaa3edfe1/crypto/block/transaction.cpp#L3051-L3138) of the reservation is complex.
+In this section, we will discuss the reservation flow and what errors can occur during it.
+
+But first, let's fix a notation:
+- `amount` - the amount of toncoins passed to the `RAWRESERVE` instruction.
+- `mode` - the integer mode passed to the `RAWRESERVE` instruction.
+- `original_balance`:
+    - if after the storage phase, account's balance is less than the value of incoming message with bounce flag set to `false`, then `original_balance` is set to $0$;
+    - otherwise, `original_balance` equals account's balance before the compute phase minus incoming message value.
+- `remaining_balance` - account's balance before the reservation action.
+- `reserve` - the final amount to be reserved.
+
+### Flow 
+
+Bellow we outline the reservation flow step by step in order to give a full picture of how the reservation is implemented and how different modes interact with each other.
+1. Check that `mode` has flag $16$:
+    - if so, then in case of any failure the transaction will be bounced;
+    - if not, then in case of any failure the reservation action will be just skipped.
+2. Set `reserve` to `amount`.
+3. Check that `mode` has flag $4$:
+    1. If so, then check that `mode` has flag $8$:
+        - if so, then set `reserve` to `original_balance - reserve`;
+        - otherwise, increase `reserve` by `original_balance`.
+    2. Otherwise, if `mode` has flag $8$, throw the error "invalid reserve mode". 
+4. Check that `mode` has flag $2$:
+    - if so, then set `reserve` to `min(reserve, remaining_balance)`.
+5. Check that `mode` has flag $1$:
+    - if so, then set `reserve` to `remaining_balance - reserve`.
+6. Set `remaining_balance` to `remaining_balance - reserve`.
+
+If there were no errors during the flow, then the reservation action was successful, and the subsequent action can spent only at most the new `remaining_balance`.
+
+### Errors
+
+Except problems with unpacking the reserve action cell and some problem related to extra-currency, the following errors can occur during the reservation flow:
+- If `mode` has flag $8$ but not flag $4$, then the error "invalid reserve mode" is thrown.
+- If after step 3, `reserve` is negative, then the error $-1$ is thrown.
+- Passing a negative `amount` also results in the error $-1$.
+- If after step 4, `reserve` is greater than `remaining_balance`, then the error "not enough grams ($37$)" is thrown.
+
+If the action had flag $16$, then in case of any of the above errors the whole transaction is bounced.
+
+## Best practices
+
+### Ensuring that a smart contract will have enough balance to pay for its storage fees in the future.
+
+After the transaction, it is often important to ensure that the remaining account balance is sufficient to cover storage fees for an 
+extended period of time. Good examples of this scenario can be found in the [Jetton wallet contracts](https://github.com/ton-blockchain/jetton-contract/blob/d55f228edb0eb477cb4845d67e0dacc6489c6b57/contracts/jetton-wallet.fc#L124) and the [Jetton master contracts](https://github.com/ton-blockchain/jetton-contract/blob/d55f228edb0eb477cb4845d67e0dacc6489c6b57/contracts/jetton-minter.fc#L38).
+
+You can estimate the number of nanotones that your account needs for a year of downtime and then reserve in the first action of the action phase.
+```fift
+RAWRESERVE <estimated_amount_for_a_year> ReserveExact ;; for reserving exact amount
+;; or
+RAWRESERVE <estimated_amount_for_a_year> ReserveAtMost ;; for reserving at most the amount
+```
+
+### Ensuring that all fees are paid from the incoming message value
+
+If the logic of your contract implies that the user should be responsible for all fees, then it would be advisable to reserve account's initial balance 
+at the start of action phase. This way, all fees will be deducted from the incoming message value (if there are enough funds), and the account's balance will remain unchanged after the transaction.
+
+The good practice is to use the `ReserveAddOriginalBalance` flag. But since this flag adds only the account original balance before the compute phase,
+we need to account for the storage fees that were already deducted. As in the previous example, you can simply add some approximate value.
+```fift
+RAWRESERVE <estimated_storage_fee> ReserveAddOriginalBalance
+```
+
+### Setting a limit on the next actions spending
+
+Sometimes it is useful to limit the amount of toncoins that subsequent actions can spend. To do this, it is enough to reserve the entire remaining balance at the moment, 
+with the exception of a certain amount of it.
+```fift
+RAWRESERVE <limit_amount> ReserveAllExcept
+```
