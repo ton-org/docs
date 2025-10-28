@@ -424,7 +424,7 @@ def main() -> None:
         body, _event, comments = _build_from_sidecar(sidecar, repo=repo, sha=sha, repo_root=Path(os.environ.get("GITHUB_WORKSPACE") or "."))
         # Always submit a COMMENT review regardless of findings
         out = {
-            "body": body or "",
+            "body": body or "LGTM",
             "event": "COMMENT",
             "comments": comments,
             "commit_id": (sidecar.get("commit_id") or sha) or None,
