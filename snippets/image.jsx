@@ -10,12 +10,12 @@
  *   width?: string | number,
  * }} props
  */
-export const Image = ({ src, darkSrc, alt = "", darkAlt, href, target, height, width }) => {
+export const Image = ({ src, darkSrc, alt = "", darkAlt, href, target, height = 342, width = 608 }) => {
   const isSVG = src.match(/\.svg(?:[#?].*?)?$/i) !== null;
   const shouldInvert = isSVG && !darkSrc;
   const shouldCreateLink = href !== undefined;
-  const minPx = 1;
-  const maxPx = 600;
+  const minPx = 9;
+  const maxPx = 608;
   const expectedPx = `a number or a string with a number that is greater than ${minPx - 1} and less than or equal to ${maxPx}`;
 
   /**
@@ -75,34 +75,8 @@ export const Image = ({ src, darkSrc, alt = "", darkAlt, href, target, height, w
   const heightPx = Number(height);
   const widthPx = Number(width);
 
-  // Is a clickable link
-  if (shouldCreateLink) {
-    return (
-      <a href={href} target={target ?? "_self"}>
-        <img
-          className="block dark:hidden"
-          src={src}
-          alt={alt}
-          {...(height && { height: heightPx })}
-          {...(width && { width: widthPx })}
-          // @ts-ignore
-          noZoom
-        />
-        <img
-          className={`hidden dark:block ${shouldInvert ? "invert" : ""}`}
-          src={darkSrc ?? src}
-          alt={darkAlt ?? alt}
-          {...(height && { height: heightPx })}
-          {...(width && { width: widthPx })}
-          // @ts-ignore
-          noZoom
-        />
-      </a>
-    );
-  }
-
-  // Not a link
-  return (
+  // Resulting images
+  const images = (
     <>
       <img
         className="block dark:hidden"
@@ -110,26 +84,30 @@ export const Image = ({ src, darkSrc, alt = "", darkAlt, href, target, height, w
         alt={alt}
         {...(height && { height: heightPx })}
         {...(width && { width: widthPx })}
+        // @ts-ignore
+        {...((shouldCreateLink || shouldInvert) && { noZoom: "true" })}
       />
-      {shouldInvert ? (
-        <img
-          className="hidden dark:block invert"
-          src={darkSrc ?? src}
-          alt={darkAlt ?? alt}
-          {...(height && { height: heightPx })}
-          {...(width && { width: widthPx })}
-          // @ts-ignore
-          noZoom
-        />
-      ) : (
-        <img
-          className="hidden dark:block"
-          src={darkSrc ?? src}
-          alt={darkAlt ?? alt}
-          {...(height && { height: heightPx })}
-          {...(width && { width: widthPx })}
-        />
-      )}
+      <img
+        className={`hidden dark:block ${shouldInvert ? "invert" : ""}`}
+        src={darkSrc ?? src}
+        alt={darkAlt ?? alt}
+        {...(height && { height: heightPx })}
+        {...(width && { width: widthPx })}
+        // @ts-ignore
+        {...((shouldCreateLink || shouldInvert) && { noZoom: "true" })}
+      />
     </>
   );
+
+  // Is a clickable link
+  if (shouldCreateLink) {
+    return (
+      <a href={href} target={target ?? "_self"}>
+        {images}
+      </a>
+    );
+  }
+
+  // Not a link
+  return images;
 };
