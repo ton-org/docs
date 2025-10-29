@@ -490,7 +490,7 @@ forall X -> (tuple, (X)) pop_back (tuple t) asm "UNCONS";
 - [`null`](./stdlib/#null)
 - [`slice_refs`](./stdlib/#slice-refs)
 
-### How to build a `StateInit` cell
+### How to build a StateInit cell
 
 The code follows the TL-B for `StateInit`:
 
@@ -1270,39 +1270,62 @@ forall X -> (tuple, X) pop_back (tuple t) asm "UNCONS";
 
 ## Contracts 
 
-### How to determine a state of the contract is empty
+### How to determine if the contract state is empty
 
-Consider a smart contract with a `counter` that tracks the number of transactions. This variable does not exist in the contract state during the first transaction because it is empty.
-It is important to handle this scenario by checking if the state is empty and initializing the `counter` accordingly.
+Consider a smart contract that keeps a `counter` stored in its state, that tracks the number of internal messages the contract has received. 
+When the contract receives its first message, the contract state is empty, which means that the `counter` has not been initialized yet.
+It is important to handle all scenarios by checking if the state is empty and initializing the `counter` accordingly.
 
 ```func
-;; `get_data()` will return the data cell from contract state
-cell contract_data = get_data();
-slice cs = contract_data.begin_parse();
+() recv_internal() {
+    ;; "get_data" returns the persistent contract state, as a cell
+    cell contract_data = get_data();
+    
+    ;; Obtain a slice from the contract data cell, for reading
+    slice cs = contract_data.begin_parse();
 
-if (cs.slice_empty?()) {
-    ;; Contract data is empty, so we create counter and save it
-    int counter = 1;
-    ;; Create cell, add counter and save in contract state
-    set_data(begin_cell().store_uint(counter, 32).end_cell());
-}
-else {
-    ;; Contract data is not empty, so we get our counter, increase it and save
-    ;; we should specify correct length of our counter in bits
-    int counter = cs~load_uint(32) + 1;
-    set_data(begin_cell().store_uint(counter, 32).end_cell());
+    ;; Check that the contract state is empty
+    if (cs.slice_empty?()) {
+        ;; Contract data is empty, so we create a counter.
+        int counter = 1;
+        
+        ;; To save the counter into the contract state, 
+        ;; create a cell containing the counter.
+        ;; The counter is stored as an unsigned 32-bit integer.
+        cell new_data = begin_cell().store_uint(counter, 32).end_cell();
+        
+        ;; Save the data cell into the contract state by using "set_data".
+        set_data(new_data);
+    } else {
+        ;; Contract data is not empty.
+        ;; Get our counter from the contract state and increase it
+        ;; The counter is an unsigned 32-bit integer.
+        int counter = cs~load_uint(32) + 1;
+        
+        ;; To save the counter into the contract state, 
+        ;; create a cell containing the counter.
+        ;; The counter is stored as an unsigned 32-bit integer.
+        cell new_data = begin_cell().store_uint(counter, 32).end_cell();
+        
+        ;; Save the data cell into the contract state by using "set_data".
+        set_data(new_data);
+    }
 }
 ```
 
-**Note:**
-The contract state can be determined as empty by verifying whether the [cell is empty](/languages/func/cookbook#how-to-determine-if-a-cell-is-empty).
-
 **References:**
 
-- [`get_data()`](/languages/func/stdlib#get_data)
-- [`begin_parse()`](/languages/func/stdlib/#begin_parse)
-- [`slice_empty?()`](/languages/func/stdlib/#slice_empty)
-- [`set_data()`](/languages/func/stdlib#set_data)
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- [Modifying notation using ~](./expressions#modifying-notation)
+- `recv_internal` method
+- [`get_data`](./stdlib#get-data)
+- [`begin_parse`](./stdlib/#begin-parse)
+- [`slice_empty?`](./stdlib/#slice-empty%3F)
+- [`begin_cell`](./stdlib/#begin-cell)
+- [`end_cell`](./stdlib/#end-cell)
+- [`store_uint`](./stdlib/#store-uint)
+- [`load_uint`](./stdlib/#load-uint)
+- [`set_data`](./stdlib#set-data)
 
 ### How to update the smart contract logic
 
@@ -1373,252 +1396,599 @@ await contractV1.sendUpgrade(provider.sender(), {
 
 ## Messages
 
-### How to build an internal message cell
+### How to build an internal message with default headers
 
-When a smart contract needs to send an internal message, it must first construct the message as a `cell`. This includes specifying technical flags, the recipient's address, and additional data.
+When a smart contract needs to send an internal message, it must first construct the message as a `cell`. 
+This includes specifying technical flags, the recipient's address, and additional data.
 
-```func
-;; We use literal `a` to get valid address inside slice from string containing address
-slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
-int amount = 1000000000;
-;; we use `op` for identifying operations
-int op = 0;
-
-cell msg = begin_cell()
-    .store_uint(0x18, 6)
-    .store_slice(addr)
-    .store_coins(amount)
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) ;; default message headers (see sending messages page)
-    .store_uint(op, 32)
-.end_cell();
-
-send_raw_message(msg, 3); ;; mode 3 - pay fees separately and ignore errors
-```
-
-**Note:**
-
-- In this example, we use the literal `a` to obtain an address. More details on string literals can be found in the [documentation](/languages/func/literals#string-literals).
-- You can find more details in the [documentation](/foundations/whitepapers/tblkch#3-1-7-message-layout). A direct link to the [layout](/foundations/whitepapers/tblkch#3-1-7-message-layout) is also available.
-
-**References:**
-
-- [`begin_cell()`](/languages/func/stdlib#begin_cell)
-- [`store_uint()`](/languages/func/stdlib#store_uint)
-- [`store_slice()`](/languages/func/stdlib#store_slice)
-- [`store_coins()`](/languages/func/stdlib#store_coins)
-- [`end_cell()`](/languages/func/stdlib/#end_cell)
-- [`send_raw_message()`](/languages/func/stdlib/#send_raw_message)
-
-### How to contain a body as a ref in an internal message cell
-
-The message body can contain `int`, `slices`, or `cells` following flags and other technical data. If a `cell` is used, a bit must be set to `1` before calling `store_ref()`, indicating that the `cell` will be included.
-
-Alternatively, if there is sufficient space, the message body can be stored in the same `cell` as the header. In this case, the bit should be set to `0`.
+The most common case involves sending an internal message that is bounceable, with no StateInit, 
+and with message body serialized in the same message cell. The following `build_message` function 
+illustrates this common case. The function receives as parameters the destination 
+address `dest_addr` encoded as a slice, the amount in nanotons to send `amount`, 
+and the requested operation opcode `opcode`:
 
 ```func
-;; We use literal `a` to get valid address inside slice from string containing address
-slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
-int amount = 1000000000;
-int op = 0;
-cell message_body = begin_cell() ;; Creating a cell with message
-    .store_uint(op, 32)
-    .store_slice("❤")
-.end_cell();
-
-cell msg = begin_cell()
-    .store_uint(0x18, 6)
-    .store_slice(addr)
-    .store_coins(amount)
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1) ;; default message headers (see sending messages page)
-    .store_uint(1, 1) ;; set bit to 1 to indicate that the cell will go on
-    .store_ref(message_body)
-.end_cell();
-
-send_raw_message(msg, 3); ;; mode 3 - pay fees separately and ignore errors
-```
-
-**Note:**
-
-- In this example, we use the literal `a` to obtain an address. More details on string literals can be found in the [documentation](/languages/func/literals#string-literals).
-- The example uses [`mode 3`](/foundations/messages/overview), which ensures the contract deducts the specified amount while covering the transaction fee from the contract balance and ignoring errors.
-  - `mode 64` returns all received tokens, subtracting the commission.
-  - `mode 128` transfers the entire balance.
-- The [message](/languages/func/cookbook#how-to-build-an-internal-message-cell) is constructed with the body added separately.
-
-**References:**
-
-- [`begin_cell()`](/languages/func/stdlib#begin_cell)
-- [`store_uint()`](/languages/func/stdlib#store_uint)
-- [`store_slice()`](/languages/func/stdlib#store_slice)
-- [`store_coins()`](/languages/func/stdlib#store_coins)
-- [`end_cell()`](/languages/func/stdlib/#end_cell)
-- [`send_raw_message()`](/languages/func/stdlib/#send_raw_message)
-
-### How to contain a body as a slice in an internal message cell
-
-A message body can be sent as either a `cell` or a `slice`. In this example, the body is sent inside a `slice`.
-
-```func
-;; We use literal `a` to get valid address inside slice from string containing address
-slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
-int amount = 1000000000;
-int op = 0;
-slice message_body = "❤";
-
-cell msg = begin_cell()
-    .store_uint(0x18, 6)
-    .store_slice(addr)
-    .store_coins(amount)
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) ;; default message headers (see sending messages page)
-    .store_uint(op, 32)
-    .store_slice(message_body)
-.end_cell();
-
-send_raw_message(msg, 3); ;; mode 3 - pay fees separately and ignore errors
-```
-
-**Note:**
-
-- The literal `a` is used to obtain an address. See the [documentation](/languages/func/literals#string-literals) for details on string literals.
-- The example uses `mode 3`, `mode 64`, and `mode 128`, as described above.
-- The [message](/languages/func/cookbook#how-to-build-an-internal-message-cell) is constructed with the body included as a slice.
-
-### How to send a simple message
-
-To send a simple message with a comment, prepend the message body with `32 bits` set to `0`, indicating that it is a `comment`.
-
-```func
-cell msg = begin_cell()
-    .store_uint(0x18, 6) ;; flags
-    .store_slice("EQBIhPuWmjT7fP-VomuTWseE8JNWv2q7QYfsVQ1IZwnMk8wL"a) ;; destination address
-    .store_coins(100) ;; amount of nanoTons to send
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) ;; default message headers (see sending messages page)
-    .store_uint(0, 32) ;; zero opcode - means simple transfer message with comment
-    .store_slice("Hello from FunC!") ;; comment
-.end_cell();
-send_raw_message(msg, 3); ;; mode 3 - pay fees separately, ignore errors
-```
-
-**Reference:** [`Message layout`](/foundations/messages/overview)
-
-### How to send a message with an incoming account
-
-A proxy contract can facilitate secure message exchange if interaction between a user and the main contract is needed.
-
-```func
-() recv_internal (slice in_msg_body) {
-    {-
-        This is a simple example of a proxy-contract.
-        It will expect in_msg_body to contain message mode, body and destination address to be sent to.
-    -}
-
-    int mode = in_msg_body~load_uint(8); ;; first byte will contain msg mode
-    slice addr = in_msg_body~load_msg_addr(); ;; then we parse the destination address
-    slice body = in_msg_body; ;; everything that is left in in_msg_body will be our new message's body
-
+cell build_message(slice dest_addr, int amount, int opcode) {
     cell msg = begin_cell()
-        .store_uint(0x18, 6)
-        .store_slice(addr)
-        .store_coins(100) ;; just for example
-        .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) ;; default message headers (see sending messages page)
-        .store_slice(body)
+
+      ;; Sets 5 headers to their default values. 
+      ;; In particular, the bounceable header is true.
+      .store_uint(0x18, 1 + 1 + 1 + 1 + 2)     
+      .store_slice(dest_addr)  ;; destination address
+      .store_coins(amount)     ;; amount to send in nanotons
+
+      ;; Sets 7 more headers to their default values.
+      ;; Sets default value 0 to all the 7 headers.
+      .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) 
+    
+      ;; Message body starts here. 
+      ;; Usually starts with an unsigned 32-bits integer,
+      ;; called "opcode", that identifies the requested operation.
+      .store_uint(op, 32)
+
+      ;; The next fields depend on the opcode.
+      ;; For example, an opcode representing a lookup operation
+      ;; would need to include the data to lookup
+      ;; ......
     .end_cell();
-    send_raw_message(msg, mode);
+
+    return msg;
 }
 ```
 
-**References:**
+The call `store_uint(0x18, 1 + 1 + 1 + 1 + 2)` sets 5 headers to their default values. The sum `1 + 1 + 1 + 1 + 2` 
+represents the number of bits occupied by each header, i.e., the first header occupies 1 bit, the second header 1 bit, and so on
+until the 5th header which occupies 2 bits. The hexadecimal number `0x18` is a shorthand for the 6 bits `011000`, which represents 
+the default values for each of the headers, i.e., the first header has value `0`, the second header `1`, and so on until the 
+5th header, which has the two bits `00`. 
 
-- [`Message layout`](/foundations/messages/overview)
-- [`load_msg_addr()`](/languages/func/stdlib/#load_msg_addr)
+Among these 5 headers, the third one is probably the most interesting for a programmer, because it corresponds to the bounceable flag,
+which is set to `1` (true) by default. If you want to set the flag to `0` (false), you should use hexadecimal `0x10` instead of `0x18`,
+because `0x10` corresponds to the 6 bits `010000`.
 
-### How to send a message with the entire balance
+The call `store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)` sets 7 further headers to the default value `0`. The sum `1 + 4 + 4 + 64 + 32 + 1 + 1`
+represents the number of bits occupied by each header. Among these 7 headers, the last two are probably the most interesting for a programmer, 
+because they correspond to the StateInit header and the message body ref header, respectively.
+In particular, the default headers state that the message has no StateInit, and that the message body is not stored as a cell reference, 
+but directly in the cell, together with the headers.
+Refer to recipes ["How to send a deploy message"](#how-to-send-a-deploy-message) and 
+["How to set the message body as a ref in an internal message"](#how-to-set-the-message-body-as-a-ref-in-an-internal-message)
+for examples on how to manipulate StateInit and the message body ref headers, respectively.
 
-To transfer the entire balance of a smart contract, use send `mode 128`. This is particularly useful for proxy contracts that receive payments and forward them to the main contract.
+For further details on all the headers, see the message layout page and 
+the [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout).
+
+Here is an example on how to use function `build_message` to send a message:
 
 ```func
-cell msg = begin_cell()
-    .store_uint(0x18, 6) ;; flags
-    .store_slice("EQBIhPuWmjT7fP-VomuTWseE8JNWv2q7QYfsVQ1IZwnMk8wL"a) ;; destination address
-    .store_coins(0) ;; we don't care about this value right now
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) ;; default message headers (see sending messages page)
-    .store_uint(0, 32) ;; zero opcode - means simple transfer message with comment
-    .store_slice("Hello from FunC!") ;; comment
-.end_cell();
-send_raw_message(msg, 128); ;; mode = 128 is used for messages that are to carry all the remaining balance of the current smart contract
+;; Create a slice from a string containing the destination address
+slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
+;; The amount to send in nanotons
+int amount = 1000000000;
+;; The opcode for the requested operation
+int op = 20;
+
+;; Create the message cell
+cell msg = build_message(addr, amount, op);
+
+;; Send the message, using default sending mode 0
+send_raw_message(msg, 0);
 ```
+
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
 
 **References:**
 
-- [`Message layout`](/foundations/messages/overview)
-- [`Message modes`](/languages/func/stdlib/#send_raw_message)
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- [`begin_cell`](./stdlib#begin-cell)
+- [`store_uint`](./stdlib#store-uint)
+- [`store_slice`](./stdlib#store-slice)
+- [`store_coins`](./stdlib#store-coins)
+- [`end_cell`](./stdlib/#end-cell)
+- Message layout page
+- [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout)
+- Sending messages page
+- [`"<address string>"a` compile-time builtin](./literals#string-with-suffix-a), where `<address string>` is a string encoding an address.
+- [`send_raw_message`](./stdlib/#send-raw-message)
+
+### How to set the message body as a ref in an internal message
+
+If there is sufficient space, the message body can be stored in the same `cell` together with the message headers,
+as shown in the recipe ["How to build an internal message with default headers"](#how-to-build-an-internal-message-with-default-headers).
+If there is not enough space in the message cell, the message body can be stored as a cell reference to the message, as shown in the following
+function. The function receives the destination address, the amount to send, and the message body as a separate cell.
+
+```func
+cell build_message(slice dest_addr, int amount, cell message_body) {
+    cell msg = begin_cell()
+
+      ;; Sets 5 headers to their default values. 
+      ;; In particular, the bounceable header is true.
+      .store_uint(0x18, 1 + 1 + 1 + 1 + 2)     
+      .store_slice(dest_addr)  ;; destination address
+      .store_coins(amount)     ;; amount to send in nanotons
+
+      ;; Sets 6 more headers to their default values.
+      ;; Sets default value 0 to all the 6 headers.
+      .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1) 
+
+      ;; Activate the message body ref header
+      ;; to indicate that the message body is included as a 
+      ;; cell reference
+      .store_uint(1, 1)
+
+      ;; Store the message body as a cell reference
+      .store_ref(message_body)
+    .end_cell();
+
+    return msg;
+}
+```
+
+The call `store_uint(0x18, 1 + 1 + 1 + 1 + 2)` sets 5 headers to their default values, as in the recipe 
+["How to build an internal message with default headers"](#how-to-build-an-internal-message-with-default-headers).
+
+The call `store_uint(0, 1 + 4 + 4 + 64 + 32 + 1)` sets 6 further headers to the default value `0`, as in 
+the first 6 headers in recipe ["How to build an internal message with default headers"](#how-to-build-an-internal-message-with-default-headers). 
+The last header, corresponding to the message body ref header, is set with the call `store_uint(1, 1)`, which indicates that the 
+message body will be included as a cell reference.
+
+For further details on all the headers, see the message layout page and 
+the [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout).
+
+Here is an example on how to use function `build_message` to send a message:
+
+```func
+;; Create a slice from a string containing the destination address
+slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
+;; The amount to send in nanotons
+int amount = 1000000000;
+;; Create a cell storing the message body
+cell message_body = begin_cell() 
+    .store_uint(20, 32) ;; include an opcode
+    .store_slice("❤")   ;; include further data required by the opcode
+    .end_cell();
+
+;; Create the message cell
+cell msg = build_message(addr, amount, message_body);
+
+;; Send the message, using default sending mode 0
+send_raw_message(msg, 0);
+```
+
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
+
+**References:**
+
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- [`begin_cell`](./stdlib#begin-cell)
+- [`store_uint`](./stdlib#store-uint)
+- [`store_slice`](./stdlib#store-slice)
+- [`store_coins`](./stdlib#store-coins)
+- [`end_cell`](./stdlib/#end-cell)
+- Message layout page
+- [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout)
+- Sending messages page
+- [`"<address string>"a` compile-time builtin](./literals#string-with-suffix-a), where `<address string>` is a string encoding an address.
+- [`send_raw_message`](./stdlib/#send-raw-message)
+
+### How to set the message body as a slice in an internal message
+
+If you want to include the message body directly in the message cell, but don't want to explicitly
+write the message body fields together with the headers,
+you can first write the message body into a slice, and then write the slice into the message cell, as
+in the following function. The function receives the destination address, the amount to send, and the message body as a slice.
+
+```func
+cell build_message(slice dest_addr, int amount, slice message_body) {
+    cell msg = begin_cell()
+
+      ;; Sets 5 headers to their default values. 
+      ;; In particular, the bounceable header is true.
+      .store_uint(0x18, 1 + 1 + 1 + 1 + 2)     
+      .store_slice(dest_addr)  ;; destination address
+      .store_coins(amount)     ;; amount to send in nanotons
+
+      ;; Sets 7 more headers to their default values.
+      ;; Sets default value 0 to all the 7 headers.
+      .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) 
+    
+      ;; Message body starts here. 
+      ;; Write the message body slice
+      .store_slice(message_body)
+    .end_cell();
+
+    return msg;
+}
+```
+
+The function writes the default values for all the message headers, as in the recipe 
+["How to build an internal message with default headers"](#how-to-build-an-internal-message-with-default-headers).
+
+For further details on all the headers, see the message layout page and 
+the [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout).
+
+Here is an example on how to use function `build_message` to send a message:
+
+```func
+;; Create a slice from a string containing the destination address
+slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
+;; The amount to send in nanotons
+int amount = 1000000000;
+;; Create a slice storing the message body
+slice message_body = begin_cell() 
+    .store_uint(20, 32) ;; include an opcode
+    .store_slice("❤")   ;; include further data required by the opcode
+    .end_cell()
+    .begin_parse();     ;; Transform the cell to a slice
+
+;; Create the message cell
+cell msg = build_message(addr, amount, message_body);
+
+;; Send the message, using default sending mode 0
+send_raw_message(msg, 0);
+```
+
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
+
+**References:**
+
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- [`begin_cell`](./stdlib#begin-cell)
+- [`store_uint`](./stdlib#store-uint)
+- [`store_slice`](./stdlib#store-slice)
+- [`store_coins`](./stdlib#store-coins)
+- [`end_cell`](./stdlib/#end-cell)
+- [`begin_parse`](./stdlib/#begin-parse)
+- Message layout page
+- [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout)
+- Sending messages page
+- [`"<address string>"a` compile-time builtin](./literals#string-with-suffix-a), where `<address string>` is a string encoding an address.
+- [`send_raw_message`](./stdlib/#send-raw-message)
+
+
+### How to send a message containing a comment
+
+A "comment" is an ASCII string encoded as a slice. To send a message with a comment, 
+write a `0` opcode followed by the comment, as done in the following function. 
+The function receives the destination address, the amount to send, and the comment encoded as a slice.
+
+```func
+cell build_message(slice dest_addr, int amount, slice comment) {
+    cell msg = begin_cell()
+
+      ;; Sets 5 headers to their default values. 
+      ;; In particular, the bounceable header is true.
+      .store_uint(0x18, 1 + 1 + 1 + 1 + 2)     
+      .store_slice(dest_addr)  ;; destination address
+      .store_coins(amount)     ;; amount to send in nanotons
+
+      ;; Sets 7 more headers to their default values.
+      ;; Sets default value 0 to all the 7 headers.
+      .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) 
+    
+      ;; Message body starts here. 
+      ;; Write a 0 opcode, which means simple 
+      ;; message with a comment
+      .store_uint(0, 32)
+
+      ;; Write the slice containing the comment
+      .store_slice(comment)
+    .end_cell();
+
+    return msg;
+}
+```
+
+The function writes the default values for all the message headers, as in the recipe 
+["How to build an internal message with default headers"](#how-to-build-an-internal-message-with-default-headers).
+
+For further details on all the headers, see the message layout page and 
+the [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout).
+
+Here is an example on how to use function `build_message` to send a message:
+
+```func
+;; Create a slice from a string containing the destination address
+slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
+;; The amount to send in nanotons
+int amount = 1000000000;
+;; Create a slice storing the comment
+slice comment = "Hello from FunC!";
+
+;; Create the message cell
+cell msg = build_message(addr, amount, comment);
+
+;; Send the message, using default sending mode 0
+send_raw_message(msg, 0);
+```
+
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
+
+**References:**
+
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- [`begin_cell`](./stdlib#begin-cell)
+- [`store_uint`](./stdlib#store-uint)
+- [`store_slice`](./stdlib#store-slice)
+- [`store_coins`](./stdlib#store-coins)
+- [`end_cell`](./stdlib/#end-cell)
+- Message layout page
+- [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout)
+- Sending messages page
+- [`"<address string>"a` compile-time builtin](./literals#string-with-suffix-a), where `<address string>` is a string encoding an address.
+- [`"<ascii string>"` compile-time builtin](./literals#string-without-suffix), where `<ascii string>` is an ASCII string.
+- [`send_raw_message`](./stdlib/#send-raw-message)
 
 ### How to send a message with a long text comment
 
-A `cell` can store up to 127 characters (`<1023 bits`).
-A sequence of linked cells ("snake cells") must be used if more space is required.
+A `cell` can store up to 1023 bits of data, which means up to 127 8-bit characters.
+If we want to send a message with a really long comment, we should split the comment into several slices.
+Each slice should have at most 127 chars. Each slice should have a reference to the next one, 
+forming a snake-like structure.
+
+The following example illustrates the idea:
 
 ```func
-{-
-    If we want to send a message with really long comment, we should split the comment to several slices.
-    Each slice should have <1023 bits of data (127 chars).
-    Each slice should have a reference to the next one, forming a snake-like structure.
--}
+;; Create a slice from a string containing the destination address
+slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
+;; The amount to send in nanotons
+int amount = 1000000000;
 
-cell body = begin_cell()
-    .store_uint(0, 32) ;; zero opcode - simple message with comment
+;; Create a cell storing the message body
+;; It contains a long string, that must be split into several 
+;; slices, linked by references in a snake-like structure.
+;; Each slice has at most 127 chars
+cell message_body = begin_cell()
+    ;; zero opcode, i.e., message with comment
+    .store_uint(0, 32) 
+    ;; The long string starts here
     .store_slice("long, long, long message...")
+    ;; Create a reference to the next part of the string
     .store_ref(begin_cell()
-        .store_slice(" you can store string of almost any length here.")
+        .store_slice(" you can store a string of almost any length, ")
+        ;; And another reference to the last part of the string
         .store_ref(begin_cell()
-            .store_slice(" just don't forget about the 127 chars limit for each slice")
+            .store_slice(" as long as each slice has at most 127 chars.")
         .end_cell())
     .end_cell())
 .end_cell();
 
-cell msg = begin_cell()
-    .store_uint(0x18, 6) ;; flags
-    ;; We use literal `a` to get valid address inside slice from string containing address
-    .store_slice("EQBIhPuWmjT7fP-VomuTWseE8JNWv2q7QYfsVQ1IZwnMk8wL"a) ;; destination address
-    .store_coins(100) ;; amount of nanoTons to send
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1) ;; default message headers (see sending messages page)
-    .store_uint(1, 1) ;; we want to store body as a ref
-    .store_ref(body)
-.end_cell();
-send_raw_message(msg, 3); ;; mode 3 - pay fees separately, ignore errors
+;; Create the message cell
+cell msg = build_message(addr, amount, message_body);
+
+;; Send the message, using default sending mode 0
+send_raw_message(msg, 0);
 ```
 
-**Reference:** [`Internal messages`](/foundations/messages/overview)
+The `build_message` function is exactly the function used in the 
+recipe [How to set the message body as a ref in an internal message](#how-to-set-the-message-body-as-a-ref-in-an-internal-message).
 
-### How to send a deploy message (with `StateInit` only, with `StateInit` and body)
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
+
+**References:**
+
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- [`begin_cell`](./stdlib#begin-cell)
+- [`store_uint`](./stdlib#store-uint)
+- [`store_slice`](./stdlib#store-slice)
+- [`store_ref`](./stdlib#store-ref)
+- [`end_cell`](./stdlib/#end-cell)
+- [`"<address string>"a` compile-time builtin](./literals#string-with-suffix-a), where `<address string>` is a string encoding an address.
+- [`"<ascii string>"` compile-time builtin](./literals#string-without-suffix), where `<ascii string>` is an ASCII string.
+- [`send_raw_message`](./stdlib/#send-raw-message)
+- Sending messages page
+
+### How to send a deploy message
+
+When sending a deploy message, you need to prepare a StateInit cell, as done in the recipe [How to build a StateInit cell](#how-to-build-a-StateInit-cell).
+Once the StateInit cell is ready, you can prepare a message cell in which the message body is included with the headers, or the 
+message body is included as a separate cell. 
+
+The following function illustrates the case for the message body included in the same cell as the headers.
+The function receives the destination address, the amount to send, the StateInit cell, and 
+the message body as a slice.
 
 ```func
-() deploy_with_stateinit(cell message_header, cell state_init) impure {
-  var msg = begin_cell()
-    .store_slice(begin_parse(message_header))
-    .store_uint(2 + 1, 2) ;; init:(Maybe (Either StateInit ^StateInit))
-    .store_uint(0, 1) ;; body:(Either X ^X)
-    .store_ref(state_init)
+() deploy(slice dest_addr, int amount, cell state_init, slice message_body) {
+    cell msg = begin_cell()
+
+      ;; Sets 5 headers to their default values. 
+      ;; In particular, the bounceable header is true.
+      .store_uint(0x18, 1 + 1 + 1 + 1 + 2)     
+      .store_slice(dest_addr)  ;; destination address
+      .store_coins(amount)     ;; amount to send in nanotons
+
+      ;; Sets 5 more headers to their default values.
+      ;; Sets default value 0 to all the 5 headers.
+      .store_uint(0, 1 + 4 + 4 + 64 + 32) 
+    
+      ;; Sets the StateInit header to the 2-bit integer 3,
+      ;; which signals that a StateInit cell is included 
+      ;; as a separate reference cell.
+      .store_uint(3, 2)
+
+      ;; Set the message body header to the 1-bit integer 0,
+      ;; which indicates that the message body is
+      ;; included in the same cell.
+      .store_uint(0, 1)
+
+      ;; Message body starts here. 
+      ;; Write the message body slice
+      .store_slice(message_body)
+
+      ;; Include the StateInit cell as a reference 
+      .store_ref(state_init)
     .end_cell();
 
-  ;; mode 64 - carry the remaining value in the new message
-  send_raw_message(msg, 64);
-}
-
-() deploy_with_stateinit_body(cell message_header, cell state_init, cell body) impure {
-  var msg = begin_cell()
-    .store_slice(begin_parse(message_header))
-    .store_uint(2 + 1, 2) ;; init:(Maybe (Either StateInit ^StateInit))
-    .store_uint(1, 1) ;; body:(Either X ^X)
-    .store_ref(state_init)
-    .store_ref(body)
-    .end_cell();
-
-  ;; mode 64 - carry the remaining value in the new message
-  send_raw_message(msg, 64);
+    ;; Send the deploy message in standard mode
+    send_raw_message(msg, 0);
 }
 ```
 
+The function writes the default values for all the message headers, following the same strategy as in the recipe 
+["How to build an internal message with default headers"](#how-to-build-an-internal-message-with-default-headers),
+with the exception of the last two headers: the StateInit header and the message body header.
+
+According to the TLB for internal messages, the StateInit header satisfies:
+
+```text
+init:(Maybe (Either StateInit ^StateInit))
+```
+
+which means that the header needs at most two bits, one for deciding the `Maybe` and, in case the `Maybe` bit is active, 
+another for deciding the `Either`. In the function above, the StateInit header was set to the 2-bit integer `3`, which corresponds to the binary 
+`11`. The first bit corresponds to the `Maybe`, and since it is active, it signals that there is a StateInit 
+in the message. The second bit corresponds to the `Either`, and since it is active, it signals that the right branch 
+of the `Either` was chosen, i.e., the branch `^StateInit`, which means that the StateInit is included as a reference cell 
+in the message.   
+
+The message body header was set to the 1-bit value `0`, which means that the message body in included in the same cell 
+together with the headers.
+
+As a second example, the following function also includes a StateInit, but the message body is included as a separate cell.
+The function receives the destination address, the amount to send, the StateInit cell, and 
+the message body as a cell.
+
+```func
+() deploy_body_cell(slice dest_addr, int amount, cell state_init, cell message_body) {
+    cell msg = begin_cell()
+
+      ;; Sets 5 headers to their default values. 
+      ;; In particular, the bounceable header is true.
+      .store_uint(0x18, 1 + 1 + 1 + 1 + 2)     
+      .store_slice(dest_addr)  ;; destination address
+      .store_coins(amount)     ;; amount to send in nanotons
+
+      ;; Sets 5 more headers to their default values.
+      ;; Sets default value 0 to all the 5 headers.
+      .store_uint(0, 1 + 4 + 4 + 64 + 32) 
+    
+      ;; Sets the StateInit header to the 2-bit integer 3,
+      ;; which signals that a StateInit cell is included 
+      ;; as a separate reference cell.
+      .store_uint(3, 2)
+
+      ;; Set the message body header to the 1-bit integer 1,
+      ;; which indicates that the message body is
+      ;; included as a separate cell
+      .store_uint(1, 1)
+
+      ;; Include the StateInit cell as a reference 
+      .store_ref(state_init)
+
+      ;; Include the message body as a reference 
+      .store_ref(message_body)
+    .end_cell();
+
+    ;; Send the deploy message in standard mode
+    send_raw_message(msg, 0);
+}
+```
+
+For further details on all the headers, see the message layout page and 
+the [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout).
+
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
+
+**References:**
+
+- [Non-modifying notation using .](./expressions#non-modifying-notation)
+- [`begin_cell`](./stdlib#begin-cell)
+- [`store_uint`](./stdlib#store-uint)
+- [`store_slice`](./stdlib#store-slice)
+- [`store_coins`](./stdlib#store-coins)
+- [`store_ref`](./stdlib#store-ref)
+- [`end_cell`](./stdlib/#end-cell)
+- [`send_raw_message`](./stdlib/#send-raw-message)
+- Message layout page
+- [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout)
+- Sending messages page
+
+### How to send a message with the entire balance
+
+To transfer the entire balance of a smart contract, use send mode `128`. 
+This is particularly useful for proxy contracts that receive payments and forward them to the main contract.
+
+```func
+;; Create a slice from a string containing the destination address
+slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
+;; The amount to send in nanotons.
+;; In this case, it is irrelevant the amount we send,
+;; because, later, the send mode 128 will include
+;; all the contract's balance in the message
+int amount = 0;
+;; The comment to send
+slice comment = "Hello from FunC!";
+
+;; Create the message cell
+cell msg = build_message(addr, amount, comment);
+
+;; Send the message, using mode 128
+;; The mode 128 sends the entire contract's balance in the message
+send_raw_message(msg, 128);
+```
+
+The `build_message` function is exactly the function used in the 
+recipe [How to send a message containing a comment](#how-to-send-a-message-containing-a-comment).
+
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
+
+**References:**
+
+- [`"<address string>"a` compile-time builtin](./literals#string-with-suffix-a), where `<address string>` is a string encoding an address.
+- [`"<ascii string>"` compile-time builtin](./literals#string-without-suffix), where `<ascii string>` is an ASCII string.
+- Sending messages page
+- [`send_raw_message`](./stdlib/#send-raw-message)
+
+
+### How to send a message in a proxy contract
+
+A proxy contract facilitates message exchange between a user and a main contract. 
+The proxy contract redirects messages based on the parameters it receives in the incoming message.
+
+For example, this is a simple example of a proxy contract.
+It expects that the incoming message body `in_msg_body` contains the message mode, 
+destination address, and the slice to send as body.
+
+```func
+() recv_internal (slice in_msg_body) {
+    
+    ;; In the incoming message body, 
+    ;; the first byte contains the message mode
+    ;; for the redirected message
+    int mode = in_msg_body~load_uint(8); 
+
+    ;; Then, the destination address
+    slice addr = in_msg_body~load_msg_addr(); 
+
+    ;; And finally, everything that is left in "in_msg_body" 
+    ;; will be the redirected message's body
+    slice body = in_msg_body; 
+
+    ;; The amount to send in nanotons
+    int amount = 1000000000;
+
+    ;; Create the message cell
+    cell msg = build_message(addr, amount, body);
+
+    ;; Send the message, using the provided mode.
+    send_raw_message(msg, mode);
+}
+```
+
+The `build_message` function is exactly the function used in the 
+recipe [How to set the message body as a slice in an internal message](#how-to-set-the-message-body-as-a-slice-in-an-internal-message).
+
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
+
+**References:**
+
+- [Modifying notation using ~](./expressions#modifying-notation)
+- [load_uint](./stdlib/#load-uint)
+- [`load_msg_addr`](./stdlib/#load-msg-addr)
+- Sending messages page
+- [`send_raw_message`](./stdlib/#send-raw-message)
 
 ## Functions 
 
@@ -1674,7 +2044,7 @@ Modifying methods allow data to be updated within the same variable, similar to 
 }
 ```
 
-**Reference:** [`Modifying methods`](/languages/func/statements#modifying-methods)
+**Reference:** [`Modifying methods`](./statements#modifying-methods)
 
 
 ## Integer utilities
