@@ -1,22 +1,30 @@
 ---
 title: "Continuations"
-description: "Continuation is a block of code executed in TVM"
 ---
+
+[Continuation](https://en.wikipedia.org/wiki/Continuation) is a value that contains executable code. Continuations are used whenever non-linear code execution is required:
+
+- conditions
+- loops
+- function calls
+- throwing and catching exceptions
+
+Continuation can be thought as "pointer to a code", with an important distinction that, unlike pointers on other machines, it's not a number.
 
 ## Ordinary continuation
 
-The most common kind of continuations are the ordinary continuations, which are just code slices, containing (the remainder of) TVM bitcode. Optionally, it can contain any of the additional parameters:
+The most common kind of continuations are the ordinary continuations, which are just code Slices, containing (the remainder of) TVM bitcode. Optionally, it can contain any of the additional parameters:
 
-- Stack, containing a predefined initial stack for this continuation
-- Savelist, a list of values to initialize registers before running this continuation
-- Codepage, which is used to interpret the bitcode of this continuation
-- Number of arguments (`nargs`), which are pushed from the caller stack to this continuation's initial stack
+- **Stack**. A list of values that will be pushed on stack before continuation is executed.
+- **Savelist**. A list of values for registers before continuation is executed.
+- **Codepage**. Bitcode version used to run this continuation.
+- **Number of arguments (`nargs`)**. Number of values from call-side stack to push onto new stack before continuation is executed.
 
 ## Control flow
 
 ### Jumps
 
-The simplest way to change `cc` is to use [`JMPREF`](./instructions#db3d-jmpref) instruction. It just sets `cc` to the reference operand of `JMPREF` (stack and registers are not affected).
+The simplest way to change `cc` is to use [`JMPREF`](/tvm/instructions#db3d-jmpref) instruction. It just sets `cc` to the reference operand of `JMPREF` (stack and registers are not affected).
 
 The following rules are applied during the jump:
 
@@ -38,7 +46,7 @@ To simplify things, TVM has an _implicit jump_ mechanism, which automatically ju
 
 ### Calls
 
-_Call_ is a special type of jump, which also saves `cc` to `c0`, so the callee can pass execution back to the caller. That is how [`CALLREF`](./instructions#db3c-callref) works.
+_Call_ is a special type of jump, which also saves `cc` to `c0`, so the callee can pass execution back to the caller. That is how [`CALLREF`](/tvm/instructions#db3c-callref) works.
 
 ```fift Fift
 2 PUSHINT
@@ -64,19 +72,19 @@ During the call, the remaining of the current continuation is saved to `c0`. Als
 
 **TL-B**: `vmc_quit$1000 exit_code:int32 = VmCont`
 
-Exits TVM with `exit_code`. During [initialization of TVM](./initialization), `c0` is set to `Quit(0)`, and `c1` to `Quit(1)`.
+Exits TVM with `exit_code`. During [initialization of TVM](/tvm/initialization), `c0` is set to `Quit(0)`, and `c1` to `Quit(1)`.
 
 ### ExcQuit
 
 **TL-B**: `vmc_quit_exc$1001 = VmCont`
 
-Default exception handler. Terminates TVM with exception code popped from the stack. During [initialization of TVM](./initialization), `c2` is set to `ExcQuit`.
+Default exception handler. Terminates TVM with exception code popped from the stack. During [initialization of TVM](/tvm/initialization), `c2` is set to `ExcQuit`.
 
 ### PushInt
 
 **TL-B**: `vmc_pushint$1111 value:int32 next:^VmCont = VmCont`
 
-Pushes `value` on the stack and jumps to `next`. This continuation is only used in [`BOOLEVAL`](./instructions#edf9-booleval) instruction.
+Pushes `value` on the stack and jumps to `next`. This continuation is only used in [`BOOLEVAL`](/tvm/instructions#edf9-booleval) instruction.
 
 ### Envelope
 
@@ -88,28 +96,28 @@ Updates current VM state with `cdata` and jumps to `next`.
 
 **TL-B**: `vmc_repeat$10100 count:uint63 body:^VmCont after:^VmCont = VmCont`
 
-Executes `body` `count` times, then jumps to `after`. Under the hood, it just sets `body` `c0` to `Repeat(count - 1, body, after)` if `count > 0`, otherwise jumps to `after`. Used in [`REPEAT`](./instructions#e4-repeat) and variants.
+Executes `body` `count` times, then jumps to `after`. Under the hood, it just sets `body` `c0` to `Repeat(count - 1, body, after)` if `count > 0`, otherwise jumps to `after`. Used in [`REPEAT`](/tvm/instructions#e4-repeat) and variants.
 
 ### Again
 
 **TL-B**: `vmc_again$110001 body:^VmCont = VmCont`
 
-Executes `body` infinite times by setting `body` `c0` to `Again(body)`. Used in [`AGAIN`](./instructions#ea-again) and variants.
+Executes `body` infinite times by setting `body` `c0` to `Again(body)`. Used in [`AGAIN`](/tvm/instructions#ea-again) and variants.
 
 ### Until
 
 **TL-B**: `vmc_until$110000 body:^VmCont after:^VmCont = VmCont`
 
-Pops bool from stack, jumps to `body` with `c0 = Until(body, after)` if bool is `false`, otherwise jumps to `after`. Used in [`UNTIL`](./instructions#e6-until) and variants.
+Pops bool from stack, jumps to `body` with `c0 = Until(body, after)` if bool is `false`, otherwise jumps to `after`. Used in [`UNTIL`](/tvm/instructions#e6-until) and variants.
 
 ### WhileCondition
 
 **TL-B**: `vmc_while_cond$110010 cond:^VmCont body:^VmCont after:^VmCont = VmCont`
 
-Pops bool from stack, jumps to `body` with `c0 = WhileBody(cond, body, after)` if bool is `true`, otherwise jumps to `after`. Used in [`WHILE`](./instructions#e8-while) and variants.
+Pops bool from stack, jumps to `body` with `c0 = WhileBody(cond, body, after)` if bool is `true`, otherwise jumps to `after`. Used in [`WHILE`](/tvm/instructions#e8-while) and variants.
 
 ### WhileBody
 
 **TL-B**: `vmc_while_body$110011 cond:^VmCont body:^VmCont after:^VmCont = VmCont`
 
-Jumps to `cond` with `c0 = WhileCondition(cond, body, after)`. Used in [`WHILE`](./instructions#e8-while) and variants.
+Jumps to `cond` with `c0 = WhileCondition(cond, body, after)`. Used in [`WHILE`](/tvm/instructions#e8-while) and variants.
