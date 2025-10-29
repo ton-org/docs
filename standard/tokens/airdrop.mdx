@@ -2,4 +2,60 @@
 title: "Airdrop"
 ---
 
-Stub
+import { Aside } from '/snippets/aside.jsx';
+import { Image } from '/snippets/image.jsx';
+
+## The problem: distributing at scale
+
+You want to reward thousands (or millions) of users. Sending assets to each address proactively looks simple-until you see the bill. Network fees add up fast when the sender pays for every transfer.
+
+## The twist: let users claim
+
+An airdrop flips the model. Instead of the distributor paying all fees, each eligible user claims their allocation and covers the network fees themselves.
+
+The straightforward approach is to keep a precomputed mapping of recipient → allocation in the contract. When a user sends a claim message, the contract releases the preassigned drop for that user.
+
+<Image
+  src="/resources/images/claim_light.svg"
+  darkSrc="/resources/images/claim_dark.svg"
+  alt="claim"
+/>
+
+## The naive approach-and its limit
+
+Keep a precomputed mapping of recipient → allocation in the contract. When a user sends a claim message, the contract releases the preassigned amount. This works until the list becomes too large, starting at roughly 3,000 entries, problems begin to surface with the external limit (see more in [limits](/foundations/limits#message-and-transaction-limits)).
+
+## The scalable design: shard and prove
+
+To scale, we split the state across many contracts ([contract sharding](/contract-dev/contract-sharding)) and keep only a compact commitment to the list on-chain: a root hash of a dictionary (see [hashmap](/languages/TL-B/complex-and-non-trivial-examples#hashmap)). Users then present a [Merkle proof](/foundations/proofs/overview) to claim.
+
+We must also prevent double-claims. The airdrop has a small per-user marker contract that records whether the user has already claimed. This marker blocks any subsequent attempts.
+
+<Aside>
+  Why not simply update the Merkle root with each claim?
+
+  With many users, several claims are likely to arrive concurrently. After the first update, all other in-flight proofs become stale, causing many transactions to fail.
+</Aside>
+
+## How to prepare
+
+1. Prepare a list of eligible recipients and their allocations, and construct a dictionary.
+1. Store the root hash in the airdrop contract.
+1. Provide each user with their [Merkle proof](/foundations/proofs/overview) (or enable self-service proof retrieval).
+
+## Claim flow
+
+1. The user sends a message that deploys their per-user marker contract along with their Merkle proof.
+1. If valid, the marker records that the claim has been made and rejects further requests.
+1. The airdrop contract verifies the [Merkle proof](/foundations/proofs/overview) and transfers the asset to the address specified in the proof.
+
+<Image
+  src="/resources/images/merkle_claim_light.svg"
+  darkSrc="/resources/images/merkle_claim_dark.svg"
+  alt="Merkle claim"
+/>
+
+## Examples
+
+- [cNFT](/standard/tokens/nft/cNFT-how-it-works)
+- [Mintless Jetton](/standard/tokens/jettons/mintless/overview)
