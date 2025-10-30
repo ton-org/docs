@@ -4,13 +4,12 @@ title: "Bag of cells"
 
 import { Aside } from '/snippets/aside.jsx';
 
-Arbitrary data are represented in TON Blockchain by trees of cells. Such a tree of cells is transformed into a
-[DAG](https://en.wikipedia.org/wiki/Directed_acyclic_graph) of cells by identifying identical cells in the
+Arbitrary data are represented in TON Blockchain by trees of cells. Such a tree of cells is transformed into a [DAG](https://en.wikipedia.org/wiki/Directed_acyclic_graph) of cells by identifying unique cells in the
 tree. After that, each of the references of each cell might be replaced by the
 32-byte [representation hash](/tvm/serialization/cells#standard-cell-representation-and-its-hash) of the cell referred to. Thus a _bag of cells (BoC)_ is obtained.
-In general, a BoC can be obtained from several trees of cells, thus forming a forest. By convention, the root of the original tree of
-cells is a marked element of the resulting bag of cells, so that anybody receiving this bag of cells and knowing
-the marked element can reconstruct the original DAG of cells, hence also the original tree of cells.
+In general, a BoC can be obtained from several trees of cells, thus forming a forest. By convention, the roots of the original trees of
+cells are marked elements of the resulting bag of cells, so that anybody receiving this bag of cells and knowing
+the marked elements can reconstruct the original forest.
 However, this BoC needs to be serialized into a file, suitable for disk storage or network transfer.
 
 There may be many different ways to serialize such a data structure, each of which has its own goals and is convenient for specific cases.
@@ -64,7 +63,7 @@ The serialization process of a BoC `B` consisting of `n` cells can be outlined a
   indicating the precise format of the serialization, followed by integers
   `s ≥ 0`, `t ≥ 0`, `n ≤ 2^s`, an optional index consisting of $\lceil\frac{(n+1)*t}{8}\rceil$ bytes,
   and `Ln` bytes with the cell representations.
-- An optional `CRC32C` may be appended to the serialization for integrity
+- An optional [CRC32C](https://en.wikipedia.org/wiki/Cyclic_redundancy_check) may be appended to the serialization for integrity
   verification purposes.
 
 ### A classification of serialization schemes for bags of cells
@@ -76,7 +75,7 @@ Each TL-B scheme for a bag of cells must specify the following parameters.
 - The number of bits `t` used to represent _offsets_ of cell serializations. Usually `t` is also a multiple of eight.
 - A flag indicating whether an index with offsets `L1, ..., Ln` of cell serializations is present. This flag may be combined
   with `t` by setting `t = 0` when the index is absent.
-- A flag indicating whether the `CRC32` of the whole serialization is appended to it for integrity verification purposes.
+- A flag indicating whether the `CRC32C` of the whole serialization is appended to it for integrity verification purposes.
 - The total number of cells `n` present in the serialization.
 - The number of root cells `k ≤ n` present in the serialization. The root
   cells themselves are $c\_1, \ldots, c\_{k}$. All other cells present in the bag of
@@ -249,14 +248,12 @@ By combining everything into a single bit string, we get the result of serializa
 According to the TL-B scheme above there is the [SDK](https://github.com/ton-org/ton-core/blob/4577e94/src/boc/cell/serialization.ts#L1)
 for serialization and parsing BoC.
 
-Only serialization of BoCs with one root and no absent cells is supported.
+Only serialization of BoCs with one root and no absent cells is supported. There are two main functions:
+- `serializeBoc` for serialization. It has two parameters: `root` and options object with two boolean flags: `idx` and `crc32`. They indicate whether indexes and CRC32C will be included in serialization. The output is a Buffer with serialization.
+- `deserializeBoc` for parsing. It has one parameter: `src`, a Buffer that contains a serialized BoC. The output is a roots list of a given BoC.
 
 ```typescript
 import { beginCell, serializeBoc, deserializeBoc } from "@ton/core";
-// serializeBoc has two arguments:
-// root: Cell. A root cell of a given tree of cells
-// opt: { idx: boolean, crc32: boolean }. Two flags indicating whether indexes and CRC32C will be included in serialization
-// the output is a Buffer with serialization
 
 const innerCell = beginCell().storeUint(456, 16).endCell();
 
@@ -268,9 +265,6 @@ const serialized_boc_with_indexes_and_crc32 = serializeBoc(rootCell, {
     idx: true,
     crc32: true,
 });
-
-// deserializeBoc has one argument, src: a Buffer that contains a serialized BoC
-// the output is roots list of a given BoC
 
 const roots_of_first_boc = deserializeBoc(serialized_boc);
 
