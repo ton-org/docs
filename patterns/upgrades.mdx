@@ -2,199 +2,164 @@
 title: "Upgrading contracts"
 ---
 
-TON supports contract upgrades through `setCode` and `setData` operations, it will be complete in [action phase](/foundations/phases#action-phase). Contracts typically store a version number to track upgrades. This pattern is used in [vanity](/patterns/vanity) contracts and when protocols need to upgrade while preserving existing contracts, such as DEXs where liquidity is critical.
+import { Aside } from '/snippets/aside.jsx';
+
+TON supports upgrading contract code and data. In Tolk, use `contract.setCodePostponed()` and `contract.setData()`. The upgrade completes in the [action phase](/foundations/phases#action-phase).
+
+This pattern is used in [vanity](/patterns/vanity) contracts and when protocols need to upgrade while preserving existing contracts, such as DEXs where liquidity is critical.
+
+<Aside type="caution">
+  Contract upgrades change code behavior and can affect funds or contract state. Unauthorized upgrades can cause loss of control or funds. Restrict upgrade messages to trusted admin addresses only. For production contracts, use delayed upgrades to allow users to react to compromised admin keys.
+</Aside>
 
 ## Basic upgrade pattern
 
-```tact Tact
-import "@stdlib/ownable";
+The contract accepts upgrade messages containing new code and data. Only the admin can trigger upgrades.
 
-/// Message for upgrading contract code and data.
-message Upgrade {
-    /// New code of the contract.
-    /// Defaults to `null`, which keeps the previous code.
-    code: Cell? = null;
-
-    /// New data of the contract.
-    /// Defaults to `null`, which keeps the previous data.
-    data: Cell? = null;
+```tolk Tolk 
+struct (0x1111) UpgradeContract {
+    Data: cell?
+    Code: cell?
 }
 
-/// Implements a basic upgrade mechanism with owner validation.
-trait Upgradable with Ownable {
-    /// Contract owner address that can perform upgrades.
-    owner: Address;
+type AllowedMessages =
+    | UpgradeContract
 
-    /// Current contract version, auto-increments after each upgrade.
-    /// Meant to be private and only accessible through the relevant getter.
-    _version: Int as uint32;
+fun onInternalMessage(in: InMessage) {
 
-    /// Checks the sender, performs an upgrade, and increments the version.
-    receive(msg: Upgrade) {
-        let ctx = context();
-        self.validateUpgrade(ctx, msg);
-        self.upgrade(ctx, msg);
+    val msg = lazy AllowedMessages.fromSlice(in.body);
 
-        self._version += 1;
-    }
+    match (msg) {
 
-    /// Checks that the sender is the owner.
-    /// Can be overridden.
-    virtual inline fun validateUpgrade(_: Context, __: Upgrade) {
-        self.requireOwner();
-    }
-
-    /// Sets the code if it's not `null`.
-    /// Sets the data if it's not `null`.
-    /// Can be overridden.
-    virtual inline fun upgrade(_: Context, msg: Upgrade) {
-        if (msg.code != null) {
-            // Change of code will be applied at the end of this transaction
-            setCode(msg.code!!);
+        UpgradeContract => {
+            var storage = lazy Storage.load();
+            assert (in.senderAddress == storage.adminAddress) throw 1111;
+            if (msg.Code != null) {
+                contract.setCodePostponed(msg.Code!);
+            }
+            if (msg.Data != null) {
+                contract.setData(msg.Data!);
+            }
         }
-        if (msg.data != null) {
-            // Change of data will be immediate
-            setData(msg.data!!);
 
-            // By the end of every transaction,
-            // the Tact compiler automatically adds a call to setData() for your convenience.
-            // However, we've already set the data ourselves,
-            // so let's stop the execution now to prevent a secondary call to setData().
-            throw(0);
+        else => { 
+            // just accept TON 
         }
-    }
-
-    /// A getter to check if the contract uses this trait.
-    get fun isUpgradable(): Bool {
-        return true;
-    }
-
-    /// A getter returning the current version of the contract.
-    get fun version(): Int {
-        return self._version;
     }
 }
 
-/// Change of code will be applied by the end of the current transaction.
-asm fun setCode(code: Cell) { SETCODE }
+struct Storage {
+    adminAddress: address
+}
+
+fun Storage.load() {
+    return Storage.fromCell(contract.getData());
+}
+
+fun Storage.save(self) {
+    contract.setData(self.toCell());
+}
 ```
 
 ## Delayed upgrades for production safety
 
 When upgrading protocols that are already running and have users, delayed upgrades are a best practice. This provides additional security layers: if an admin is compromised, you can react in time. Users can also see the upgrade and withdraw funds from the protocol if it has been compromised.
 
-```tact
-import "@stdlib/ownable";
+The pattern adds a time delay between requesting and approving an upgrade. The admin must first request an upgrade, wait for a timeout period, then approve it.
 
-/// Message for upgrading contract code and data with a timeout.
-message Upgrade {
-    /// New code of the contract.
-    /// Defaults to `null`, which keeps the previous code.
-    code: Cell? = null;
-
-    /// New data of the contract.
-    /// Defaults to `null`, which keeps the previous data.
-    data: Cell? = null;
+```tolk Tolk
+struct UpgradeContract {
+    Data: cell?
+    Code: cell?
 }
 
-/// Message for confirming delayed upgrade execution.
-/// Must be sent after the timeout specified in the `Upgrade` message has elapsed.
-/// Can only be processed by contracts that implement the `DelayedUpgradable` trait.
-message Confirm {}
-
-/// Extended version of `Upgradable` that adds a delay mechanism.
-///
-/// The upgrade process happens in two steps:
-/// 1. Owner initiates an upgrade by sending the `Upgrade` message.
-/// 2. After a timeout period, the owner confirms the upgrade by sending the `Confirm` message.
-trait DelayedUpgradable with Upgradable {
-
-    /// Contract owner address that can perform upgrades.
-    owner: Address;
-
-    /// Current contract version, auto-increments after each upgrade.
-    /// Meant to be private and only accessible through the relevant getter.
-    _version: Int as uint32;
-
-    /// Timestamp in seconds of the last `Upgrade` message arrival.
-    /// Used to enforce a timeout period before the confirmation.
-    initiatedAt: Int;
-
-    /// Contains new code, new data, and a timeout period.
-    upgradeInfo: Upgrade;
-
-    /// Delay in seconds before upgrade can be confirmed.
-    /// Defaults to zero, which means the upgrade can be confirmed immediately.
-    /// Unused in `Upgradable` trait.
-    timeout: Int;
-
-    /// Confirms and executes a pending upgrade only after `upgradeInfo.timeout`
-    /// seconds have passed since the last `_initiatedAt`.
-    receive(msg: Confirm) {
-        require(now() >= self.initiatedAt + self.timeout, "DelayedUpgradable: Cannot confirm upgrade before timeout");
-
-        if (self.upgradeInfo.code != null) {
-            // Change of code will be applied at the end of this transaction
-            setCode(self.upgradeInfo.code!!);
-        }
-        if (self.upgradeInfo.data != null) {
-            // Change of data will be immediate
-            setData(self.upgradeInfo.data!!);
-
-            // By the end of every transaction,
-            // the Tact compiler automatically adds a call to setData() for your convenience.
-            // However, we have already set the data ourselves,
-            // so let us stop the execution now to prevent a secondary call to setData().
-            throw(0);
-        }
-    }
-
-    /// Instead of performing an upgrade right away,
-    /// saves details for delayed execution.
-    override inline fun upgrade(_: Context, msg: Upgrade) {
-        self.upgradeInfo = msg;
-        self.initiatedAt = now();
-    }
+struct CurrentRequest {
+    newUpgrade: UpgradeContract
+    timestamp: uint32
 }
 
-//
-// Helper traits and functions described earlier on this page
-//
+struct (0x00000001) RequestUpgrade {
+    newUpgrade: UpgradeContract
+}
 
-trait Upgradable with Ownable {
-    owner: Address;
-    _version: Int as uint32;
+struct (0x00000002) RejectUpgrade { }
 
-    receive(msg: Upgrade) {
-        let ctx = context();
-        self.validateUpgrade(ctx, msg);
-        self.upgrade(ctx, msg);
+struct (0x00000003) ApproveUpgrade { }
 
-        self._version += 1;
-    }
+type AllowedMessages =
+    | RequestUpgrade
+    | RejectUpgrade
+    | ApproveUpgrade
 
-    virtual inline fun validateUpgrade(_: Context, __: Upgrade) {
-        self.requireOwner();
-    }
+fun onInternalMessage(in: InMessage) {
 
-    virtual inline fun upgrade(_: Context, msg: Upgrade) {
-        if (msg.code != null) {
-            setCode(msg.code!!);
+    val msg = lazy AllowedMessages.fromSlice(in.body);
+
+    match (msg) {
+
+        RequestUpgrade => {
+            var storage = lazy Storage.load();
+
+            assert (in.senderAddress == storage.adminAddress) throw 1111;
+            assert (storage.CurrentRequest == null) throw 101;
+
+            storage.CurrentRequest = {
+                newUpgrade: msg.newUpgrade,
+                timestamp: blockchain.now()
+            };
+
+            storage.save();
         }
-        if (msg.data != null) {
-            setData(msg.data!!);
-            throw(0);
+
+        RejectUpgrade => {
+            var storage = lazy Storage.load();
+
+            assert (in.senderAddress == storage.adminAddress) throw 1111;
+            assert (storage.CurrentRequest != null) throw 201;
+
+            storage.CurrentRequest = null;
+            storage.save();
         }
-    }
 
-    get fun isUpgradable(): Bool {
-        return true;
-    }
+        ApproveUpgrade => {
+            var storage = lazy Storage.load();
+            
+            assert (in.senderAddress == storage.adminAddress) throw 1111;
+            assert (storage.CurrentRequest != null) throw 301;
+            assert (storage.CurrentRequest!.timestamp + storage.timeout < blockchain.now()) throw 302;
 
-    get fun version(): Int {
-        return self._version;
+            if (storage.CurrentRequest!.newUpgrade.Code != null) {
+                contract.setCodePostponed(storage.CurrentRequest!.newUpgrade.Code!);
+            }
+            if (storage.CurrentRequest!.newUpgrade.Data != null) {
+                contract.setData(storage.CurrentRequest!.newUpgrade.Data!);
+            }
+            storage.CurrentRequest = null;
+            storage.save();
+        }
+
+        else => { 
+            // just accept TON 
+        }
     }
 }
 
-asm fun setCode(code: Cell) { SETCODE }
+get fun currentRequest() {
+    var storage = lazy Storage.load();
+    return storage.CurrentRequest;
+}
+
+struct Storage {
+    adminAddress: address,
+    timeout: uint32,
+    CurrentRequest: CurrentRequest?
+}
+
+fun Storage.load() {
+    return Storage.fromCell(contract.getData());
+}
+
+fun Storage.save(self) {
+    contract.setData(self.toCell());
+}
 ```
