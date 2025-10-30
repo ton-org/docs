@@ -5,60 +5,60 @@ sidebarTitle: "Catchain overview"
 
 import {Aside} from "/snippets/aside";
 
-Catchain is a communication protocol between validators. It does not execute the consensus algorithm itself but prepares data required for the decision-making of a higher-level component: [BCP - Block Consensus Protocol](/foundations/consensus/bcp-overview)
+Catchain is a communication protocol between validators. It does not execute the consensus algorithm itself but prepares the data required for the decision-making of a higher-level component: [BCP - Block Consensus Protocol](/foundations/consensus/bcp-overview).
 
-## Проблема
+## Problem
 
-В полностью ас любой участник сети может проверить, действительно ли такое сообщение существовало и получить его.инхронной системе при отправке сообщений нет никаких гарантий, что сообщение дойдёт. А если дойдёт, то не известно, в каком порядке. Даже если А отправляет 2 сообщения для Б, нет никаких гарантий порядка, в котором эти сообщения дойдут, если конечно они вообще дойдут. Более того, считается, что некоторые из акторов сети могут совершать Византийские ошибки. Требуется не допускать ситуации, при которой византийские узлы мешают функциональности системы.
+In a fully asynchronous network there are no guarantees that a message will ever be delivered, nor in which order it will arrive. Even if node A sends two messages to node B, there is no guarantee that they will be delivered in the same order, or that they will be delivered at all. Moreover, some actors in the network are assumed to behave in a Byzantine way. The system must avoid situations where Byzantine nodes prevent honest nodes from making progress.
 
-## Вводные данны
+## Assumptions
 
-Будем считать, что все участники сети известны в том смысле, что каждому участнику сети известен ADNL адрес любого другого участника сети и его публичный ключ. Таким образом, участники могут безопасно обмениваться сообщениями, шифруя или подписывая их своими приватными ключами. И подпись любого участника может быть проверена любым другим участником.
+All participants of the network are known. Each validator knows the ADNL address and the public key of every other validator. Messages can therefore be encrypted and signed with private keys, and every signature can be verified by every other participant.
 
-## Задачи протокола
+## Protocol goals
 
-Catchain помогает частично решить эту проблему. Он описывает
-- как выбирать узлы "соседи"
-- Описывает формат сообщений, у которых есть зависимости (другие сообщения)
-- Описывает, как получать зависимости
-- Как выявлять и наказывать те узлы в сети, которые мешают правильной работе сети
+Catchain helps to address the issues above by describing:
 
-Основной задачей протокола является предоставление возможности отправки сообщений, которые явно зависят от других сообщений, отправленных, возможно, другим актором, возможно, собой. Более того, эти зависимости задаются таким образом, что узел, получивший сообщение, может скачать зависимости и проверить их валидность.
+- how to choose "neighbor" nodes;
+- the format of messages with explicit dependencies (other messages);
+- how to fetch dependencies;
+- how to detect and penalize nodes that try to disrupt the system.
 
-## Как выбирать узлы соседи
+The main purpose of the protocol is to allow validators to send messages that explicitly depend on other messages, possibly produced by different actors. Dependencies are encoded in such a way that a node receiving a message can download the referenced messages and verify their validity.
 
-Catchain предполагает выбор пяти узлов - соседей, случайным образом, а так же их периодическое обновление (через случайный интервал от 60 до 120 секунд в текущей конфигурации). Важно понимать, что отношение "соседства" не является симметричным, то есть если B сосед A, это не значит что А сосед B и наоборот.
+## Choosing neighbor nodes
 
-## Идентификация сообщений
+Catchain selects five neighbors at random and periodically refreshes the list (every random interval between 60 and 120 seconds in the current configuration). The neighbor relation is not symmetric: if B is a neighbor of A, it does not imply that A is also a neighbor of B.
 
-Таким образом, сообщение в catchain можно уникально идентифицировать по паре значений — (отправитель; номер сообщения отправителя)
+## Message identification
+
+Every catchain message is uniquely identified by the pair `(sender; sender's sequence number)`.
 
 <Aside type="note">
-  Строго говоря, один и тот же набор участников может участвовать в различных catchain раундах, поэтому к id сообщения добавляется id раунда, чтобы отличать сообщения из предыдущих раундов. Однако для упрощения обзорной статьи возможность создания различных раундов опускается.
+  Strictly speaking, the same set of participants can take part in multiple catchain rounds, so the message identifier is extended with the round identifier to distinguish messages from previous rounds. However, for the sake of this overview the possibility of multiple rounds is omitted.
 </Aside>
 
-Таким образом получается, что каждый актор должен сам индексировать свои сообщения и повышать счётчик. В силу того, что узлы могут быть Византийскими, требуется проверять, что узлы верно ведут свой счётчик.
+Each actor is responsible for indexing its own messages and increasing the sequence counter. Because nodes can be Byzantine, honest validators must verify that counters are monotonically increasing.
 
-### Проверка на разные блоки с одинаковым id
+### Detecting forks (duplicate message IDs)
 
-Если некий актор выпускает два различных по содержанию сообщения с id = (A; i), где i - номер сообщения, то такая ситуация называется форком. В таком случае, любой актор, заметивший это может сконструировать доказательство того, что такие 2 сообщения существовали. Учитывая, что публичные ключи всех участников известны, можно сконструировать доказательство, состоящее из id блока и двух подписей к нему. Это доказательство плохого поведения транслируется всем соседям в сети, а затем их соседям и так далее. Любой из честных участников сети, получивший доказательство, начинает игнорировать любые сообщения от узла A, а так же все сообщения, которые зависят от сообщений узла А.
+If an actor issues two messages with the same identifier `(A; i)` but different payloads, the situation is called a fork. Any validator who observes it can construct a proof consisting of the block identifier and two distinct signatures. Since all public keys are known, this proof can be broadcast to the neighbors, and then further across the network. Every honest participant who receives the proof starts ignoring all messages from node A, as well as all messages that depend on A's messages.
 
 <Aside title="tip">
-  По оригинальной задумке, в случае применения Catchain для реализации консенсуса на блокчейне TON, доказательство форка может быть отправлено в смарт-контракт [Elector](/foundations/system#elector), однако данная идея так и не была реализована.
+  According to the original design, when Catchain is used for the TON blockchain consensus, a fork proof can be submitted to the [Elector](/foundations/system#elector) smart contract. However, this idea has not been implemented.
 </Aside>
 
-### Проверка на последовательные id
+### Detecting skipped sequence numbers
 
-Считается, что любое сообщение (X; i), кроме, конечно, (X;0), зависит от (X;i-1). Если узел выпустить сообщение (X; i), а затем выпустить (X; i + j, j > 1), то честный узел, получивший данное сообщение, не сможет получить сообщение (X; i + j - 1), а значит не сможет обработать (X; i + j). Таким образом, пропуск id сообщений становится бессмысленным, т.к. сообщения, следующие за пропущенным, игнорируются всеми правильными узлами.
+Every message `(X; i)` (except the genesis message `(X; 0)`) depends on `(X; i - 1)`. If a node produces `(X; i)` and later emits `(X; i + j)` with `j > 1`, an honest node will not be able to obtain `(X; i + j - 1)` and therefore will not process `(X; i + j)`. Skipping sequence numbers is thus pointless: all messages following the missing one are ignored by honest validators.
 
+## Dependency retrieval process
 
-## Процесс получения зависимостей
+Every 0.1–0.2 seconds a node selects three random neighbors and starts a synchronization round. Synchronization can be performed in two ways:
 
-Каждые 0.1 - 0.2 секунды узел выбирает трёх случайных соседей и запускает с ними синхронизацию. Синхронизация может выполняться двумя способами
+- Exchange a compressed summary of already delivered messages. If the neighbor has more recent blocks, it provides them.
+- Perform targeted downloads of specific messages. This is usually used if, after the bulk synchronization above, there are still individual missing dependencies.
 
-- Отправка (в сжатом виде) информации об уже полученных сообщениях. Если у соседа есть блоки сообщения свежее, он их предоставляет.
-- Таргетированная подкачка конкретных сообщений. Обычно применяется, если после общей синхронизации первым способом, остались какие-то пропущенные единичные зависимости.
+## Encryption
 
-## Шифрование
-
-Стоит отметить, что все описанные выше действия происходят в так называемом [приватном оверлее ADNL](ссылка). Общий сессионный ключ не считается, вместо этого для каждой пары узлов считается собственный ключ, которым и шифруются тела сообщений. На практике это означает что стороннему наблюдателю в TON Blockchain нельзя читать сообщения валидаторов, которые они посылают друг-другу.
+All the steps above happen inside a [private ADNL overlay](/foundations/network/adnl). There is no shared session key; instead each pair of nodes derives its own key that is used to encrypt message bodies. In practice this means that an external observer in the TON blockchain cannot read the messages that validators exchange with each other.
