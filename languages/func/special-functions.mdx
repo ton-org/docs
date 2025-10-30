@@ -1,0 +1,141 @@
+---
+title: "Reserved functions"
+sidebarTitle: "Reserved functions"
+noindex: "true"
+---
+
+FunC (specifically, the Fift assembler) reserves several function names with predefined [IDs](./functions#method-id-specifier):
+
+- [`recv_internal`](#receive-internal) and [`main`](#main) have `id = 0`
+- [`recv_external`](#receive-external) has `id = -1`
+- [`run_ticktock`](#run-ticktock) has `id = -2`
+- [`split_prepare`](#split-prepare) has `id = -3`
+- [`split_install`](#split-install) has `id = -4`
+
+Every program must include a function with `id = 0`, meaning it must define either `recv_internal` or `main`, but **not** both.
+
+#### Receive internal
+
+The `recv_internal` function is invoked when a smart contract receives an inbound **internal message**.
+Any of the following `recv_internal` declarations can be used.
+
+```func
+() recv_internal(int balance, int msg_value, cell in_msg_cell, slice in_msg_body)
+() recv_internal(int msg_value, cell in_msg_cell, slice in_msg_body)
+() recv_internal(cell in_msg_cell, slice in_msg_body)
+() recv_internal(slice in_msg_body)
+() recv_internal()
+```
+
+Here,
+
+- `balance` is the smart contract balance in nanotons after adding the amount `msg_value` in the inbound message. It is an integer.
+- `msg_value` is the amount in nanotons included in the inbound message. It is an integer.
+- `in_msg_cell` is the inbound message, given as a cell.
+- `in_msg_body` is the inbound message body, equal to the body field in `in_msg_cell`. The body is given as a cell slice.
+
+<Aside>
+  Each time a contract receives a message, the [TVM initializes](/tvm/initialization) and pushes into the stack the following four pieces of data, in this order:
+
+  - The balance of the contract.
+  - The coins included in the inbound message.
+  - The message itself as a cell.
+  - The message body as a slice.
+
+  This means that the message body slice is the value at the top of the stack, since it was pushed last.
+
+  At the moment `recv_internal` executes, its arguments are assigned values from the stack as follows:
+
+  ```func
+  () recv_internal(arg_1, arg_2, ....., arg_n-1, arg_n)
+  ;;                 |       |            |        |
+  ;;                 |       |            |        value at the top of the stack 
+  ;;                 |       |            |
+  ;;                 |       |            second value from the top of the stack
+  ;;                 |       |
+  ;;                 |       (n-1)-th value from the top of the stack
+  ;;                 |
+  ;;                 n-th value from the top of the stack
+  ```
+
+  This means that if, for example, you use the declaration:
+
+  ```func
+  () recv_internal(cell in_msg_cell, slice in_msg_body)
+  ```
+
+  `in_msg_body` will get assigned the value at the top of the stack (which corresponds to the message body slice),
+  and `in_msg_cell` will receive the second value from the top of the stack (which corresponds to the message as a cell).
+  The rest of values in the stack remain unassigned to variables during the execution of `recv_internal`, meaning that they
+  will remain unused in the stack and will be dropped once the TVM finishes execution.
+
+  The declarations of `recv_internal` with fewer arguments consume slightly less gas,
+  because each unused value in the stack is automatically dropped from the stack once the TVM finishes execution, without the need
+  to spend gas by explicitly executing a DROP instruction when `recv_internal` finishes.
+</Aside>
+
+<Aside
+  type="danger"
+>
+  The FunC compiler does not check if the `recv_internal` arguments will actually match the values in the stack.
+  For example, the following declaration will compile, but leads to errors during contract execution, because variable `in_msg_body` will
+  not hold a slice, but the contract's balance, which is an integer!
+
+  ```func
+  () recv_internal(slice in_msg_body, int msg_value, cell in_msg_cell, int balance)
+  ```
+
+  Be careful of accidentally permuting the arguments in `recv_internal`. Only use the five possible declarations listed previously for `recv_internal`.
+</Aside>
+
+#### Main
+
+`main` is an alias for `recv_internal`.
+
+If the intention of the code is to handle inbound internal messages, it is preferable to use `recv_internal` over `main`,
+since `recv_internal` states more clearly the intention of the code.
+
+#### Receive external
+
+The `recv_external` function handles inbound **external messages**. It allows declarations similar to those for [`recv_internal`](#receive-internal):
+
+```func
+() recv_external(int balance, int msg_value, cell in_msg_cell, slice in_msg_body)
+() recv_external(int msg_value, cell in_msg_cell, slice in_msg_body)
+() recv_external(cell in_msg_cell, slice in_msg_body)
+() recv_external(slice in_msg_body)
+() recv_external()
+```
+
+The only difference is that `msg_value` is always `0`, since external messages cannot carry coins, as they are created outside the blockchain.
+
+The behavior of the stack is identical to the behavior described for [`recv_internal`](#receive-internal).
+
+#### Run ticktock
+
+The `run_ticktock` triggers when tick and tock transactions occur. It allows the following possible declarations:
+
+```func
+() run_ticktock(int balance, int address, int is_tock)
+() run_ticktock(int address, int is_tock)
+() run_ticktock(int is_tock)
+() run_ticktock()
+```
+
+where:
+
+- `balance` is the smart contract balance in nanotons. It is an integer.
+- `address` is the address of the current account inside the MasterChain. It is an unsigned 256-bit integer.
+- `is_tock` a flag that indicates if it is a tock transaction (`-1`) or a tick transaction (`0`).
+
+The behavior of the stack is identical to the behavior described for [`recv_internal`](#receive-internal).
+
+### Split prepare
+
+The `split_prepare` would trigger when a split prepare transaction occurs. Even though the `split_prepare` name is currently reserved,
+split prepare transactions are currently not in use.
+
+### Split install
+
+The `split_install` would trigger when a split install transaction occurs. Even though the `split_install` name is currently reserved,
+split install transactions are currently unavailable.

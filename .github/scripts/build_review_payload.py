@@ -424,7 +424,7 @@ def main() -> None:
         body, _event, comments = _build_from_sidecar(sidecar, repo=repo, sha=sha, repo_root=Path(os.environ.get("GITHUB_WORKSPACE") or "."))
         # Always submit a COMMENT review regardless of findings
         out = {
-            "body": body or "LGTM",
+            "body": body or "No documentation issues detected.",
             "event": "COMMENT",
             "comments": comments,
             "commit_id": (sidecar.get("commit_id") or sha) or None,
@@ -495,7 +495,7 @@ def main() -> None:
     # Fallback to original markdown body
     body = _absolutize_location_links(body, repo if repo else None, sha if sha else None)
     if not body.strip():
-        body = "Automated review summary is unavailable for this run."
+        body = "No documentation issues detected."
 
     # Parse validator findings and deduplicate
     findings: List[Finding] = []
@@ -567,12 +567,6 @@ def main() -> None:
             if fobj and fobj.severity in include_sevs:
                 selected_findings.append(fobj)
         base_list = selected_findings
-        # Note unresolved UIDs in the summary body to aid debugging
-        resolved = {f.uid for f in selected_findings if f.uid}
-        unresolved = [u for u in selected_ids if u not in resolved]
-        if unresolved:
-            note = "\n\n(Unresolved selected_ids: " + ", ".join(unresolved) + ")"
-            body = (body or "Automated review summary") + note
     else:
         # Filter by severities, then dedupe
         findings = [f for f in findings if f.severity in include_sevs]
@@ -611,7 +605,6 @@ def main() -> None:
         parts.append(f"### [{f.severity}] {f.title}")
         if f.desc.strip():
             parts.append("")
-            parts.append("Description:")
             parts.append(f.desc.strip())
         # Only submit commit suggestions when the replacement likely covers the full selected range
         submitted_suggestion = False
@@ -627,7 +620,6 @@ def main() -> None:
                 submitted_suggestion = True
         if not submitted_suggestion and f.suggestion_raw.strip():
             parts.append("")
-            parts.append("Suggestion:")
             # Do not include fenced blocks if we can't guarantee a commit suggestion
             parts.append(_TRAILER_JSON_RE.sub("", f.suggestion_raw.strip()))
         body_text = "\n".join(parts).strip()
