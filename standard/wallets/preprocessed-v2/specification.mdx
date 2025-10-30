@@ -86,6 +86,9 @@ The sequence number is limited to 16 bits (instead of 32 bits used in other wall
 **Protection mechanism:**\
 Even if an attacker intercepts an old message, they cannot replay it because the sequence number will no longer match the current value in storage.
 
+**Wrap‑around note:**\
+See [Replay protection mechanism](#replay-protection-mechanism) for guidance on wrap‑around and `valid_until` windows.
+
 ## External message structure
 
 External messages sent to Preprocessed Wallet V2 have a specific layout.
@@ -102,8 +105,11 @@ sign:bits512
 **Key point:**\
 The signature is in the root cell (512 bits); all other parameters are in a reference cell (`MsgInner`).
 
-<Aside type="tip">
-  **Gas optimization:** This structure saves gas units during signature verification. If the signature were in the same cell as the message body, the contract would need to use `slice_hash()` (which rebuilds the cell internally, costing extra gas) instead of simply taking `cell_hash()` of the reference.
+<Aside
+  type="tip"
+  title="Gas optimization"
+>
+  This structure saves gas units during signature verification. If the signature were in the same cell as the message body, the contract would need to use `slice_hash()` (which rebuilds the cell internally, costing extra gas) instead of simply taking `cell_hash()` of the reference.
 </Aside>
 
 ---
@@ -170,7 +176,7 @@ Exit code `33`.
 A serialized `OutList` containing up to 255 actions to execute.
 
 **Validation:**\
-The contract validates that the number of actions does not exceed 255.
+No validation.
 
 **Supported actions:**
 All standard TVM actions are supported without restrictions:
@@ -182,8 +188,9 @@ All standard TVM actions are supported without restrictions:
 
 <Aside
   type="danger"
+  title="Critical security warning"
 >
-  **Critical security warning:** Preprocessed Wallet V2 does not protect against `action_set_code` actions. If you accidentally include a `set_code` action in your message, the wallet contract code will be changed, potentially making your funds inaccessible. Always verify your action lists before sending.
+  Preprocessed Wallet V2 does not protect against `action_set_code` actions. If you accidentally include a `set_code` action in your message, the wallet contract code will be changed, potentially making your funds inaccessible. Always verify your action lists before sending.
 </Aside>
 
 **Maximum actions:** 255 (maximum number of out actions in TON)
@@ -215,9 +222,15 @@ Preprocessed Wallet V2 uses sequence numbers and time-based expiration to preven
 
 **Recommended expiration:**
 
-- 1 hour (3600 seconds) for most use cases
+- 1 minute (60 seconds) for most use cases
 - Shorter for high-frequency operations
 - Longer for batch operations with network delays
+
+### Wrap‑around and validity window
+
+When `seq_no` wraps (65535 → 0), previously sent messages that used the same numeric `seq_no` remain non‑applicable if their `valid_until` has already expired. Safety relies on the dual check: current `seq_no` equality and unexpired `valid_until`.
+
+Do not set `valid_until` excessively far in the future. A very long validity window increases the chance that, after wrap‑around, an old message with the same `seq_no` is still valid. Keep the window short (for example, ≤ 60 seconds) unless you have a specific operational reason.
 
 ### Signature verification
 
@@ -249,8 +262,11 @@ Each external message can trigger up to 255 actions.
 **Impact:**\
 Suitable for batch operations with up to 255 actions per transaction.
 
-<Aside type="note">
-  **Sequential processing:** Preprocessed Wallet V2 uses sequential `seq_no` processing. This means you must wait for each transaction to complete before sending the next one.
+<Aside
+  type="note"
+  title="Sequential processing"
+>
+  Preprocessed Wallet V2 uses sequential `seq_no` processing. This means you must wait for each transaction to complete before sending the next one.
 </Aside>
 
 ## Implementation
