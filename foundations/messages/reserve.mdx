@@ -2,7 +2,7 @@
 title: "Reserve coins"
 ---
 
-_Reserving coins_ is one of the four actions that a smart contract can perform during the [action phase](/foundations/phases#action-phase). In TVM it is implemented via the [`RAWRESERVE`](/tvm/instructions#fb02-rawreserve)
+_Reserving coins_ is one of actions that a smart contract can perform during the [action phase](/foundations/phases#action-phase). In TVM it is implemented via the [`RAWRESERVE`](/tvm/instructions#fb02-rawreserve)
 instruction that takes from the stack an `amount` of nanotoncoins to reserve and an integer `mode` specifying a way of the reservation.
 The reservation action is queued to the _output action list_ of a smart contract, which contains other actions such as _message sends_.
 
@@ -14,23 +14,23 @@ The `mode` parameter is a bitmask that specifies how the reservation amount is c
 
 | Mode value | Convenient name    | Description                                             |
 | ---------: | :----------------- | ------------------------------------------------------- |
-|        $0$ | `ReserveExact`     | Reserves exactly the specified `amount` of nanotoncoin. |
-|        $1$ | `ReserveAllExcept` | Reserves all but the specified `amount` of nanotoncoin. |
-|        $2$ | `ReserveAtMost`    | Reserves at most the specified `amount` of nanotoncoin. |
+|        `0` | `ReserveExact`     | Reserves exactly the specified `amount` of nanotoncoin. |
+|        `1` | `ReserveAllExcept` | Reserves all but the specified `amount` of nanotoncoin. |
+|        `2` | `ReserveAtMost`    | Reserves at most the specified `amount` of nanotoncoin. |
 
 Additionally, the resulting `mode` can have the following optional flags added:
 
 | Flag value | Convenient name             | Description                                                                                                                           |
 | ---------: | :-------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-|       $+4$ | `ReserveAddOriginalBalance` | Increases the `amount` by the original balance (i.e. without incoming message value) of the current account before the compute phase. |
-|       $+8$ | `ReserveInvertSign`         | Negates the `amount` value before performing the reservation.                                                                         |
-|      $+16$ | `ReserveBounceIfActionFail` | Bounces the transaction if the reservation fails.                                                                                     |
+|       `+4` | `ReserveAddOriginalBalance` | Increases the `amount` by the original balance (i.e. without incoming message value) of the current account before the compute phase. |
+|       `+8` | `ReserveInvertSign`         | Negates the `amount` value before performing the reservation.                                                                         |
+|      `+16` | `ReserveBounceIfActionFail` | Bounces the transaction if the reservation fails.                                                                                     |
 
-Below we describe how the reservation action is implemented. If you just want to see examples when the reservation is used in practice and how to solve related tasks, go to the [reserve patterns](/patterns/reserve) page.
+Below we describe how the reservation action is implemented. To see examples of when the reservation is used in practice and learn how to solve related problems, visit the [reserve patterns](/patterns/reserve) page.
 
 ## Implementation
 
-The current implementation of the reservation is complex. In this section, we will discuss the reservation flow and what errors can occur during it.
+In this section, we will discuss the reservation flow and what errors can occur during it.
 
 But first, let's fix a notation:
 
@@ -44,20 +44,20 @@ But first, let's fix a notation:
 
 ### Flow
 
-Bellow we outline the reservation flow step by step in order to give a full picture of how the reservation is implemented and how different modes interact with each other.
+Below we outline the reservation flow step by step in order to give a full picture of how the reservation is implemented and how different modes interact with each other.
 
-1. Check that `mode` has flag $16$:
-   - if so, then in case of any failure the transaction will be bounced;
-   - if not, then in case of any failure the reservation action will be just skipped.
+1. Check that `mode` has flag `ReserveBounceIfActionFail`:
+   - if so, then in case of any failure the action phase will be interrupted and the bounce phase will be initiated;
+   - if not, then in case of any failure the reservation action will be skipped.
 1. Set `reserve` to `amount`.
-1. Check that `mode` has flag $4$:
-   1. If so, then check that `mode` has flag $8$:
+1. Check that `mode` has flag `ReserveAddOriginalBalance`:
+   1. If so, then check that `mode` has flag `ReserveInvertSign`:
       - if so, then set `reserve` to `original_balance - reserve`;
       - otherwise, increase `reserve` by `original_balance`.
-   1. Otherwise, if `mode` has flag $8$, throw the error "invalid reserve mode".
-1. Check that `mode` has flag $2$:
+   1. Otherwise, if `mode` has flag `ReserveInvertSign`, throw the error "invalid reserve mode".
+1. Check that `mode` has flag `ReserveMinRemainingBalance`:
    - if so, then set `reserve` to `min(reserve, remaining_balance)`.
-1. Check that `mode` has flag $1$:
+1. Check that `mode` has flag `ReserveAllExcept`:
    - if so, then set `reserve` to `remaining_balance - reserve`.
 1. Set `remaining_balance` to `remaining_balance - reserve`.
 
@@ -65,12 +65,12 @@ If there were no errors during the flow, then the reservation action was success
 
 For example, suppose that:
 
-- `amount` = $0.1$ Ton;
-- `mode` = $1 + 4 + 8$ (`ReserveAllExcept` + `ReserveAddOriginalBalance` + `ReserveInvertSign`);
-- `original_balance` = $2$ Ton;
-- `remaining_balance` = $3$ Ton.
+- `amount` = `0.1` Ton;
+- `mode` = `1 + 4 + 8` (`ReserveAllExcept` + `ReserveAddOriginalBalance` + `ReserveInvertSign`);
+- `original_balance` = `2` Ton;
+- `remaining_balance` = `3` Ton.
 
-Thus, at the end we will have `reserve` = $1.1$ Ton and `remaining_balance` = $1.9$ Ton.
+Thus, at the end we will have `reserve` = `1.1` Ton and `remaining_balance` = `1.9` Ton.
 
 ### Errors
 
