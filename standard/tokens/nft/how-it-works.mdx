@@ -29,7 +29,7 @@ The collection is the source of truth for items. It should provide each NFT item
 
 ### NFT item
 
-Each NFT item is its own smart contract account ([Explanation of why one item equals one contract](/contract-dev/contract-sharding)). It provides the collection address, index, current owner, and individual metadata. On a valid transfer from the current owner, it updates the owner, optionally notifies the new owner, and returns excess Toncoin to the specified address.
+Following TON's [contract sharding](/contract-dev/contract-sharding) approach, each NFT item is its own smart contract account. It provides the collection address, index, current owner, and individual metadata. On a valid transfer from the current owner, it updates the owner, optionally notifies the new owner, and returns excess Toncoin to the specified address.
 
 <Aside
   type="caution"
@@ -53,14 +53,16 @@ flowchart TD
 
 Transfer message body contains the following data:
 
-| Name                   | Type               | Description                                                                                                                      |
-| ---------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `query_id`             | `uint 64`          | Links transfer, ownership notification, and excesses together.                                                                   |
-| `new_owner`            | `MsgAddress`       | Address that should receive ownership.                                                                                           |
-| `response_destination` | `Maybe MsgAddress` | Optional address to receive excess Toncoin, usually the sender's address.                                                        |
-| `custom_payload`       | `Maybe Cell`       | Optional custom data passed to the NFT, can be used by higher‑level protocols. Typically, the NFT item does not read this field. |
-| `forward_amount`       | `VarUInteger 16`   | Toncoin amount to forward to the new owner. If `> 0`, a notification with `forward_payload` will be sent.                        |
-| `forward_payload`      | `Maybe Cell`       | Optional payload delivered with the ownership notification.                                                                      |
+| Field                  | Type                | Description                                                               |
+| ---------------------- | ------------------- | ------------------------------------------------------------------------- |
+| `transfer`             | `uint32`            | tag equal to `0x5fcc3d14`                                                 |
+| `query_id`             | `uint64`            | arbitrary request number                                                  |
+| `new_owner`            | `MsgAddress`        | address of the new owner of the NFT item                                  |
+| `response_destination` | `MsgAddress`        | optional address to receive excess Toncoin, usually the sender's address |
+| `custom_payload`       | `Maybe ^Cell`       | optional custom data                                                      |
+| `forward_amount`       | `VarUInteger 16`    | the amount of Toncoin to be sent to the new owner                        |
+| `forward_payload`      | `Either Cell ^Cell` | optional data that should be forwarded to the new owner                 |
+
 
 ```tlb TL-B
 transfer#5fcc3d14 query_id:uint64 
@@ -74,11 +76,12 @@ transfer#5fcc3d14 query_id:uint64
 
 Ownership notification message body (`ownership_assigned`) contains the following data:
 
-| Name              | Type         | Description                                                    |
-| ----------------- | ------------ | -------------------------------------------------------------- |
-| `query_id`        | `uint 64`    | Links transfer, ownership notification, and excesses together. |
-| `prev_owner`      | `MsgAddress` | Address of the previous owner of this NFT item.                |
-| `forward_payload` | `Cell`       | Optional data for the recipient.                               |
+| Field                | Type                | Description                                      |
+| -------------------- | ------------------- | ------------------------------------------------ |
+| `ownership_assigned` | `uint32`            | tag equal to `0x05138d91`                        |
+| `query_id`           | `uint64`            | should be equal to request's `query_id`        |
+| `prev_owner`         | `MsgAddress`        | address of the previous owner of this NFT item   |
+| `forward_payload`    | `Either Cell ^Cell` | should be equal to request's `forward_payload` |
 
 ```tl-b TL-B 
 ownership_assigned query_id:uint64 
@@ -90,9 +93,10 @@ ownership_assigned query_id:uint64
 
 Excess message body (`excesses`) contains the following data:
 
-| Name       | Type      | Description                                                    |
-| ---------- | --------- | -------------------------------------------------------------- |
-| `query_id` | `uint 64` | Links transfer, ownership notification, and excesses together. |
+| Field      | Type     | Description                               |
+| ---------- | -------- | ----------------------------------------- |
+| `excesses` | `uint32` | tag equal to `0xd53276db`                 |
+| `query_id` | `uint64` | should be equal to request's `query_id` |
 
 ```tl-b TL-B 
 excesses query_id:uint64 = InternalMsgBody;
@@ -102,6 +106,34 @@ The transfer must be rejected if:
 
 1. The inbound message is not from the current owner.
 1. There are not enough coins (considering storage fee guidelines) to process the operation and send `forward_amount`.
+
+## Get static data 
+
+Anyone can send a `get_static_data` message to an NFT item to request its static data (index and collection address). The item responds with `report_static_data` message using send-mode `64` (return message amount except gas fees).
+
+Get static data message body contains the following data:
+
+| Field             | Type     | Description               |
+| ----------------- | -------- | ------------------------- |
+| `get_static_data` | `uint32` | tag equal to `0x2fcb26a2` |
+| `query_id`        | `uint64` | arbitrary request number  |
+
+```tl-b TL-B
+get_static_data#2fcb26a2 query_id:uint64 = InternalMsgBody;
+```
+
+Report static data message body contains the following data:
+
+| Field                | Type         | Description                                                               |
+| -------------------- | ------------ | ------------------------------------------------------------------------- |
+| `report_static_data` | `uint32`     | tag equal to `0x8b771735`                                                 |
+| `query_id`           | `uint64`     | should be equal to request's `query_id`                                 |
+| `index`              | `uint256`    | numerical index of this NFT in the collection                             |
+| `collection`         | `MsgAddress` | address of the smart contract of the collection to which this NFT belongs |
+
+```tl-b TL-B
+report_static_data#8b771735 query_id:uint64 index:uint256 collection:MsgAddress = InternalMsgBody;
+```
 
 ## Best practices
 
