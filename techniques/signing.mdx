@@ -1,15 +1,12 @@
 ---
-title: "Signing messages in TON"
-sidebarTitle: "Signing"
+title: "Signing messages"
 ---
 
 import { Aside } from '/snippets/aside.jsx';
 
-## Overview
-
 Cryptographic signatures are the foundation of access control in TON. Contracts verify signatures on-chain and implement their own policies, enabling flexible designs such as wallet operations, server-authorized actions, gasless flows, multisig, and delegation.
 
-### Ed25519 in TON
+## Ed25519 in TON
 
 TON uses Ed25519 as the standard signature scheme. All wallets (v1–v5) and highload wallets rely on Ed25519.
 
@@ -27,9 +24,10 @@ See [TON Cryptography — Ed25519](/ton/whitepapers/tblkch#a-3-10-cryptographic-
   The public key is **not** the wallet address. The address is derived from the contract's `StateInit` (code + initial data). Multiple contracts can use the same public key but have different addresses. See [Addresses in TON](/ton/addresses/overview).
 </Aside>
 
-<Aside type="note">
-  **Other cryptographic primitives in TVM**
-
+<Aside
+  type="note"
+  title="Other cryptographic primitives in TVM"
+>
   TVM exposes additional cryptographic primitives beyond Ed25519. These are useful for cross-chain compatibility and advanced protocols:
 
   - **secp256k1** — Ethereum-style ECDSA via `ECRECOVER`; plus x-only pubkey tweak ops (v9+)
@@ -42,14 +40,24 @@ See [TON Cryptography — Ed25519](/ton/whitepapers/tblkch#a-3-10-cryptographic-
   This guide focuses on Ed25519, the standard for TON.
 </Aside>
 
-### What gets signed
+## Signing pipeline
 
-Ed25519 signatures in TON work with **hashes**, not raw data:
+Ed25519 signatures in TON work with hashes, not raw data:
 
-1. **Off-chain:** Serialize message data into a cell → compute its hash (256 bits) → sign the hash with private key → signature (512 bits)
-1. **On-chain:** Contract receives signature and data → recomputes the hash → verifies signature matches the hash and public key
+1. **Off-chain:**
 
-## Common signing patterns
+- Serialize message data into a cell
+- Compute its hash (256 bits)
+- Sign the hash with private key
+- Signature (512 bits)
+
+1. **On-chain:**
+
+- Contract receives signature and data
+- Recomputes the hash
+- Verifies signature matches the hash and public key
+
+## Signature interaction patterns
 
 Signatures are used in different ways depending on who signs the message, who sends it, and who pays for execution. Here are three real-world examples.
 
@@ -171,13 +179,16 @@ throw_unless(35, check_signature(hash, signature, public_key));
 
 **Gas analysis:**
 
-After loading the signature, the remaining data is a **slice**. To verify the signature, the contract needs to hash this slice. In TVM, the method for hashing a slice is `slice_hash()`, which costs 526 gas.
+After loading the signature, the remaining data is a **slice**. To verify the signature, the contract needs to hash this slice. In TVM, the method for hashing a slice is `slice_hash()`, which costs `526` gas.
 
 **Why expensive?**\
 `slice_hash()` internally rebuilds a cell from the slice, copying all data and references.
 
-<Aside type="tip">
-  **TVM v12+ optimization:** In TVM version 12+, use `builder_hash()` instead. Convert the slice to a builder and hash it — this costs less than 100 gas total. See [TVM v12 improvement](#tvm-v12-improvement) below for details.
+<Aside
+  type="tip"
+  title="TVM v12+ optimization"
+>
+  In TVM version 12+, use `builder_hash()` instead. Convert the slice to a builder and hash it — this costs less than 100 gas total. See [TVM v12 improvement](#tvm-v12-improvement) below for details.
 </Aside>
 
 ### Approach 2: Signed data as cell
