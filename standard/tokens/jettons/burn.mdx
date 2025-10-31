@@ -1,0 +1,86 @@
+---
+title: "Burn"
+---
+
+import { Image } from '/snippets/image.jsx';
+import { Aside } from "/snippets/aside.jsx";
+
+Burning is a process of reducing supply of a certain Jetton, mostly in order to create [deflation](https://en.wikipedia.org/wiki/Deflation).
+
+## Web services
+
+To burn Jettons manually, use a web service, for example [Minter](https://minter.ton.org/):
+
+- Connect your wallet using TON Connect.
+- Enter the Jetton master contract address into the "Jetton address" field.
+- Click the "Burn" button in your wallet's balance field and enter the amount you want to burn.
+- Confirm burning in your wallet application.
+
+![Burning](/resources/images/burning-ton-minter.png)
+
+## Another approach
+
+An alternative way to burn tokens is to send them to a ["zero" account](https://tonviewer.com/UQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJKZ), see [How to transfer](/standard/tokens/jettons/transfer) page. A [wallet app](/ecosystem/wallet-apps/overview) can be used for this.
+
+## Programmatically
+
+In more complex cases, it is usually done with an SDK (for example, [`assets-sdk`](https://github.com/ton-community/assets-sdk)) that handles low-level message serialization details. The provided example uses [TON Center API](/ecosystem/api/toncenter/overview). You'll need a mnemonic of a wallet that will pay for the burn. `JETTON_WALLET_ADDR` stands for the Jetton wallet that holds tokens that will be burned.
+
+<Aside
+  type="danger"
+  title="Funds at risk"
+>
+  Beware that API keys and mnemonic must not be committed or shared publicly.
+
+  A better approach is to use a `.env` file that is excluded from repository with `.gitignore`. For Github CI purposes, consult [their documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
+</Aside>
+
+```typescript
+import { Address, toNano, WalletContractV5R1, TonClient } from "@ton/ton";
+import { mnemonicToPrivateKey } from "@ton/crypto";
+import { AssetsSDK, createApi } from "@ton-community/assets-sdk";
+
+const NETWORK = "testnet";
+// a list of 24 space-separated words
+const MNEMONIC = "foo bar baz ...";
+const JETTON_WALLET_ADDR = Address.parse("<JETTON_WALLET_ADDR>");
+
+async function main() {
+    // create an RPC client that will send network requests
+    const client = new TonClient({
+        endpoint: "https://toncenter.com/api/v2/jsonRPC",
+    });
+
+    // extract private and public keys from the mnemonic
+    const keyPair = await mnemonicToPrivateKey(MNEMONIC.split(" "));
+
+    // create a client for TON wallet
+    const wallet = WalletContractV5R1.create({
+        workchain: 0,
+        // public key is required to deploy a new wallet
+        // if it wasn't deployed yet
+        publicKey: keyPair.publicKey,
+    });
+
+    const provider = client.provider(wallet.address);
+
+    // sender is an object used by assets-sdk to send messages
+    // private key is used to sign messages sent to a wallet
+    const sender = wallet.sender(provider, keyPair.secretKey);
+
+    // create an assets-sdk client 
+    const api = await createApi(NETWORK);
+    const sdk = AssetsSDK.create({
+        api,
+        sender,
+    });
+
+    // create a client for interacting with given jetton wallet
+    const jetton = sdk.openJettonWallet(JETTON_WALLET_ADDR);
+
+    // burn 1200000 jettons
+    await jetton.sendBurn(sender, 1200000n);
+}
+
+void main();
+```
