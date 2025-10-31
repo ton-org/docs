@@ -4,71 +4,48 @@ title: "Blockchain sharding"
 
 import { Image } from '/snippets/image.jsx';
 
-## Infinite Sharding Paradigm
+TON Blockchain is a collection of blockchains that are called _workchains_. Each workchain might have different formats of [account addresses](/foundations/addresses/overview), formats of [transactions](/foundations/transaction), and different virtual machines for smart contracts.
 
-The TON Blockchain is a collection of blockchains which are called _workchains_. Each workchain could have different formats of [account addresses](/foundations/addresses/overview), formats of [transactions](/foundations/transaction), even different virtual machines for smart contracts, and so on.
-One of the main ideas behind the TON Blockchain is the _Infinite Sharding Paradigm_ (ISP). According to ISP, the TON Blockchain can dynamically split its workchains into parts in order to handle an arbitrary high load of transactions and improve efficiency of the whole system. And vise versa, when the load is low enough, these parts can be merged back into one.
+TON Blockchain dynamically splits workchains into halves when the transaction rate is above the threshold, and merges them when it decreases below the threshold. This is called _Infinite Sharding Paradigm_.
 
-Imagine that sharding has been taken to its extreme (became infinite as possible), so that exactly one account or smart contract remains in each part. Then we have a huge
-number of _accountchains_, each describing the state and state transitions of only one account, and sending value-bearing messages to each other to
-transfer value and information. It is impractical to have hundreds of millions of blockchains, with updates (new blocks) usually appearing quite rarely in each of
-them. In order to implement them more efficiently, these accountchains are grouped into _shardchains_, so that each block of the shardchain is essentially a collection of blocks of accountchains that have been assigned to this shard.
-Thus the accountchains have only a purely virtual or logical existence inside the shardchains.
+We can consider every account to be the sole citizen of its corresponding blockchain, _accountchain_. Each accountchain describes the state and state transitions of only one account. Accountchain is a virtual concept used in explanations.
 
-To sum up, we have the following hierarchy of blockchains according to ISP:
-
-- workchains;
-- shardchains;
-- accountchains (actually virtual).
+Regularly creating empty blocks for rarely updated accountchains would be too expensive. To reduce the cost, accountchains are grouped into _shardchains_, where each block is a collection of blocks of accountchains that have been assigned to this shard.
 
 <Image
   src="/resources/images/blockchain_sharding.png"
-  alt="Blockchain hyerarchy"
+  alt="Blockchain hierarchy"
 />
 
 ### Sharding process
 
-Each workchain (the number of which could be up to `2^32`) has its own format of addresses. But a restriction is imposed on all workchains: each account address (after `workchain_id`) must have at least 64-bit length `account_id` (see [Account id](/foundations/addresses/overview#account-id)).
+There might be up to `2^32` workchains, identified with `workchain_id`. Each workchain might use its own format for [`account_id`](/foundations/addresses/overview#account-id), but every such ID must be at least 64-bit long. A pair of `workchain_id` and `account_id` uniquely identifies an account.
 
-Each shardchain is identified by a couple `(workchain_id, shard_prefix)`, where `shard_prefix` is a bit string of length at most `60`, defining the subset of accounts for which this shardchain is responsible. Namely, all accounts with `account_id` starting
-with `shard_prefix` (having `shard_prefix` as most significant bits) will be assigned to this shardchain.
+Each shardchain is identified by a pair `(workchain_id, shard_prefix)`, where `shard_prefix` is a bit string of length at most `60`. Accounts that have `account_id` starting with `shard_prefix` (have `shard_prefix` as the most significant bits) will be assigned to this shardchain.
 
-The need for sharding arises when the load of transactions in already existed shards exceeds some threshold value. In this case validators could decide to split these shards into two new ones or merge some of them, if a load is low enough.
+When the volume of transactions per block exceeds the threshold, validators decide to split shards into halves.
 
-As the simplest case, let's some workchain initially has only one shardchain with `shard_prefix` equal to an empty string (i.e., containing all accounts of that workchain). Then the load exceeded the threshold and the validators decided to split this shardchain into two new ones with `shard_prefix` equal to `0` and `1`, respectively.
-After that, all accounts with `account_id` starting with bit `0` will be assigned to the first shardchain, and all accounts with `account_id` starting with bit `1` will be assigned to the second shardchain.
+Assume a workchain initially has one shardchain with an empty `shard_prefix`, i.e., it contains all accounts of that workchain. Then the load exceeded the threshold and the validators decide to split this shardchain into two with `shard_prefix` equal to `0` and `1`, respectively. After that, all accounts with an `account_id` starting with bit `0` will be assigned to the first shardchain, and all accounts with `account_id` starting with bit `1` will be assigned to the second shardchain.
 
-Analogously, if some shardchain with `shard_prefix` equal to `p` needs to be split, then two new shardchains with `shard_prefix` equal to `p0` and `p1` will be created.
-When merging is needed, two shardchains with `shard_prefix` equal to `p0` and `p1` could be merged into one shardchain with `shard_prefix` equal to `p`. After the merging, all accounts with `account_id` starting with `p` will be assigned to the new single shardchain.
+If some shardchain with `shard_prefix` equal to `p` needs to be split, then two new shardchains with `shard_prefix` equal to `p0` and `p1` will be created.
 
-As a result of sharding process, the number of shardchains in each workchain can vary dynamically from `1` to `2^60`.
+When a merge is needed, two shardchains with `shard_prefix` equal to `p0` and `p1` merge into one shardchain with `shard_prefix` equal to `p`. After the merge, all accounts with `account_id` starting with `p` will be assigned to this new single shardchain.
+
+As a result of sharding process, the number of shardchains in each workchain is a power of two, and can vary dynamically from `1` to `2^60`.
 
 ## Messages between shardchains
 
-An important component of the TON Blockchain is the messaging system between blockchains. These blockchains may be shardchains of the same
-workchain, or of different workchains.
+Shardchains can exchange messages with each other. It works both for shardchains of the same and different workchains.
 
-### Input and output queues
+Size of the block sets a limit to how many transactions a shardchain can process in a single block. Every shardchain can do computations asynchronously and in isolation from each other, so due to mismatch in the rate of message processing there might be an congestion: one shard sends messages to another, and it cannot process them at the moment.
 
-Each shardchain block contains specific descriptions (as hashmaps with appropriate keys) of all inbound and outbound messages of all accounts assigned to this shardchain.
-The key idea is that all messages **received** by a blockchain are immediately delivered. Therefore, there is no "input queue"
-as such and a shardchain block stores the descriptions of only inbound messages that it received. Instead, if not all messages destined for a specific
-shardchain can be processed because of limitations on the total size of blocks and gas usage, some messages are simply left to accumulate in
-"output queues" of the originating shardchains.
-
-Thus, each shardchain must always observe the output queue of other shardchains in order to receive the message intended for it.
-But it would require prohibitive amounts of computing power and network bandwidth as the total quantity of shardchains grows, thus limiting
-the scalability of the system. Therefore, it is not possible to deliver messages directly from any shard to every other. Instead, a special routing mechanism is used to deliver messages between shardchains.
+During congestion, handling of messages that do not fit into current block is delayed to next blocks. Unprocessed messages are still stored only in blocks of sending shardchains, and receiving shardchain would have to check for all the possible sending shardchains for possible unprocessed messages. To reduce this number of possible sending shardchains to only `16 * 15` shardchains, a _hypercube routing_ mechanism is used.
 
 ### Intermediate addresses
 
-Each message has _source_ and _destination_ address fields that represent the addresses of sender and recipient accounts.
-If the source and destination account belong to different shardchains, the message need to travel through several intermediate shardchains on its way to the destination account.
-So, it is also assigned _transit_ and _next-hope_ addresses which are used for routing the message through intermediate shardchains.
-These addresses are defined as follows:
+Each message has _source_ and _destination_ address fields that represent the addresses of sender and recipient accounts. If the source and destination account belong to different shardchains, the message need to travel through several intermediate shardchains on its way to the destination account. So, it is also assigned _transit_ and _next-hope_ addresses which are used for routing the message through intermediate shardchains. These addresses are defined as follows:
 
-- **transit address** is an address of some account in intermediate shardchain as if belonging to a special message-relay smart contract whose only job is
-  to relay the unchanged message to the next shardchain on the route;
+- **transit address** is an address of some account in intermediate shardchain as if belonging to a special message-relay smart contract whose only job is to relay the unchanged message to the next shardchain on the route;
 - **next-hope address** is the address in a shardchain (or, on some rare occasions, in the same shardchain) to which the message needs to be relayed.
 
 For example, if a message needs to be sent from shardchain `A` to shardchain `D` in the same workchain, and the route is `A -> B -> C -> D`, then:
@@ -84,24 +61,14 @@ For example, if a message needs to be sent from shardchain `A` to shardchain `D`
 The next-hop address is computed from the transit address (originally equal to the source address) as follows:
 
 - If transit and destination addresses workchains are different, then the next-hope address is just the transit address in which `worchain_id` is replaced by the destination `workchain_id`.
-- If the `workchain_id` parts of the transit and destination addresses match, then a similar process is applied to the `account_id` parts of the
-  addresses: the first (most significant) `64` bits of `account_id`, are split into groups of four bits starting from the most significant bit,
-  and are compared starting from the left. The first group that differs is replaced in the transit address with its
-  value in the destination address to compute the next-hop address.
-- If the first `64` bits of the `account_id` parts of the transit and destination addresses match as well, then the destination account belongs
-  to the current shardchain, and the message should not be forwarded outside the current shardchain at all. Instead, it must be processed by
-  a transaction inside it.
+- If the `workchain_id` parts of the transit and destination addresses match, then a similar process is applied to the `account_id` parts of the addresses: the first (most significant) `64` bits of `account_id`, are split into groups of four bits starting from the most significant bit, and are compared starting from the left. The first group that differs is replaced in the transit address with its value in the destination address to compute the next-hop address.
+- If the first `64` bits of the `account_id` parts of the transit and destination addresses match as well, then the destination account belongs to the current shardchain, and the message should not be forwarded outside the current shardchain at all. Instead, it must be processed by a transaction inside it.
 
-For example, suppose that a message has source (hence, first transit) address with `workchain_id` equal to `0` and `account_id` equal to `0x1234567890ABCDEF...`, and destination address with `workchain_id` equal to `0` and `account_id` equal to `0x12345678FEDCBA98...`.
-Then the first next-hop address will have `workchain_id` equal to `0` and `account_id` equal to `0x12345678F0ABCDEF...`.
+For example, suppose that a message has source (hence, first transit) address with `workchain_id` equal to `0` and `account_id` equal to `0x1234567890ABCDEF...`, and destination address with `workchain_id` equal to `0` and `account_id` equal to `0x12345678FEDCBA98...`. Then the first next-hop address will have `workchain_id` equal to `0` and `account_id` equal to `0x12345678F0ABCDEF...`.
 
-Here comes an key definition for routing protocol: two shardchains are said to be _neighbors_, or _neighboring shardchains_,
-if one of them contains a next-hop address for at least one combination of allowed source and destination addresses, while the other
-contains the transit address for the same combination. In other words, two shardchains are neighbors if a message can be forwarded directly from one
-of them into the other via routing algorithm.
+Here comes an key definition for routing protocol: two shardchains are said to be _neighbors_, or _neighboring shardchains_, if one of them contains a next-hop address for at least one combination of allowed source and destination addresses, while the other contains the transit address for the same combination. In other words, two shardchains are neighbors if a message can be forwarded directly from one of them into the other via routing algorithm.
 
-For instance, the shardchains from the previous example that contains the addresses `0:1234567890ABCDEF...` and `0:12345678F0ABCDEF...` are neighbors, because a message with source address `0:1234567890ABCDEF...` and destination address `0:12345678FEDCBA98...`
-will be forwarded directly from the first shardchain into the second one.
+For instance, the shardchains from the previous example that contains the addresses `0:1234567890ABCDEF...` and `0:12345678F0ABCDEF...` are neighbors, because a message with source address `0:1234567890ABCDEF...` and destination address `0:12345678FEDCBA98...` will be forwarded directly from the first shardchain into the second one.
 
 <Aside type="note">
   Regarding the definition, each shardchain is a neighbor of itself and the single shardchain in the masterchain is a neighbor for every shardchain.
@@ -109,16 +76,11 @@ will be forwarded directly from the first shardchain into the second one.
 
 ### Hypercube routing protocol
 
-Let's consider the set of all shardchains in some workchain. According to the definition of neighboring shardchains, we can construct a _hypercube_
-where each vertex corresponds to a shardchain, and two vertices are connected by an edge if the corresponding shardchains are neighbors.
-Thus, the full configuration of shardchains consists of such hypercubes with some edges connecting them (these edges correspond to messages being sent between different workchains).
+Let's consider the set of all shardchains in some workchain. According to the definition of neighboring shardchains, we can construct a _hypercube_ where each vertex corresponds to a shardchain, and two vertices are connected by an edge if the corresponding shardchains are neighbors. Thus, the full configuration of shardchains consists of such hypercubes with some edges connecting them (these edges correspond to messages being sent between different workchains).
 
-The idea of the _hypercube routing (HR) protocol_ is to deliver messages between shardchains by moving them along the edges of these hypercubes.
-At each step, a message is forwarded from the current shardchain to one of its neighboring shardchain (according to the computed next-hope address).
+The idea of the _hypercube routing (HR) protocol_ is to deliver messages between shardchains by moving them along the edges of these hypercubes. At each step, a message is forwarded from the current shardchain to one of its neighboring shardchain (according to the computed next-hope address).
 
-For successful routing, the validators of each shardchain must constantly inspect the output queues of all neighboring shardchains.
-Messages are stored in the queue using keys obtained from the hash of the message and the next-hope address, which allows validators of neighboring shardchains to
-quickly receive information about messages that will be transmitted to them.
+For successful routing, the validators of each shardchain must constantly inspect the output queues of all neighboring shardchains. Messages are stored in the queue using keys obtained from the hash of the message and the next-hope address, which allows validators of neighboring shardchains to quickly receive information about messages that will be transmitted to them.
 
 Omitting some technical details, HR can be outlined as follows:
 
@@ -128,5 +90,4 @@ Omitting some technical details, HR can be outlined as follows:
 1. The message information is deleted from the output queue of the original shardchain by a special transaction.
 1. The process continues until the message reaches its destination address.
 
-The HR protocol also has some additional mechanisms to ensure reliability and efficiency of message delivery, such as preventing double delivery of messages,
-processing messages in order of their logical time creation, and so on. For a detailed acquaintance with these processes, the reader can refer to the [TON Blockchain whitepaper](/foundations/whitepapers/tblkch#2-2-hypercube-routing-protocol).
+The HR protocol also has some additional mechanisms to ensure reliability and efficiency of message delivery, such as preventing double delivery of messages, processing messages in order of their logical time creation, and so on. For a detailed acquaintance with these processes, the reader can refer to the [TON Blockchain whitepaper](/foundations/whitepapers/tblkch#2-2-hypercube-routing-protocol).
