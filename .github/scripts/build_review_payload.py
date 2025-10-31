@@ -234,15 +234,20 @@ def _build_from_sidecar(sidecar: dict, *, repo: str, sha: str, repo_root: Path) 
             parts.append("")
             parts.append(desc)
         # When replacement text is present, include a GitHub suggestion block.
-        if code:
+        # Allow empty replacement (deletion) suggestions: GitHub treats an empty block as delete selected lines.
+        if code is not None:
             repl = sanitize_code_for_gh_suggestion(code)
-            # Only include GH suggestion when replacement length matches the selected range
             repl_lines = repl.splitlines()
             n_range = end - start + 1
-            if (n_range == 1 and len(repl_lines) == 1) or (n_range > 1 and len(repl_lines) == n_range):
+            if (
+                (n_range == 1 and len(repl_lines) == 1) or
+                (n_range > 1 and len(repl_lines) == n_range) or
+                (repl == "" and n_range >= 1)
+            ):
                 parts.append("")
                 parts.append("```suggestion")
-                parts.append(repl)
+                if repl:
+                    parts.append(repl)
                 parts.append("```")
         else:
             # No auto-fix block; rely on title/description and CTA only.
@@ -623,14 +628,32 @@ def main() -> None:
             parts.append(f.desc.strip())
         # Only submit commit suggestions when the replacement likely covers the full selected range
         submitted_suggestion = False
-        if f.suggestion_replacement:
+        if f.suggestion_replacement is not None:
             repl = f.suggestion_replacement.rstrip("\n")
             repl_lines = repl.splitlines()
             n_range = f.end - f.start + 1
-            if (n_range == 1 and len(repl_lines) == 1) or (n_range > 1 and len(repl_lines) == n_range):
+            if (
+                (n_range == 1 and len(repl_lines) == 1) or
+                (n_range > 1 and len(repl_lines) == n_range) or
+                (repl == "" and n_range >= 1)
+            ):
                 parts.append("")
                 parts.append("```suggestion")
-                parts.append(repl)
+                if repl:
+                    parts.append(repl)
+                parts.append("```")
+                submitted_suggestion = True
+        if not submitted_suggestion and f.suggestion_raw.strip():
+            # Detect deletion-only diffs and convert to empty GH suggestion
+            raw = f.suggestion_raw
+            lang, inner = _extract_first_code_block(raw)
+            text = inner if inner is not None else raw
+            lines = [ln.strip() for ln in text.splitlines()]
+            has_add = any(ln.startswith('+') and not ln.startswith('++') for ln in lines)
+            has_del = any(ln.startswith('-') and not ln.startswith('--') for ln in lines)
+            if has_del and not has_add:
+                parts.append("")
+                parts.append("```suggestion")
                 parts.append("```")
                 submitted_suggestion = True
         if not submitted_suggestion and f.suggestion_raw.strip():
