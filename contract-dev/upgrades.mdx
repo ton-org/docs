@@ -6,12 +6,7 @@ import { Aside } from '/snippets/aside.jsx';
 
 ## What is contract upgrading?
 
-TON allows smart contracts to upgrade their code and data while preserving the contract's identity. During an upgrade:
-
-- **Address remains unchanged** — the contract keeps its original address
-- **Balance is preserved** — all TON and jettons remain in the contract
-- **State persists** — the contract's data can be upgraded or preserved
-- **Code is replaced** — new logic takes effect immediately after the upgrade
+TON allows smart contracts to upgrade their code and data while preserving the contract's identity. 
 
 This is useful for fixing bugs, adding features, or adapting to protocol changes without migrating to a new contract.
 
@@ -21,12 +16,12 @@ The pattern is also essential for [vanity](/contract-dev/vanity) contracts and p
 
 ## How upgrades work
 
-TON provides two functions for upgrades in Tolk:
+Tolk provides two functions for upgrades.
 
-- **`contract.setCodePostponed(code: cell)`** — schedules the code to be replaced during the [action phase](/foundations/phases#action-phase). The new code takes effect after the current transaction completes.
-- **`contract.setData(data: cell)`** — immediately replaces the contract's persistent storage. This happens during the [compute phase](/foundations/phases#compute-phase), before the transaction ends.
+- _`contract.setCodePostponed(code: cell)`_ — schedules the code to be replaced during the [action phase](/foundations/phases#action-phase). The new code takes effect after the current transaction completes.
+- _`contract.setData(data: cell)`_ — immediately replaces the contract's persistent storage. This happens during the [compute phase](/foundations/phases#compute-phase), before the transaction ends.
 
-**Key difference**: `setCodePostponed()` applies changes _after_ the current transaction, while `setData()` applies changes _immediately_. This means the new code won't run until the next message arrives, but the new data is already active.
+_Key difference_: `setCodePostponed()` applies changes _after_ the current transaction, while `setData()` applies changes _immediately_. This means the new code won't run until the next message arrives, but the new data is already active.
 
 <Aside
   type="caution"
@@ -40,12 +35,12 @@ The contract accepts upgrade messages containing new code and data. Only the adm
 
 ### How it works
 
-1. **Admin sends upgrade message** — the message contains new code, data, or both
-1. **Contract verifies sender** — checks that the sender is the admin address
-1. **Code is scheduled** — if new code is provided, `setCodePostponed()` schedules it for replacement
-1. **Data is upgraded** — if new data is provided, `setData()` immediately replaces the storage
-1. **Transaction completes** — the action phase executes, applying the new code
-1. **Next message uses new code** — subsequent messages execute with the upgraded logic
+1. _Admin sends upgrade message_ — the message contains new code, data, or both
+1. _Contract verifies sender_ — checks that the sender is the admin address
+1. _Code is scheduled_ — if new code is provided, `setCodePostponed()` schedules it for replacement
+1. _Data is upgraded_ — if new data is provided, `setData()` immediately replaces the storage
+1. _Transaction completes_ — the action phase executes, applying the new code
+1. _Next message uses new code_ — subsequent messages execute with the upgraded logic
 
 The upgrade happens immediately in a single transaction. The new code becomes active after the transaction completes. Any data replacement happens during the compute phase, so the new data is immediately available when the transaction ends.
 
@@ -57,8 +52,7 @@ struct (0x1111) UpgradeContract {
     code: cell?
 }
 
-type AllowedMessages =
-    | UpgradeContract
+type AllowedMessages = UpgradeContract
 
 fun onInternalMessage(in: InMessage) {
 
@@ -104,13 +98,13 @@ The pattern adds a time delay between requesting and approving an upgrade. The a
 
 ### How it works
 
-1. **Admin requests upgrade** — sends `RequestUpgrade` message with new code and data
-1. **Contract verifies and stores** — validates admin, ensures no pending request, stores upgrade details with timestamp
-1. **Timeout period** — the contract enforces a waiting period before approval
-1. **Admin approves upgrade** — sends `ApproveUpgrade` message after timeout expires
-1. **Contract verifies timeout** — checks that enough time has passed since the request
-1. **Upgrade applies** — schedules new code with `setCodePostponed()` and upgrades data with `setData()`
-1. **Request cleared** — removes the pending request from storage
+1. _Admin requests upgrade_ — sends `RequestUpgrade` message with new code and data
+1. _Contract verifies and stores_ — validates admin, ensures no pending request, stores upgrade details with timestamp
+1. _Timeout period_ — the contract enforces a waiting period before approval
+1. _Admin approves upgrade_ — sends `ApproveUpgrade` message after timeout expires
+1. _Contract verifies timeout_ — checks that enough time has passed since the request
+1. _Upgrade applies_ — schedules new code with `setCodePostponed()` and upgrades data with `setData()`
+1. _Request cleared_ — removes the pending request from storage
 
 The admin can also send `RejectUpgrade` at any time to cancel a pending upgrade. This three-message flow (request → wait → approve or reject) gives users time to review changes and react if the admin account is compromised.
 
@@ -179,16 +173,17 @@ fun onInternalMessage(in: InMessage) {
 
             if (storage.CurrentRequest!.newUpgrade.code != null) {
                 contract.setCodePostponed(storage.CurrentRequest!.newUpgrade.code!);
+                storage.CurrentRequest = null;
+                storage.save();
             }
+
             if (storage.CurrentRequest!.newUpgrade.data != null) {
                 contract.setData(storage.CurrentRequest!.newUpgrade.data!);
             }
-            storage.CurrentRequest = null;
-            storage.save();
         }
 
         else => { 
-            // just accept TON 
+            // just accepted tons 
         }
     }
 }
@@ -223,12 +218,12 @@ Hot upgrades solve this by scheduling a code change and immediately calling a mi
 
 ### How it works
 
-1. **Admin sends upgrade message** — the message contains new code cell and optional additional data
-1. **Contract verifies sender** — checks that the sender is the admin address
-1. **Schedule code change** — `setCodePostponed()` schedules the code replacement
-1. **Switch to new code** — `setTvmRegisterC3()` immediately activates the new code in register C3
-1. **Call migration** — invoke `hotUpgradeData()` which now runs with the new code
-1. **Migration executes** — the function reads old storage, transforms it, and writes new storage
+1. _Admin sends upgrade message_ — the message contains new code cell and optional additional data
+1. _Contract verifies sender_ — checks that the sender is the admin address
+1. _Schedule code change_ — `setCodePostponed()` schedules the code replacement
+1. _Switch to new code_ — `setTvmRegisterC3()` immediately activates the new code in register [C3](/tvm/registers#c3-—-function-selector)
+1. _Call migration_ — invoke `hotUpgradeData()` which now runs with the new code
+1. _Migration executes_ — the function reads old storage, transforms it, and writes new storage
 
 The key mechanism: `setTvmRegisterC3()` switches the code register so the migration function executes with the new code in the same transaction. The migration reads the current storage state (preserving all updates), transforms it to the new schema, and saves it. When the transaction completes, the new code becomes permanent through `setCodePostponed()`.
 
@@ -258,6 +253,7 @@ type AllowedMessages =
     | HotUpgrade
     | IncreaseCounter
 
+// migration function must have method_id 
 @method_id(2121)
 fun hotUpgradeData(additionalData: cell?) { return null; }
 
@@ -330,6 +326,7 @@ type AllowedMessages =
     | HotUpgrade
     | IncreaseCounter
 
+// migration function must have method_id 
 @method_id(2121)
 fun hotUpgradeData(additionalData: cell?) {  
     var oldStorage = lazy oldStorage.load();
@@ -433,3 +430,9 @@ Use standard upgrades when:
 ## Combining delayed and hot upgrades
 
 You can combine delayed upgrades with hot upgrades for production protocols that require both safety and structure migration. The delayed pattern provides time for users to review changes, while the hot upgrade mechanism handles storage migration without data loss.
+
+<Aside
+  title={"📁 Complete Example Code"}
+>
+  You can find full working examples demonstrating all upgrade patterns in our [GitHub repository](https://github.com/ton-org/docs-examples/tree/main/contract-dev/Upgrading). This includes implementations for basic, delayed, and hot upgrade patterns.
+</Aside>
