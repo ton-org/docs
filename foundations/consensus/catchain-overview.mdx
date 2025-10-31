@@ -33,6 +33,8 @@ Catchain selects five neighbors at random and periodically refreshes the list (e
 ## Message identification
 
 Every catchain message is uniquely identified by the pair `(sender; sender's sequence number)`.
+Also, every catchain message has a reference to previous message from the same sender.
+If this is the first message from the current node, then the previous message for it is `genesis`.
 
 <Aside type="note">
   Strictly speaking, the same set of participants can take part in multiple catchain rounds, so the message identifier is extended with the round identifier to distinguish messages from previous rounds. However, for the sake of this overview the possibility of multiple rounds is omitted.
@@ -40,9 +42,28 @@ Every catchain message is uniquely identified by the pair `(sender; sender's seq
 
 Each actor is responsible for indexing its own messages and increasing the sequence counter. Because nodes can be Byzantine, honest validators must verify that counters are monotonically increasing.
 
+### Example message flow
+
+```mermaid
+flowchart LR
+    A((A))
+    B((B))
+    C((C))
+
+    A -- "(A; 1)<br/>prev: genesis" --> B
+    A -- "(A; 1)<br/>prev: genesis" --> C
+
+    B -- "(B; 1)<br/>prev: genesis<br/>deps: (A; 1)" --> A
+    B -- "(B; 1)<br/>prev: genesis<br/>deps: (A; 1)" --> C
+
+    C -- "(C; 1)<br/>prev: genesis<br/>deps: (A; 1), (B; 1)" --> A
+    C -- "(C; 2)<br/>prev: (C; 1)<br/>deps: (A; 1), (B; 1)" --> B
+```
+
+
 ### Detecting forks (duplicate message IDs)
 
-If an actor issues two messages with the same identifier `(A; i)` but different payloads, the situation is called a fork. Any validator who observes it can construct a proof consisting of the block identifier and two distinct signatures. Since all public keys are known, this proof can be broadcast to the neighbors, and then further across the network. Every honest participant who receives the proof starts ignoring all messages from node A, as well as all messages that depend on A's messages.
+If an actor issues two messages with the same identifier `(A; i)` but different payloads, the situation is called a fork. Any honest validator who observes it construct a proof consisting of the block identifier and two distinct signatures. Since all public keys are known, this proof can be broadcast to the neighbors, and then further across the network. Every honest participant who receives the proof starts ignoring all messages from node A, as well as all messages that depend on A's messages.
 
 <Aside type="tip">
   According to the original design, when Catchain is used for the TON blockchain consensus, a fork proof can be submitted to the [Elector](/foundations/system#elector) smart contract. However, this idea has not been implemented.
@@ -51,6 +72,12 @@ If an actor issues two messages with the same identifier `(A; i)` but different 
 ### Detecting skipped sequence numbers
 
 Every message `(X; i)` (except the genesis message `(X; 0)`) depends on `(X; i - 1)`. If a node produces `(X; i)` and later emits `(X; i + j)` with `j > 1`, an honest node will not be able to obtain `(X; i + j - 1)` and therefore will not process `(X; i + j)`. Skipping sequence numbers is thus pointless: all messages following the missing one are ignored by honest validators.
+
+## Node state
+
+State holds the information about all processed messages by the current node. Since messages are ordered for each node, we can denote this information by vector
+`(A<sub>i</sub>, B<sub>j</sub>, C<sub>k</sub>, D<sub>m</sub> ...)`
+This vector hold an information about the last processed message for the validator. So, if A<sub>i</sub> is stored, and A<sub>i+2</sub> comes, than A<sub>i+1</sub> was skipped.
 
 ## Dependency retrieval process
 
