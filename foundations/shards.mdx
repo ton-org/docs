@@ -39,55 +39,23 @@ Shardchains can exchange messages with each other. It works both for shardchains
 
 Size of the block sets a limit to how many transactions a shardchain can process in a single block. Every shardchain can do computations asynchronously and in isolation from each other, so due to mismatch in the rate of message processing there might be an congestion: one shard sends messages to another, and it cannot process them at the moment.
 
-During congestion, handling of messages that do not fit into current block is delayed to next blocks. Unprocessed messages are still stored only in blocks of sending shardchains, and receiving shardchain would have to check for all the possible sending shardchains for possible unprocessed messages. To reduce this number of possible sending shardchains to only `16 * 15` shardchains, a _hypercube routing_ mechanism is used.
+During congestion, handling of messages that do not fit into current block is delayed to next blocks. Unprocessed messages are still stored only in blocks of sending shardchains, and receiving shardchain would have to check for all the possible sending shardchains for possible unprocessed messages. In the case of a large number of shardchains, the inspection time for all sending shardchains may be too long. In addition, if a shardchain can receive messages from all other shardchains, then its blocks can fill up very quickly, which will lead to a large delay in outgoing messages in the remaining shardchains.
 
-### Intermediate addresses
+Minimizing the time it takes to transfer data between different shardchains is crucial for complex protocols, such as token processing and decentralized exchanges (DEX). In these scenarios, different participants may be located in different shardchains, making it essential to optimize the communication process.
 
-Each message has _source_ and _destination_ address fields that represent the addresses of sender and recipient accounts. If the source and destination account belong to different shardchains, the message need to travel through several intermediate shardchains on its way to the destination account. So, it is also assigned _transit_ and _next-hope_ addresses which are used for routing the message through intermediate shardchains. These addresses are defined as follows:
+To reduce the number of possible sending shardchains to only `16 * 15` _neighboring shardchains_, a _hypercube routing_ mechanism is used.
 
-- **transit address** is an address of some account in intermediate shardchain as if belonging to a special message-relay smart contract whose only job is to relay the unchanged message to the next shardchain on the route;
-- **next-hope address** is the address in a shardchain (or, on some rare occasions, in the same shardchain) to which the message needs to be relayed.
+### Hypercube routing
 
-For example, if a message needs to be sent from shardchain `A` to shardchain `D` in the same workchain, and the route is `A -> B -> C -> D`, then:
+The set of all shardchains of a given workchain and their connection to neighboring shardchains can be represented as a hypercube. Each vertex of the hypercube corresponds to a shardchain, and two shardchains are connected by an edge if they are neighbors. Omitting the technical details, the neighborhood relation is determined using the differences in the `shard_prefix` of the two shardchains. Finally, messages are routed between shardchains by moving them along the edges of such hypercube.
 
-- when the message is created in shardchain `A`, its source address and initial transit address are the sender account address;
-- its destination address is the recipient account in shardchain `D`;
-- its initial next-hope address is some virtual message-relay account address in shardchain `B` obtained according to the routing algorithm;
-- when the message occurs in shardchain `B`, its transit address is the message-relay account in shardchain `B`, and its next-hope address is some special message-relay account address in shardchain `C`;
-- the same happens in shardchain `C`, and finally the message reaches its destination address in shardchain `D`.
+As a simple example, consider a workchain that has eight shardchains with `shard_prefix` equal to `000`, `001`, `010`, `011`, `100`, `101`, `110`, and `111`. These shardchains can be represented as vertices of a three-dimensional cube, where two shardchains are connected by an edge if their `shard_prefix` differ by exactly one bit. Thus, a message from `001` shardchain to `110` shardchain will be routed along the edges of the cube following the path `001 -> 101 -> 111 -> 110`. Hence, there are three hops between `001` and `110` shardchains.
 
-### Computation of next-hope addresses and neighboring shardchains
+<Image
+  src="/resources/images/hypercube_routing.png"
+  alt="Hypercube routing"
+/>
 
-The next-hop address is computed from the transit address (originally equal to the source address) as follows:
+TON Blockchain uses a more complex version. The hypercube has `15` dimensions, and each shardchain has up to `16` neighboring shardchains (include itself) along each dimension. Hence, each shardchain has up to `16 * 15 = 240` neighboring shardchains in total and the maximum number of hops between any two shardchains in the same workchain is `15`. If the source and destination shardchains belong to different workchains, then an additional hop between workchains is needed.
 
-- If transit and destination addresses workchains are different, then the next-hope address is just the transit address in which `worchain_id` is replaced by the destination `workchain_id`.
-- If the `workchain_id` parts of the transit and destination addresses match, then a similar process is applied to the `account_id` parts of the addresses: the first (most significant) `64` bits of `account_id`, are split into groups of four bits starting from the most significant bit, and are compared starting from the left. The first group that differs is replaced in the transit address with its value in the destination address to compute the next-hop address.
-- If the first `64` bits of the `account_id` parts of the transit and destination addresses match as well, then the destination account belongs to the current shardchain, and the message should not be forwarded outside the current shardchain at all. Instead, it must be processed by a transaction inside it.
-
-For example, suppose that a message has source (hence, first transit) address with `workchain_id` equal to `0` and `account_id` equal to `0x1234567890ABCDEF...`, and destination address with `workchain_id` equal to `0` and `account_id` equal to `0x12345678FEDCBA98...`. Then the first next-hop address will have `workchain_id` equal to `0` and `account_id` equal to `0x12345678F0ABCDEF...`.
-
-Here comes an key definition for routing protocol: two shardchains are said to be _neighbors_, or _neighboring shardchains_, if one of them contains a next-hop address for at least one combination of allowed source and destination addresses, while the other contains the transit address for the same combination. In other words, two shardchains are neighbors if a message can be forwarded directly from one of them into the other via routing algorithm.
-
-For instance, the shardchains from the previous example that contains the addresses `0:1234567890ABCDEF...` and `0:12345678F0ABCDEF...` are neighbors, because a message with source address `0:1234567890ABCDEF...` and destination address `0:12345678FEDCBA98...` will be forwarded directly from the first shardchain into the second one.
-
-<Aside type="note">
-  Regarding the definition, each shardchain is a neighbor of itself and the single shardchain in the masterchain is a neighbor for every shardchain.
-</Aside>
-
-### Hypercube routing protocol
-
-Let's consider the set of all shardchains in some workchain. According to the definition of neighboring shardchains, we can construct a _hypercube_ where each vertex corresponds to a shardchain, and two vertices are connected by an edge if the corresponding shardchains are neighbors. Thus, the full configuration of shardchains consists of such hypercubes with some edges connecting them (these edges correspond to messages being sent between different workchains).
-
-The idea of the _hypercube routing (HR) protocol_ is to deliver messages between shardchains by moving them along the edges of these hypercubes. At each step, a message is forwarded from the current shardchain to one of its neighboring shardchain (according to the computed next-hope address).
-
-For successful routing, the validators of each shardchain must constantly inspect the output queues of all neighboring shardchains. Messages are stored in the queue using keys obtained from the hash of the message and the next-hope address, which allows validators of neighboring shardchains to quickly receive information about messages that will be transmitted to them.
-
-Omitting some technical details, HR can be outlined as follows:
-
-1. When a message is created in some shardchain and populated to the output queue, its initial transit address is set to the source address, and the next-hope address is computed.
-1. The validators of the next-hope shardchain inspect the output queue of the shardchain containing the message, and find out that there is a message to be forwarded to the next-hope shardchain (by checking the next-hope address).
-1. The message is then included in the new block of the neighboring shardchain, where it either reaches its destination by a new transaction (if the destination address belongs to this shardchain) or is forwarded further by inserting a message into the output queue of the new shardchain.
-1. The message information is deleted from the output queue of the original shardchain by a special transaction.
-1. The process continues until the message reaches its destination address.
-
-The HR protocol also has some additional mechanisms to ensure reliability and efficiency of message delivery, such as preventing double delivery of messages, processing messages in order of their logical time creation, and so on. For a detailed acquaintance with these processes, the reader can refer to the [TON Blockchain whitepaper](/foundations/whitepapers/tblkch#2-2-hypercube-routing-protocol).
+The hypercube routing mechanism also has some additional features to ensure reliability and efficiency of message delivery, such as preventing double delivery of messages, processing messages in order of their logical time creation, and so on. For a detailed acquaintance with these processes, the reader can refer to the [TON Blockchain whitepaper](/foundations/whitepapers/tblkch#2-2-hypercube-routing-protocol).
