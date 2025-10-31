@@ -1,0 +1,348 @@
+---
+title: "Deriving addresses"
+---
+
+It is often useful to derive an [address](/foundations/addresses/overview) of an account to interact with it, either on-chain or off-chain. General algorithm for address derivation is to compose [StateInit](/foundations/addresses/overview#account-id) of an account, calculate its hash, and build an address in a desired [format](/foundations/addresses/overview#internal-addresses).
+
+Even though the general algorithm is practically the same for all cases, the details can still be non-trivial. Composing address is not a problem once you have the StateInit, and all that has to be solved is StateInit composing.
+
+It is very important to understand the difference between StateInit and current state of the account. StateInit is the initial state, which an account stores at deployment. After that, state can be changed by smart contract itself - for example by updating the data. Since address depends on StateInit, in order to derive address it is necessary to compose an initial state rather than the actual one.
+
+## On-chain derivation
+
+### Simple
+
+If it's known how to compose contract's initial `code` and `data`, it's enough to follow the general algorithm mentioned above as is. Code and data form a StateInit, and [workchain](/foundations/addresses/overview#workchain-id) is usually hardcoded. Below is one of the most common patterns, when `code` is a constant cell known in advance, and `data` is composed at runtime.
+
+```func
+(builder) calculate_address(cell code, cell data, int workchain) {
+    ;; 1. compose StateInit
+    cell state_init = begin_cell()
+        .store_uint(6, 5) ;; `0b00110`: only `code` and `data` are present
+        .store_ref(code)
+        .store_ref(data)
+    .end_cell();
+
+    ;; 2. compose MsgAddressInt
+    return begin_cell()
+        .store_uint(4, 3) ;; `0b100`: it's `addr_std` and no `anycast`
+        .store_int(workchain, 8) ;; workchain_id:int8
+        .store_uint(cell_hash(state_init), 256); ;; address:bits256
+}
+
+;; placeholder for code cell
+(cell) getCode() asm "B{b5ee9c724101010100020000004cacb9cd} PUSHREF";
+
+;; placeholder for data cell
+(cell) getData() {
+    ;; usually data gets composed in-place with some parameters
+    ;; rather than being hardcoded like code
+    return begin_cell()
+        .store_uint(123, 123)
+        .store_slice("hello, world")
+    .end_cell();
+}
+
+() recv_internal() {
+    ;; example usage with placeholder values
+
+    cell code = getCode();
+    cell data = getData();
+    int workchain = 0; ;; basechain
+
+    builder builder_with_address = calculate_address(
+        code, data, workchain
+    );
+
+    cell example_usage = begin_cell()
+        ;; common usage pattern is to use
+        ;; the derived address in some cell composing
+        .store_builder(builder_with_address)
+    .end_cell();
+}
+```
+
+The `b5ee9c724101010100020000004cacb9cd` in `getCode` function is a placeholder for a hardcoded code cell in [BoC](/tvm/serialization/boc) format known at compile-time. The `getData` function is a placeholder for building a data cell, and actual implementation depends on the storage layout of the target smart contract. Usually data is composed in a parametrized way, but this does not alter the rest of the logic - only the `getData` function.
+
+The `calculate_address` function first composes a StateInit, following the required format:
+
+```tlb
+_ fixed_prefix_length:(Maybe (## 5)) special:(Maybe TickTock)
+  code:(Maybe ^Cell) data:(Maybe ^Cell)
+  library:(Maybe ^Cell) = StateInit;
+```
+
+Only `code` and `data` fields are serialized for this simple case. Binary `00110` that we store corresponds to each of the `Maybe` types, with `0` and `1` showing whether the field is absent or present.
+
+Once StateInit is composed, it is hashed with `cell_hash` function that computes [representation hash](/tvm/serialization/cells#standard-cell-representation-and-its-hash) and the address is composed as type [`MsgAddressInt`](/foundations/whitepapers/tblkch#3-1-2-tl-b-scheme-for-addresses) with tag [`addr_std`](/foundations/addresses/overview#internal-addresses) and with no `anycast`.
+
+```tlb
+addr_std$10 anycast:(Maybe Anycast)
+  workchain_id:int8 address:bits256 = MsgAddressInt;
+```
+
+### Contract sharding
+
+When working with [contract sharding](/contract-dev/contract-sharding#contract-sharding) pattern, child contracts usually have StateInit that depends on parent. The same logic from [simple](#simple) case works here, and only `getData` has to be changed. Since parent is the one that has to derive child addresses often, then handling that dependence is trivial. In example below the dependence is implemented by adding parent address in child StateInit.
+
+```func
+(builder) calculate_address(cell code, cell data, int workchain) {
+    ;; no changes
+}
+
+;; placeholder for code cell
+(cell) getCode() asm "B{b5ee9c724101010100020000004cacb9cd} PUSHREF";
+
+;; composing child data
+(cell) getData(slice parent_address) {
+    ;; dependence of child on parent is often
+    ;; implemented by adding parent address in child stateinit
+    return begin_cell()
+        .store_slice("hello, world") ;; example data
+        .store_slice(parent_address) ;; child depends on parent
+    .end_cell();
+}
+
+() recv_internal() {
+    ;; example usage with placeholder values
+
+    cell code = getCode();
+    cell data = getData(my_address()); ;; get parent address
+    int workchain = 0; ;; basechain
+
+    builder builder_with_address = calculate_address(
+        code, data, workchain
+    );
+
+    ;; ...
+}
+```
+
+Child contracts also often have some kind of index or additional data that they depend on, but it is case-specific and up to the implementation. The common pattern is to include at least the parent address in StateInit.
+
+### Vanity
+
+A [vanity contract](https://github.com/ton-community/vanity-contract) allows _customizing_ the address of a smart contract that is being deployed. It does that by making its own StateInit depend on some constant data that is then randomly generated many times until a desired address is found, usually by prefix or a suffix.
+
+Actual code and data of the smart contract being deployed are included in the deploy message of the vanity contract, which it takes and simply replaces its own state with that. As a result, the smart contract is initially deployed with a certain StateInit producing the desired address, and actual state is then immediately set based on what is provided.
+
+In this case there's no real correlation between data contract holds and its address. The only way to actually derive the address is by hardcoding constant StateInit that was used to deploy the contract, which has to be retrieved from blockchain history via API.
+
+But if StateInit is a constant, there is really no point in calculating its hash at runtime. It's better to calculate the address in advance and hardcode it.
+
+```func
+;; in raw format
+const slice address = "0:4de24b95c1c3c9b6a94231460716192c7d2b4e444ca6ae9a98bc5c4b3fcdef3f"a;
+
+;; in user-friendly format
+const slice address = "EQBN4kuVwcPJtqlCMUYHFhksfStOREymrpqYvFxLP83vP-Ci"a;
+```
+
+Or, if the workchain is not known in advance, it is still possible to hardcode the StateInit hash, and compsoe address from it at runtime.
+
+```func
+(builder) calculate_address(int stateinit_hash, int workchain) {
+    return begin_cell()
+        .store_uint(4, 3) ;; `0b100`: it's `addr_std` and no `anycast`
+        .store_int(workchain, 8) ;; workchain_id:int8
+        .store_uint(stateinit_hash, 256); ;; address:bits256
+}
+
+() recv_internal() {
+    ;; example usage
+
+    ;; placeholder stateinit hash
+    int stateinit_hash = 0x4de24b95c1c3c9b6a94231460716192c7d2b4e444ca6ae9a98bc5c4b3fcdef3f;
+
+    int workchain = 0; ;; basechain
+
+    builder builder_with_address = calculate_address(
+        stateinit_hash, workchain
+    );
+
+    ;; ...
+}
+```
+
+### Prefixed
+
+The `fixed_prefix_length` field in StateInit allows smart contracts to have a specific prefix in address, for the purpose of deploying it to a certain shardchain. This can be useful for cross-contract latency optimization, as in [Jetton 2.0](/standard/tokens/jettons/comparison#jetton-2-0).
+
+This can seem similar to the [vanity](#vanity) case, but they serve different purposes. Vanity generator finds such StateInit that an address composed from its hash will have certain letters in prefix or suffix. The `fixed_prefix_length` does not affect other fields of the state, and tells blockchain to ignore the first few bits in the address to which the contract is getting deployed.
+
+As a result, the logic here is more similar to the [simple](#simple) case. The only difference is that StateInit should also include `fixed_prefix_length` and address should have first few bits replaced with desired ones.
+
+```func
+(builder) calculate_address(
+    cell code, cell data, int workchain,
+    int prefix_length, int prefix_mask
+) {
+    ;; 1. compose StateInit
+    cell state_init = begin_cell()
+        .store_uint(1, 1) ;; fixed_prefix_length is present
+        .store_uint(8, 5) ;; prefix length itself
+        .store_uint(6, 4) ;; `0b0110`: `code` and `data` are present
+        .store_ref(code)
+        .store_ref(data)
+    .end_cell();
+
+    ;; 2. compose MsgAddressInt
+    int prefixed = cell_hash(state_init) & prefix_mask;
+
+    return begin_cell()
+        .store_uint(4, 3) ;; `0b100`: it's `addr_std` and no `anycast`
+        .store_int(workchain, 8) ;; workchain_id:int8
+        .store_uint(prefixed, 256); ;; address:bits256
+}
+
+;; placeholder for code cell
+(cell) getCode() asm "B{b5ee9c724101010100020000004cacb9cd} PUSHREF";
+
+;; placeholder for data cell
+(cell) getData() {
+    return begin_cell().end_cell();
+}
+
+() recv_internal() {
+    ;; example usage with placeholder values
+
+    cell code = getCode();
+    cell data = getData();
+    int workchain = 0; ;; basechain
+
+    ;; first 8 bits will be 00000000
+    int prefix_length = 8;
+    int prefix_mask = 0x00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
+
+    builder builder_with_address = calculate_address(
+        code, data, workchain, prefix_length, prefix_mask
+    );
+
+    ;; ...
+}
+```
+
+The max possible prefix length is defined in blockchain config's [param 43](/foundations/config#param-43%3A-account-and-message-limits) as `max_acc_fixed_prefix_length`.
+
+## Off-chain derivation
+
+### Simple
+
+The logic mirrors the [on-chain example](#simple). The `@ton/core` library also has `contractAddress` function that handles StateInit hash calculation and composes the address.
+
+```ts
+import { contractAddress, Cell, beginCell } from "@ton/core";
+
+// constant code from BoC
+const code = Cell.fromBoc(
+  Buffer.from("b5ee9c724101010100020000004cacb9cd", "hex"),
+)[0];
+
+// data composing example
+const data = beginCell()
+  .storeUint(123, 123)
+  .storeStringTail("hello, world!")
+  .endCell();
+
+const init = {
+  code,
+  data,
+};
+
+const addr = contractAddress(0, init);
+
+console.log(addr); // EQC235M1tplyIg2OUQZQgG8D3BNF6_TZJ1932iaIV26XBVCH
+```
+
+### Contract sharding
+
+The logic mirrors the [on-chain example](#contract-sharding). Parent address is hardcoded in this examples but could as well be derived on its own.
+
+```ts
+import { contractAddress, Cell, beginCell, Address } from "@ton/ton";
+
+// constant code from BoC
+const code = Cell.fromBoc(
+  Buffer.from("b5ee9c724101010100020000004cacb9cd", "hex"),
+)[0];
+
+// data composing example
+const parentAddress = Address.parse(
+  "EQBKgXCNLPexWhs2L79kiARR1phGH1LwXxRbNsCFF9doc2lN",
+);
+const data = beginCell()
+  .storeStringTail("hello, world!")
+  .storeAddress(parentAddress) // including parent address in child stateinit
+  .endCell();
+
+const init = {
+  code,
+  data,
+};
+
+const addr = contractAddress(0, init);
+
+console.log(addr); // EQAE74NUORgCfJQqcKy6GTCEs1hlZ--um6PWEmWX25fgDuuZ
+````
+
+### Vanity
+
+Similarly to the [on-chain example](#vanity), it only makes sense to hardcode either the StateInit or address due to how vanity contract works.
+
+```ts
+import { contractAddress, Cell, beginCell, Address } from "@ton/ton";
+
+// EXAMPLE 1: constant address
+const addr1 = Address.parse("EQBKgXCNLPexWhs2L79kiARR1phGH1LwXxRbNsCFF9doc2lN");
+
+console.log(addr1); // EQBKgXCNLPexWhs2L79kiARR1phGH1LwXxRbNsCFF9doc2lN
+
+// EXAMPLE 2: constant stateinit
+
+// constant code and data from BoC
+const code = Cell.fromBoc(
+  Buffer.from("b5ee9c724101010100020000004cacb9cd", "hex"),
+)[0];
+const data = Cell.fromBoc(
+  Buffer.from("b5ee9c724101010100020000004cacb9cd", "hex"),
+)[0];
+
+const init = {
+  code,
+  data,
+};
+
+const addr2 = contractAddress(0, init);
+
+console.log(addr2); // EQCtMet2LmiPwbohV11DWbD5xIc4r2U-FmojMwC9xrKa6fCK
+```
+
+### Prefixed
+
+The logic mirrors the [on-chain example](#prefixed).
+
+```ts
+import { contractAddress, Cell, beginCell } from "@ton/core";
+
+// constant code from BoC
+const code = Cell.fromBoc(
+  Buffer.from("b5ee9c724101010100020000004cacb9cd", "hex"),
+)[0];
+
+// data composing example
+const data = beginCell()
+  .storeUint(123, 123)
+  .storeStringTail("hello, world!")
+  .endCell();
+
+const init = {
+  splitDepth: 8,
+  code,
+  data,
+};
+
+const addr = contractAddress(0, init);
+addr.hash[0] = parseInt("00000000", 2); // replace first byte with 0x00
+
+console.log(addr); // EQAAO5BKgRAfcMawxnHYUkZ2Ga74iZMA7uPoD_JkwWfyOwMA
+```
