@@ -108,14 +108,23 @@ This function uses the [`GETGASFEE`](/tvm/instructions#f836-getgasfee) TVM opcod
 
 ### Forward fees
 
+Forward fee is calculated using such a formula
+
+```
+fwdFee = lump_price + priceForCells * msgSizeInCells + priceForBits * msgSizeInBits
+```
+
 In general, you can calculate message size at runtime using `computeDataSize()` which uses [`CDATASIZE`](/tvm/instructions#f941-cdatasize):
 And then, calculate forward fee using `getForwardFee()` which uses [`GETFORWARDFEE`](/tvm/instructions#f838-getforwardfee)
 
-ComputeDataSize have the second argument - maximum number of cells to visit. If it is ok to set in in _8192_ since it is the [limit for message size](/foundations/limits#message-and-transaction-limits).
+ComputeDataSize has the second argument: maximum number of cells to visit. Usually it is set to _8192_ since it is the [limit for message size](/foundations/limits#message-and-transaction-limits).
+
+The price for the message root is fixed and equal to [lump_price](/foundations/config#param-24-and-25%3A-message-price): this is the price for root's bits and the cell itself. The `lump_price` constant is included in `getForwardFee()` function.
 
 ```tact
-let size = computeDataSize(msg.toCell(), 8192);
-let fwdFee = getForwardFee(size.cells, size.bits, isAccountInMasterchain);
+let sizeMsg = computeDataSize(msg.toCell(), 8192);
+
+let fwdFee = getForwardFee(sizeMsg.cells - 1, sizeMsg.bits - msg.toCell().bits(), isAccountInMasterchain);
 ```
 
 <Aside
@@ -126,7 +135,7 @@ let fwdFee = getForwardFee(size.cells, size.bits, isAccountInMasterchain);
 
 ### Optimized forward fee calculation
 
-If the size of the outgoing message is bounded by the size of the incoming message, we can estimate the forward fee of an outgoing message to be no larger than the forward fee of the incoming message, that was already computed by TVM. Thus, we don't have to calculate it again. Note, that this estimation is correct only for contract system in the same workchain.
+If the size of the outgoing message is bounded by the size of the incoming message, we can estimate the forward fee of an outgoing message to be no larger than the forward fee of the incoming message, that was already computed by TVM. Thus, we don't have to calculate it again. Note that this estimation is correct only for a contract system in the same workchain.
 
 ```tolk
 fun onInternalMessage(in: InMessage) {
@@ -135,36 +144,11 @@ fun onInternalMessage(in: InMessage) {
 }
 ```
 
-### Additional forward fee calculation
-
-Forward fee is calculated using such formula
-
-```
-fwdFee = basePrice + priceForCells * cells + priceForBits * bits
-```
-
-So, when one want to send message, with `a + b` cells and `x + y` bits, the forward fee won't be `getForwardFee(a + b, x + y)`, but rather `basePrice + priceForCells * (a + b) + priceForBits * (x + y)`.
-
-For this case, we can use `getSimpleForwardFee()` which uses [`GETFORWARDFEESIMPLE`](/tvm/instructions#f83c-getforwardfeesimple). This function does not add basePrice (called `lump_price` in config) into account.
-
-So the price of sending message with `a + b` cells and `x + y` bits is `getForwardFee(a, x) + getSimpleForwardFee(b, y)`.
-
-For example, when deploying contracts as part of the operation:
-
-```tact
-deploy(DeployParameters{
-    init: initOf TargetContract(params),
-    value: 0,
-    mode: SendRemainingBalance,
-    body: msg.toCell(),
-});
-```
-
-The `init` field adds significant message size. Calculate forward fees using actual cell and bit counts, summing the base message and the `StateInit`: `getForwardFee(msgCells, msgBits) + getSimpleForwardFee(stateInitCells, stateInitBits)`.
-
 ### Complex forward fee calculation
 
-Sometimes, out message is larger than the input one. In that cases combined approach can be used.
+Assume the contract receives a message with an unknown size and forwards it further adding additional fields with `a` bits and `b` cells to the message, e.g. `StateInit`.
+
+For this case, use `getSimpleForwardFee(b, a)` which uses [`GETFORWARDFEESIMPLE`](/tvm/instructions#f83c-getforwardfeesimple). This function does not add lump_price into account.
 
 ```tolk
 fun onInternalMessage(in: InMessage) {
@@ -231,12 +215,13 @@ let otherFees = 0; // compute compute + forward fees here
 
 **Approach 2: Cover storage on demand**
 
-In the worst case the storage fee for a single message is [`freeze_due_limit`](/foundations/config#param-20-and-21%3A-gas-prices). Otherwise, the contract likely is already frozen and a transaction chain is likely to fail anyway.
+The order of phases [depends](/foundations/phases) on the `bounce` flag of an incoming message. If all messages in the protocol are unbounceable, then the storage phase comes after the credit phase. So, the contract's storage fees are deducted from the joint balance of the contract and incoming message. In this case the pattern where the contract's balance is zero and incoming messages cover storage fees can be applied.
 
-So if we reserve storage debt from incoming messages. Allow the balance to remain at zero or with small debt.
+It is impossible to know in advance what the storage fee due will be on the contract, so a threshold must be selected depending on the network configuration. It is good practice to select [`freeze_due_limit`](/foundations/config#param-20-and-21%3A-gas-prices). Otherwise, the contract likely is already frozen and a transaction chain is likely to fail anyway.
+
+This pattern can be generalized to both bounceable and unbounceable messages with `myStorageDue()` function that returns [`storage_fees_due`](/foundations/phases#storage-phase)
 
 Note, this is supposed to be the code in the **internal** contracts.
-
 ```tact
 receive(msg: Operation) {
     // Reserve original balance plus any storage debt
@@ -250,12 +235,6 @@ receive(msg: Operation) {
     });
 }
 ```
-
-This simplifies fee calculation at the start of the operation—you do not need to pre‑calculate storage fees. The `myStorageDue()` function returns the amount needed to bring the balance to zero (or zero if it is already positive).
-
-<Aside type="tip">
-  If the incoming message is non‑bounceable, storage fees are deducted from the incoming message’s balance before processing. For bounceable messages, storage fees are deducted from the contract’s balance. So, if all messages to **internal** contracts are unbounceable, and you use this, there is no need to reserve toncoins for storage in **internal** contracts.
-</Aside>
 
 If we expect that the rest of trace uses `n` unique contracts, then it won't take more than `n` freeze limits to pay their storage fees. So, in the **receiver** contract, the check should be:
 
