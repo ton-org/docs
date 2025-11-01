@@ -1,0 +1,57 @@
+---
+title: "NFT: how to transfer"
+sidebarTitle: "How to transfer"
+---
+
+NFT transfer is an operation specified in [TEP 0062](https://github.com/ton-blockchain/TEPs/blob/1fbc23cac69723c53251f686ec90d81bf0e83443/text/0062-nft-standard.md). Its implementation must comply with this standard,
+and NFT item contracts must support the logic described there. The NFT transfer message is
+also specified and must comply with the corresponding TL-B scheme. This scheme involves, among other things,
+
+- `forward_amount`: the amount of nanotons to be sent to the destination address;
+- `forward_payload`: optional custom data that should be sent to the destination address.
+
+If `forward_amount > 0`, then `forward_payload` must comply with one of the [standard formats](https://github.com/ton-blockchain/TEPs/blob/1fbc23cac69723c53251f686ec90d81bf0e83443/text/0062-nft-standard.md#forward_payload-format).
+
+Use a wallet app with NFTs and follow its guide (for example, [Tonkeeper](https://tonkeeper.helpscoutdocs.com/article/47-how-to-send-nft-to-another-wallet)).
+Or you can do it manually. Below there is an illustrative example:
+
+```typescript
+import { WalletContractV5R1, TonClient, Address, toNano } from "@ton/ton";
+
+import { mnemonicToPrivateKey } from "@ton/crypto";
+
+import { AssetsSDK, createApi } from "@ton-community/assets-sdk";
+
+async function main() {
+    const client = new TonClient({
+        endpoint: "https://toncenter.com/api/v2/jsonRPC",
+    });
+
+    const MNEMONIC = process.env.MNEMONIC as string; // set via environment
+    const keyPair = await mnemonicToPrivateKey(MNEMONIC.split(" "));
+
+    const wallet = WalletContractV5R1.create({
+        workchain: 0,
+        publicKey: keyPair.publicKey,
+    });
+
+    const provider = client.provider(wallet.address);
+    const sender = wallet.sender(provider, keyPair.secretKey);
+
+    const NETWORK = "testnet";
+    const api = await createApi(NETWORK);
+
+    const sdk = AssetsSDK.create({
+        api,
+        sender,
+    });
+
+    const NFT_ADDRESS = Address.parse("<NFT_ITEM_ADDR>");
+    const nftItem = await sdk.openNftItem(NFT_ADDRESS);
+
+    const RECEIVER_ADDRESS = Address.parse("<RECEIVER_ADDR>");
+    await nftItem.send(sender, RECEIVER_ADDRESS, { value: toNano(10) });
+}
+
+void main();
+```
