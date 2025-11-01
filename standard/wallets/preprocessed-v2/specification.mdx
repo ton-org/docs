@@ -1,0 +1,280 @@
+---
+title: "Preprocessed Wallet V2 — specification"
+sidebarTitle: "Specification"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+This page provides a complete technical specification for Preprocessed Wallet V2, covering storage structure, message formats, replay protection, limitations, and implementation details.
+
+## Objective
+
+Understand the internal architecture, data structures, and operational mechanics of Preprocessed Wallet V2. This reference page explains how the wallet processes batch transactions efficiently with minimal gas consumption.
+
+<Aside type="tip">
+  For practical usage, see [How-to guides](/standard/wallets/preprocessed-v2/interact).
+</Aside>
+
+## What is Preprocessed Wallet V2?
+
+Preprocessed Wallet V2 is a wallet smart contract designed for efficiency with minimal code complexity. It provides low transaction costs while maintaining the ability to send up to 255 actions in a single transaction.
+
+**Key difference from standard wallets:**\
+Preprocessed V2 enables batch transaction processing with up to 255 actions per message, making it suitable for services that need to send multiple payments efficiently.
+
+**Optimization focus:**\
+Preprocessed V2 prioritizes gas efficiency and simplicity, making it suitable for applications that need batch processing with minimal overhead.
+
+**Gas consumption:**\
+The wallet consumes 1537 gas units per transaction.
+
+## TL-B schema
+
+[TL-B (Type Language - Binary)](/languages/TL-B/overview) is a domain-specific language designed to describe data structures in TON. The schemas below define the binary layout of the contract's storage and external messages.
+
+### Storage structure
+
+```tlb
+storage$_ pub_key:bits256 seq_no:uint16 = Storage;
+```
+
+### External message structure
+
+```tlb
+_ {n:#} valid_until:uint64 seq_no:uint16 actions:^(OutList n) { n <= 255 } = MsgInner n;
+
+msg_body$_ {n:#} sign:bits512 ^(MsgInner n) = ExtInMsgBody n;
+```
+
+<Aside type="note">
+  The canonical TL-B schemas are maintained in the [ton-preprocessed-wallet-v2 repository](https://github.com/pyAndr3w/ton-preprocessed-wallet-v2).
+</Aside>
+
+Below, each field is explained in detail.
+
+## Storage structure
+
+The Preprocessed Wallet V2 contract stores two persistent fields:
+
+### `pub_key` (256 bits)
+
+**Purpose:**\
+An Ed25519 public key is used to verify signatures on incoming external messages.
+
+**How it works:**\
+When the wallet receives an external message, it verifies that the 512-bit signature was created by the holder of the private key corresponding to this public key.
+
+<Aside
+  type="caution"
+>
+  The public key is not the wallet address. The address is derived from the contract's `StateInit` (code + initial data). See [Addresses in TON](/foundations/addresses/overview) for details.
+</Aside>
+
+### `seq_no` (16 bits)
+
+**Purpose:**\
+Prevents replay attacks by ensuring each message has a unique sequence number.
+
+**How it works:**\
+Each external message must contain the correct `seq_no` that matches the current value stored in the contract. After successful processing, the sequence number is incremented (with modulo 2^16 to prevent overflow).
+
+**Range:** 0 to 65535 (wraps from 65535 to 0)
+
+**Size optimization:**\
+The sequence number is limited to 16 bits (instead of 32 bits used in other wallets) to minimize storage size and message size, reducing gas costs.
+
+**Protection mechanism:**\
+Even if an attacker intercepts an old message, they cannot replay it because the sequence number will no longer match the current value in storage.
+
+**Wrap‑around note:**\
+See [Replay protection mechanism](#replay-protection-mechanism) for guidance on wrap‑around and `valid_until` windows.
+
+## External message structure
+
+External messages sent to Preprocessed Wallet V2 have a specific layout.
+
+### Message layout
+
+```text
+sign:bits512
+^[ valid_until:uint64
+   seq_no:uint16
+   actions:^(OutList n) ]
+```
+
+**Key point:**\
+The signature is in the root cell (512 bits); all other parameters are in a reference cell (`MsgInner`).
+
+<Aside
+  type="tip"
+  title="Gas optimization"
+>
+  This structure saves gas units during signature verification. If the signature were in the same cell as the message body, the contract would need to use `slice_hash()` (which rebuilds the cell internally, costing extra gas) instead of simply taking `cell_hash()` of the reference.
+</Aside>
+
+---
+
+### `sign` (512 bits)
+
+**Type:**\
+Ed25519 signature (512 bits).
+
+**What is signed:**\
+The hash of the reference cell (`MsgInner`) containing `valid_until`, `seq_no`, and `actions`.
+
+**Validation:**\
+The contract verifies the signature using:
+
+```func
+check_signature(hash(ref_cell), signature, public_key)
+```
+
+**On failure:**\
+Exit code `35`.
+
+**Link:** [Ed25519 signature scheme](https://en.wikipedia.org/wiki/EdDSA#Ed25519)
+
+---
+
+### `valid_until` (64 bits)
+
+**Purpose:**\
+Unix timestamp (seconds) when the external message expires.
+
+**Validation:**\
+The contract performs a single check:
+
+```func
+now() > valid_until  // Message expired
+```
+
+**On failure:**\
+Exit code `34`.
+
+**Why it matters:**\
+Prevents replay of expired messages. If `now() > valid_until`, the message is considered expired and rejected.
+
+**Recommendation:**\
+Set `valid_until` to 1 minute (60 seconds) from message creation time.
+
+---
+
+### `seq_no` (16 bits)
+
+**Purpose:**\
+Expected sequence number for this message.
+
+**Validation:**\
+Must match the current `seq_no` stored in contract storage.
+
+**On mismatch:**\
+Exit code `33`.
+
+### `actions` (reference cell)
+
+**Structure:**\
+A serialized `OutList` containing up to 255 actions to execute.
+
+**Validation:**\
+No validation.
+
+**Supported actions:**
+All standard TVM actions are supported without restrictions:
+
+- `action_send_msg` — Send messages
+- `action_set_code` — Update contract code
+- `action_reserve_currency` — Reserve currency
+- `action_change_library` — Change library
+
+<Aside
+  type="danger"
+  title="Critical security warning"
+>
+  Preprocessed Wallet V2 does not protect against `action_set_code` actions. If you accidentally include a `set_code` action in your message, the wallet contract code will be changed, potentially making your funds inaccessible. Always verify your action lists before sending.
+</Aside>
+
+**Maximum actions:** 255 (maximum number of out actions in TON)
+
+## Replay protection mechanism
+
+Preprocessed Wallet V2 uses sequence numbers and time-based expiration to prevent replay attacks.
+
+### Sequence number protection
+
+**How it works:**
+
+1. Each message must contain the correct `seq_no`
+1. After successful processing, `seq_no` is incremented
+1. Old messages with incorrect sequence numbers are rejected
+
+**Overflow protection:**
+
+- Uses modulo 2^16 operation: `(seq_no + 1) % 65536`
+- Wraps from 65535 to 0
+
+### Time-based expiration
+
+**How it works:**
+
+1. Each message includes `valid_until` timestamp
+1. Messages are rejected if `now() > valid_until`
+1. Prevents replay of expired messages
+
+**Recommended expiration:**
+
+- 1 minute (60 seconds) for most use cases
+- Shorter for high-frequency operations
+- Longer for batch operations with network delays
+
+### Wrap‑around and validity window
+
+When `seq_no` wraps (65535 → 0), previously sent messages that used the same numeric `seq_no` remain non‑applicable if their `valid_until` has already expired. Safety relies on the dual check: current `seq_no` equality and unexpired `valid_until`.
+
+Do not set `valid_until` excessively far in the future. A very long validity window increases the chance that, after wrap‑around, an old message with the same `seq_no` is still valid. Keep the window short (for example, ≤ 60 seconds) unless you have a specific operational reason.
+
+### Signature verification
+
+**How it works:**
+
+1. All messages must be signed with the wallet's private key
+1. Signature covers the entire message content (hash of `MsgInner`)
+1. Prevents unauthorized message creation
+
+## Exit codes
+
+| Exit code | Name                      | Description                                        | How to fix                                                                      |
+| --------- | ------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `0`       | Success                   | Message processed successfully                     | —                                                                               |
+| `33`      | Incorrect sequence number | The `seq_no` in the message does not match storage | Use the correct `seq_no` from contract storage                                  |
+| `34`      | Message expired           | The `valid_until` timestamp has passed             | Ensure `valid_until >= now()` when creating the message                         |
+| `35`      | Invalid signature         | Ed25519 signature verification failed              | Check that the private key is correct and the message hash is computed properly |
+
+## Limitations and constraints
+
+### Maximum actions per transaction
+
+**Limitation:**\
+Each external message can trigger up to 255 actions.
+
+**Why this limitation?**\
+255 is the maximum number of out actions supported by TON blockchain. This is a fundamental limitation of the TVM execution environment.
+
+**Impact:**\
+Suitable for batch operations with up to 255 actions per transaction.
+
+<Aside
+  type="note"
+  title="Sequential processing"
+>
+  Preprocessed Wallet V2 uses sequential `seq_no` processing. This means you must wait for each transaction to complete before sending the next one.
+</Aside>
+
+## Implementation
+
+### Source code
+
+- Repository: - [pyAndr3w/ton-preprocessed-wallet-v2](https://github.com/pyAndr3w/ton-preprocessed-wallet-v2)
+
+## See also
+
+- [How to interact with Preprocessed Wallet V2](/standard/wallets/preprocessed-v2/interact)
