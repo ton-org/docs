@@ -1,0 +1,142 @@
+---
+title: "Gas"
+---
+
+Each instruction executed in TVM consumes gas. All instructions consume _basic gas_, which is calculated from the size of the instruction in the bitcode. Some instructions may consume _extra gas_, which is often not fixed but calculated based on the input data.
+
+## Basic gas usage (per bit of executed code)
+
+Each instruction consumes a fixed amount of `10` gas and `1` gas for each bit of this instruction, not including variable-length operands and references.
+
+Examples:
+
+| Instruction                                             | TL-B                                                                                             | Gas  | Notes                                                                                                                                              |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`NEWC`](/tvm/instructions#c8-newc)                     | `#C8`                                                                                            | `18` | 8-bit prefix without operands                                                                                                                      |
+| [`STU`](/tvm/instructions#cb-stu)                       | `#CB` <br />`cc:uint8`                                                                           | `26` | 8-bit prefix, 8-bit operand                                                                                                                        |
+| [`PUSHINT_LONG`](/tvm/instructions#82-pushint_long)     | `#82` <br />`l:(## 5)` <br />`xxx:(int (8 * l + 19))`                                            | `23` | 8-bit prefix, 5-bit operand, length of `xxx` depends on `l`, so it is not included                                                                 |
+| [`STSLICE_CONST`](/tvm/instructions#cfc0_-stsliceconst) | `#CFC0_` <br />`x:(## 2)` <br />`y:(## 3)` <br />`c:(x * ^Cell)` <br />`sss:((8 * y + 2) * Bit)` | `24` | 9-bit prefix (`CF` is 8 bits, `C0_` is `C_`, which is just bit `1`), 2-bit and 3-bit operands, refs `c` and variable-length `sss` are not included |
+
+## Cell operations
+
+When any instruction internally finalizes a `Builder` to a `Cell`, it consumes `500` gas. When a `Cell` is loaded as a `Slice`, it consumes `100` gas for the first access in current smart contract invocation, and `25` gas for each subsequent load from cache. Cells are identified by representation hash, e.g., loading cell with the same hash for the second time will always cost `25` gas.
+
+This applies to all instructions that internally operate with cells (including dictionary operations). The only exceptions are:
+
+- `BTOS` converts a `Builder` to a `Slice` without consuming gas for cell operations.
+- `HASHBU` computes hash without consuming gas for converting `Builder` to a `Cell`
+
+## Exceptions
+
+TVM consumes `50` gas when any exception is thrown, both explicitly by [`THROW`](/tvm/instructions#f2c4_-throw)-like instructions or implicitly during execution of other instructions. This happens before the jump to the exception handler `c2`.
+
+## Implicit jumps and returns
+
+When the current continuation ends and there is a remaining reference, TVM jumps to it and consumes `10` gas. When there are no instructions to execute and references to jump to, implicit return to `c0` occurs, which consumes `5` gas.
+
+## Nested continuations
+
+Calling more than `8` extraordinary continuations in a chain consumes `1` gas for each subsequent continuation.
+
+## Tuple operations
+
+[`TUPLE`](/tvm/instructions#6f0-tuple), [`TUPLEVAR`](/tvm/instructions#6f80-tuplevar), [`UNTUPLE`](/tvm/instructions#6f2-untuple), [`UNTUPLEVAR`](/tvm/instructions#6f82-untuplevar), [`UNPACKFIRST`](/tvm/instructions#6f3-unpackfirst), [`UNPACKFIRSTVAR`](/tvm/instructions#6f83-unpackfirstvar), [`EXPLODE`](/tvm/instructions#6f4-explode), [`EXPLODEVAR`](/tvm/instructions#6f84-explodevar) consumes `1` gas for each entry been pushed or popped into a tuple. [`TPUSH`](/tvm/instructions#6f8c-tpush), [`TPOP`](/tvm/instructions#6f8d-tpop), [`SETINDEX`](/tvm/instructions#6f5-setindex), [`SETINDEXVAR`](/tvm/instructions#6f85-setindexvar), [`SETINDEXQ`](/tvm/instructions#6f7-setindexq)/[`SETINDEXVARQ`](/tvm/instructions#6f87-setindexvarq) consumes `len(tuple)` gas for the resulting tuple size after push/pop/set. Same applies to instructions operating with `c7`: [`SETGLOB`](/tvm/instructions#f87_-setglob)/[`SETGLOBVAR`](/tvm/instructions#f860-setglobvar), [`RANDU256`](/tvm/instructions#f810-randu256)/[`RAND`](/tvm/instructions#f811-rand), [`SETRAND`](/tvm/instructions#f814-setrand), [`ADDRAND`](/tvm/instructions#f815-addrand).
+
+## Stack operations
+
+TVM consumes 1 gas for each stack element deeper than 32 elements inside the resulting new stack each time stack gets copied: when calling or jumping to a continuation with a non-empty argument number, an initial stack, or both, when extending a continuation stack using [`SETCONTARGS`](/tvm/instructions#ec-setcontargs_n) and similar instructions, when using [`RUNVM`](/tvm/instructions#db4-runvm) (both for initial and resulting stacks of the vm).
+
+## Extra currency
+
+The first `5` executions of `GETEXTRABALANCE` consume at most `200` gas each. For example, if the gas cost was `1000`, then `200` gas will be consumed, and the remaining `800` is free.
+
+## RUNVM
+
+[`RUNVM`](/tvm/instructions#db4-runvm) and [`RUNVMX`](/tvm/instructions#db50-runvmx) consume `40` extra gas before starting a VM.
+
+## Cryptography
+
+### CHKSIGNS/CHKSIGNU
+
+[`CHKSIGNS`](/tvm/instructions#f911-chksigns) and [`CHKSIGNU`](/tvm/instructions#f910-chksignu) can be invoked `10` times without extra gas cost. Next checks will cost `4000` gas each.
+
+### HASHEXT
+
+`HASHEXT*` instructions always consume `1` extra gas for each part of the input. Additionally, the following gas is consumed for each hashed byte:
+
+| Algorithm | Gas consumed  |
+| --------- | ------------- |
+| SHA256    | 1/33 per byte |
+| SHA512    | 1/16 per byte |
+| BLAKE2B   | 1/19 per byte |
+| KECCAK256 | 1/11 per byte |
+| KECCAK512 | 1/6 per byte  |
+
+Only the integer part of the gas is consumed; for example, 0-32 bytes of SHA256 cost 0 gas, 33-64 bytes cost 1 gas, and so on.
+
+### RIST255
+
+Instructions consume constant extra gas.
+
+| Instruction                                                   | Extra gas |
+| ------------------------------------------------------------- | --------- |
+| [`RIST255_FROMHASH`](/tvm/instructions#f920-rist255_fromhash) | 600       |
+| [`RIST255_VALIDATE`](/tvm/instructions#f921-rist255_validate) | 200       |
+| [`RIST255_ADD`](/tvm/instructions#f922-rist255_add)           | 600       |
+| [`RIST255_MUL`](/tvm/instructions#f924-rist255_mul)           | 2000      |
+| [`RIST255_MULBASE`](/tvm/instructions#f925-rist255_mulbase)   | 750       |
+
+### Other instructions
+
+[`ECRECOVER`](/tvm/instructions#f912-ecrecover) consumes 1500 extra gas.
+
+`SECP256K1_XONLY_PUBKEY_TWEAK_ADD` consumes 1250 extra gas.
+
+[`P256_CHKSIGNU`](/tvm/instructions#f914-p256_chksignu) and [`P256_CHKSIGNS`](/tvm/instructions#f915-p256_chksigns) consume 3500 extra gas.
+
+### BLS
+
+#### Signature verification and aggregation
+
+| Instruction                                                                   | Gas consumed        | Notes                                                                             |
+| ----------------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------- |
+| [`BLS_VERIFY`](/tvm/instructions#f93000-bls_verify)                           | `61000`             |                                                                                   |
+| [`BLS_AGGREGATE`](/tvm/instructions#f93001-bls_aggregate)                     | `-2650 + 4350 * n`  | `n` is the number of signatures aggregated.                                       |
+| [`BLS_FASTAGGREGATEVERIFY`](/tvm/instructions#f93002-bls_fastaggregateverify) | `58000 + 3000 * n`  | `n` is the number of public keys verified against one message/signature pair.     |
+| [`BLS_AGGREGATEVERIFY`](/tvm/instructions#f93003-bls_aggregateverify)         | `38500 + 22500 * n` | `n` is the number of `(public key, message)` pairs checked against one signature. |
+
+#### G1 group helpers
+
+| Instruction                                                                                               | Gas consumed |
+| --------------------------------------------------------------------------------------------------------- | ------------ |
+| [`BLS_G1_ADD`](/tvm/instructions#f93010-bls_g1_add) / [`BLS_G1_SUB`](/tvm/instructions#f93011-bls_g1_sub) | `3900`       |
+| [`BLS_G1_NEG`](/tvm/instructions#f93012-bls_g1_neg)                                                       | `750`        |
+| [`BLS_G1_MUL`](/tvm/instructions#f93013-bls_g1_mul)                                                       | `5200`       |
+| [`BLS_MAP_TO_G1`](/tvm/instructions#f93016-bls_map_to_g1)                                                 | `2350`       |
+| [`BLS_G1_INGROUP`](/tvm/instructions#f93017-bls_g1_ingroup)                                               | `2950`       |
+
+[`BLS_G1_MULTIEXP`](/tvm/instructions#f93014-bls_g1_multiexp) consumes `11375 + 630 * n + (8820 * n) / max(log₂ n, 4)` extra gas, where `n` is the number of `(point, scalar)` pairs.
+
+Instructions [`BLS_G1_ZERO`](/tvm/instructions#f93015-bls_g1_zero) and [`BLS_G1_ISZERO`](/tvm/instructions#f93018-bls_g1_iszero) do not charge additional gas.
+
+#### G2 group helpers
+
+| Instruction                                                                                               | Gas consumed |
+| --------------------------------------------------------------------------------------------------------- | ------------ |
+| [`BLS_G2_ADD`](/tvm/instructions#f93020-bls_g2_add) / [`BLS_G2_SUB`](/tvm/instructions#f93021-bls_g2_sub) | `6100`       |
+| [`BLS_G2_NEG`](/tvm/instructions#f93022-bls_g2_neg)                                                       | `1550`       |
+| [`BLS_G2_MUL`](/tvm/instructions#f93023-bls_g2_mul)                                                       | `10550`      |
+| [`BLS_MAP_TO_G2`](/tvm/instructions#f93026-bls_map_to_g2)                                                 | `7950`       |
+| [`BLS_G2_INGROUP`](/tvm/instructions#f93027-bls_g2_ingroup)                                               | `4250`       |
+
+[`BLS_G2_MULTIEXP`](/tvm/instructions#f93024-bls_g2_multiexp) consumes `30388 + 1280 * n + (22840 * n) / max(log₂ n, 4)` gas, where `n` is the number of `(point, scalar)` pairs.
+
+Instructions [`BLS_G2_ZERO`](/tvm/instructions#f93025-bls_g2_zero) and [`BLS_G2_ISZERO`](/tvm/instructions#f93028-bls_g2_iszero) do not charge additional gas.
+
+#### Pairing and constants
+
+| Instruction                                           | Gas consumed        | Notes                                                                         |
+| ----------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------- |
+| [`BLS_PAIRING`](/tvm/instructions#f93030-bls_pairing) | `20000 + 11800 * n` | `n` is the number of `(G1, G2)` pairs supplied for the pairing product check. |
+
+[`BLS_PUSHR`](/tvm/instructions#f93031-bls_pushr) do not charge additional gas.
