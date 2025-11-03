@@ -1,7 +1,7 @@
 export const FeePlayground = () => {
   const nano = 10 ** -9;
   const bit16 = 2 ** 16;
-  const Note = ({ title, children }) => (
+  const LocalNote = ({ title, children }) => (
     <div className="my-3 px-4 py-3 rounded-2xl border border-sky-500/20 bg-sky-50/50 dark:border-sky-500/30 dark:bg-sky-500/10">
       {title && (
         <div className="text-xs font-semibold text-sky-900 dark:text-sky-200 mb-1">
@@ -130,17 +130,17 @@ export const FeePlayground = () => {
             <input name="time_delta" defaultValue="69" className="mt-1 w-full border rounded-md px-2 py-1 bg-transparent" type="number" step="0.00001" />
           </label>
         </div>
-        <Note title="Where to get payload sizes?">
+        <LocalNote title="Where to get payload sizes?">
           You can find import, forward and storage parameters in the Executor logs (txtracer/retracer) for a specific transaction.
-        </Note>
+        </LocalNote>
       </div>
 
       <div className="mt-4">
         <h4 className="font-semibold text-sm">Compute fee</h4>
-        <Note title="Why enter gas manually?">
+        <LocalNote title="Why enter gas manually?">
           The compute (gas) cost cannot be predicted by a static formula. <br />
           Measure it in tests or read it from the executor logs / explorer, then enter the gas fee here.
-        </Note>
+        </LocalNote>
         <div className="grid grid-cols-1 gap-3">
           <label className="block text-xs">Gas fee (TON)
             <input name="gas_fees_ton" defaultValue="0.0011976" step="0.000000001" className="mt-1 w-full border rounded-md px-2 py-1 bg-transparent" type="number" />
