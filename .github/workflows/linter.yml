@@ -2,6 +2,7 @@ name: 💅 Linting suite
 
 env:
   HUSKY: 0
+  NODE_VERSION: 20
 
 on:
   pull_request:
@@ -30,7 +31,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
 
       - name: Install dependencies
@@ -62,7 +63,7 @@ jobs:
           echo
           npx remark --no-stdout --quiet --frail --silently-ignore $(echo -e "${ALL_CHANGED_FILES[@]}" | tr '\n' ' ')
 
-      - name: ${{ steps.check-fmt.conclusion == 'failure' && '👀' }} How to fix the formatting? See these suggestions!
+      - name: ${{ steps.check-fmt.conclusion == 'failure' && '👀 How to fix the formatting? See these suggestions!' || '...' }}
         env:
           ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
         if: failure()
@@ -93,7 +94,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
 
       - name: Install dependencies
@@ -107,3 +108,39 @@ jobs:
         with:
           check_dot_files: explicit
           suggestions: true
+
+  redirects-check:
+    name: "Redirects"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          corepack enable
+          npm ci
+
+      - name: Check uniqueness of redirect sources in docs.json
+        if: ${{ !cancelled() }}
+        run: node scripts/check:redirects unique
+
+      - name: Check existence of redirect destinations in docs.json
+        if: ${{ !cancelled() }}
+        run: node scripts/check:redirects exist
+
+      # - name: Check redirects against the previous TON Documentation
+      #   if: ${{ !cancelled() }}
+      #   run: node scripts/check:redirects previous
+
+      - name: Check redirects against the upstream docs.json structure
+        if: ${{ !cancelled() }}
+        run: node scripts/check:redirects upstream
