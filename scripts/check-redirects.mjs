@@ -45,7 +45,6 @@ import {
  * @return {CheckResult}
  */
 const checkUnique = (config) => {
-  console.log('🏁 Checking the uniqueness of redirect sources in docs.json...');
   const redirectSources = getRedirects(config).map((it) => it.source);
   const duplicates = redirectSources.filter((source, index) => redirectSources.indexOf(source) !== index);
   if (duplicates.length !== 0) {
@@ -69,7 +68,6 @@ const checkUnique = (config) => {
  * @return {CheckResult}
  */
 const checkExist = (config) => {
-  console.log('🏁 Checking the existence of redirect destinations in docs.json...');
   const uniqDestinations = [...new Set(getRedirects(config).map((it) => it.destination))];
   let todoDestsExist = false;
   const missingDests = uniqDestinations.filter((it) => {
@@ -109,8 +107,6 @@ const checkExist = (config) => {
  * @return {Promise<CheckResult>}
  */
 const checkPrevious = async (td, config) => {
-  console.log('🏁 Checking redirects against the previous TON Documentation...');
-
   // 1. Clone previous TON Docs in a temporary directory
   //    in order to obtain the sidebars.js module
   const tonDocsPath = join(td, 'ton-docs');
@@ -214,7 +210,6 @@ const checkPrevious = async (td, config) => {
  * @return {Promise<CheckResult>}
  */
 const checkUpstream = async (localConfig) => {
-  console.log('🏁 Checking redirects against the upstream docs.json structure...');
   const response = await fetch('https://raw.githubusercontent.com/ton-org/docs/refs/heads/main/docs.json');
 
   /** @type {DocsConfig} */
@@ -271,25 +266,32 @@ const main = async () => {
   const handleCheckResult = (res, rawSuccessMsg) => {
     if (!res.ok) {
       errored = true;
-      console.log(res.error + '\n');
+      console.log(res.error);
     } else {
-      console.log(composeSuccess(rawSuccessMsg) + '\n');
+      console.log(composeSuccess(rawSuccessMsg));
     };
+    if (shouldRunAll) {
+      console.log(); // intentional break
+    }
   }
 
   if (shouldRunAll || argUnique) {
+    console.log('🏁 Checking the uniqueness of redirect sources in docs.json...');
     handleCheckResult(checkUnique(config), 'All sources are unique.');
   }
 
   if (shouldRunAll || argExist) {
+    console.log('🏁 Checking the existence of redirect destinations in docs.json...');
     handleCheckResult(checkExist(config), 'All destinations exist.');
   }
 
   if (shouldRunAll || argPrevious) {
+    console.log('🏁 Checking redirects against the previous TON Documentation...');
     handleCheckResult(await checkPrevious(td, config), 'Full coverage.');
   }
 
   if (shouldRunAll || argUpstream) {
+    console.log('🏁 Checking redirects against the upstream docs.json structure...');
     handleCheckResult(await checkUpstream(config), 'Full coverage.');
   }
 
