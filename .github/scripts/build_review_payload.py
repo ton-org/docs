@@ -177,9 +177,15 @@ def _build_from_sidecar(sidecar: dict, *, repo: str, sha: str, repo_root: Path) 
     items = sidecar.get("selected_details") or []
     comments: List[Dict[str, object]] = []
     def sanitize_code_for_gh_suggestion(code: str) -> str:
-        # Remove diff headers and convert +added lines to plain text; drop -removed lines.
+        """Normalize a suggestion snippet for GitHub suggestions.
+        - If a fenced block is present, extract its inner content.
+        - Remove diff headers and treat leading '+' additions as plain text; drop '-' lines.
+        """
+        # Extract inner of first fenced block when present
+        lang, inner = _extract_first_code_block(code)
+        text = inner if inner is not None else code
         out: List[str] = []
-        for ln in code.splitlines():
+        for ln in text.splitlines():
             if ln.startswith('--- ') or ln.startswith('+++ ') or ln.startswith('@@'):
                 continue
             if ln.startswith('+') and not ln.startswith('++'):
@@ -216,12 +222,8 @@ def _build_from_sidecar(sidecar: dict, *, repo: str, sha: str, repo_root: Path) 
                     continue
             except Exception:
                 pass
-        # Build comment body with title + description + suggestion fence
+        # Build comment body with title + description and optional suggestion fence
         code = code.rstrip("\n")
-        if not code:
-            # Skip items with no replacement text
-            continue
-        repl = sanitize_code_for_gh_suggestion(code)
         parts: List[str] = []
         # Prefer including severity in heading when present in sidecar
         sev = (it.get("severity") or "").strip().upper()
@@ -231,10 +233,26 @@ def _build_from_sidecar(sidecar: dict, *, repo: str, sha: str, repo_root: Path) 
         if desc:
             parts.append("")
             parts.append(desc)
-        parts.append("")
-        parts.append("```suggestion")
-        parts.append(repl)
-        parts.append("```")
+        # When replacement text is present, include a GitHub suggestion block.
+        # Allow empty replacement (deletion) suggestions: GitHub treats an empty block as delete selected lines.
+        if code is not None:
+            repl = sanitize_code_for_gh_suggestion(code)
+            repl_lines = repl.splitlines()
+            n_range = end - start + 1
+            if (
+                (n_range == 1 and len(repl_lines) == 1) or
+                (n_range > 1 and len(repl_lines) == n_range) or
+                (repl == "" and n_range >= 1)
+            ):
+                parts.append("")
+                parts.append("```suggestion")
+                if repl:
+                    parts.append(repl)
+                parts.append("```")
+        else:
+            # No auto-fix block; rely on title/description and CTA only.
+            pass
+        # Always include the feedback CTA
         parts.append("")
         parts.append("Please leave a reaction 👍/👎 to this suggestion to improve future reviews for everyone!")
         body_text = "\n".join(parts).strip()
@@ -292,6 +310,8 @@ def _extract_first_code_block(text: str) -> Tuple[Optional[str], Optional[str]]:
 
 
 _TRAILER_JSON_RE = re.compile(r"```json\s*(\{[\s\S]*?\})\s*```\s*$", re.IGNORECASE | re.MULTILINE)
+# Remove any fenced code blocks (```lang ... ```), used when we can't submit a proper GH suggestion
+_FENCED_BLOCK_RE = re.compile(r"```[a-zA-Z0-9_-]*\s*\n[\s\S]*?\n```", re.MULTILINE)
 
 def _strip_trailing_json_trailer(text: str) -> str:
     """Remove a trailing fenced JSON block (validator trailer) from text."""
@@ -424,7 +444,7 @@ def main() -> None:
         body, _event, comments = _build_from_sidecar(sidecar, repo=repo, sha=sha, repo_root=Path(os.environ.get("GITHUB_WORKSPACE") or "."))
         # Always submit a COMMENT review regardless of findings
         out = {
-            "body": body or "LGTM",
+            "body": body or "No documentation issues detected.",
             "event": "COMMENT",
             "comments": comments,
             "commit_id": (sidecar.get("commit_id") or sha) or None,
@@ -495,7 +515,7 @@ def main() -> None:
     # Fallback to original markdown body
     body = _absolutize_location_links(body, repo if repo else None, sha if sha else None)
     if not body.strip():
-        body = "Automated review summary is unavailable for this run."
+        body = "No documentation issues detected."
 
     # Parse validator findings and deduplicate
     findings: List[Finding] = []
@@ -567,12 +587,6 @@ def main() -> None:
             if fobj and fobj.severity in include_sevs:
                 selected_findings.append(fobj)
         base_list = selected_findings
-        # Note unresolved UIDs in the summary body to aid debugging
-        resolved = {f.uid for f in selected_findings if f.uid}
-        unresolved = [u for u in selected_ids if u not in resolved]
-        if unresolved:
-            note = "\n\n(Unresolved selected_ids: " + ", ".join(unresolved) + ")"
-            body = (body or "Automated review summary") + note
     else:
         # Filter by severities, then dedupe
         findings = [f for f in findings if f.severity in include_sevs]
@@ -611,25 +625,47 @@ def main() -> None:
         parts.append(f"### [{f.severity}] {f.title}")
         if f.desc.strip():
             parts.append("")
-            parts.append("Description:")
             parts.append(f.desc.strip())
         # Only submit commit suggestions when the replacement likely covers the full selected range
         submitted_suggestion = False
-        if f.suggestion_replacement:
+        if f.suggestion_replacement is not None:
             repl = f.suggestion_replacement.rstrip("\n")
             repl_lines = repl.splitlines()
             n_range = f.end - f.start + 1
-            if (n_range == 1 and len(repl_lines) == 1) or (n_range > 1 and len(repl_lines) == n_range):
+            if (
+                (n_range == 1 and len(repl_lines) == 1) or
+                (n_range > 1 and len(repl_lines) == n_range) or
+                (repl == "" and n_range >= 1)
+            ):
                 parts.append("")
                 parts.append("```suggestion")
-                parts.append(repl)
+                if repl:
+                    parts.append(repl)
+                parts.append("```")
+                submitted_suggestion = True
+        if not submitted_suggestion and f.suggestion_raw.strip():
+            # Detect deletion-only diffs and convert to empty GH suggestion
+            raw = f.suggestion_raw
+            lang, inner = _extract_first_code_block(raw)
+            text = inner if inner is not None else raw
+            lines = [ln.strip() for ln in text.splitlines()]
+            has_add = any(ln.startswith('+') and not ln.startswith('++') for ln in lines)
+            has_del = any(ln.startswith('-') and not ln.startswith('--') for ln in lines)
+            if has_del and not has_add:
+                parts.append("")
+                parts.append("```suggestion")
                 parts.append("```")
                 submitted_suggestion = True
         if not submitted_suggestion and f.suggestion_raw.strip():
             parts.append("")
-            parts.append("Suggestion:")
             # Do not include fenced blocks if we can't guarantee a commit suggestion
-            parts.append(_TRAILER_JSON_RE.sub("", f.suggestion_raw.strip()))
+            cleaned = _TRAILER_JSON_RE.sub("", f.suggestion_raw.strip())
+            cleaned = _FENCED_BLOCK_RE.sub("", cleaned).strip()
+            if cleaned:
+                parts.append(cleaned)
+        # Always include the feedback CTA
+        parts.append("")
+        parts.append("Please leave a reaction 👍/👎 to this suggestion to improve future reviews for everyone!")
         body_text = "\n".join(parts).strip()
         # Rewrite style-guide references to clickable blob URLs
         body_text = _absolutize_location_links(body_text, repo if repo else None, sha if sha else None)
