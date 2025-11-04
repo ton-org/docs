@@ -184,7 +184,10 @@ const checkPrevious = async (td, config) => {
 
   const redirectSources = getRedirects(config).map((it) => it.source);
   const missingSources = prevOnlyLinks.filter(
-    (it) => [it, it.replace(/\/index$/, ''), it.replace(/\/README$/, '')].some(redirectSources.includes) === false,
+    (it) =>
+      [it, it.replace(/\/index$/, ''), it.replace(/\/README$/, '')].some((variant) =>
+        redirectSources.includes(variant),
+      ) === false,
   );
   if (missingSources.length !== 0) {
     return {
