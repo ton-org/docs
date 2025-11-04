@@ -6,6 +6,7 @@
 /**
  * Docusaurus
  * @typedef {import('./docusaurus-sidebars-types.d.ts').SidebarsConfig} Sidebars
+ * @typedef {import('./docusaurus-sidebars-types.d.ts').SidebarItemConfig} SidebarItem
  * @typedef {import('./docusaurus-sidebars-types.d.ts').SidebarItemDoc} ItemDoc
  * @typedef {import('./docusaurus-sidebars-types.d.ts').SidebarItemLink} ItemLink
  * @typedef {import('./docusaurus-sidebars-types.d.ts').SidebarItemCategoryBase} ItemCat
@@ -75,13 +76,13 @@ export function getNavLinks(config) {
   /** @param page {any} */
   const processPage = (page) => {
     switch (typeof page) {
-      case "string": {
-        links.push("/" + page.replace(/^\/+/, ""));
+      case 'string': {
+        links.push('/' + page.replace(/^\/+/, ''));
         break;
       }
-      case "object": {
+      case 'object': {
         if (page?.pages) {
-          page["pages"].forEach(processPage);
+          page['pages'].forEach(processPage);
         }
         break;
       }
