@@ -65,11 +65,7 @@ export function ansiBold(src) {
  * @param msg {string} Complete description of the error message
  */
 export function composeErrorList(brief, list, msg) {
-  return [
-    brief,
-    '- ' + list.join('\n- '),
-    `\n${ansiRed('Error:')} ${msg}`,
-  ].join('\n');
+  return [brief, '- ' + list.join('\n- '), `\n${ansiRed('Error:')} ${msg}`].join('\n');
 }
 
 /** @param msg {string} */

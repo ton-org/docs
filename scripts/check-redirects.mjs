@@ -47,16 +47,14 @@ import {
 const checkUnique = (config) => {
   console.log('Checking the uniqueness of redirect sources in docs.json...');
   const redirectSources = getRedirects(config).map((it) => it.source);
-  const duplicates = redirectSources.filter(
-    (source, index) => redirectSources.indexOf(source) !== index
-  );
+  const duplicates = redirectSources.filter((source, index) => redirectSources.indexOf(source) !== index);
   if (duplicates.length !== 0) {
     return {
       ok: false,
       error: composeErrorList(
         'Found duplicate sources in the redirects array:',
         duplicates,
-        'Redirect sources in docs.json must be unique!'
+        'Redirect sources in docs.json must be unique!',
       ),
     };
   }
@@ -83,21 +81,19 @@ const checkExist = (config) => {
       return false;
     }
     const rel = it.replace(/^\/+/, '').replace(/#.*$/, '').replace(/\?.*$/, '');
-    return [
-      rel === '' ? `index.mdx` : `${rel}/index.mdx`,
-      `${rel}.mdx`,
-      `${rel}`,
-    ].some(existsSync) === false;
+    return [rel === '' ? `index.mdx` : `${rel}/index.mdx`, `${rel}.mdx`, `${rel}`].some(existsSync) === false;
   });
   if (todoDestsExist) {
     console.log(composeWarning('TODO-prefixed destinations found!'));
   }
   if (missingDests.length !== 0) {
-    console.error(composeErrorList(
-      'Nonexistent destinations found:',
-      missingDests,
-      'Some redirect destinations in docs.json do not exist!'
-    ));
+    console.error(
+      composeErrorList(
+        'Nonexistent destinations found:',
+        missingDests,
+        'Some redirect destinations in docs.json do not exist!',
+      ),
+    );
     process.exit(1);
   }
   // Otherwise
@@ -118,20 +114,14 @@ const checkPrevious = async (td, config) => {
   // 1. Clone previous TON Docs in a temporary directory
   //    in order to obtain the sidebars.js module
   const tonDocsPath = join(td, 'ton-docs');
-  const cloneRes = spawnSync('git', [
-    'clone',
-    '--depth=1',
-    'https://github.com/ton-community/ton-docs',
-    tonDocsPath,
-  ], {
+  const cloneRes = spawnSync('git', ['clone', '--depth=1', 'https://github.com/ton-community/ton-docs', tonDocsPath], {
     encoding: 'utf8',
     timeout: 1_000 * 60 * 10,
   });
   if (cloneRes.status != 0) {
     return {
       ok: false,
-      error: `${cloneRes.error}`,
-      // error: `${cloneRes.stdout}\n${cloneRes.stderr}`,
+      error: `${cloneRes.error ?? cloneRes.stdout}`,
     };
   }
 
@@ -194,7 +184,7 @@ const checkPrevious = async (td, config) => {
 
   const redirectSources = getRedirects(config).map((it) => it.source);
   const missingSources = prevOnlyLinks.filter(
-    (it) => !redirectSources.includes(it) && !redirectSources.includes(it.replace(/\/index$/, ''))
+    (it) => !redirectSources.includes(it) && !redirectSources.includes(it.replace(/\/index$/, '')),
   );
   if (missingSources.length !== 0) {
     return {
@@ -202,9 +192,9 @@ const checkPrevious = async (td, config) => {
       error: composeErrorList(
         'Missing pages or redirects for the following URLs:',
         missingSources,
-        'Some URLS in the previous TON Documentation do not have corresponding pages or redirect sources in the local docs.json!'
-      )
-    }
+        'Some URLS in the previous TON Documentation do not have corresponding pages or redirect sources in the local docs.json!',
+      ),
+    };
   }
 
   // Otherwise
@@ -236,7 +226,7 @@ const checkUpstream = async (localConfig) => {
 
   const redirectSources = getRedirects(localConfig).map((it) => it.source);
   const missingSources = upstreamOnlyLinks.filter(
-    (it) => !redirectSources.includes(it) && !redirectSources.includes(it.replace(/\/index$/, ''))
+    (it) => !redirectSources.includes(it) && !redirectSources.includes(it.replace(/\/index$/, '')),
   );
   if (missingSources.length !== 0) {
     return {
@@ -269,7 +259,7 @@ const main = async () => {
   const argUpstream = rawArgs.includes('upstream'); // sources cover upstream docs.json structure
   const args = [argUnique, argExist, argPrevious, argUpstream];
 
-  const shouldRunAll = (args.every((it) => it) || args.every((it) => !it));
+  const shouldRunAll = args.every((it) => it) || args.every((it) => !it);
   const shouldRunUnique = shouldRunAll || argUnique;
   const shouldRunExist = shouldRunAll || argExist;
   const shouldRunPrevious = shouldRunAll || argPrevious;
