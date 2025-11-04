@@ -33,6 +33,16 @@ export function ansiBoldGreen(src) {
 }
 
 /** @param src {string} */
+export function ansiYellow(src) {
+  return `\x1b[33m${src}\x1b[0m`;
+}
+
+/** @param src {string} */
+export function ansiBoldYellow(src) {
+  return `\x1b[1;33m${src}\x1b[0m`;
+}
+
+/** @param src {string} */
 export function ansiBold(src) {
   return `\x1b[1m${src}\x1b[0m`;
 }
@@ -62,6 +72,26 @@ export function composeErrorList(brief, list, msg) {
   ].join('\n');
 }
 
+/** @param msg {string} */
+export function composeError(msg) {
+  return `${ansiRed('Error:')} ${msg}`;
+}
+
+/** @param msg {string} */
+export function composeWarning(msg) {
+  return `${ansiYellow('Warning:')} ${msg}`;
+}
+
+/** @param msg {string} */
+export function composeSuccess(msg) {
+  return `${ansiGreen('Success:')} ${msg}`;
+}
+
+/** @param src {string} */
+export function prefixWithSlash(src) {
+  return '/' + src.replace(/^\/+/, '');
+}
+
 /**
  * Get navigation links from the docs.json configuration.
  * Notice that each link is prefixed by a single slash /
@@ -77,7 +107,7 @@ export function getNavLinks(config) {
   const processPage = (page) => {
     switch (typeof page) {
       case 'string': {
-        links.push('/' + page.replace(/^\/+/, ''));
+        links.push(prefixWithSlash(page));
         break;
       }
       case 'object': {
