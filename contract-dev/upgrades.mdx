@@ -4,29 +4,33 @@ title: "Upgrading contracts"
 
 import { Aside } from '/snippets/aside.jsx';
 
-## What is contract upgrading?
+The address of a contract is determined by its [initial code and state](/foundations/status). A contract can upgrade its code while preserving its address. This is useful for fixing bugs, adding features, or adapting to protocol changes without migrating to a new address.
 
-TON allows smart contracts to upgrade their code and data while preserving the contract's identity.
+Upgrades are critical when other contracts reference the contract being upgraded. For example, [NFT items](/standard/tokens/nft/how-it-works) reference their collection contract. The collection admin cannot modify these references stored in existing NFT items. Without upgrades, fixing bugs or adding features would require deploying a new collection and migrating all items—an expensive and complex process. Upgrades solve this by allowing the collection contract to evolve in place while preserving all existing references.
 
-This is useful for fixing bugs, adding features, or adapting to protocol changes without migrating to a new contract.
-
-Upgrades are critical when other contracts reference the contract being upgraded. For example, NFT items reference their collection contract. The collection admin cannot modify these references stored in existing NFT items. Without upgrades, fixing bugs or adding features would require deploying a new collection and migrating all items—an expensive and complex process. Upgrades solve this by allowing the collection contract to evolve in place while preserving all existing references.
-
-The pattern is also essential for [vanity](/contract-dev/vanity) contracts and protocols like DEXs where preserving the contract address and liquidity is critical.
+The pattern is also essential for [vanity](/contract-dev/vanity) contracts and protocols such as [DEX](/ecosystem/dex/overview) where preserving the contract address is critical.
 
 ## How upgrades work
 
 Tolk provides two functions for upgrades.
 
-- _`contract.setCodePostponed(code: cell)`_ — schedules the code to be replaced during the [action phase](/foundations/phases#action-phase). The new code takes effect after the current transaction completes.
-- _`contract.setData(data: cell)`_ — immediately replaces the contract's persistent storage. This happens during the [compute phase](/foundations/phases#compute-phase), before the transaction ends.
+- `contract.setCodePostponed(code: cell)` — schedules the code to be replaced during the [action phase](/foundations/phases#action-phase). The new code takes effect after the current transaction completes.
+- `contract.setData(data: cell)` — immediately replaces the contract's persistent storage. This happens during the [compute phase](/foundations/phases#compute-phase), before the transaction ends.
 
-_Key difference_: `setCodePostponed()` applies changes _after_ the current transaction, while `setData()` applies changes _immediately_. This means the new code won't run until the next message arrives, but the new data is already active.
+Key difference: `setCodePostponed()` applies changes _after_ the current transaction, while `setData()` applies changes _immediately_. This means the new code won't run until the next message arrives, but the new data is already active.
 
 <Aside
   type="caution"
+  title="Funds at risk"
 >
-  Contract upgrades change code behavior and can affect funds or contract state. Unauthorized upgrades can cause loss of control or funds. Restrict upgrade messages to trusted admin addresses only. For production contracts, use delayed upgrades to allow users to react to compromised admin keys.
+  Contract upgrades change code behavior and can affect funds or contract state. Unauthorized upgrades can cause loss of control or funds. Restrict upgrade messages to trusted admin addresses only.
+</Aside>
+
+<Aside
+  type="caution"
+  title="Ethics"
+>
+  Use delayed upgrades to allow users to [react to compromised admin keys](https://blog.trailofbits.com/2025/06/25/maturing-your-smart-contracts-beyond-private-key-risk/) or [unwanted updates](https://en.wikipedia.org/wiki/Exit_scam).
 </Aside>
 
 ## Basic upgrade pattern
@@ -35,18 +39,18 @@ The contract accepts upgrade messages containing new code and data. Only the adm
 
 ### How it works
 
-1. _Admin sends upgrade message_ — the message contains new code, data, or both
-1. _Contract verifies sender_ — checks that the sender is the admin address
-1. _Code is scheduled_ — if new code is provided, `setCodePostponed()` schedules it for replacement
-1. _Data is upgraded_ — if new data is provided, `setData()` immediately replaces the storage
-1. _Transaction completes_ — the action phase executes, applying the new code
-1. _Next message uses new code_ — subsequent messages execute with the upgraded logic
+1. Admin sends upgrade message. The message contains new code, data, or both.
+1. Contract verifies sender. Checks that the sender is the admin address.
+1. Code is scheduled. If new code is provided, `setCodePostponed()` schedules it for .replacement
+1. Data is upgraded. If new data is provided, `setData()` immediately replaces the storage.
+1. Transaction completes. The action phase executes, applying the new code.
+1. Next message uses new code. Subsequent messages execute with the upgraded logic.
 
 The upgrade happens immediately in a single transaction. The new code becomes active after the transaction completes. Any data replacement happens during the compute phase, so the new data is immediately available when the transaction ends.
 
 ### Example
 
-```tolk
+```tolk expandable
 struct (0x1111) UpgradeContract {
     data: cell?
     code: cell?
@@ -98,19 +102,19 @@ The pattern adds a time delay between requesting and approving an upgrade. The a
 
 ### How it works
 
-1. _Admin requests upgrade_ — sends `RequestUpgrade` message with new code and data
-1. _Contract verifies and stores_ — validates admin, ensures no pending request, stores upgrade details with timestamp
-1. _Timeout period_ — the contract enforces a waiting period before approval
-1. _Admin approves upgrade_ — sends `ApproveUpgrade` message after timeout expires
-1. _Contract verifies timeout_ — checks that enough time has passed since the request
-1. _Upgrade applies_ — schedules new code with `setCodePostponed()` and upgrades data with `setData()`
-1. _Request cleared_ — removes the pending request from storage
+1. Admin requests upgrade. Sends `RequestUpgrade` message with new code and data
+1. Contract verifies and stores. Validates admin, ensures no pending request, stores upgrade details with timestamp
+1. Timeout period. The contract enforces a waiting period before approval
+1. Admin approves upgrade. Sends `ApproveUpgrade` message after timeout expires
+1. Contract verifies timeout. Checks that enough time has passed since the request
+1. Upgrade applies. Schedules new code with `setCodePostponed()` and upgrades data with `setData()`
+1. Request cleared. Removes the pending request from storage
 
 The admin can also send `RejectUpgrade` at any time to cancel a pending upgrade. This three-message flow (request → wait → approve or reject) gives users time to review changes and react if the admin account is compromised.
 
 ### Example
 
-```tolk
+```tolk expandable
 struct UpgradeContract {
     data: cell?
     code: cell?
@@ -135,7 +139,6 @@ type AllowedMessages =
     | ApproveUpgrade
 
 fun onInternalMessage(in: InMessage) {
-
     val msg = lazy AllowedMessages.fromSlice(in.body);
 
     match (msg) {
@@ -220,12 +223,12 @@ Hot upgrades solve this by scheduling a code change and immediately calling a mi
 
 ### How it works
 
-1. _Admin sends upgrade message_ — the message contains new code cell and optional additional data
-1. _Contract verifies sender_ — checks that the sender is the admin address
-1. _Schedule code change_ — `setCodePostponed()` schedules the code replacement
-1. _Switch to new code_ — `setTvmRegisterC3()` immediately activates the new code in register [C3](/tvm/registers#c3-—-function-selector)
-1. _Call migration_ — invoke `hotUpgradeData()` which now runs with the new code
-1. _Migration executes_ — the function reads old storage, transforms it, and writes new storage
+1. Admin sends upgrade message. The message contains new code cell and optional additional data
+1. Contract verifies sender. Checks that the sender is the admin address
+1. Schedule code change. `setCodePostponed()` schedules the code replacement
+1. Switch to new code. `setTvmRegisterC3()` immediately activates the new code in register [C3](/tvm/registers#c3-—-function-selector)
+1. Call migration. Invoke `hotUpgradeData()` which now runs with the new code
+1. Migration executes. The function reads old storage, transforms it, and writes new storage
 
 The key mechanism: `setTvmRegisterC3()` switches the code register so the migration function executes with the new code in the same transaction. The migration reads the current storage state (preserving all updates), transforms it to the new schema, and saves it. When the transaction completes, the new code becomes permanent through `setCodePostponed()`.
 
@@ -241,7 +244,7 @@ The example shows a counter contract that adds a metadata field through a hot up
 
 Original contract (`main.tolk`):
 
-```tolk
+```tolk expandable
 import "@stdlib/tvm-lowlevel"
 
 struct (0x00001111) HotUpgrade {
