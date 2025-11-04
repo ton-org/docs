@@ -118,14 +118,20 @@ const checkPrevious = async (td, config) => {
   // 1. Clone previous TON Docs in a temporary directory
   //    in order to obtain the sidebars.js module
   const tonDocsPath = join(td, 'ton-docs');
-  const cloneRes = spawnSync(`git clone --depth=1 https://github.com/ton-community/ton-docs ${tonDocsPath}`, {
+  const cloneRes = spawnSync('git', [
+    'clone',
+    '--depth=1',
+    'https://github.com/ton-community/ton-docs',
+    tonDocsPath,
+  ], {
     encoding: 'utf8',
     timeout: 1_000 * 60 * 10,
   });
   if (cloneRes.status != 0) {
     return {
       ok: false,
-      error: `${cloneRes.stdout}\n${cloneRes.stderr}`,
+      error: `${cloneRes.error}`,
+      // error: `${cloneRes.stdout}\n${cloneRes.stderr}`,
     };
   }
 
