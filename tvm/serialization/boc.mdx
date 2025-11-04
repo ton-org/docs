@@ -4,21 +4,82 @@ title: "Bag of cells"
 
 import { Aside } from '/snippets/aside.jsx';
 
-Arbitrary data are represented in TON Blockchain by trees of cells. Such a tree of cells is transformed into a [DAG](https://en.wikipedia.org/wiki/Directed_acyclic_graph) of cells by identifying unique cells in the tree. After that, each of the references of each cell might be replaced by the 32-byte [representation hash](/tvm/serialization/cells#standard-cell-representation-and-its-hash) of the cell referred to. Thus a _bag of cells (BoC)_ is obtained. In general, a BoC can be obtained from several trees of cells, thus forming a forest. By convention, the roots of the original trees of cells are marked elements of the resulting bag of cells, so that anybody receiving this bag of cells and knowing the marked elements can reconstruct the original forest. However, this BoC needs to be serialized into a file, suitable for disk storage or network transfer.
+Arbitrary data are represented in TON Blockchain by trees of cells.
 
-There may be many different ways to serialize such a data structure, each of which has its own goals and is convenient for specific cases. This page provides a general serialization algorithm and specification of the corresponding TL-B schemes, followed by the example and specific implementation used in the TON Blockchain.
+```mermaid
+graph TD
+  n["🔵 0x1111"] --> 0x2222
+  n["🔵 0x1111"] --> 0x3333
+  0x2222 --> d1["0x4444"]
+  0x3333 --> d2["0x4444"]
+```
+
+Such a tree of cells is transformed into a [DAG](https://en.wikipedia.org/wiki/Directed_acyclic_graph) of cells by identifying cells in the tree that have the same hash.
+
+```mermaid
+graph TD
+  n["🔵 0x1111"] --> 0x2222
+  n["🔵 0x1111"] --> 0x3333
+  0x2222 --> 0x4444
+  0x3333 --> 0x4444
+```
+
+After that, each of the references of each cell might be replaced by the 32-byte [representation hash](/tvm/serialization/cells#standard-cell-representation-and-its-hash) of the cell referred to. Thus a _bag of cells (BoC)_ is obtained.
+
+```
+🔵 Roots: [0x1111]
+
+0x1111
+  Refs: [0x2222, 0x3333]
+0x2222
+  Refs: [0x4444]
+0x3333
+  Refs: [0x4444]
+0x4444
+  Refs: []
+```
+
+In general, a BoC can be obtained from several trees of cells, thus forming a forest.
+
+```mermaid
+graph TD
+  n["🔵 0x1111"] --> 0x3333
+  m["🔵 0x2222"] --> 0x3333
+```
+
+By convention, the roots of the original trees of cells are marked elements of the resulting bag of cells, so that anybody receiving this bag of cells and knowing the marked elements can reconstruct the original forest. However, this BoC needs to be serialized into a file, suitable for disk storage or network transfer.
+
+```
+🔵 Roots: [0x1111, 0x2222]
+
+0x1111
+  Refs: [0x3333]
+0x2222
+  Refs: [0x3333]
+0x3333
+  Refs: []
+```
+
+There may be many different ways to serialize such a data structure, each of which has its own goals and is convenient for specific cases. This page provides a general serialization algorithm and specification of the corresponding [TL-B](/languages/TL-B/overview) schemes, followed by the example and specific implementation used in the TON Blockchain.
+
+<Aside type="note">
+  Even though the syntax looks very much like TL-B, it cannot be used in most of the TL-B tooling. Unlike in real TL-B, these schemas serialize to a bitstring with no 1023 bit length limit, and without any refs.
+</Aside>
 
 ## General scheme
 
 ### Internal references, absent cells, and complete BoCs
 
-Consider an arbitrary cell `c` in a given BoC. A reference of `c` is called _internal_ if the cell corresponding to the reference is also represented in BoC. Otherwise, the reference is called _external_ and the corresponding cell is called _absent_ from that BoC. In turn, a BoC is called _complete_ if it does not contain any external references.
+For an arbitrary cell `c` in a given BoC, references to it can be either:
 
-Although most real-world cases only deal with complete BoCs, in general, the serialization of absent cells in BoC differs from the serialization of included cells. Therefore, it is important to be able to identify the type of references.
+- _internal_ if the cell corresponding to the reference is also represented in BoC,
+- _external_ if it's not in BoC. Such cell `c` is called _absent_ from this BoC.
+
+A BoC is called _complete_ if it does not contain any external references. Most real-world BoCs are complete.
 
 ### Assigning indices to the cells from a bag of cells
 
-In the process of BoC serialization, the assignment of indices of its cells plays an important role. Let `c1, ..., cn` be the `n` distinct cells belonging to a bag of cells `B`. The most used options are:
+The assignment of indices of its cells plays an important role. Let `c1, ..., cn` be the `n` distinct cells belonging to a bag of cells `B`. The most used options are:
 
 - Order cells by their representation hash. Thus `Hash(ci) < Hash(cj)` whenever `i < j`.
 - [Topological order](https://en.wikipedia.org/wiki/Topological_sorting).
