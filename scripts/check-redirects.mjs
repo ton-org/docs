@@ -270,6 +270,7 @@ const main = async () => {
 
   /** @type string[] */
   const errors = [];
+
   if (shouldRunUnique) {
     const res = checkUnique(config);
     if (!res.ok) {
@@ -278,6 +279,7 @@ const main = async () => {
       console.log(composeSuccess('All sources are unique.'));
     }
   }
+
   if (shouldRunExist) {
     const res = checkExist(config);
     if (!res.ok) {
@@ -286,20 +288,22 @@ const main = async () => {
       console.log(composeSuccess('All destinations exist.'));
     }
   }
+
   if (shouldRunPrevious) {
     const res = await checkPrevious(td, config);
     if (!res.ok) {
       errors.push(res.error);
     } else {
-      console.log(composeSuccess('Sources cover previous documentation links.'));
+      console.log(composeSuccess('Full coverage.'));
     }
   }
+
   if (shouldRunUpstream) {
     const res = await checkUpstream(config);
     if (!res.ok) {
       errors.push(res.error);
     } else {
-      console.log(composeSuccess('Sources cover upstream docs.json.'));
+      console.log(composeSuccess('Full coverage.'));
     }
   }
 
