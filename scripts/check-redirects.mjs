@@ -271,36 +271,42 @@ const main = async () => {
     const res = checkUnique(config);
     if (!res.ok) {
       errors.push(res.error);
+    } else {
+      console.log(composeSuccess('All sources are unique.'));
     }
   }
   if (shouldRunExist) {
     const res = checkExist(config);
     if (!res.ok) {
       errors.push(res.error);
+    } else {
+      console.log(composeSuccess('All destinations exist.'));
     }
   }
   if (shouldRunPrevious) {
     const res = await checkPrevious(td, config);
     if (!res.ok) {
       errors.push(res.error);
+    } else {
+      console.log(composeSuccess('Sources cover previous documentation links.'));
     }
   }
   if (shouldRunUpstream) {
     const res = await checkUpstream(config);
     if (!res.ok) {
       errors.push(res.error);
+    } else {
+      console.log(composeSuccess('Sources cover upstream docs.json.'));
     }
   }
 
   // Removing the temporary directory
   rmSync(td, { recursive: true });
 
-  // Displaying the errors or the success message
+  // Displaying the errors
   if (errors.length !== 0) {
     console.error(errors.join('\n\n'));
     process.exit(1);
-  } else {
-    console.log(composeSuccess('All URLs and redirects are good.'));
   }
 };
 
