@@ -45,7 +45,7 @@ import {
  * @return {CheckResult}
  */
 const checkUnique = (config) => {
-  console.log('Checking the uniqueness of redirect sources in docs.json...');
+  console.log('🏁 Checking the uniqueness of redirect sources in docs.json...');
   const redirectSources = getRedirects(config).map((it) => it.source);
   const duplicates = redirectSources.filter((source, index) => redirectSources.indexOf(source) !== index);
   if (duplicates.length !== 0) {
@@ -69,7 +69,7 @@ const checkUnique = (config) => {
  * @return {CheckResult}
  */
 const checkExist = (config) => {
-  console.log('Checking the existence of redirect destinations in docs.json...');
+  console.log('🏁 Checking the existence of redirect destinations in docs.json...');
   const uniqDestinations = [...new Set(getRedirects(config).map((it) => it.destination))];
   let todoDestsExist = false;
   const missingDests = uniqDestinations.filter((it) => {
@@ -109,7 +109,7 @@ const checkExist = (config) => {
  * @return {Promise<CheckResult>}
  */
 const checkPrevious = async (td, config) => {
-  console.log('Checking redirects against the previous TON Documentation...');
+  console.log('🏁 Checking redirects against the previous TON Documentation...');
 
   // 1. Clone previous TON Docs in a temporary directory
   //    in order to obtain the sidebars.js module
@@ -214,7 +214,7 @@ const checkPrevious = async (td, config) => {
  * @return {Promise<CheckResult>}
  */
 const checkUpstream = async (localConfig) => {
-  console.log('Checking redirects against the upstream docs.json structure...');
+  console.log('🏁 Checking redirects against the upstream docs.json structure...');
   const response = await fetch('https://raw.githubusercontent.com/ton-org/docs/refs/heads/main/docs.json');
 
   /** @type {DocsConfig} */
@@ -254,65 +254,50 @@ const main = async () => {
   // Creating the temporary directory
   const td = mkdtempSync(join(tmpdir(), 'td'));
 
-  // Running either check or all
+  // Running either one check or all checks
   const rawArgs = process.argv.slice(2);
   const argUnique = rawArgs.includes('unique'); // all sources are unique
   const argExist = rawArgs.includes('exist'); // all destinations exist
   const argPrevious = rawArgs.includes('previous'); // sources cover previous TON Docs
   const argUpstream = rawArgs.includes('upstream'); // sources cover upstream docs.json structure
   const args = [argUnique, argExist, argPrevious, argUpstream];
-
   const shouldRunAll = args.every((it) => it) || args.every((it) => !it);
-  const shouldRunUnique = shouldRunAll || argUnique;
-  const shouldRunExist = shouldRunAll || argExist;
-  const shouldRunPrevious = shouldRunAll || argPrevious;
-  const shouldRunUpstream = shouldRunAll || argUpstream;
+  let errored = false;
 
-  /** @type string[] */
-  const errors = [];
-
-  if (shouldRunUnique) {
-    const res = checkUnique(config);
+  /**
+   * @param res {CheckResult}
+   * @param rawSuccessMsg {string}
+   */
+  const handleCheckResult = (res, rawSuccessMsg) => {
     if (!res.ok) {
-      errors.push(res.error);
+      errored = true;
+      console.log(res.error + '\n');
     } else {
-      console.log(composeSuccess('All sources are unique.'));
-    }
+      console.log(composeSuccess(rawSuccessMsg) + '\n');
+    };
   }
 
-  if (shouldRunExist) {
-    const res = checkExist(config);
-    if (!res.ok) {
-      errors.push(res.error);
-    } else {
-      console.log(composeSuccess('All destinations exist.'));
-    }
+  if (shouldRunAll || argUnique) {
+    handleCheckResult(checkUnique(config), 'All sources are unique.');
   }
 
-  if (shouldRunPrevious) {
-    const res = await checkPrevious(td, config);
-    if (!res.ok) {
-      errors.push(res.error);
-    } else {
-      console.log(composeSuccess('Full coverage.'));
-    }
+  if (shouldRunAll || argExist) {
+    handleCheckResult(checkExist(config), 'All destinations exist.');
   }
 
-  if (shouldRunUpstream) {
-    const res = await checkUpstream(config);
-    if (!res.ok) {
-      errors.push(res.error);
-    } else {
-      console.log(composeSuccess('Full coverage.'));
-    }
+  if (shouldRunAll || argPrevious) {
+    handleCheckResult(await checkPrevious(td, config), 'Full coverage.');
+  }
+
+  if (shouldRunAll || argUpstream) {
+    handleCheckResult(await checkUpstream(config), 'Full coverage.');
   }
 
   // Removing the temporary directory
   rmSync(td, { recursive: true });
 
-  // Displaying the errors
-  if (errors.length !== 0) {
-    console.error(errors.join('\n\n'));
+  // In case of errors, exit with code 1
+  if (errored) {
     process.exit(1);
   }
 };
