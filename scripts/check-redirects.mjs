@@ -87,14 +87,14 @@ const checkExist = (config) => {
     console.log(composeWarning('TODO-prefixed destinations found!'));
   }
   if (missingDests.length !== 0) {
-    console.error(
-      composeErrorList(
+    return {
+      ok: false,
+      error: composeErrorList(
         'Nonexistent destinations found:',
         missingDests,
         'Some redirect destinations in docs.json do not exist!',
       ),
-    );
-    process.exit(1);
+    };
   }
   // Otherwise
   return { ok: true };
