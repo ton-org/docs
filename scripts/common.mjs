@@ -56,7 +56,7 @@ export function ansiBold(src) {
 export function composeErrorList(brief, list, msg) {
   return [
     brief,
-    '- ' + list.join('\n - '),
+    '- ' + list.join('\n- '),
     `\n${ansiRed('Error:')} ${msg}`,
   ].join('\n');
 }

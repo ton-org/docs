@@ -67,8 +67,11 @@ const checkExist = (config) => {
   const uniqDestinations = [...new Set(getRedirects(config).map((it) => it.destination))];
   const missingDests = uniqDestinations.filter((it) => {
     const rel = it.replace(/^\/+/, '');
-    return [`${rel}.mdx`, `${rel}.pdf`].some(existsSync) === false;
-    // return !existsSync(rel + '.mdx') && !existsSync(rel + '.pdf');
+    return [
+      rel === '' ? `index.mdx` : `${rel}/index.mdx`,
+      `${rel}.mdx`,
+      `${rel}`,
+    ].some(existsSync) === false;
   });
   if (missingDests.length !== 0) {
     console.error(composeErrorList(
@@ -177,17 +180,16 @@ const checkUpstream = async (td, localConfig) => {
     };
   }
 
+  // NOTE: might be off
   const uniqDestinations = [...new Set(redirects.map((it) => it.destination))];
   const missingDests = uniqDestinations.filter((it) => !localNavLinks.has(it));
-  // NOTE:
-  // const missingDests = uniqDestinations.filter((it) => !localNavLinks.has(it) || !existsSync(it.replace(/^\/+/, '') + '.mdx'));
   if (missingDests.length !== 0) {
     return {
       ok: false,
       error: composeErrorList(
         'Missing destinations found:',
         missingDests,
-        'some redirect destinations in the local docs.json do not correspond to local docs.json structure!',
+        'some redirect destinations do not correspond to the local docs.json structure!',
       ),
     };
   }
