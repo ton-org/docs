@@ -77,13 +77,6 @@ For an arbitrary cell `c` in a given BoC, references to it can be either:
 
 A BoC is called _complete_ if it does not contain any external references. Most real-world BoCs are complete.
 
-### Assigning indices to the cells from a bag of cells
-
-The assignment of indices of its cells plays an important role. Let `c1, ..., cn` be the `n` distinct cells belonging to a bag of cells `B`. The most used options are:
-
-- Order cells by their representation hash. Thus `Hash(ci) < Hash(cj)` whenever `i < j`.
-- [Topological order](https://en.wikipedia.org/wiki/Topological_sorting).
-
 ### Outline of serialization process
 
 <Aside type="note">
@@ -94,13 +87,13 @@ The assignment of indices of its cells plays an important role. Let `c1, ..., cn
 
 The serialization process of a BoC `B` consisting of `n` cells can be outlined as follows.
 
-- List the cells from B in a chosen order: `c1, ..., cn`(with `c1, ..., c_k` as root cells, if `B` is a forest).
-- Choose an integer number `s`, such that `n ≤ 2^s`. Represent each cell `ci` by an integral number of bytes as in [standard representation cell algorithm](/tvm/serialization/cells#standard-cell-representation-and-its-hash), but:
-  - `d1 = r + 8s + 16h + 32l` where `h = 1` if the cell’s hashes are explicitly included into the serialization; otherwise, `h = 0` (when `r = 7`, `h` must be `1`);
+- List the cells from B in a [topological order](https://en.wikipedia.org/wiki/Topological_sorting): `c1, ..., cn`(with `c1, ..., ck` as root cells, if `B` is a forest).
+- Choose the smallest power of two `s` that is larger than `n`. Serialize each cell `ci` in a way similar to [standard representation algorithm](/tvm/serialization/cells#standard-cell-representation-and-its-hash), with exceptions:
+  - `d1 = r + 8s + 16h + 32l` where `h = 1` if the cell's hashes are explicitly included into the serialization; otherwise, `h = 0` (when `r = 7`, `h` must be `1`);
   - if `h = 1`, after bytes `b1` and `b2` the serialization is continued by `l + 1` 32-byte higher hashes of `c`;
   - unsigned big-endian s-bit integer `j` used instead of hash `Hash(cj)` to represent internal references to cell `cj`.
 - Concatenate the representations of cells `ci` thus obtained in the increasing order of `i`.
-- Optionally, an index can be constructed that consists of `n + 1` t-bit integer entries `L1, ..., Ln`, where `Li` is the total length (in bytes) of the representations of cells `cj` with `j ≤ i`, and integer `t ≥ 0` is chosen so that `Ln ≤ 2^t`. If the index is included, any cell `ci` the serialized bag of cells may be easily accessed by its index `i` without deserializing all other cells, or even without loading the entire serialized bag of cells in memory.
+- Optionally, an _index_ can be constructed that consists of `n + 1` `t`-bit integer entries `L1, ..., Ln`, where `Li` is the total byte length of the representations of cells `cj` with `j ≤ i`, and integer `t ≥ 0` is chosen so that `Ln ≤ 2^t`. If the index is included, any cell `ci` the serialized bag of cells may be easily accessed by its index `i` without deserializing all other cells, or even without loading the entire serialized bag of cells in memory.
 - The serialization of the bag of cells now consists of a magic number indicating the precise format of the serialization, followed by integers `s ≥ 0`, `t ≥ 0`, `n ≤ 2^s`, an optional index consisting of $\lceil\frac{(n+1)*t}{8}\rceil$ bytes, and `Ln` bytes with the cell representations.
 - An optional [CRC32C](https://en.wikipedia.org/wiki/Cyclic_redundancy_check) may be appended to the serialization for integrity verification purposes.
 
@@ -118,7 +111,7 @@ Each TL-B scheme for a bag of cells must specify the following parameters.
 - The number of absent cells `l ≤ n − k`, which represent cells that are absent from this bag of cells, but are referred to from it. The absent cells themselves are represented by $c\_{n−l+1}, \ldots, c\_{n}$, and only these cells may (and also must) have `r = 7`. Complete bags of cells have `l = 0`.
 - The total length in bytes `Ln` of the serialization of all cells. If the index is present, `Ln` might not be stored explicitly since it can be recovered as the last entry of the index.
 
-## A TL-B scheme
+## TL-B schema
 
 Only one [serialization scheme of BoCs](https://github.com/ton-blockchain/ton/blob/24dc184a2ea67f9c47042b4104bbb4d82289fac1/crypto/tl/boc.tlb#L25) is used in TON Blockchain (there are also two outdated BoC serialization schemes in the file):
 
@@ -148,17 +141,17 @@ uint1 is_exotic;
 uint3 ref_count;
 
 // d2
-if ref_count < 7 {
+if (ref_count < 7) {
     uint7 byte_size;
     uint1 has_padding;
 }
-        
-if has_hashes {
+
+if (has_hashes) {
     uint256 hashes[GetLevel(level_mask) + 1];
     uint16 depths[GetLevel(level_mask) + 1];
 }
-        
-if ref_count < 7 {
+
+if (ref_count < 7) {
     if byte_size + has_padding != 0 {
         uint8 data_bits[byte_size + has_padding];
     }
@@ -265,7 +258,7 @@ _                                          -> CRC32C is not serialized
 
 By combining everything into a single bit string, we get the result of serialization.
 
-## SDK from @ton/core
+## SDK from `@ton/core`
 
 According to the TL-B scheme above there is the [SDK](https://github.com/ton-org/ton-core/blob/4577e94/src/boc/cell/serialization.ts#L1) for serialization and parsing BoC.
 
@@ -277,20 +270,22 @@ Only serialization of BoCs with one root and no absent cells is supported. There
 ```typescript
 import { beginCell, serializeBoc, deserializeBoc } from "@ton/core";
 
-const innerCell = beginCell().storeUint(456, 16).endCell();
+const innerCell = beginCell()
+  .storeUint(456, 16)
+  .endCell();
+const rootCell = beginCell()
+  .storeUint(0, 64)
+  .storeRef(innerCell)
+  .endCell();
 
-const rootCell = beginCell().storeUint(0, 64).storeRef(innerCell).endCell();
-
-const serialized_boc = serializeBoc(rootCell, { idx: false, crc32: false });
-
-const serialized_boc_with_indexes_and_crc32 = serializeBoc(rootCell, {
-    idx: true,
-    crc32: true,
-});
-
-const roots_of_first_boc = deserializeBoc(serialized_boc);
-
-const roots_of_second_boc = deserializeBoc(
-    serialized_boc_with_indexes_and_crc32,
+const boc = serializeBoc(
+  rootCell,
+  {
+    // do not include index
+    idx: false,
+    // do not include CRC-32
+    crc32: false,
+  },
 );
+const decodedRootCell = deserializeBoc(boc)[0];
 ```
