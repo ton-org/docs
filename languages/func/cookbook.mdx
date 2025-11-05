@@ -134,7 +134,7 @@ slice slice_with_refs_only = begin_cell()
     .store_ref(dummy_cell)      ;; Add the dummy cell as a reference
     .end_cell()                 ;; this creates the cell
     .begin_parse();             ;; this creates a slice from the cell
-;; `slice_empty?()` returns `false` because the slice has no references.
+;; `slice_empty?()` returns `false` because the slice has cell references.
 slice_with_refs_only.slice_empty?();
 
 ;; Creating slice which contains bits and refs
@@ -370,7 +370,7 @@ int are_slices_equal_3? (slice a, slice b) {
 
 ### Determine if the cells are equal
 
-We can determine if two cells are equal by comparing their hashes.
+Determine whether two cells are equal by comparing their hashes.
 
 ```func
 int are_cells_equal? (cell a, cell b) {
@@ -388,7 +388,7 @@ int are_cells_equal? (cell a, cell b) {
 
     ~dump(are_cells_equal?(a, b));   ;; -1 = true
 
-    cell dummy_cell = begin_cell().end_parse();
+    cell dummy_cell = begin_cell().end_cell();
 
     cell c = begin_cell()     ;; Like cell a, but it has an extra reference 
             .store_uint(123, 16)
@@ -410,7 +410,7 @@ int are_cells_equal? (cell a, cell b) {
 
 ### How to get only the data bits from a slice
 
-If the cell references within a slice are unnecessary, the raw data bits can be extracted for further processing
+If the cell references within a slice are not needed, the raw data bits can be extracted for further processing
 using the function `preload_bits`:
 
 ```func
@@ -422,12 +422,13 @@ slice s = begin_cell()
     .end_cell()
     .begin_parse();
 
-;; Exttract the data bits as a new slice
+;; Extract the data bits as a new slice
 slice s_only_data = s.preload_bits(s.slice_bits());
 ```
 
-Function `preload_bits` needs the amount of bits to extract given as argument. We extract the amount of bits
-of the slice with `s.slice_bits()`.
+Function `preload_bits` requires as argument the amount of bits to extract. 
+`s.slice_bits()` obtains the amount of data bits 
+in the slice.
 
 **References:**
 
@@ -453,7 +454,7 @@ in standard programming tasks. The `library` field usually set to `0` as well.
 See more details for the fields in the `StateInit` TL-B in its article.
 
 ```func
-() build_stateinit(cell init_code, cell init_data) {
+cell build_stateinit(cell init_code, cell init_data) {
   var state_init = begin_cell()
     .store_uint(0, 1) ;; split_depth: Maybe (## 5), set to "None"
     .store_uint(0, 1) ;; special: Maybe TickTock, set to "None"
@@ -465,6 +466,7 @@ See more details for the fields in the `StateInit` TL-B in its article.
     .store_ref(init_code)  ;; the code as a cell reference
     .store_ref(init_data)  ;; the data as a cell reference
     .end_cell();
+    return state_int;
 }
 ```
 
@@ -561,7 +563,7 @@ and then call a [`dict_get_prev?` primitive](/languages/func/stdlib#dict-get-pre
 ;; Initialize an example dictionary.
 ;; keys will be unsigned 256-bit integers. Values are slices.
 ;; Since keys are unsigned, 
-;; we should use 'unsigned' versions of the 
+;; should use 'unsigned' versions of the 
 ;; dict_set, dict_get_min?, dict_get_max?, 
 ;; dict_get_next?, and dict_get_prev? primitives.
 cell d = new_dict();
@@ -569,7 +571,7 @@ d~udict_set(256, 1, "value 1");   ;; Map key 1 to a slice containing string "val
 d~udict_set(256, 5, "value 2");   ;; Map key 5 to a slice containing string "value 2"
 d~udict_set(256, 12, "value 3");  ;; Map key 12 to a slice containing string "value 3"
 
-;; First, we iterate from smallest to biggest key:
+;; First, iterate from smallest to biggest key:
 
 ;; Obtain the smallest key.
 (int key, slice val, int flag) = d.udict_get_min?(256);   
@@ -584,7 +586,7 @@ while (flag) {
     (key, val, flag) = d.udict_get_next?(256, key);
 }
 
-;; Now, we iterate from biggest to smallest key:
+;; Now, iterate from biggest to smallest key:
 
 ;; Obtain the biggest key.
 (key, val, flag) = d.udict_get_max?(256);   
@@ -620,7 +622,7 @@ Use the [`dict_delete?` primitives](/languages/func/stdlib#dict-delete%3F) to de
 ;; Initialize an example dictionary.
 ;; keys will be unsigned 256-bit integers. Values are slices.
 ;; Since keys are unsigned, 
-;; we should use 'unsigned' versions of the 
+;; should use 'unsigned' versions of the 
 ;; dict_set, dict_delete?, dict_get? primitives.
 cell names = new_dict();
 names~udict_set(256, 27, "Alice");  ;; Map key 27 to a slice containing string "Alice"
@@ -802,7 +804,7 @@ to accept the input to `to_tuple` as a `tuple`.
 
 ### Iterating n-nested tuples
 
-Sometimes, we need to iterate through nested tuples.
+Sometimes, while traversing the elements of a tuple, there is the need to iterate through nested tuples.
 The following example iterates through a tuple starting from the last index,
 and finds the biggest number, irrespective if there are nested tuples.
 
@@ -892,7 +894,7 @@ to accept the input to `to_tuple` as a `tuple`, and the input to `to_int` as an 
 
 ### Casting types in tuples
 
-If a tuple contains various data types `[cell, slice, int, tuple, ...]`, we may need to check the value and cast it accordingly before processing.
+If a tuple contains various data types `[cell, slice, int, tuple, ...]`, there is the need to check the value and cast it accordingly before processing.
 The following snippet illustrates this idea.
 
 ```func
@@ -930,7 +932,7 @@ forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
 forall X -> () resolve_type (X value) impure {
 
     ;; "value" has an arbitrary type.
-    ;; We need to check what is its type and cast it.
+    ;; Check its type and cast it.
 
     if (is_null(value)) {
         ;; Do something with the null.
@@ -957,14 +959,12 @@ forall X -> () resolve_type (X value) impure {
     t~tpush(4);
     ;; The tuple is ["Some text", 4].
 
-    ;; Let us suppose that we do not know beforehand 
-    ;; the type of the last element in the tuple.
-    ;; So, when extracting the last element, we use the
-    ;; keyword var, because we do not know the type
-    ;; of the value.
+    ;; Since the tuple has values of different types,
+    ;; when extracting an element, use the
+    ;; keyword "var".
     var value = t~tpop();
 
-    ;; Process the value
+    ;; Process the value.
     resolve_type(value);
 }
 ```
@@ -1105,7 +1105,7 @@ int tlen (tuple t) asm "TLEN";
     int i = 0;
     while (i < old_tuple.tlen()) {
         int el = old_tuple.at(i);
-        ;; When we reach the place to delete, we skip
+        ;; When the place to delete is reached, skip
         ;; that element by not pushing it to the result tuple.
         if (i != place) {
             ;; Since the current index i is not equal to 
@@ -1150,7 +1150,7 @@ The `tlen` [assembler function](/languages/func/asm-functions) uses the [TVM ins
 ### Determine if tuples are equal
 
 The approach involves iterating through both tuples and comparing each value recursively.
-Since tuples can contain different data types, we must check and cast values dynamically.
+Since tuples can contain different data types, check types and cast values dynamically.
 
 ```func
 ;; Determines the number of elements in a tuple.
@@ -1226,7 +1226,7 @@ int are_cells_equal? (cell a, cell b) {
         ;; execution will enter the "else" branch,
         ;; marking the "equal?" flag to false.
         ;; However, if they have the same type,
-        ;; we need to check if their values 
+        ;; check that their values 
         ;; are equal or not.
         if (is_null(v1) & is_null(v2)) {
             ;; nulls are always equal
@@ -1286,7 +1286,7 @@ For explanation of the functions that check types, refer to the recipe ["Casting
 [Lisp-style lists](/languages/func/stdlib#lisp-style-lists) are represented as nested tuples. For example, the list `1, 2, 3` is represented as the
 nested tuple `[1, [2, [3, null]]]`, where the value `null` acts as a marker for the end of the list.
 
-You can use the [`cons`](/languages/func/stdlib#cons) function to add an element at the front of the provided list. For example,
+Use the [`cons`](/languages/func/stdlib#cons) function to add an element at the front of the provided list. For example,
 if `lst` is the list `2, 3`, then `cons(1, lst)` is the list `1, 2, 3`. Internally, `cons(1, lst)` builds the tuple `[1, lst]`, where
 `lst` is the tuple `[2, [3, null]]`.
 
@@ -1373,7 +1373,7 @@ which returns the head of the list and the rest of the list. The following snipp
 Each cell can store up to `1023` bits of data and `4` cell references. Therefore, it is possible to represent
 complex tree structures by linking cells using cell references.
 
-Given a tree of cells, we can use any [tree traversal algorithm](https://en.wikipedia.org/wiki/Tree_traversal)
+Given a tree of cells, use any [tree traversal algorithm](https://en.wikipedia.org/wiki/Tree_traversal)
 to access each cell in the tree. For example, the snippet below uses the
 [iterative version of pre-order traversal](https://en.wikipedia.org/wiki/Tree_traversal#Pre-order_implementation),
 which makes use of a stack, instead of recursive calls.
@@ -1381,7 +1381,7 @@ which makes use of a stack, instead of recursive calls.
 The stack is implemented using the same technique for [lisp-style lists](/languages/func/stdlib#lisp-style-lists).
 The only difference is that the list grows by appending elements to the end of the list, instead of at the front.
 The last element in the list is the top of the stack.
-More concretely, if `s` is the current stack, we append an element `x` by constructing the tuple `[s, x]`.
+More concretely, if `s` is the current stack, append an element `x` by constructing the tuple `[s, x]`.
 This tuple `[s, x]` is the new stack, with top element `x`.
 For example, the stack `1, 2, 3`, where `3` is the top element, is represented using nested tuples
 as `[[[null, 1], 2], 3]`, where `null` represents the empty stack.
@@ -1485,7 +1485,7 @@ It is important to handle all scenarios by checking if the state is empty and in
 
     ;; Check that the contract state is empty
     if (cs.slice_empty?()) {
-        ;; Contract data is empty, so we create a counter.
+        ;; Contract data is empty, so create a fresh counter.
         int counter = 1;
         
         ;; To save the counter into the contract state, 
@@ -1516,7 +1516,7 @@ It is important to handle all scenarios by checking if the state is empty and in
 
 - [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
 - [Modifying notation using \~](/languages/func/expressions#modifying-notation)
-- `recv_internal` method
+- [`recv_internal` method](/languages/func/special-functions#receive-internal)
 - [`get_data`](/languages/func/stdlib#get-data)
 - [`begin_parse`](/languages/func/stdlib#begin-parse)
 - [`slice_empty?`](/languages/func/stdlib#slice-empty%3F)
@@ -1549,7 +1549,7 @@ Below is an example of a simple `CounterV1` smart contract that allows the count
 }
 ```
 
-After interacting with the contract, you may realize that the functionality for decrementing the counter is missing. To fix this, copy the code from `CounterV1` and add a new `decrease` function next to the existing `increase` function. Your updated code will look like this:
+After interacting with the contract, and realizing that the functionality for decrementing the counter is missing. Fix this by copying the code from `CounterV1` and adding a new `decrease` function next to the existing `increase` function. The updated code will look like this:
 
 ```func
 () recv_internal (slice in_msg_body) {
@@ -1577,7 +1577,7 @@ After interacting with the contract, you may realize that the functionality for 
 }
 ```
 
-Once the `CounterV2` smart contract is ready, you need to compile it off-chain into a `cell` and send an upgrade message to the `CounterV1` contract:
+Once the `CounterV2` smart contract is ready, compile it off-chain into a `cell` and send an upgrade message to the `CounterV1` contract:
 
 ```javascript
 await contractV1.sendUpgrade(provider.sender(), {
@@ -1588,9 +1588,7 @@ await contractV1.sendUpgrade(provider.sender(), {
 
 **References:**
 
-{/* Needs a note: Is it possible to redeploy code to an existing address, or does it have to be deployed as a new contract? */}
-
-- [`set_code()`](/languages/func/stdlib#set_code)
+- [`set_code`](/languages/func/stdlib#set-code)
 
 ## Messages
 
@@ -1641,7 +1639,7 @@ the default values for each of the headers, i.e., the first header has value `0`
 5th header, which has the two bits `00`.
 
 Among these 5 headers, the third one is probably the most interesting for a programmer, because it corresponds to the bounceable flag,
-which is set to `1` (true) by default. If you want to set the flag to `0` (false), you should use hexadecimal `0x10` instead of `0x18`,
+which is set to `1` (true) by default. If the flag is required to be `0` (false), use hexadecimal `0x10` instead of `0x18`,
 because `0x10` corresponds to the 6 bits `010000`.
 
 The call `store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)` sets 7 further headers to the default value `0`. The sum `1 + 4 + 4 + 64 + 32 + 1 + 1`
@@ -1770,9 +1768,8 @@ Refer to the sending messages page for further details on sending modes in the `
 
 ### How to set the message body as a slice in an internal message
 
-If you want to include the message body directly in the message cell, but don't want to explicitly
-write the message body fields together with the headers,
-you can first write the message body into a slice, and then write the slice into the message cell, as
+If the message body needs to be included directly in the message cell, but the message body is already in a separate slice,
+write the slice into the message cell, as
 in the following function. The function receives the destination address, the amount to send, and the message body as a slice.
 
 ```func
@@ -1916,7 +1913,7 @@ Refer to the sending messages page for further details on sending modes in the `
 ### How to send a message with a long text comment
 
 A `cell` can store up to 1023 bits of data, which means up to 127 8-bit characters.
-If we want to send a message with a really long comment, we should split the comment into several slices.
+If there is a need to send a message with a really long comment, split the comment into several slices.
 Each slice should have at most 127 chars. Each slice should have a reference to the next one,
 forming a snake-like structure.
 
@@ -1939,7 +1936,7 @@ cell message_body = begin_cell()
     .store_slice("long, long, long message...")
     ;; Create a reference to the next part of the string
     .store_ref(begin_cell()
-        .store_slice(" you can store a string of almost any length, ")
+        .store_slice(" store a string of almost any length, ")
         ;; And another reference to the last part of the string
         .store_ref(begin_cell()
             .store_slice(" as long as each slice has at most 127 chars.")
@@ -1974,8 +1971,8 @@ Refer to the sending messages page for further details on sending modes in the `
 
 ### How to send a deploy message
 
-When sending a deploy message, you need to prepare a StateInit cell, as done in the recipe [How to build a StateInit cell](#how-to-build-a-StateInit-cell).
-Once the StateInit cell is ready, you can prepare a message cell in which the message body is included with the headers, or the
+When sending a deploy message, prepare a StateInit cell, as done in the recipe [How to build a StateInit cell](#how-to-build-a-StateInit-cell).
+Once the StateInit cell is ready, prepare a message cell in which the message body is included with the headers, or the
 message body is included as a separate cell.
 
 The following function illustrates the case for the message body included in the same cell as the headers.
@@ -2106,7 +2103,7 @@ This is particularly useful for proxy contracts that receive payments and forwar
 ;; Create a slice from a string containing the destination address
 slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
 ;; The amount to send in nanotons.
-;; In this case, it is irrelevant the amount we send,
+;; In this case, it is irrelevant the sent amount,
 ;; because, later, the send mode 128 will include
 ;; all the contract's balance in the message
 int amount = 0;
@@ -2192,7 +2189,7 @@ In such cases, it is possible to define functions that make use of the TVM instr
 For example, while the function [`tpush`](/languages/func/stdlib#tpush), which adds an element to the end of a tuple, exists in the standard library,
 there is no `tpop` function, which removes the last element in a tuple and returns the modified tuple and the removed element.
 But there is a [TVM instruction `TPOP`](/tvm/instructions#6f8d-tpop) that does precisely this.
-So, we define the function `tpop` as an [assembler function](/languages/func/asm-functions) that wraps the `TPOP` instruction:
+So, define the function `tpop` as an [assembler function](/languages/func/asm-functions) that wraps the `TPOP` instruction:
 
 ```func
 forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
@@ -2203,7 +2200,8 @@ The function is [polymorphic](/languages/func/types#polymorphism-with-type-varia
 can be any type. The function name uses the symbol `~` to indicate that this function can be called
 using [modifying notation](/languages/func/expressions#modifying-notation).
 
-For example, if we are sure that tuple `t` has only integer elements, we can call the function using [modifying notation](/languages/func/expressions#modifying-notation):
+For example, if it is certain that tuple `t` has only integer elements, call the function using 
+[modifying notation](/languages/func/expressions#modifying-notation), like this:
 
 ```func
 int elem = t~tpop();
@@ -2255,7 +2253,7 @@ The second result is the loaded digit.
     ;; slice s is implicitly modified,
     ;; and it is now ready to read the next 8 bits.
     int x = s~load_uint(8); 
-    ;; Char '0' has code 48, so we substract it 
+    ;; Char '0' has code 48. Substract it 
     ;; to get the digit as a number.
     x -= 48; 
     ;; Return the modified slice and the digit.
@@ -2338,11 +2336,11 @@ int c = random();
 
 ### Modulo operations
 
-As an example, let’s say we need to perform the following calculation for all 256 numbers:
+As an example, let's say there is a need to perform the following calculation for all 256 numbers:
 
 `(xp + zp) * (xp - zp)`.
 
-Since these operations are commonly used in cryptography, we utilize the modulo operator for montgomery curves.
+Since these operations are commonly used in cryptography, modulo operator for montgomery curves should be used.
 
 **Note:**
 Variable names like `xp+zp` are valid as long as there are no spaces between the operators.
@@ -2435,7 +2433,7 @@ while (~ string_number.slice_empty?()) {
     ;; Load 8 bits (one char) from the slice.
     ;; "x" stores the decimal ASCII code of the char.
     int x = string_number~load_uint(8);
-    ;; Char '0' has code 48, so we substract it 
+    ;; Char '0' has code 48. Substract it 
     ;; to get the digit as a number.
     x -= 48;
     ;; Accumulate the result.
@@ -2482,7 +2480,7 @@ do {
     ;; ASCII codes in the list match the order 
     ;; of the digits in the original "n"
     chars = cons(r + 48, chars);
-} until (n == 0); ;; Stop until we process all the digits 
+} until (n == 0); ;; Stop until all digits are processed.
 
 ;; Now, iterate the list.
 do {
@@ -2545,8 +2543,8 @@ throw(36);
 
 ### Generate an internal address
 
-When deploying a new contract, we need to generate its internal address because it is initially unknown.
-Suppose we already have its StateInit, which contains the code and data of the new contract.
+When deploying a new contract, there is the need to generate its internal address because it is initially unknown.
+The internal address can be generated from the contract's StateInit, which contains the code and data of the new contract.
 
 According to the `MsgAddressInt` TLB, an internal address is composed of the following headers:
 
@@ -2554,8 +2552,10 @@ According to the `MsgAddressInt` TLB, an internal address is composed of the fol
 addr_std$10 anycast:(Maybe Anycast) workchain_id:int8 address:bits256;
 ```
 
-The following function creates an internal address that follows these headers,
-and stores the address in a slice.
+Therefore, to create an internal address, the above headers must be written in a cell, where `address` header is computed 
+using the hash of the contract's StateInit. The following function creates an internal address that follows these headers,
+and stores the address in a cell, which finally gets transformed into a slice, as slices tend to be the preferred 
+format for storing internal addresses.
 
 ```func
 slice generate_internal_address (int workchain_id, cell state_init) {
@@ -2567,7 +2567,7 @@ slice generate_internal_address (int workchain_id, cell state_init) {
         ;; workchain_id, 8-bits signed integer
         .store_int(workchain_id, 8)
         ;; The address as 256-bit unsigned integer.
-        ;; Here, we use the function cell_hash to compute 
+        ;; Use the function cell_hash to compute 
         ;; a hash of the provided state_init.
         ;; This hash acts as the address.
         .store_uint(cell_hash(state_init), 256) 
@@ -2595,7 +2595,7 @@ Further information on WorkChain IDs are found in the [docs](/foundations/addres
 
 ### Generate an external address
 
-We use the TL-B scheme from [block.tlb](https://github.com/ton-blockchain/ton/blob/24dc184a2ea67f9c47042b4104bbb4d82289fac1/crypto/block/block.tlb#L101C1-L101C12) to determine the address format to generate an external address.
+Use the TL-B scheme from [block.tlb](https://github.com/ton-blockchain/ton/blob/24dc184a2ea67f9c47042b4104bbb4d82289fac1/crypto/block/block.tlb#L101C1-L101C12) to determine the address format to generate an external address.
 
 ```func
 (int) ubitsize (int a) asm "UBITSIZE";
@@ -2613,6 +2613,6 @@ slice generate_external_address (int address) {
 }
 ```
 
-Since we need to find the exact number of bits occupied by the address, we must [declare an asm function](#how-to-write-custom-functions-using-asm-keyword) with the `UBITSIZE` opcode. This function will return the minimum number of bits required to store a given number.
+Since there is a need to find the exact number of bits occupied by the address, [declare an asm function](#how-to-write-custom-functions-using-asm-keyword) with the `UBITSIZE` opcode. This function will return the minimum number of bits required to store a given number.
 
 **Reference:** [TVM instructions](/tvm/instructions#B603)
