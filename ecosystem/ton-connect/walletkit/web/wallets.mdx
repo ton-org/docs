@@ -1,0 +1,327 @@
+---
+title: "How to manage TON wallets with WalletKit on the Web platform"
+sidebarTitle: "Manage TON wallets"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+<Aside>
+  [Initialize the WalletKit](./init) before using examples on this page.
+</Aside>
+
+The [basic configuration earlier](./init#initialization) is enough to outline necessary wallet information and initialize the WalletKit, but it isn't enough for deeper interactions with the blockchain. For that, you need to set up at least one TON wallet contract.
+
+## Initialization
+
+1. First, obtain the signer. It can be instantiated [from a mnemonic](#from-mnemonic), from [a private key](#from-private-key), or be [made custom](#from-custom-signer).
+
+1. Then, select a wallet adapter — it's an implementation of the `WalletInterface` type for a particular TON wallet contract. Currently, WalletKit provides two: `WalletV5R1Adapter` (recommended) and `WalletV4R2Adapter`.
+
+   Adapter takes in a signer from the previous step and a number of options, namely:
+
+   - `network` — TON Blockchain network, either `CHAIN.MAINNET` or `CHAIN.TESTNET`.
+   - `client` — API client to communicate with TON Blockchain. In most cases, the client of the initialized kit via `kit.getApiClient()` would suffice.
+   - `walletId` — identifier of the new wallet, which is used to make its smart contract address unique.
+   - `workchain` — either `0` for the basechain (default), or `-1` for the masterchain.
+
+   ```ts title="TypeScript"
+   import {
+     // Network constants (MAINNET/TESTNET)
+     CHAIN,
+     // Latest wallet version (recommended)
+     WalletV5R1Adapter,
+     defaultWalletIdV5R1,
+     // Legacy wallet version
+     WalletV4R2Adapter,
+     defaultWalletIdV4R2,
+   } from '@ton/walletkit';
+
+   const walletAdapter = await WalletV5R1Adapter.create(signer, {
+     network: CHAIN.TESTNET,
+     client: kit.getApiClient(),
+
+     // Either 0 for the basechain (default),
+     // or -1 for the masterchain
+     workchain: 0,
+
+     // Specify an ID for this wallet when you plan
+     // on adding more than one wallet to the kit
+     // under the same mnemonic or private key.
+     //
+     // In such cases, ID is used to make wallet addresses unique,
+     // because the same ID for the same mnemonic results in wallets
+     // with the same address, i.e., the same smart contract.
+     walletId: defaultWalletIdV5R1, // 2147483409
+   });
+   ```
+
+1. Finally, pass the adapter to the `addWallet()` method of the kit to complete the wallet initialization process:
+
+   ```ts title="TypeScript"
+    // Notice that addWallet() method returns an initialized TON wallet,
+    // which can be used on its own elsewhere.
+    const wallet = await kit.addWallet(walletAdapter);
+    console.log('Wallet address:', wallet.getAddress());
+   ```
+
+See the complete example for each signer kind:
+
+<Columns cols={3}>
+  <Card
+    title="Mnemonic"
+    horizontal="true"
+    href="#from-mnemonic"
+  />
+
+  <Card
+    title="Private key"
+    horizontal="true"
+    href="#from-private-key"
+  />
+
+  <Card
+    title="Custom signer"
+    horizontal="true"
+    href="#from-custom-signer"
+  />
+</Columns>
+
+### From mnemonic
+
+To initialize a TON wallet from an existing BIP-39 or TON-specific mnemonic seed phrase, the signer should be instantiated with the `fromMnemonic()` method of the utility `Signer` class of the WalletKit.
+
+<Aside
+  type="danger"
+>
+  Never specify the mnemonic phrase directly in your code. It is a "password" to your wallet and all its funds.
+
+  Instead, prefer sourcing the seed phrase from a secure storage, backend environment variables, or a special `.env` file that is Git-ignored and handled with care.
+</Aside>
+
+```ts title="TypeScript" expandable
+import {
+  // Handles cryptographic signing
+  Signer,
+  // Latest wallet version (recommended)
+  WalletV5R1Adapter,
+  // Network constants (MAINNET/TESTNET)
+  CHAIN,
+} from '@ton/walletkit';
+
+// 1.
+const signer = await Signer.fromMnemonic(
+  // (REQUIRED)
+  // A 12 or 24-word seed phrase obtained with general BIP-39 or TON-specific derivation.
+  // The following value assumes a corresponding MNEMONIC localStorage entry
+  // that contains 24 space-separated seed phrase words as a single string:
+  localStorage.getItem('MNEMONIC')!.split(' '), // list of 24 strings
+  {
+    // Type of derivation used to produce a mnemonic.
+    // If you've used a pure BIP-39 derivation, specify 'bip-39'.
+    // Otherwise, specify 'ton'.
+    // Defaults to: 'ton'
+    type: 'ton',
+  },
+);
+
+// 2.
+const walletAdapter = await WalletV5R1Adapter.create(signer, {
+  network: CHAIN.TESTNET,
+  client: kit.getApiClient(),
+});
+
+// 3.
+const wallet = await kit.addWallet(walletAdapter);
+```
+
+<Aside
+  type="caution"
+>
+  If you don't yet have a mnemonic for an existing TON wallet or you want to create a new one, you can generate a TON-specific mnemonic with the `CreateTonMnemonic()` function. However, it's crucial to use that function only **once per wallet** and then save it securely.
+
+  You **must NOT** invoke this function amidst the rest of your project code.
+
+  The following is an example of a simple one-off standalone script to produce a new mnemonic that then should be saved somewhere private:
+
+  ```ts
+  import { CreateTonMnemonic } from '@ton/walletkit';
+
+  console.log(await CreateTonMnemonic()); // word1, word2, ..., word24
+  ```
+</Aside>
+
+### From private key
+
+To initialize a TON wallet from an existing private key, the signer should be instantiated with the `fromPrivateKey()` method of the utility `Signer` class of the WalletKit.
+
+If there is a [mnemonic](#from-mnemonic), one can convert it to an Ed25519 key pair with public and private key by using the `MnemonicToKeyPair()` function.
+
+<Aside
+  type="danger"
+  title="Private keys are sensitive data!"
+>
+  Handle private keys carefully. Use test keys, keep them in a secure keystore, and avoid logs or commits.
+</Aside>
+
+```ts title="TypeScript" expandable
+import {
+  // Handles cryptographic signing
+  Signer,
+  // Latest wallet version (recommended)
+  WalletV5R1Adapter,
+  // Conversion function
+  MnemonicToKeyPair,
+  // Network constants (MAINNET/TESTNET)
+  CHAIN,
+} from '@ton/walletkit';
+
+// 1.
+const signer = await Signer.fromPrivateKey(
+  // Private key as a hex-encoded string or Uint8Array of bytes.
+  // The following value assumes a corresponding PRIVATE_KEY localStorage entry
+  // that contains the private key as a hex-encoded string:
+  localStorage.getItem('PRIVATE_KEY')!,
+);
+
+// 2.
+const walletAdapter = await WalletV5R1Adapter.create(signer, {
+  network: CHAIN.TESTNET,
+  client: kit.getApiClient(),
+});
+
+// 3.
+const wallet = await kit.addWallet(walletAdapter);
+```
+
+### From custom signer
+
+To provide a custom signing mechanism as an alternative to using a [mnemonic phrase](#from-mnemonic) or a [private key](#from-private-key), create an object of type `WalletSigner` and then pass it to the target wallet adapter's `create()` method.
+
+The signer object has to have two fields:
+
+- Signing function of type `ISigner`, which takes an iterable bytes object, such as `array`, `Uint8Array`, or `Buffer`, and asynchronously produces an Ed25519-encoded signature of the input as `Hex`. The `Hex` type is a string containing a hexadecimal value that starts with an explicit `0x` prefix.
+
+  ```ts title="TypeScript"
+  type ISigner = (bytes: Iterable<number>) => Promise<Hex>;
+  ```
+
+- Relevant Ed25519 public key of type `Hex`.
+
+  ```ts title="TypeScript"
+  type Hex = `0x${string}`;
+  ```
+
+A custom signer is useful to maintain complete control over the signing process, such as when using a hardware wallet or signing data on the backend.
+
+```ts title="TypeScript" expandable
+import {
+  // Network constants (MAINNET/TESTNET)
+  CHAIN,
+  // Latest wallet version (recommended)
+  WalletV5R1Adapter,
+  // Conversion function
+  MnemonicToKeyPair,
+  // Utility function to convert an array of bytes into a string of type Hex
+  Uint8ArrayToHex,
+  // Utilify function to obtain an Ed25519 signature
+  DefaultSignature,
+  // Handles cryptographic signing
+  type WalletSigner,
+  // String with a hexadecimal value, which starts with the `0x` prefix
+  type Hex,
+} from '@ton/walletkit';
+
+// A Ed25519 key pair from a mnemonic
+const keyPair = await MnemonicToKeyPair(
+  // The following value assumes a corresponding MNEMONIC localStorage entry
+  // that contains 24 space-separated seed phrase words as a single string:
+  localStorage.getItem('MNEMONIC')!.split(' '),
+  'ton',
+);
+
+// 1.
+const signer: WalletSigner = {
+  // The following is a simple demo of a signing function.
+  // Make sure to replace it with a production-ready one!
+  sign: async (bytes: Iterable<number>): Promise<Hex> => {
+    return DefaultSignature(Uint8Array.from(bytes), keyPair.secretKey);
+  },
+
+  // Public key as a Hex
+  publicKey: Uint8ArrayToHex(keyPair.publicKey),
+};
+
+// 2.
+const walletAdapter = await WalletV5R1Adapter.create(signer, {
+  network: CHAIN.TESTNET,
+  client: kit.getApiClient(),
+});
+
+// 3.
+const wallet = await kit.addWallet(walletAdapter);
+```
+
+### Multiple wallets
+
+You can add multiple TON wallets to WalletKit and switch between them as needed.
+
+```ts title="TypeScript"
+const wallet1 = await kit.addWallet(walletAdapter1);
+const wallet2 = await kit.addWallet(walletAdapter2);
+// ...
+const walletN = await kit.addWallet(walletAdapterN);
+```
+
+Providing the same wallet adapter to the kit multiple times will return the wallet that was already added in the first attempt.
+
+## Methods
+
+### Get a single wallet
+
+To get a single wallet by its address, use the `getWallet()` method of the initialized kit.
+
+```ts title="TypeScript"
+const wallet: IWallet = kit.getWallet(walletAdapter.getAddress());
+console.log('TON wallet address:', wallet.getAddress());
+```
+
+### Get all wallets
+
+To obtain all added wallets, use the `getWallets()` method of the initialized kit.
+
+```ts title="TypeScript"
+const wallets: IWallet[] = kit.getWallets();
+wallets.forEach(w => console.log('TON wallet address:', w.getAddress()));
+```
+
+### Remove a single wallet
+
+To remove a single wallet by its address, use the `removeWallet()` method of the initialized kit.
+
+```ts title="TypeScript"
+await kit.removeWallet(wallet.getAddress());
+```
+
+### Clear all wallets
+
+To remove all previously added wallets from the kit, use the `clearWallets()` method of the initialized kit.
+
+```ts title="TypeScript"
+await kit.clearWallets();
+```
+
+## Next steps
+
+<Columns cols={2}>
+  <Card
+    title="Handle connection requests"
+    icon="plug"
+    horizontal="true"
+    href="/ecosystem/ton-connect/walletkit/web/connections"
+  />
+</Columns>
+
+## See also
+
+- [WalletKit overview](/ecosystem/ton-connect/walletkit)
+- [TON Connect overview](/ecosystem/ton-connect)

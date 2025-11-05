@@ -31,7 +31,7 @@ Here, `op` means a 32‑bit operation code placed at the start of an internal me
 
 ### Storage
 
-The storage scheme itself is not defined by these standards, so it can be arbitrary. The reference collection contract contains 5 fields: `owner_address`, `next_item_index`, `content`, `nft_item_code`, and `royalty_params`. Some of them are self-explanatory, while `content` and `royalty_params` need additional explanation below.
+The storage scheme itself is not defined by these standards, so it can be arbitrary. The reference collection contract contains 5 fields: `owner_address`, `next_item_index`, `content`, `nft_item_code`, and `royalty_params`. Some of them are self‑explanatory, while `content` and `royalty_params` need additional explanation below.
 
 Storage loading and saving is implemented with simple functions `load_data` and `save_data`:
 
@@ -58,13 +58,13 @@ Storage loading and saving is implemented with simple functions `load_data` and 
 }
 ```
 
-The `content` [cell](/tvm/serialization/cells) in this contract contains 2 cells in [references](/tvm/serialization/cells): `collection_content` containing metadata of the collection itself, and `common_content` containing the common prefix for individual items' metadata.
+The `content` [cell](/foundations/serialization/cells) in this contract contains 2 cells in [references](/foundations/serialization/cells): `collection_content` containing metadata of the collection itself, and `common_content` containing the common prefix for individual items' metadata.
 
 The `royalty_params` cell contains 3 values: `royalty_factor` which is a numerator, `royalty_base` which is a denominator, and `royalty_address` which is the address where royalties are sent.
 
 ### Child contracts
 
-The collection and item contracts implement a classic [parent–child pattern](/patterns/contract-sharding), where the collection acts as the parent and items are children. Therefore, the collection implements functionality to deploy its children, and the contract keeps the `nft_item_code` field in storage.
+The collection and item contracts implement a classic [parent–child pattern](/contract-dev/contract-sharding), where the collection acts as the parent and items are children. Therefore, the collection implements functionality to deploy its children, and the contract keeps the `nft_item_code` field in storage.
 
 The contract uses helper functions to compose [`StateInit`](/foundations/whitepapers/tblkch#3-1-7-message-layout) — roughly, the package that holds a contract’s initial code and data used to derive its address and deploy it — calculate addresses, and send deploy messages for NFT items.
 
@@ -111,7 +111,7 @@ Note on `.store_uint(0x18, 6)` and `.store_uint(0x10, 6)`:
 - These 6 leading bits encode the start of `CommonMsgInfo` for an internal message: `int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress …` (see [message layout](/foundations/whitepapers/tblkch#3-1-7-message-layout)). Concretely, the 6 bits are:
 
   - `tag` = `0` — selects `int_msg_info$0` (internal message info).
-  - `ihr_disabled` — set to `1` to disable IHR (Instant Hypercube Routing). IHR is a legacy delivery mode and is not used in TON; contracts should always keep it disabled. See [Hypercube routing](/foundations/hypercube-routing).
+  - `ihr_disabled` — set to `1` to disable IHR (Instant Hypercube Routing). IHR is a legacy delivery mode and is not used in TON; contracts should always keep it disabled. See [Hypercube routing](/foundations/shards).
   - `bounce` — if `1`, the message will bounce back on errors during compute/action phases; if `0`, it will not bounce. We use `bounce=1` (0x18) for deploys to child items so the collection gets its funds back on failure, and `bounce=0` (0x10) for royalty replies to avoid bounces and ensure crediting wallets/uninitialized addresses. See [Bounce phase](/foundations/phases#bounce-phase).
   - `bounced` — set to `0` in outbound messages you build. This bit is meaningful only for inbound messages: when the blockchain generates a bounce, the inbound copy has `bounced=1`. Validators construct such bounce messages themselves; your outbound value does not make a message “bounced”. In normal sends, keep it `0`.
   - `src` — we serialize `addr_none` (the `00` tag). Validators replace it with the current contract address during the action phase, so you don’t need to spend bits storing the full source address. See [`send_raw_message`](/languages/func/stdlib#send-raw-message).
@@ -222,7 +222,7 @@ Then there are 3 features: deploy single item (opcode `1`), deploy a batch of it
 
 #### Deploy single item
 
-It parses the incoming message and expects it to contain 3 values: `item_index:uint64`, `amount:Coins`, and `content:^Cell` ([TL‑B](/languages/TL-B/overview) notation — the `^` means this field is stored in a separate referenced cell, i.e., the message carries a reference to a child [cell](/tvm/serialization/cells) that contains the content). It checks the item index to be less than or equal to the `next_item_index` from storage. Then it calls a helper function `deploy_nft_item`, which deploys the new NFT item. Lastly, if the item index equals `next_item_index`, it increments `next_item_index` to update the last item index.
+It parses the incoming message and expects it to contain 3 values: `item_index:uint64`, `amount:Coins`, and `content:^Cell` ([TL‑B](/languages/TL-B/overview) notation — the `^` means this field is stored in a separate referenced cell, i.e., the message carries a reference to a child [cell](/foundations/serialization/cells) that contains the content). It checks the item index to be less than or equal to the `next_item_index` from storage. Then it calls a helper function `deploy_nft_item`, which deploys the new NFT item. Lastly, if the item index equals `next_item_index`, it increments `next_item_index` to update the last item index.
 
 ```func
 () recv_internal(cell in_msg_full, slice in_msg_body) impure {

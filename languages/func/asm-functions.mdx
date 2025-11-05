@@ -1,0 +1,185 @@
+---
+title: "Assembler functions"
+sidebarTitle: "Assembler functions"
+noindex: "true"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+## Assembler function definition
+
+In FunC, functions can be defined directly using assembler code. This is done by declaring the function body using the `asm` keyword, followed by one or more assembler commands written inside double quotes `"`, and finalizing with the symbol `;`. For example, the following function increments an integer and then negates it:
+
+```func
+int inc_then_negate(int x) asm "INC" "NEGATE";
+```
+
+Calls to `inc_then_negate` are translated to 2 assembler commands `INC` and `NEGATE`.
+
+Alternatively, the function can be written as:
+
+```func
+int inc_then_negate'(int x) asm "INC NEGATE";
+```
+
+Here, `INC NEGATE` is treated as a single assembler command by FunC, but the Fift assembler correctly interprets it as two separate commands.
+
+<Aside>
+  The list of assembler commands can be found here: [TVM instructions](/tvm/instructions).
+</Aside>
+
+### Multi-line asms
+
+Multi-line assembler commands, including Fift code snippets, can be defined using triple-quoted strings `"""`.
+
+For instance:
+
+```func
+slice hello_world() asm """
+  "Hello"
+  " "
+  "World"
+  $+ $+ $>s
+  PUSHSLICE
+""";
+```
+
+## Stack calling conventions
+
+The syntax for arguments and returns is the same as for standard functions, but there is one caveat - argument values are pushed onto the stack before the function body is executed, and the return type is what is captured from the stack afterward.
+
+### Arguments
+
+When calling an asm function, the first argument is pushed onto the stack first, the second one second, and so on, so that the first argument is at the bottom of the stack and the last one at the top.
+
+```func
+builder storeCoins(builder b, int value) asm "STVARUINT16";
+    ;;                     |        |
+    ;;                     |        Pushed last, sits on top of the stack
+    ;;                     |
+    ;;                     Pushed first, sits at the bottom of the stack
+
+    ;; The instruction "STVARUINT16" stores
+    ;; integer "value" into builder "b",
+    ;; by taking the builder from the bottom of the stack
+    ;; and the integer from the top of the stack,
+    ;; producing a new builder at the top of the stack.
+```
+
+### Returns
+
+An assembler function's return type attempts to grab relevant values from the resulting stack after the function execution and any [result rearrangements](#rearranging-stack-entries).
+
+Specifying an [atomic type](./types#atomic-types), such as an `int`, `cell`, or `builder`, will make the assembler function capture the top value from the stack.
+
+For example, in the following function:
+
+```func
+builder storeCoins(builder b, int value) asm "STVARUINT16";
+```
+
+the instruction `STVARUINT16` produces a final builder at the top of the stack, which is returned by the `storeCoins` function.
+
+Specifying a [tensor type](./types#tensor-types) as a return type, such as `(int, int)`, will cause the assembler function to take as many elements from the stack as the number of components in the tensor type. If the tensor type has nested tensor types, like `((int, int), int)`, it is interpreted as if it was the flattened tensor type `(int, int, int)`.
+
+For example, this function duplicates its input, so that if the input is `5`, it returns the tensor `(5, 5)`:
+
+```func
+(int, int) duplicate(int a) asm "DUP";
+;;
+;; DUP reads the value at the top of the stack
+;; and pushes a copy.
+;;
+;; Since the return type is (int, int),
+;; the function takes the first two values in the stack
+;; and returns them.
+```
+
+# Stack registers
+
+The so-called _stack registers_ are a way of referring to the values at the top of the stack. In total, there are 256 stack registers, i.e., values held on the stack at any given time.
+
+Register `s0` is the value at the top of the stack, register `s1` is the value immediately after it, and so on, until we reach the bottom of the stack, represented by `s255`, i.e., the 256th stack register. When a value `x` is pushed onto the stack, it becomes the new `s0`. At the same time, the old `s0` becomes the new `s1`, the old `s1` becomes the new `s2`, and so on.
+
+```func
+int takeSecond(int a, int b) asm "SWAP" "DROP";
+;;                 ↑      ↑
+;;                 |      Pushed last, sits on top of the stack
+;;                 Pushed first, sits second from the top of the stack
+
+;; SWAP interchanges s0 (top of the stack) with s1 (second-to-top)
+;;
+;; Before │ After
+;; ───────┼───────
+;; s0 = b │ s0 = a
+;; s1 = a │ s1 = b
+
+;; Then, DROP pops the value from the top of the stack and throws it away
+;;
+;; Before │ After
+;; ───────┼───────
+;; s0 = a │ s0 = b
+;; s1 = b │ s1 is now either some value deeper or just blank
+
+;; At the end, we have only one value on the stack, which is b
+;; Thus, it is captured by the return type `int`:
+int showcase() {
+    return takeSecond(5, 10);   ;; 10, i.e., b
+}
+```
+
+## Rearranging stack entries
+
+<Aside>
+  When manually rearranging arguments, they are evaluated in the new order. To overwrite this behavior see [`#pragma compute-asm-ltr`](./compiler-directives#%23pragma-compute-asm-ltr).
+</Aside>
+
+Sometimes, the order in which function arguments are passed may not match the expected order of an assembler command. Similarly, the returned values may need to be arranged differently. While this can be done manually using stack manipulation primitives, FunC has special syntax to handle this.
+
+Considering arrangements, the evaluation flow of the assembly function can be thought of in these 5 steps:
+
+1. The function takes arguments in the order specified by the parameters.
+1. If an argument arrangement is present, arguments are reordered before being pushed onto the stack.
+1. The function body is executed.
+1. If a result arrangement is present, resulting values are reordered on the stack.
+1. The resulting values are captured (partially or fully) by the return type of the function.
+
+The argument arrangement has the syntax `asm(arg2 arg1)`, where `arg1` and `arg2` are some arguments of the function arranged in the order we want to push them
+onto the stack: `arg1` will be pushed first and placed at the bottom of the stack, while `arg2` will be pushed last and placed at the top of the stack.
+
+Arrangements are not limited to two arguments and operate on all parameters of the function:
+
+```func
+;; Changing the order of arguments to match the STDICT signature:
+;; `c` will be pushed first and placed at the bottom of the stack,
+;; while `b` will be pushed last and placed at the top of the stack
+builder asmStoreDict(builder b, cell c) asm(c b) "STDICT";
+```
+
+The return arrangement has the syntax `asm(-> 1 0)`, where 1 and 0 represent a left-to-right reordering of [stack registers](#stack-registers) `s1` and `s0`, respectively. The contents of `s1` will be at the top of the stack, followed by the contents of `s0`.
+
+Arrangements are not limited to two return values and operate on captured values:
+
+```func
+;; Changing the order of return values of LDVARUINT16 instruction,
+;; since originally it would place the modified Slice on top of the stack
+(slice, int) asmLoadCoins(slice s) asm(-> 1 0) "LDVARUINT16";
+;;                                        ↑ ↑
+;;                                        | Value of the stack register 0,
+;;                                        | which is the topmost value on the stack
+;;                                        Value of the stack register 1,
+;;                                        which is the second-to-top value on the stack
+```
+
+Both argument and return arrangement can be combined together and written as follows: `asm(arg2 arg1 -> 1 0)`.
+
+```func
+;; Changing the order of return values compared to the stack
+;; and switching the order of arguments as well
+(slice, int) asmLoadInt(int len, slice s) asm(s len -> 1 0) "LDIX";
+;;                                                     ↑ ↑
+;;                                                     | Value of the stack register 0,
+;;                                                     | which is the topmost value on the stack
+;;                                                     Value of the stack register 1,
+;;                                                     which is the second-to-top value on the stack
+```
