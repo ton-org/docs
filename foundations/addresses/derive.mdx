@@ -2,17 +2,17 @@
 title: "Deriving addresses"
 ---
 
-It is often useful to derive an [address](/foundations/addresses/overview) of an account to interact with it, either on-chain or off-chain. General algorithm for address derivation is to compose [StateInit](/foundations/addresses/overview#account-id) of an account, calculate its hash, and build an address in a desired [format](/foundations/addresses/overview#internal-addresses).
+It is often useful to derive an [address](/foundations/addresses/overview) of an account to interact with it, either on-chain or off-chain. General algorithm for address derivation is to compose the [StateInit](/foundations/addresses/overview#account-id) of an account, calculate its hash, and build the address in the desired [format](/foundations/addresses/overview#internal-addresses).
 
-Even though the general algorithm is practically the same for all cases, the details can still be non-trivial. Composing address is not a problem once you have the StateInit, and all that has to be solved is StateInit composing.
+Even though the general algorithm is practically the same for all cases, the details can still be non-trivial. Once StateInit is available, composing the address is straightforward; the task is to compose StateInit.
 
-It is very important to understand the difference between StateInit and current state of the account. StateInit is the initial state, which an account stores at deployment. After that, state can be changed by smart contract itself - for example by updating the data. Since address depends on StateInit, in order to derive address it is necessary to compose an initial state rather than the actual one.
+Understand the difference between StateInit and the current state of the account. StateInit is the initial state, which an account stores at deployment. After that, state can be changed by the smart contract itself — for example, by updating the data. Since the address depends on StateInit, to derive the address it is necessary to compose the initial state rather than the current one.
 
 ## On-chain derivation
 
 ### Simple
 
-If it's known how to compose contract's initial `code` and `data`, it's enough to follow the general algorithm mentioned above as is. Code and data form a StateInit, and [workchain](/foundations/addresses/overview#workchain-id) is usually hardcoded. Below is one of the most common patterns, when `code` is a constant cell known in advance, and `data` is composed at runtime.
+If it's known how to compose the contract's initial `code` and `data`, it's enough to follow the general algorithm mentioned above as is. Code and data form a StateInit, and [workchain](/foundations/addresses/overview#workchain-id) is usually hardcoded. Below is one of the most common patterns, when `code` is a constant cell known in advance, and `data` is composed at runtime.
 
 ```func
 (builder) calculate_address(cell code, cell data, int workchain) {
@@ -72,7 +72,7 @@ _ fixed_prefix_length:(Maybe (## 5)) special:(Maybe TickTock)
   library:(Maybe ^Cell) = StateInit;
 ```
 
-Only `code` and `data` fields are serialized for this simple case. Binary `00110` that we store corresponds to each of the `Maybe` types, with `0` and `1` showing whether the field is absent or present.
+Only `code` and `data` fields are serialized for this simple case. Binary `00110` corresponds to each of the `Maybe` types, with `0` and `1` showing whether the field is absent or present.
 
 Once StateInit is composed, it is hashed with `cell_hash` function that computes [representation hash](/foundations/serialization/cells#standard-cell-representation-and-its-hash) and the address is composed as type [`MsgAddressInt`](/foundations/whitepapers/tblkch#3-1-2-tl-b-scheme-for-addresses) with tag [`addr_std`](/foundations/addresses/overview#internal-addresses) and with no `anycast`.
 
@@ -83,7 +83,7 @@ addr_std$10 anycast:(Maybe Anycast)
 
 ### Contract sharding
 
-When working with [contract sharding](/contract-dev/contract-sharding#contract-sharding) pattern, child contracts usually have StateInit that depends on parent. The same logic from [simple](#simple) case works here, and only `getData` has to be changed. Since parent is the one that has to derive child addresses often, then handling that dependence is trivial. In example below the dependence is implemented by adding parent address in child StateInit.
+When working with [contract sharding](/contract-dev/contract-sharding#contract-sharding) pattern, child contracts usually have StateInit that depends on parent. The same logic from [simple](#simple) case works here, and only `getData` has to be changed. Since parent is the one that has to derive child addresses often, then handling that dependence is trivial. In the example below the dependence is implemented by adding parent address in child StateInit.
 
 ```func
 (builder) calculate_address(cell code, cell data, int workchain) {
@@ -107,7 +107,7 @@ When working with [contract sharding](/contract-dev/contract-sharding#contract-s
     ;; example usage with placeholder values
 
     cell code = getCode();
-    cell data = getData(my_address()); ;; get parent address
+    cell data = getData(my_address()); ;; obtain parent address
     int workchain = 0; ;; basechain
 
     builder builder_with_address = calculate_address(
@@ -168,7 +168,7 @@ Or, if the workchain is not known in advance, it is still possible to hardcode t
 
 The `fixed_prefix_length` field in StateInit allows smart contracts to have a specific prefix in address, for the purpose of deploying it to a certain shardchain. This can be useful for cross-contract latency optimization, as in [Jetton 2.0](/standard/tokens/jettons/comparison#jetton-2-0).
 
-This can seem similar to the [vanity](#vanity) case, but they serve different purposes. Vanity generator finds such StateInit that an address composed from its hash will have certain letters in prefix or suffix. The `fixed_prefix_length` does not affect other fields of the state, and tells blockchain to ignore the first few bits in the address to which the contract is getting deployed.
+This can seem similar to the [vanity](#vanity) case, but they serve different purposes. Vanity generator finds such StateInit that an address composed from its hash will have certain letters in a prefix or suffix. The `fixed_prefix_length` does not affect other fields of the state, and tells blockchain to ignore the first few bits in the address to which the contract is getting deployed.
 
 As a result, the logic here is more similar to the [simple](#simple) case. The only difference is that StateInit should also include `fixed_prefix_length` and address should have first few bits replaced with desired ones.
 
@@ -180,7 +180,7 @@ As a result, the logic here is more similar to the [simple](#simple) case. The o
     ;; 1. compose StateInit
     cell state_init = begin_cell()
         .store_uint(1, 1) ;; fixed_prefix_length is present
-        .store_uint(8, 5) ;; prefix length itself
+        .store_uint(prefix_length, 5) ;; prefix length itself
         .store_uint(6, 4) ;; `0b0110`: `code` and `data` are present
         .store_ref(code)
         .store_ref(data)
@@ -272,7 +272,7 @@ const parentAddress = Address.parse(
 );
 const data = beginCell()
   .storeStringTail("hello, world!")
-  .storeAddress(parentAddress) // including parent address in child stateinit
+  .storeAddress(parentAddress) // including parent address in child StateInit
   .endCell();
 
 const init = {
@@ -283,7 +283,7 @@ const init = {
 const addr = contractAddress(0, init);
 
 console.log(addr); // EQAE74NUORgCfJQqcKy6GTCEs1hlZ--um6PWEmWX25fgDuuZ
-````
+```
 
 ### Vanity
 
