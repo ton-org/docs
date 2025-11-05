@@ -1,0 +1,799 @@
+---
+title: "Blueprint TypeScript API"
+---
+
+Blueprint exports functions and classes for programmatic interaction with TON smart contracts.
+
+### `tonDeepLink`
+
+Generates a TON deep-link for transfer.
+
+```typescript
+function tonDeepLink(
+  address: Address,
+  amount: bigint,
+  body?: Cell,
+  stateInit?: Cell,
+  testOnly?: boolean
+): string;
+```
+
+**Parameters:**
+
+- `address` — the recipient's TON address
+- `amount` — the amount of nanoTON to send
+- `body` — optional message body as a Cell
+- `stateInit` — optional state init cell for deploying a contract
+- `testOnly` — optional flag to determine output address format
+
+**Returns:** a URL deep link that can be opened in TON wallets
+
+**Example:**
+
+```typescript
+const link = tonDeepLink(myAddress, 10_000_000n); // 0.01 TON
+// "ton://transfer/..."
+```
+
+### `getExplorerLink`
+
+Generates a link to view a TON address in a selected blockchain explorer.
+
+```typescript
+function getExplorerLink(
+  address: string,
+  network: string,
+  explorer: 'tonscan' | 'tonviewer' | 'toncx' | 'dton'
+): string;
+```
+
+**Parameters:**
+
+- `address` — the TON address to view in explorer
+- `network` — the target network (`mainnet` or `testnet`)
+- `explorer` — the desired explorer (`tonscan`, `tonviewer`, `toncx`, `dton`)
+
+**Returns:** a full URL pointing to the address in the selected explorer
+
+**Example:**
+
+```typescript
+const link = getExplorerLink("<ADDR>", "testnet", "tonscan");
+// "https://testnet.tonscan.org/address/EQC...9gA"
+// <ADDR> — TON address to view.
+```
+
+### `getNormalizedExtMessageHash`
+
+Generates a normalized hash of an `external-in` message for comparison.
+
+```typescript
+function getNormalizedExtMessageHash(message: Message): Buffer;
+```
+
+This function ensures consistent hashing of external-in messages by following [TEP-467](https://github.com/ton-blockchain/TEPs/blob/8b3beda2d8611c90ec02a18bec946f5e33a80091/text/0467-normalized-message-hash.md).
+
+**Parameters:**
+
+- `message` — the message to be normalized and hashed (must be of type `external-in`)
+
+**Returns:** the hash of the normalized message as `Buffer`
+
+**Throws:** error if the message type is not `external-in`
+
+### `compile`
+
+Compiles a contract using the specified configuration for `tact`, `func`, or `tolk` languages.
+
+```typescript
+async function compile(name: string, opts?: CompileOpts): Promise<Cell>
+```
+
+**Parameters:**
+
+- `name` — the name of the contract to compile (should correspond to a file named `<name>.compile.ts`)
+- `opts` — optional [`CompileOpts`](#compileopts), including user data passed to hooks
+
+**Returns:** a promise that resolves to the compiled contract code as a `Cell`
+
+**Example:**
+
+```typescript
+import { compile } from '@ton/blueprint';
+
+async function main() {
+    const codeCell = await compile('Contract');
+    console.log('Compiled code BoC:', codeCell.toBoc().toString('base64'));
+}
+```
+
+### `libraryCellFromCode`
+
+Packs the resulting code hash into a library cell.
+
+```typescript
+function libraryCellFromCode(code: Cell): Cell
+```
+
+**Parameters:**
+
+- `code` — the contract code cell
+
+**Returns:** a library cell containing the code hash
+
+### `NetworkProvider`
+
+Interface representing a network provider for interacting with the TON Blockchain.
+
+```typescript
+interface NetworkProvider {
+  network(): 'mainnet' | 'testnet' | 'custom';
+  explorer(): Explorer;
+  sender(): SenderWithSendResult;
+  api(): BlueprintTonClient;
+  provider(address: Address, init?: { code?: Cell; data?: Cell }): ContractProvider;
+  isContractDeployed(address: Address): Promise<boolean>;
+  waitForDeploy(address: Address, attempts?: number, sleepDuration?: number): Promise<void>;
+  waitForLastTransaction(attempts?: number, sleepDuration?: number): Promise<void>;
+  getContractState(address: Address): Promise<ContractState>;
+  getConfig(configAddress?: Address): Promise<BlockchainConfig>;
+  open<T extends Contract>(contract: T): OpenedContract<T>;
+  ui(): UIProvider;
+}
+```
+
+#### `network()`
+
+```typescript
+network(): 'mainnet' | 'testnet' | 'custom';
+```
+
+**Returns:** current network type that the provider is connected to
+
+#### `explorer()`
+
+```typescript
+explorer(): Explorer;
+```
+
+**Returns:** [`Explorer`](#explorer) name for the current network
+
+#### `sender()`
+
+```typescript
+sender(): SenderWithSendResult
+```
+
+**Returns:** the [`SenderWithSendResult`](#senderwithsendresult) instance used for sending transactions
+
+#### `api()`
+
+```typescript
+api(): BlueprintTonClient
+```
+
+**Returns:** the underlying [`BlueprintTonClient`](#blueprinttonclient) API for direct blockchain interactions
+
+#### `provider()`
+
+```typescript
+provider(address: Address, init?: { code?: Cell; data?: Cell }): ContractProvider
+```
+
+Creates a contract provider for interacting with a contract at the specified address.
+
+**Parameters:**
+
+- `address` — the contract address to interact with
+- `init` — optional contract initialization data
+  - `code` — Contract code cell
+  - `data` — Contract initial data cell
+
+**Returns:** `contractProvider` instance for the specified address
+
+#### `isContractDeployed()`
+
+```typescript
+isContractDeployed(address: Address): Promise<boolean>
+```
+
+Checks whether a contract is deployed at the specified address.
+
+**Parameters:**
+
+- `address` — the contract address to check
+
+**Returns:** promise resolving to `true` if contract is deployed, `false` otherwise
+
+**Usage example:**
+
+```typescript
+export async function run(provider: NetworkProvider) {
+  const isDeployed = await provider.isContractDeployed(contractAddress);
+  if (!isDeployed) {
+    console.log('Contract not yet deployed');
+  }
+}
+```
+
+#### `waitForDeploy()`
+
+```typescript
+waitForDeploy(address: Address, attempts?: number, sleepDuration?: number): Promise<void>
+```
+
+Waits for a contract to be deployed by polling the address until the contract appears on-chain.
+
+**Parameters:**
+
+- `address` — the contract address to monitor
+- `attempts` — maximum number of polling attempts (default: 20)
+- `sleepDuration` — delay between attempts in milliseconds (default: 2000)
+
+**Returns:** a promise that resolves when the contract is deployed
+
+**Throws:** error if the contract is not deployed within the specified attempts
+
+**Usage example:**
+
+```typescript
+export async function run(provider: NetworkProvider) {
+  // Send deployment transaction
+  await contract.sendDeploy(provider.sender(), { value: toNano('0.01') });
+  
+  // Wait for deployment to complete
+  await provider.waitForDeploy(contract.address);
+  console.log('Contract deployed successfully');
+}
+```
+
+#### `waitForLastTransaction()`
+
+```typescript
+waitForLastTransaction(attempts?: number, sleepDuration?: number): Promise<void>
+```
+
+Waits for the last sent transaction to be processed and confirmed on the blockchain.
+
+**Parameters:**
+
+- `attempts` — maximum number of polling attempts (default: 20)
+- `sleepDuration` — delay between attempts in milliseconds (default: 2000)
+
+**Returns:** promise that resolves when the last transaction is confirmed
+
+**Usage example:**
+
+```typescript
+export async function run(provider: NetworkProvider) {
+  await contract.sendIncrement(provider.sender(), { value: toNano('0.01') });
+  await provider.waitForLastTransaction();
+}
+```
+
+#### `getContractState()`
+
+```typescript
+getContractState(address: Address): Promise<ContractState>
+```
+
+Retrieves the current state of a contract, including its balance, code, and data.
+
+**Parameters:**
+
+- `address` — the contract address to query
+
+**Returns:** promise resolving to `ContractState`.
+
+**Usage example:**
+
+```typescript
+export async function run(provider: NetworkProvider) {
+  const state = await provider.getContractState(contractAddress);
+  console.log(`Contract balance: ${fromNano(state.balance)} TON`);
+}
+```
+
+#### `getConfig()`
+
+```typescript
+getConfig(configAddress?: Address): Promise<BlockchainConfig>
+```
+
+Fetches the current blockchain configuration parameters.
+
+**Parameters:**
+
+- `configAddress` — optional config contract address (uses default if not provided)
+
+**Returns:** promise resolving to `BlockchainConfig`
+
+#### `open()`
+
+```typescript
+open<T extends Contract>(contract: T): OpenedContract<T>
+```
+
+Opens a contract instance for interaction, binding it to the current provider.
+
+**Parameters:**
+
+- `contract` — the contract instance to open
+
+**Returns:** `openedContract` wrapper that enables direct method calls
+
+**Usage example:**
+
+```typescript
+export async function run(provider: NetworkProvider) {
+  const counter = provider.open(Counter.fromAddress(contractAddress));
+  const currentValue = await counter.getCounter();
+  console.log('Current counter value:', currentValue);
+}
+```
+
+#### `ui()`
+
+```typescript
+ui(): UIProvider
+```
+
+**Returns:** [`UIProvider`](#uiprovider) instance for console interactions
+
+**Usage example:**
+
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  ui.write('Deployment starting...');
+  const confirmed = await ui.prompt('Deploy to mainnet?');
+}
+```
+
+### `UIProvider`
+
+Interface for handling user interactions, such as displaying messages, prompting for input, and managing action prompts. This interface abstracts console interactions and can be used in both interactive and automated scenarios.
+
+```typescript
+interface UIProvider {
+  write(message: string): void;
+  prompt(message: string): Promise<boolean>;
+  inputAddress(message: string, fallback?: Address): Promise<Address>;
+  input(message: string): Promise<string>;
+  choose<T>(message: string, choices: T[], display: (v: T) => string): Promise<T>;
+  setActionPrompt(message: string): void;
+  clearActionPrompt(): void;
+}
+```
+
+#### `write()`
+
+```typescript
+write(message: string): void
+```
+
+Displays a message to the user console.
+
+**Parameters:**
+
+- `message` — the text message to display
+
+**Usage example:**
+
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  ui.write('Starting contract deployment...');
+  ui.write(`Network: ${provider.network()}`);
+}
+```
+
+#### `prompt()`
+
+```typescript
+prompt(message: string): Promise<boolean>
+```
+
+Displays a yes/no prompt to the user and waits for their response.
+
+**Parameters:**
+
+- `message` — the prompt message to display
+
+**Returns:** promise resolving to `true` for yes, `false` for no
+
+**Usage example:**
+
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  const confirmed = await ui.prompt('Deploy to mainnet? This will cost real TON');
+  if (confirmed) {
+    ui.write('Proceeding with deployment...');
+  } else {
+    ui.write('Deployment cancelled');
+    return;
+  }
+}
+```
+
+#### `inputAddress()`
+
+```typescript
+inputAddress(message: string, fallback?: Address): Promise<Address>
+```
+
+Prompts the user to input a TON address with validation.
+
+**Parameters:**
+
+- `message` — the prompt message to display
+- `fallback` — optional default address to use if user provides empty input
+
+**Returns:** promise resolving to Address object
+
+**Usage example:**
+
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  const targetAddress = await ui.inputAddress(
+    'Enter the contract address to interact with:',
+    Address.parse('EQD4FPq-PRDieyQKkizFTRtSDyucUIqrj0v_zXJmqaDp6_0t') // fallback
+  );
+  ui.write(`Using address: ${targetAddress.toString()}`);
+}
+```
+
+#### `input()`
+
+```typescript
+input(message: string): Promise<string>
+```
+
+Prompts the user for a text input and returns the entered string.
+
+**Parameters:**
+
+- `message` — the prompt message to display
+
+**Returns:** promise resolving to the user's input as a string
+
+**Usage example:**
+
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  const contractName = await ui.input('Enter the contract name:');
+  ui.write(`Deploying contract: ${contractName}`);
+}
+```
+
+#### `choose()`
+
+```typescript
+choose<T>(message: string, choices: T[], display: (v: T) => string): Promise<T>
+```
+
+Presents a list of choices to the user and returns the selected option.
+
+**Parameters:**
+
+- `message` — the prompt message to display
+- `choices` — array of options to choose from
+- `display` — function to convert each choice to a display string
+
+**Returns:** promise resolving to the selected choice
+
+**Usage example:**
+
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  
+  const networks = ['mainnet', 'testnet'];
+  const selectedNetwork = await ui.choose(
+    'Select deployment network:',
+    networks,
+    (network) => network.toUpperCase()
+  );
+  
+  ui.write(`Selected network: ${selectedNetwork}`);
+}
+```
+
+#### `setActionPrompt()`
+
+```typescript
+setActionPrompt(message: string): void
+```
+
+Sets a persistent action prompt that remains visible during operations.
+
+**Parameters:**
+
+- `message` — the action prompt message to display
+
+**Usage example:**
+
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  ui.setActionPrompt('⏳ Waiting for transaction confirmation...');
+  
+  await contract.send(provider.sender(), { value: toNano('0.01') }, 'increment');
+  await provider.waitForLastTransaction();
+  
+  ui.clearActionPrompt();
+  ui.write('✅ Transaction confirmed');
+}
+```
+
+#### `clearActionPrompt()`
+
+```typescript
+clearActionPrompt(): void
+```
+
+Clears the current action prompt, removing it from display.
+
+**Usage example:**
+
+```typescript
+export async function run(provider: NetworkProvider) {
+  const ui = provider.ui();
+  ui.setActionPrompt('🔄 Processing...');
+  
+  // Perform some operation
+  await someAsyncOperation();
+  
+  ui.clearActionPrompt();
+  ui.write('Operation completed');
+}
+```
+
+## Type definitions
+
+Blueprint exports several TypeScript types for configuration and compilation options. These types provide type safety and IntelliSense support when working with Blueprint programmatically.
+
+### `CompileOpts`
+
+Optional compilation settings, including user data passed to hooks and compilation flags.
+
+```typescript
+type CompileOpts = {
+  hookUserData?: any;
+  debugInfo?: boolean;
+  buildLibrary?: boolean;
+};
+```
+
+**Properties:**
+
+- `hookUserData` — optional user data passed to pre/post compile hooks
+- `debugInfo` — enable debug information in compiled output (default: `false`)
+- `buildLibrary` — build as a library instead of a regular contract (default: `false`)
+
+**Usage example:**
+
+```typescript
+import { compile } from '@ton/blueprint';
+
+const codeCell = await compile('MyContract', {
+  debugInfo: true,
+  hookUserData: { customFlag: true }
+});
+```
+
+### `CommonCompilerConfig`
+
+Base configuration shared by all compiler types. This interface defines common compilation hooks and options.
+
+```typescript
+type CommonCompilerConfig = {
+  preCompileHook?: (params: HookParams) => Promise<void>;
+  postCompileHook?: (code: Cell, params: HookParams) => Promise<void>;
+  buildLibrary?: boolean;
+};
+```
+
+**Properties:**
+
+- `preCompileHook` — optional function called before compilation starts (receives [`HookParams`](#hookparams))
+- `postCompileHook` — optional function called after compilation completes (receives compiled `Cell` and [`HookParams`](#hookparams))
+- `buildLibrary` — whether to build as a library (default: `false`)
+
+**Usage example:**
+
+```typescript title="./wrappers/MyContract.compile.ts"
+import { CompilerConfig } from '@ton/blueprint';
+
+export const compile: CompilerConfig = {
+  lang: 'func',
+  targets: ['contracts/my_contract.fc'],
+  preCompileHook: async (params) => {
+    console.log('Starting compilation...');
+  },
+  postCompileHook: async (code, params) => {
+    console.log('Compilation completed!');
+  }
+};
+```
+
+### `FuncCompilerConfig`
+
+Configuration specific to the FunC compiler, including optimization levels and source file specifications.
+
+```typescript
+type FuncCompilerConfig = {
+  lang?: 'func';
+  optLevel?: number;
+  debugInfo?: boolean;
+} & (
+  | {
+      targets: string[];
+      sources?: SourceResolver | SourcesMap;
+    }
+  | {
+      targets?: string[];
+      sources: SourcesArray;
+    }
+);
+```
+
+**Properties:**
+
+- `lang` — compiler language identifier (optional, defaults to `'func'`)
+- `optLevel` — optimization level (0-2, default: 2)
+- `debugInfo` — include debug information in output
+- `targets` — array of FunC source file paths to compile
+- `sources` — alternative source specification method
+
+**Usage example:**
+
+```typescript title="./wrappers/MyContract.compile.ts"
+import { CompilerConfig } from '@ton/blueprint';
+
+export const compile: CompilerConfig = {
+  lang: 'func',
+  targets: [
+    'contracts/imports/stdlib.fc',
+    'contracts/my_contract.fc'
+  ],
+  optLevel: 2,
+  debugInfo: false
+};
+```
+
+### `TolkCompilerConfig`
+
+Configuration for the Tolk compiler, including optimization and debugging options.
+
+```typescript
+type TolkCompilerConfig = {
+  lang: 'tolk';
+  entrypoint: string;
+  optimizationLevel?: number;
+  withStackComments?: boolean;
+  withSrcLineComments?: boolean;
+  experimentalOptions?: string;
+};
+```
+
+**Properties:**
+
+- `lang` — compiler language identifier (must be `'tolk'`)
+- `entrypoint` — path to the main Tolk source file
+- `optimizationLevel` — optimization level
+- `withStackComments` — include stack operation comments in Fift output
+- `withSrcLineComments` — include source line comments in Fift output
+- `experimentalOptions` — additional experimental compiler flags
+
+**Usage example:**
+
+```typescript title="./wrappers/MyContract.compile.ts"
+import { CompilerConfig } from '@ton/blueprint';
+
+export const compile: CompilerConfig = {
+  lang: 'tolk',
+  entrypoint: 'contracts/my_contract.tolk',
+  optimizationLevel: 2,
+  withStackComments: true,
+  withSrcLineComments: true
+};
+```
+
+### `TactLegacyCompilerConfig`
+
+Configuration for the Tact compiler (legacy configuration format).
+
+```typescript
+type TactLegacyCompilerConfig = {
+  lang: 'tact';
+  target: string;
+  options?: Options;
+};
+```
+
+**Properties:**
+
+- `lang` — compiler language identifier (must be `'tact'`)
+- `target` — path to the main Tact source file
+- `options` — additional Tact compiler options
+
+**Usage example:**
+
+```typescript title="./wrappers/MyContract.compile.ts"
+import { CompilerConfig } from '@ton/blueprint';
+
+export const compile: CompilerConfig = {
+  lang: 'tact',
+  target: 'contracts/my_contract.tact',
+  options: {
+    debug: false,
+    external: true
+  }
+};
+```
+
+### `HookParams`
+
+Parameters passed to compilation hooks, providing context about the compilation process.
+
+```typescript
+type HookParams = {
+  userData?: any;
+};
+```
+
+**Properties:**
+
+- `userData` — optional user data passed from [`CompileOpts`](#compileopts)
+
+### `SenderWithSendResult`
+
+An extended sender interface that tracks the result of the last send operation.
+
+```typescript
+interface SenderWithSendResult extends Sender {
+  readonly lastSendResult?: unknown;
+}
+```
+
+**Properties:**
+
+- `lastSendResult` — optional result from the most recent send operation
+
+### `BlueprintTonClient`
+
+Union type representing supported TON client implementations.
+
+```typescript
+type BlueprintTonClient = TonClient4 | TonClient | ContractAdapter | LiteClient;
+```
+
+**Supported clients:**
+
+- `TonClient4` — TON HTTP API v4 client
+- `TonClient` — TON HTTP API v2/v3 client
+- `ContractAdapter` — TON API adapter
+- `LiteClient` — Lite client for direct node communication
+
+### `Explorer`
+
+Supported blockchain explorer types.
+
+```typescript
+type Explorer = 'tonscan' | 'tonviewer' | 'toncx' | 'dton';
+```
+
+**Supported explorers:**
+
+- `'tonscan'` — TONScan explorer
+- `'tonviewer'` — Tonviewer explorer (default)
+- `'toncx'` — TON.cx explorer
+- `'dton'` — dton.io explorer
+
+## Configuration
+
+For detailed configuration options, refer to the [Blueprint Configuration](/contract-dev/blueprint/config) guide.
