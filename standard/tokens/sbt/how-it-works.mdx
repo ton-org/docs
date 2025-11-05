@@ -15,12 +15,14 @@ It is important to keep in mind that SBT standards provide only a general scheme
 
 The SBT standard defines what data must be stored in the contract. Each SBT contract must store the following fields:
 
-- `index` (uint256): SBT identifier
-- `collection_address` (MsgAddress): collection address
-- `owner` (MsgAddress): owner address
-- `content` (Cell): SBT content/metadata
-- `authority` (MsgAddress): authority address that can revoke the SBT
-- `revoked_at` (uint64): revocation time in Unix format, or `0` if not revoked
+| Field                | Type         | Description                                                  |
+| -------------------- | ------------ | ------------------------------------------------------------ |
+| `index`              | `uint256`    | SBT identifier                                               |
+| `collection_address` | `MsgAddress` | Collection address                                           |
+| `owner`              | `MsgAddress` | Owner address                                                |
+| `content`            | `Cell`       | SBT content/metadata                                         |
+| `authority`          | `MsgAddress` | Authority address that can revoke the SBT                    |
+| `revoked_at`         | `uint64`     | Revocation time in Unix format, or `0` if not revoked        |
 
 <Aside type="note">
   The standard defines **what** must be stored in the contract, but does not specify **how** exactly this data should be structured in storage. Developers are free to choose their own implementation.
@@ -30,10 +32,10 @@ The SBT standard defines what data must be stored in the contract. Each SBT cont
 
 Interactions with SBT contracts, which are most often encountered by users and developers, are:
 
-- prove ownership: sending proof of SBT ownership to a target contract;
-- request current owner: requesting current owner information from SBT;
-- destroy SBT: destroying the SBT contract and returning remaining balance;
-- revoke SBT: marking the SBT as revoked by authority.
+- _Prove ownership_: sending proof of SBT ownership to a target contract.
+- _Request current owner_: requesting current owner information from SBT.
+- _Destroy SBT_: destroying the SBT contract and returning remaining balance.
+- _Revoke SBT_: marking the SBT as revoked by authority.
 
 <Aside
   type="caution"
@@ -46,6 +48,20 @@ Interactions with SBT contracts, which are most often encountered by users and d
 The `owner` of SBT is set at the minting time and never changes. Below is a simple explanation of the key operations and their message flows.
 
 ## Prove ownership
+
+```mermaid
+sequenceDiagram
+  participant U as Owner
+  participant S as SBT
+  participant D as dest (target contract)
+
+  U->>S: prove_ownership
+  alt owner
+    S->>D: ownership_proof
+  else not owner
+    S-->>U: reject
+  end
+```
 
 This message flow allows the `owner` to ask the SBT to send a proof to a target contract confirming that they own this SBT. You may include arbitrary `forward_payload` and optionally attach `content`.
 
@@ -83,23 +99,19 @@ ownership_proof#0524c7ae query_id:uint64 item_id:uint256 owner:MsgAddress
 
 Rejected transaction if the sender is not the `owner`.
 
-```mermaid
-sequenceDiagram
-  participant U as Owner
-  participant S as SBT
-  participant D as dest (target contract)
-
-  U->>S: prove_ownership
-  alt owner
-    S->>D: ownership_proof
-  else not owner
-    S-->>U: reject
-  end
-```
-
 ## Request current owner
 
 This message flow allows any initiator to ask the SBT to send the current `owner` (and optionally the `content`) to a target contract.
+
+```mermaid
+sequenceDiagram
+  participant I as Initiator
+  participant S as SBT
+  participant D as dest (target contract)
+
+  I->>S: request_owner
+  S->>D: owner_info
+```
 
 ### Request owner message (inbound to SBT)
 
@@ -134,21 +146,23 @@ owner_info#0dd607e3 query_id:uint64 item_id:uint256 initiator:MsgAddress owner:M
 | `revoked_at` | `uint64`     | Revoke time if revoked, `0` otherwise.                                                                                                                |
 | `content`    | `Maybe Cell` | SBT content if it was requested.                                                                                                                      |
 
-### Full pipeline
-
-```mermaid
-sequenceDiagram
-  participant I as Initiator
-  participant S as SBT
-  participant D as dest (target contract)
-
-  I->>S: request_owner
-  S->>D: owner_info
-```
-
 ## Destroy
 
 This message flow allows the `owner` to destroy the SBT contract. This clears the `owner` and `authority` fields, and sends remaining balance back to the sender via an `excesses` message.
+
+```mermaid
+sequenceDiagram
+  participant U as Owner
+  participant S as SBT
+
+  U->>S: destroy(query_id)
+  alt owner
+    S->>S: owner = null, authority = null
+    S-->>U: excesses(query_id)
+  else not owner
+    S-->>U: reject
+  end
+```
 
 ### Destroy message (inbound to SBT)
 
@@ -174,25 +188,22 @@ excesses#d53276db query_id:uint64 = InternalMsgBody;
 
 Rejected transaction if the sender is not the `owner`.
 
-### Full pipeline
-
-```mermaid
-sequenceDiagram
-  participant U as Owner
-  participant S as SBT
-
-  U->>S: destroy(query_id)
-  alt owner
-    S->>S: owner = null, authority = null
-    S-->>U: excesses(query_id)
-  else not owner
-    S-->>U: reject
-  end
-```
-
 ## Revoke SBT
 
 This message flow allows the `authority` to mark the SBT as revoked. Revoking twice is disallowed.
+
+```mermaid
+sequenceDiagram
+  participant A as Authority
+  participant S as SBT
+
+  A->>S: revoke(query_id)
+  alt A == authority and not revoked
+    S->>S: revoked_at = now
+  else not authority or already revoked
+    S-->>A: reject
+  end
+```
 
 ### Revoke message (inbound to SBT)
 
@@ -209,19 +220,6 @@ Rejected transaction if:
 
 - the sender is not the `authority`;
 - the SBT was already revoked.
-
-```mermaid
-sequenceDiagram
-  participant A as Authority
-  participant S as SBT
-
-  A->>S: revoke(query_id)
-  alt A == authority and not revoked
-    S->>S: revoked_at = now
-  else not authority or already revoked
-    S-->>A: reject
-  end
-```
 
 ## See more:
 
