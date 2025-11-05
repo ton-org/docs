@@ -1,0 +1,200 @@
+---
+title: "Execution phases"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+When an event occurs on an account in The Open Network (TON) blockchain, it triggers a **transaction**.
+The most common event is receiving a message, but other events like `tick-tock`, `merge`, and `split` can also initiate transactions.
+
+Each transaction consists of up to five phases:
+
+1. **Storage phase**: calculates storage fees for the contract based on the space it occupies in the blockchain state.
+1. **Credit phase**: updates the contract balance by accounting for incoming message values and storage fees.
+1. **Compute phase**: executes the contract code on the TON Virtual Machine (TVM). The result includes `exit_code`, `actions`, `gas_details`, `new_storage`, and other data.
+1. **Action phase**: processes actions from the compute phase if it succeeds.\
+   Actions may include sending messages, updating contract code, or modifying libraries. If an action fails (for example, due to a lack of funds), the transaction may revert or skip the action, depending on its mode. For example, `mode = 0, flag = 2` means that any errors arising while processing this message during the action phase are ignored.
+1. **Bounce phase**: If the compute phase ends with an error and the inbound message has the bounce flag set, this phase generates a bounce message. If the send\_msg action failed and it had the +16 flag set, then the bounce phase will also be triggered.
+
+> Compute, Action and Bounce phases may be skipped
+
+<Aside
+  type="note"
+  title="Execution order notes"
+>
+  For non-bounceable messages:
+  Credit → Storage → Compute → Action → Bounce
+
+  For bounceable messages:
+  Storage → Credit → Compute → Action → Bounce
+</Aside>
+
+## Fee deduction sequence
+
+1. Import fee (before the first phase)
+1. Storage fee (storage phase)
+1. Gas fee (compute phase)
+1. Action fee + forward fee (action phase)
+1. Additional forward fees (bounce phase)
+
+## Storage phase
+
+Cannot be skipped.
+
+In this phase, the blockchain processes fees related to the account's persistent storage. Let's start by looking at the TL-B schema:
+
+```tlb
+tr_phase_storage$_ storage_fees_collected:Grams
+  storage_fees_due:(Maybe Grams)
+  status_change:AccStatusChange
+  = TrStoragePhase;
+```
+
+The `storage_fees_due` field is of type `Maybe` because it is only present when the account has **insufficient balance** to cover the storage fees. When the account has enough funds, this field is omitted.
+
+> Note: Grams are unsigned integers, so account balances cannot be negative.
+
+The `AccStatusChange` field indicates whether the account's status changed during this phase. For example, see [account status variety](/foundations/status#status-variety).
+
+## Credit phase
+
+Cannot be skipped.
+
+This phase is relatively small and straightforward.
+The main logic of this phase is to **credit the contract’s balance** with the remaining value from the incoming message.
+
+The credit phase is serialized in TL-B as follows:
+
+```tlb
+tr_phase_credit$_ due_fees_collected:(Maybe Grams)
+  credit:CurrencyCollection = TrCreditPhase;
+```
+
+This phase consists of the following two fields:
+
+| Field                | Type                 | Description                                                                                                          |
+| -------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `due_fees_collected` | `Maybe Grams`        | Amount of previously due storage fees collected (present only if storage fees were due and collected in this phase). |
+| `credit`             | `CurrencyCollection` | The amount credited to the account as a result of receiving the incoming message.                                    |
+
+## Compute phase
+
+The **compute phase** is one of the most complex stages of a transaction. This is where the smart contract code, stored in the account’s state, is executed.
+
+Unlike previous phases, the TL-B definition for the compute phase includes multiple variants.
+
+```tlb
+tr_phase_compute_skipped$0 reason:ComputeSkipReason
+  = TrComputePhase;
+tr_phase_compute_vm$1 success:Bool msg_state_used:Bool
+  account_activated:Bool gas_fees:Grams
+  ^[ gas_used:(VarUInteger 7)
+  gas_limit:(VarUInteger 7) gas_credit:(Maybe (VarUInteger 3))
+  mode:int8 exit_code:int32 exit_arg:(Maybe int32)
+  vm_steps:uint32
+  vm_init_state_hash:bits256 vm_final_state_hash:bits256 ]
+  = TrComputePhase;
+cskip_no_state$00 = ComputeSkipReason;
+cskip_bad_state$01 = ComputeSkipReason;
+cskip_no_gas$10 = ComputeSkipReason;
+cskip_suspended$110 = ComputeSkipReason;
+```
+
+### When the compute phase is skipped
+
+To start, note that the compute phase can be **skipped** entirely. In that case, the reason for skipping is explicitly recorded and can be one of the following:
+
+| Skip reason       | Description                                                                                                                                                                                                             |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cskip_no_state`  | The smart contract has no [state](/foundations/status#status-variety) and, therefore, no code, so execution is not possible.                                                                                            |
+| `cskip_bad_state` | Raised in two cases: when the `fixed_prefix_length` [field has an invalid value][fixed_prefix_length] or when the `StateInit` provided in the incoming message [does not match the account’s address][account_address]. |
+| `cskip_no_gas`    | The incoming message did not provide enough TON to cover the gas required to execute the smart contract.                                                                                                                |
+| `cskip_suspended` | The address is suspended; execution is disabled (used to limit early miner accounts).                                                                                                                                   |
+
+[fixed_prefix_length]: https://github.com/ton-blockchain/ton/blob/72056a2261cbb11f7cf0f20b389bcbffe018b1a8/crypto/block/transaction.cpp#L1721
+[account_address]: https://github.com/ton-blockchain/ton/blob/72056a2261cbb11f7cf0f20b389bcbffe018b1a8/crypto/block/transaction.cpp#L1726
+
+<Aside
+  type="note"
+  title="Bad state"
+>
+  The `fixed_prefix_length` field can be used to specify a fixed prefix for the account address, ensuring that the account resides in a specific shard.
+  This topic is outside the scope of this guide, but more information is available in [Shards page](/foundations/shards).
+</Aside>
+
+## Action phase
+
+Once the smart contract code has finished executing, the **Action phase** begins. If any actions were created during the compute phase, they are processed at this stage.
+
+There are precisely 4 types of actions in TON:
+
+```tlb
+action_send_msg#0ec3c86d mode:(## 8)
+  out_msg:^(MessageRelaxed Any) = OutAction;
+action_set_code#ad4de08e new_code:^Cell = OutAction;
+action_reserve_currency#36e6b809 mode:(## 8)
+  currency:CurrencyCollection = OutAction;
+libref_hash$0 lib_hash:bits256 = LibRef;
+libref_ref$1 library:^Cell = LibRef;
+action_change_library#26fa1dd4 mode:(## 7)
+  libref:LibRef = OutAction;
+```
+
+| Type                      | Description                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------------------ |
+| `action_send_msg`         | Sends a message.                                                                           |
+| `action_set_code`         | Updates the smart contract's code.                                                         |
+| `action_reserve_currency` | Reserves a portion of the account's balance. This is especially useful for gas management. |
+| `action_change_library`   | Changes the library used by the smart contract.                                            |
+
+These actions are executed _in the order in which they were created_ during code execution.
+A total of up to [255 actions](https://github.com/ton-blockchain/ton/blob/cac968f77dfa5a14e63db40190bda549f0eaf746/crypto/block/transaction.h#L164) can be made.
+
+Here is the TL-B schema, which defines the structure of the action phase:
+
+```tlb
+tr_phase_action$_ success:Bool valid:Bool no_funds:Bool
+  status_change:AccStatusChange
+  total_fwd_fees:(Maybe Grams) total_action_fees:(Maybe Grams)
+  result_code:int32 result_arg:(Maybe int32) tot_actions:uint16
+  spec_actions:uint16 skipped_actions:uint16 msgs_created:uint16
+  action_list_hash:bits256 tot_msg_size:StorageUsed
+  = TrActionPhase;
+```
+
+## Bounce phase
+
+If the **Compute phase** or **Action phase** ends with an error, and the incoming message has the `bounce` flag set, the system triggers the **Bounce phase**.
+
+<Aside
+  type="note"
+  title="Bounce on error"
+>
+  For the bounce phase to trigger due to an error in the action phase, the failed action must have **flag 16** set, which enables bounce on error.
+</Aside>
+
+```tlb
+tr_phase_bounce_negfunds$00 = TrBouncePhase;
+tr_phase_bounce_nofunds$01 msg_size:StorageUsed
+  req_fwd_fees:Grams = TrBouncePhase;
+tr_phase_bounce_ok$1 msg_size:StorageUsed
+  msg_fees:Grams fwd_fees:Grams = TrBouncePhase;
+```
+
+The `tr_phase_bounce_negfunds` type is not used in the current version of the blockchain. The other two types function as follows:
+
+| Type                      | Description                                                                                                             |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `tr_phase_bounce_nofunds` | Indicates that the account does not have enough funds to process the message that should be bounced back to the sender. |
+| `tr_phase_bounce_ok`      | Indicates that the system successfully processes the bounce and sends the message back to the sender.                   |
+
+In this phase, `msg_fees` and `fwd_fees` are calculated from the `total_fwd_fees`:\
+approximately $\frac{1}{3}$ goes to `msg_fees` and $\frac{2}{3}$ go to `fwd_fees`.
+
+> See [Fees → Forward fee](/foundations/fees#forward-fee) for more info.
+
+### Key points
+
+- If the receiver cannot parse the message and terminates with a non-zero exit code, the message bounces back automatically.
+- The bounced message has its `bounce` flag cleared and `bounced` flag set, and contains `0xffffffff` (32-bit) op code followed by the original message body.
+- Always check the `bounced` flag before parsing `op` to avoid treating a bounce as a new query.

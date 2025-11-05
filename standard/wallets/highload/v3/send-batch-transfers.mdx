@@ -1,0 +1,161 @@
+---
+title: "How to send a batch of transfers"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+<Aside
+  type="danger"
+>
+  **Funds at risk:** This guide sends real TON. Test on testnet first. Double-check recipient addresses — blockchain transactions cannot be reversed.
+</Aside>
+
+This guide shows how to send multiple transfers in a single transaction using Highload Wallet v3. This is the main feature of the wallet, enabling up to 254 messages per transaction.
+
+## Objective
+
+By the end of this guide, you will:
+
+- Send multiple transfers (up to 254) in a single transaction
+- Understand the two-transaction flow for batch transfers
+- Know how to calculate the compute fees for the internal transaction
+
+## Prerequisites
+
+- Completed [wallet creation](/standard/wallets/highload/v3/create) with funded balance and saved configuration in `.wallet.json`
+
+## Step 1: Load wallet configuration
+
+Load the wallet data and create the wallet instance:
+
+```typescript
+import { TonClient, internal, toNano, comment } from '@ton/ton';
+import { mnemonicToPrivateKey } from '@ton/crypto';
+import { Cell, SendMode } from '@ton/core';
+import { HighloadWalletV3 } from './wrappers/HighloadWalletV3';
+import { HighloadQueryId } from './wrappers/HighloadQueryId';
+import * as fs from 'fs';
+
+// Load wallet data
+const walletData = JSON.parse(fs.readFileSync('.wallet.json', 'utf-8'));
+const mnemonic = walletData.mnemonic.split(' ');
+const keyPair = await mnemonicToPrivateKey(mnemonic);
+
+const CODE = Cell.fromBoc(Buffer.from('b5ee9c7241021001000228000114ff00f4a413f4bcf2c80b01020120020d02014803040078d020d74bc00101c060b0915be101d0d3030171b0915be0fa4030f828c705b39130e0d31f018210ae42e5a4ba9d8040d721d74cf82a01ed55fb04e030020120050a02027306070011adce76a2686b85ffc00201200809001aabb6ed44d0810122d721d70b3f0018aa3bed44d08307d721d70b1f0201200b0c001bb9a6eed44d0810162d721d70b15800e5b8bf2eda2edfb21ab09028409b0ed44d0810120d721f404f404d33fd315d1058e1bf82325a15210b99f326df82305aa0015a112b992306dde923033e2923033e25230800df40f6fa19ed021d721d70a00955f037fdb31e09130e259800df40f6fa19cd001d721d70a00937fdb31e0915be270801f6f2d48308d718d121f900ed44d0d3ffd31ff404f404d33fd315d1f82321a15220b98e12336df82324aa00a112b9926d32de58f82301de541675f910f2a106d0d31fd4d307d30cd309d33fd315d15168baf2a2515abaf2a6f8232aa15250bcf2a304f823bbf2a35304800df40f6fa199d024d721d70a00f2649130e20e01fe5309800df40f6fa18e13d05004d718d20001f264c858cf16cf8301cf168e1030c824cf40cf8384095005a1a514cf40e2f800c94039800df41704c8cbff13cb1ff40012f40012cb3f12cb15c9ed54f80f21d0d30001f265d3020171b0925f03e0fa4001d70b01c000f2a5fa4031fa0031f401fa0031fa00318060d721d300010f0020f265d2000193d431d19130e272b1fb00b585bf03', 'hex'))[0];
+
+const client = new TonClient({
+    endpoint: 'https://testnet.toncenter.com/api/v2/jsonRPC', // This is TESTNET endpoint
+    // apiKey: 'your-api-key' // Optional: get from @tonapibot or @tontestnetapibot
+});
+
+const wallet = client.open(
+    HighloadWalletV3.createFromConfig(
+        {
+            publicKey: keyPair.publicKey,
+            subwalletId: walletData.subwalletId,
+            timeout: walletData.timeout,
+        },
+        CODE
+    )
+);
+```
+
+## Step 2: Prepare the message batch
+
+Create an array of messages to send:
+
+```typescript
+const messages = [];
+for (let i = 1; i <= 10; i++) {
+    messages.push({
+        type: 'sendMsg' as const,
+        mode: SendMode.PAY_GAS_SEPARATELY,
+        outMsg: internal({
+            to: 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM9c', // Zero address (for testing)
+            value: toNano('0.001'),
+            body: comment(`#${i}`),
+            bounce: false,
+        }),
+    });
+}
+```
+
+Each message in the batch:
+
+- **`type: 'sendMsg'`** — specifies that this is an outgoing message action
+- **`mode`** — send mode for each individual message
+- **`outMsg`** — the internal message to send
+
+<Aside type="tip">
+  **Batch limit:** You can send up to **254 messages** per transaction. This limit exists because one action slot is reserved for [`set_code` protection](/standard/wallets/highload/v3/specification#protection-against-set-code).
+</Aside>
+
+## Step 3: Send the batch
+
+Send the batch using the `sendBatch` method:
+
+```typescript
+const queryId = HighloadQueryId.fromSeqno(17n); // Use a specific seqno
+const createdAt = Math.floor(Date.now() / 1000) - 30; // 30 seconds ago
+const value = toNano('0.0007024'); // Compute fee for internal receiver
+
+await wallet.sendBatch(
+    keyPair.secretKey,
+    messages,
+    walletData.subwalletId,
+    queryId,
+    walletData.timeout,
+    createdAt,
+    value
+);
+
+console.log('Batch sent: 10 transfers');
+console.log(`Query ID: ${queryId.toSeqno()}`);
+console.log(`Created At: ${createdAt}`);
+```
+
+<Aside type="note">
+  **Automatic deployment:** If your wallet is in `uninit` status (has a balance but no code), it will automatically deploy when processing this external message. The wallet transitions to `active` status, and the batch transfer is executed in the same transaction.
+</Aside>
+
+### Parameter explanation
+
+**`queryId`** — Unique identifier for replay protection:
+
+- Each `query_id` can only be processed once within the protection window
+- `HighloadQueryId` is a wrapper class that represents the composite `query_id` as a sequential counter
+- Use `HighloadQueryId.fromSeqno(n)` to create a specific query ID
+- Provides `getNext()` method to increment to the next unique ID
+- Total range: 8,380,416 unique IDs
+- See [Query ID structure](/standard/wallets/highload/v3/specification#query-id-structure) for details
+
+**`createdAt`** — Message timestamp for expiration:
+
+- Set to 30 seconds **before** current time: `Math.floor(Date.now() / 1000) - 30`
+- Compensates for blockchain time lag (lite-servers use last block time, not current time)
+- See [Timestamp validation](/standard/wallets/highload/v3/specification#timestamp-validation) for why this is necessary
+
+**`value`** — Compute fee for the internal transaction:
+
+- The internal receiver (Transaction 2) consumes a fixed **1,756 gas** to process the action list
+- At current gas prices, this equals \~0.0007024 TON
+- This fee is sent to the wallet itself to cover internal message processing
+- If insufficient, the internal transaction may fail (but replay protection remains intact)
+
+<Aside
+  type="caution"
+>
+  **Compute fee requirement:** The `value` parameter covers gas for the internal transaction that processes the action list. This is in addition to the gas costs of the external message itself.
+</Aside>
+
+## How it works
+
+Batch transfers use a two-transaction pattern: the external message marks the `query_id` as processed and sends an internal message to itself with the action list, then the internal transaction processes the actions and sends all outgoing messages.
+
+See [Message sending flow](/standard/wallets/highload/v3/specification#message-sending-flow) for the complete validation sequence.
+
+## Next steps
+
+You can send multiple batches in parallel, each with a unique `query_id`.
+
+To verify that your batch was fully processed, see [How to verify message is processed](/standard/wallets/highload/v3/verify-is-processed).

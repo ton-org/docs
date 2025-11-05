@@ -134,7 +134,7 @@ export const Stub = ({ issue }) => {
     const issueEl = issue
         ? (
             <>
-                You can track progress on this page in <a href={`https://github.com/tact-lang/mintlify-ton-docs/issues/${issue}`}>issue #{issue}</a>.
+                You can track progress on this page in <a href={`https://github.com/ton-org/docs/issues/${issue}`}>issue #{issue}</a>.
             </>
         )
         : null;

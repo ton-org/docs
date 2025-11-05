@@ -22,7 +22,7 @@ tail#_ {bn:#} b:(bits bn) = SnakeData ~0;
 cons#_ {bn:#} {n:#} b:(bits bn) next:^(SnakeData ~n) = SnakeData ~(n + 1);
 ```
 
-[Read more about similar examples](/language/TL-B/complex-and-non-trivial-examples).
+[Read more about similar examples](/languages/TL-B/complex-and-non-trivial-examples).
 
 When the payload exceeds the maximum size of a single cell, Snake stores the remaining data in child cells. Part of the data is placed in the root cell, and the rest in the first child cell, continuing recursively until all data is stored.
 
@@ -83,7 +83,7 @@ export function flattenSnakeCell(cell: Cell): Buffer {
 }
 ```
 
-The `0x00` byte prefix is not always required in the root cell when using Snake, for example with off-chain NFT content. Also, cells are filled with bytes rather than bits to simplify parsing. To avoid issues when adding a reference in a child cell after it has already been written to its parent, the Snake cell is constructed in reverse order.
+The `0x00` byte prefix is not always required in the root cell when using Snake, for example, with off-chain NFT content. Also, cells are filled with bytes rather than bits to simplify parsing. To avoid issues when adding a reference in a child cell after it has already been written to its parent, the Snake cell is constructed in reverse order.
 
 ## Chunked encoding
 
@@ -156,9 +156,39 @@ export function ParseChunkDict(cell: Slice): Buffer {
 - `currency` — display as a currency (default).
 - `game` — game-style display that appears as an NFT, shows the number of tokens, and respects `amount_style`.
 
+### `decimals`
+
+<Aside
+  type="danger"
+  title="Funds at risk"
+>
+  Each jetton stores a `decimals` parameter in its metadata that determines how amounts are displayed. Transferring without accounting for `decimals` can result in sending drastically more tokens than expected.
+
+  Mitigation: Always retrieve and apply the correct `decimals` value before calculating transfer amounts. Test transfers with small amounts on testnet first.
+</Aside>
+
+The `decimals` parameter defines the number of decimal places for displaying token amounts. The on-chain balance is stored as an integer in the smallest unit (nano-tokens), and must be divided by 10^decimals to get the user-facing value.
+
+Common values:
+
+- Most jettons use `decimals: 9` (default when not specified)
+- USDT uses `decimals: 6`
+
+Example: If the on-chain balance is 1000000000 nano-tokens:
+
+- With `decimals: 9` → displayed as 1.0 token
+- With `decimals: 6` → displayed as 1000.0 tokens
+
+When transferring jettons programmatically, the amount must be calculated as: `on_chain_amount = display_amount × 10^decimals`.
+
+For example, to transfer 1 USDT (`decimals: 6`):
+
+- Correct on-chain amount: `1 × 10^6 = 1000000`
+- Incorrect (using default 9): `1 × 10^9 = 1000000000` (transfers 1000 USDT instead of 1)
+
 ## Parsing metadata
 
-To parse metadata, first retrieve the NFT data from the blockchain. For details, see [retrieving NFT data](/standard/tokens/nft/how-works#how-to-get-full-metadata-of-an-nft).
+To parse metadata, first retrieve the NFT data from the blockchain. For details, see [retrieving NFT data](/standard/tokens/nft/how-to-get-metadata).
 
 After the on-chain NFT data is retrieved, determine the content type by reading the first byte of the content, then parse accordingly.
 
@@ -189,15 +219,15 @@ Read known attributes such as `uri`, `name`, `image`, `description`, and `image_
 
 Examples:
 
-On-chain NFT: [EQBq5z4N\_GeJyBdvNh4tPjMpSkA08p8vWyiAX6LNbr3aLjI0](https://getgems.io/collection/EQAVGhk_3rUA3ypZAZ1SkVGZIaDt7UdvwA4jsSGRKRo-MRDN/EQBq5z4N_GeJyBdvNh4tPjMpSkA08p8vWyiAX6LNbr3aLjI0)
+On-chain NFT: [`EQBq5z4N_GeJyBdvNh4tPjMpSkA08p8vWyiAX6LNbr3aLjI0`](https://tonviewer.com/EQBq5z4N_GeJyBdvNh4tPjMpSkA08p8vWyiAX6LNbr3aLjI0)
 
-Semi-chain NFT: [EQB2NJFK0H5OxJTgyQbej0fy5zuicZAXk2vFZEDrqbQ\_n5YW](https://getgems.io/nft/EQB2NJFK0H5OxJTgyQbej0fy5zuicZAXk2vFZEDrqbQ_n5YW)
+Semi-chain NFT: [`EQB2NJFK0H5OxJTgyQbej0fy5zuicZAXk2vFZEDrqbQ_n5YW`](https://tonviewer.com/EQB2NJFK0H5OxJTgyQbej0fy5zuicZAXk2vFZEDrqbQ_n5YW)
 
-On-chain jetton master: [EQA4pCk0yK-JCwFD4Nl5ZE4pmlg4DkK-1Ou4HAUQ6RObZNMi](https://tonscan.org/jetton/EQA4pCk0yK-JCwFD4Nl5ZE4pmlg4DkK-1Ou4HAUQ6RObZNMi)
+On-chain jetton master: [`EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs`](https://tonviewer.com/EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs)
 
 ## How to parse
 
-Use the following API to parse metadata: [API Metadata](/ecosystem/rpc/toncenter/v3/accounts/get-account-metadata?playground=open). It handles most cases within gas limits; in rare cases, parsing may fail.
+Use the following API to parse metadata: [API Metadata](/ecosystem/api/toncenter/v3/accounts/get-account-metadata?playground=open). It handles most cases within gas limits; in rare cases, parsing may fail.
 
 ## Important notes on NFT metadata
 

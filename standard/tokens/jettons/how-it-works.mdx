@@ -3,6 +3,7 @@ title: "How it works"
 ---
 
 import { Image } from '/snippets/image.jsx';
+import { Aside } from '/snippets/aside.jsx';
 
 This article describes the basic ideas and processes behind the implementation of Jettons (aka tokens in Ethereum) in the TON Blockchain.
 
@@ -20,52 +21,54 @@ It is important to keep in mind that Jetton standards provide only a general sch
 ### Jetton master
 
 _Jetton master_ smart contracts store general information about a particular jetton, such as total supply (the total number of tokens of this type),
-a metadata link (or the metadata itself) and a code of the standard jetton-wallet smart contract for this jetton. They
-also have an _owner (admin)_ who, by sending suitable messages to them, [mints new tokens](/standard/tokens/jettons/how-to-mint), closes the minting, change metadata or transfers the
+a metadata link (or the metadata itself), and the code of the standard jetton-wallet smart contract for this jetton. They
+also have an _owner (admin)_ who, by sending suitable messages to them, [mints new tokens](/standard/tokens/jettons/mint), closes the minting, changes metadata, or transfers the
 admin rights to another contract.
 
-Jetton master contracts also receive notifications about the [burning of tokens](/standard/tokens/jettons/how-to-burning).
+Jetton master contracts also receive notifications about the [burning of tokens](/standard/tokens/jettons/burn).
 When they receive such a notification, they must adjust the total supply accordingly.
 
 ### Jetton wallet
 
-_Jetton wallet_ smart contracts are used to [transfer](/standard/tokens/jettons/how-to-transfer), receive, and [burn](/standard/tokens/jettons/how-to-burning) jettons. Each jetton wallet contract stores
-wallet balance information for specific users (owner), address of Jetton master contract (for appropriate minting), and some additional information.
+_Jetton wallet_ smart contracts are used to [transfer](/standard/tokens/jettons/transfer), receive, and [burn](/standard/tokens/jettons/burn) jettons. Each jetton wallet contract stores
+the wallet balance information for a specific user (owner), the address of the Jetton master contract (for appropriate minting), and some additional information.
 In certain cases, Jetton wallets are used for individual token holders for each token type.
 
 ### Difference between Jetton wallets and regular ones
 
 Although both regular wallets and Jetton wallets are smart contracts, there are some significant differences between them.
 
-The regular wallets smart contract are designed for off-chain interaction with their owner. In most implementations, their main purpose is to receive
+The regular wallets' smart contracts are designed for off-chain interaction with their owner. In most implementations, their main purpose is to receive
 external messages and perform the operations requested in them. It is through a regular
 wallet that the user sends requests for the transfer of tokens or their burning to the Jetton wallet smart contract.
 They are designed to store only the native TON Blockchain currency: toncoins or TONs.
 
-On the other hand, Jetton wallets smart contracts are designed only for storing and processing tokens. They ignore any external messages and
-accept only special internal ones. They execute commands received only from the Jetton master, another Jetton wallet or
+On the other hand, Jetton wallet smart contracts are designed only for storing and processing tokens. They ignore any external messages and
+accept only special internal ones. They execute commands received only from the Jetton master, another Jetton wallet, or
 their owner's regular wallet smart contracts.
 
 ## Message layouts
 
-Interactions with Jetton contracts, which are most often encountered by users and developers, are:
+Interactions with Jetton contracts, which users and developers most often encounter, are:
 
 - tokens transfer: sending tokens from one Jetton wallet to another;
 - tokens minting: minting new tokens and transferring them to the Jetton wallet;
 - tokens burning: burn a certain number of tokens on the Jetton wallet contract;
 - wallet address providing: find the address of the Jetton wallet corresponding to a regular wallet.
 
-<Warning>
-  In all schemes below you will see the `query id` field. Nowadays the field is almost deprecated, and protocols itself doesn't need it.
+<Aside
+  type="caution"
+>
+  In all schemes below, you will see the `query id` field. Nowadays, the field is almost deprecated, and the protocol itself doesn't need it.
   It is mostly used for easier off-chain parsing and other web2 processing.
-</Warning>
+</Aside>
 
 ### Token transfer
 
 <Image
   src="/resources/images/jettons/transfer_light.svg"
   darkSrc="/resources/images/jettons/transfer_dark.svg"
-  alt="Web wallet welcome page"
+  alt="Jetton transfer"
 />
 
 `Actor A regular wallet -> actor A Jetton wallet`. _Transfer_ message contains the following data:
@@ -74,13 +77,13 @@ Interactions with Jetton contracts, which are most often encountered by users an
 | ---------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `query_id`             | uint64            | Links the three messaging types—transfer, transfer notification, and excesses—to each other. To ensure this process works correctly, **always use a unique query ID**. |
 | `amount`               | VarUInteger 16    | The total jetton amount to transfer.                                                                                                                                   |
-| `destination`          | MsgAddress        | The address of the actor B regular wallet.                                                                                                                             |
+| `destination`          | MsgAddress        | The address of the actor B's regular wallet.                                                                                                                           |
 | `response_destination` | MsgAddress        | The wallet address used to return remaining Toncoin through the excesses message.                                                                                      |
 | `custom_payload`       | Maybe ^Cell       | The optional custom data used by either the sender or receiver jetton wallet for internal logic.                                                                       |
 | `forward_ton_amount`   | VarUInteger 16    | Toncoins to forward to the recipient. Must `> 0` to send a transfer notification with `forward_payload` and must be less than the Toncoin attached to this message.    |
 | `forward_payload`      | Either Cell ^Cell | Optional data. If the first `32` bits equal `0x00000000`, it is a text comment.                                                                                        |
 
-that meet TL-B scheme specified in [TEP 0074](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md):
+that meet the TL-B scheme specified in [TEP 0074](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md):
 
 ```tlb
 transfer#0f8a7ea5 query_id:uint64 amount:(VarUInteger 16) destination:MsgAddress
@@ -100,7 +103,7 @@ transfer#0f8a7ea5 query_id:uint64 amount:(VarUInteger 16) destination:MsgAddress
 | `forward_ton_amount`   | VarUInteger 16    | Toncoins to forward to the recipient. Must `> 0` to send a transfer notification with `forward_payload` and must be less than the Toncoin attached to this message.    |
 | `forward_payload`      | Either Cell ^Cell | Optional data. If the first `32` bits equal `0x00000000`, it is a text comment.                                                                                        |
 
-that is not specified but has a recommended TL-B scheme in [TEP 0074](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md):
+that is not specified, but has a recommended TL-B scheme in [TEP 0074](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md):
 
 ```tlb
 internal_transfer#178d4519  query_id:uint64 amount:(VarUInteger 16) from:MsgAddress
@@ -119,7 +122,7 @@ internal_transfer#178d4519  query_id:uint64 amount:(VarUInteger 16) from:MsgAddr
 | `sender`          | MsgAddress        | The address of the actor A regular wallet.                                                                                                                             |
 | `forward_payload` | Either Cell ^Cell | Some data.                                                                                                                                                             |
 
-that meet TL-B scheme specified in [TEP 0074](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md):
+that meet the TL-B scheme specified in [TEP 0074](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md):
 
 ```tlb
 transfer_notification#7362d09c query_id:uint64 amount:(VarUInteger 16)
@@ -133,7 +136,7 @@ transfer_notification#7362d09c query_id:uint64 amount:(VarUInteger 16)
 | ---------- | ------ |
 | `query_id` | uint64 |
 
-that meet TL-B scheme specified in [TEP 0074](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md):
+that meet the TL-B scheme specified in [TEP 0074](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md):
 
 ```tlb
 excesses#d53276db query_id:uint64 = InternalMsgBody;
@@ -144,20 +147,22 @@ excesses#d53276db query_id:uint64 = InternalMsgBody;
 <Image
   src="/resources/images/jettons/mint_light.svg"
   darkSrc="/resources/images/jettons/mint_dark.svg"
-  alt="Web wallet welcome page"
+  alt="Jettons minting"
 />
 
 `Admin regular wallet -> Jetton master contract`. _Mint_ message contains the following data:
 
-<Warning>
-  The following data layout is just a possible example. The structure of Mint message is not specified in any TEPs and left at the choice of the developer.
-</Warning>
+<Aside
+  type="caution"
+>
+  The following data layout is just a possible example. The structure of the Mint message is not specified in any TEPs and is left to the choice of the developer.
+</Aside>
 
-| Name          | Type       | Description                                                               |
-| ------------- | ---------- | ------------------------------------------------------------------------- |
-| `query_id`    | uint64     | To ensure this process works correctly, **always use a unique query ID**. |
-| `receiver`    | MsgAddress | The address of the actor A regular wallet.                                |
-| `mintMessage` | Cell       | The rest of data as in internal transfer message except `query_id` field. |
+| Name          | Type       | Description                                                                           |
+| ------------- | ---------- | ------------------------------------------------------------------------------------- |
+| `query_id`    | uint64     | To ensure this process works correctly, **always use a unique query ID**.             |
+| `receiver`    | MsgAddress | The address of the actor A regular wallet.                                            |
+| `mintMessage` | Cell       | The rest of the data as in an internal transfer message, except the `query_id` field. |
 
 The rest of the messages have already been described above when analyzing the transfer process.
 
@@ -166,7 +171,7 @@ The rest of the messages have already been described above when analyzing the tr
 <Image
   src="/resources/images/jettons/burn_light.svg"
   darkSrc="/resources/images/jettons/burn_dark.svg"
-  alt="Web wallet welcome page"
+  alt="Jettons burning"
 />
 
 `Actor A regular wallet -> actor A Jetton wallet`. _Burn_ message contains the following data:
@@ -176,7 +181,7 @@ The rest of the messages have already been described above when analyzing the tr
 | `query_id`             | uint64         | To ensure this process works correctly, **always use a unique query ID**.         |
 | `amount`               | VarUInteger 16 | The total jetton amount to burn.                                                  |
 | `response_destination` | MsgAddress     | The wallet address used to return remaining Toncoin through the excesses message. |
-| `custom_payload`       | Maybe ^Cell    | The optional custom data used by receiver jetton wallet for internal logic.       |
+| `custom_payload`       | Maybe ^Cell    | The optional custom data used by the receiver jetton wallet for internal logic.   |
 
 that meet a TL-B scheme in [TEP 0074](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md):
 
@@ -205,12 +210,12 @@ burn_notification#7bdd97de query_id:uint64 amount:(VarUInteger 16)
 
 ### Wallet address providing
 
-This process is very simple. Some actor sends to the Jetton master contract `provide_wallet_address` message that contains the following fields:
+This process is straightforward. Some actor sends to the Jetton master contract `provide_wallet_address` message that contains the following fields:
 
 | Name              | Type       | Description                                                                |
 | ----------------- | ---------- | -------------------------------------------------------------------------- |
 | `query_id`        | uint64     | To ensure this process works correctly, **always use a unique query ID**.  |
-| `owner_address`   | MsgAddress | The address of the actor which Jetton wallet address is needed.            |
+| `owner_address`   | MsgAddress | The address of the actor for which the Jetton wallet address is needed.    |
 | `include_address` | Bool       | Whether to include the address of the actor himself in the output message. |
 
 Then, the Jetton master contract sends to the actor a message that contains the following fields:
@@ -235,20 +240,20 @@ owner_address:(Maybe ^MsgAddress) = InternalMsgBody;
 
 There are three actions that can be performed through the UI:
 
-- [getting wallet balance](/standard/tokens/jettons/how-to-get-wallet-data);
-- [transfer jettons](/standard/tokens/jettons/how-to-transfer);
+- [getting wallet balance](/standard/tokens/jettons/wallet-data);
+- [transfer jettons](/standard/tokens/jettons/transfer);
 - indexing available jettons.
 
 ### Applications
 
-The most popular user wallet applications, such as [TonKeeper](https://tonkeeper.com/), use their own SQL-like database. When the user receives new jetton for the first time,
-the application processes the `transfer_notification` message. Next, information about the number of jettons received is taken from it and it is
+The most popular user wallet applications, such as [TonKeeper](https://tonkeeper.com/), use their own SQL-like database. When the user receives a new jetton for the first time,
+the application processes the `transfer_notification` message. Next, information about the number of jettons received is taken from it, and it is
 checked if there is information about this jetton in the applications database. If there is, information is added to the database stating that the user has a
-new type of jetton in the amount received. If not, the database starts indexing this new jetton and after the validation process begins to show data
+new type of jetton in the amount received. If not, the database starts indexing this new jetton, and after the validation process begins to show data
 about it to users. This is how all the jettons that a given user has and their amounts are listed.
 
-In order for a user to transfer a given amount of a token to another user, they only need to fill in the `destination` and `amount`
-fields through the application. Next, it will automatically generate a transfer message and send it to the jetton-wallet smart contract associated with the user.
+For a user to transfer a given amount of a token to another user, they only need to fill in the `destination` and `amount`
+fields through the application. Next, it will automatically generate a transfer message and send it to the Jetton wallet associated with the user.
 
 ### Web services
 
