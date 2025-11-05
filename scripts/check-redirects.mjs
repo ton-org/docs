@@ -240,7 +240,7 @@ const checkUpstream = async (localConfig) => {
       error: composeErrorList(
         'Missing pages or redirects for the following upstream URLs:',
         missingSources,
-        `Local docs.json does not have corresponding pages or redirect sources for some URLs in the upstream docs.json!\n${ansiYellow('Possible solution:')} merge main branch into the current one to make the docs.json up to date.`,
+        `Local docs.json does not have corresponding pages or redirect sources for some URLs in the upstream docs.json!\n${ansiYellow('Possible fix:')} merge the main branch into the current one to keep docs.json up to date, or add new redirects to account for removed or renamed pages.`,
       ),
     };
   }
