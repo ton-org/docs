@@ -71,11 +71,11 @@ const checkUnique = (config) => {
 const checkExist = (config) => {
   const uniqDestinations = [...new Set(getRedirects(config).map((it) => it.destination))];
   let todoDestsExist = false;
-  let repoDestsExist = false;
+  let repoIssuesDestsExist = false;
   const missingDests = uniqDestinations.filter((it) => {
     if (it.startsWith('http')) {
-      if (it.includes('github.com/ton-org/docs')) {
-        repoDestsExist = true;
+      if (it.includes('github.com/ton-org/docs/issues')) {
+        repoIssuesDestsExist = true;
       }
       return false;
     }
@@ -86,11 +86,11 @@ const checkExist = (config) => {
     const rel = it.replace(/^\/+/, '').replace(/#.*$/, '').replace(/\?.*$/, '');
     return [rel === '' ? `index.mdx` : `${rel}/index.mdx`, `${rel}.mdx`, `${rel}`].some(existsSync) === false;
   });
-  if (repoDestsExist) {
-    console.log(composeWarning('GitHub repo and issue destinations found!'));
+  if (repoIssuesDestsExist) {
+    console.log(composeWarning('Found GitHub issue destinations!'));
   }
   if (todoDestsExist) {
-    console.log(composeWarning('TODO-prefixed destinations found!'));
+    console.log(composeWarning('Found TODO-prefixed destinations!'));
   }
   if (missingDests.length !== 0) {
     return {
