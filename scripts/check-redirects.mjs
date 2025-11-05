@@ -21,6 +21,7 @@ import { spawnSync } from 'node:child_process';
 
 // Common utils
 import {
+  ansiYellow,
   composeSuccess,
   composeWarning,
   composeError,
@@ -230,9 +231,9 @@ const checkUpstream = async (localConfig) => {
     return {
       ok: false,
       error: composeErrorList(
-        'Missing pages or redirects for the following URLs:',
+        'Missing pages or redirects for the following upstream URLs:',
         missingSources,
-        'Some URLs in the upstream docs.json structure do not have corresponding pages or redirect sources in the local docs.json!',
+        `Local docs.json does not have corresponding pages or redirect sources for some URLs in the upstream docs.json!\n${ansiYellow('Possible solution:')} merge main branch into the current one to make the docs.json up to date.`,
       ),
     };
   }
