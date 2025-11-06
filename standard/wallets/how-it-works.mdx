@@ -64,3 +64,30 @@ By varying `subwallet_id`, you can deploy multiple independent wallet contracts 
 >
   Changing `subwallet_id` creates a different wallet address. Funds are not shared across subwallets even if they use the same public key.
 </Aside>
+
+## Transfer comments
+
+Ton wallets can attach short human-readable notes — commonly called *comments* — to outgoing internal messages. On-chain they are just message bodies with a specific layout that wallets agree to interpret as text.
+
+### Comment format
+
+- The first 32 bits of the incoming message body must be the opcode `0x00000000`. This value signals that the rest of the payload should be treated as a comment.
+- The remaining bytes are UTF-8 encoded text. Wallets should decode the bytes as-is and tolerate invalid or empty strings — many senders emit messages without a comment or with zero-length payloads.
+- When parsing, always inspect the opcode before assuming a text comment. If the opcode differs, fall back to handling other contract-specific payloads.
+
+Because comments ride inside ordinary internal messages, the format works identically for:
+
+- native Toncoin transfers between wallets;
+- Jetton transfers, where the wallet forwards an internal message to the token wallet along with the comment payload;
+- NFT transfers, where the comment travels in the same forwarding message that moves the ownership record.
+
+### Attaching a comment when sending
+
+To include a comment in an outgoing transfer, construct an internal message body that starts with `0x00000000` and append the UTF-8 bytes of the note you want to share. Most wallet libraries expose helpers for this, but the underlying steps are:
+
+1. Allocate a cell.
+2. Store the 32-bit zero opcode.
+3. Store the text as a byte string (UTF-8 encoded).
+4. Send the internal message along with the desired Toncoin, Jettons, or NFT payload.
+
+Receivers that follow the convention will display the decoded text to the user. Contracts that do not recognize the opcode will simply ignore it or treat the message body as opaque data, so comments are backward-compatible with existing transfers.
