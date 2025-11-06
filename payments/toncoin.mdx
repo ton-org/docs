@@ -7,7 +7,7 @@ import { Aside } from "/snippets/aside.jsx";
 
 Processing Toncoin payments requires choosing between two architectural approaches: invoice-based deposits to a single address, common to all users or unique deposit addresses per user. Each approach has different security characteristics, implementation complexity, and operational requirements.
 
-## Deposit methods compatison
+## Deposit methods comparison
 
 **Invoice-based flow**
 
@@ -19,6 +19,7 @@ graph LR
 ```
 
 **Unique deposit address flow**
+
 ```mermaid
 graph LR
   U1[User A] --> W1[Wallet A]
@@ -30,14 +31,14 @@ graph LR
 **Comparison table**
 
 | Criteria                     | Invoice-based deposits                                                                                | Unique deposit addresses                                                                 |
-|------------------------------|-------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------|
+| ---------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | Security exposure            | One shared hot wallet; a key leak drains the full pool                                                | Each wallet isolates funds; compromise affects only the impacted user                    |
 | User input requirements      | User must include an invoice ID comment; missing or malformed comments need manual recovery workflows | User only needs the destination address                                                  |
 | Parsing and validation       | Backend parses comments on every deposit and matches to invoices                                      | No parsing; deposit attribution is address-based                                         |
 | Deployment and storage costs | Deploy and maintain a single wallet; storage rent limited to that contract                            | Deploy many wallets; storage rent and deployment gas scale with user count               |
 | Monitoring workload          | Poll one address; comment parsing adds CPU but RPC calls stay low                                     | Track many addresses; RPC queries and state tracking grow with the active user base      |
 | Withdrawal handling          | Highload wallet can batch withdrawals from one balance                                                | Need sweeps or coordinated withdrawals from many wallets; extra gas and sequencing logic |
-| Sharding behavior            | All activity hits one shard; throughput limited by that shard                                         | Wallets are distributed across shards; helps spread load            |
+| Sharding behavior            | All activity hits one shard; throughput limited by that shard                                         | Wallets are distributed across shards; helps spread load                                 |
 
 ## Invoice-based deposits
 
@@ -48,12 +49,14 @@ The implementation deploys one wallet contract (typically [Highload](/standard/w
 Transaction comments in TON use the text message format, read more about them [here](/standard/wallets/how-it-works#transfer-comments).
 
 **Advantages**:
+
 - Single wallet simplifies key management
 - Reduced gas costs for deployments
 - Withdrawals can batch multiple user requests into one transaction using a Highload wallet
 - The approach scales well for high transaction volumes
 
 **Disadvantages**:
+
 - Access leak to the single hot wallet could lead to all user funds loss
 - Users must correctly input the invoice identifier, and mistakes result in lost or misdirected funds
 - Comment parsing adds complexity
@@ -66,34 +69,38 @@ Reference education-only implementation: [Invoice-based Toncoin deposits](https:
 
 Unique address deposits generate a separate wallet contract for each user. The user deposits to their dedicated address, and the service monitors all deployed wallets for incoming transactions. No comment parsing is required since each address maps to exactly one user.
 
-Implementation requires a wallet generation strategy. The most common approach uses a deterministic scheme based on a master seed and user identifiers. For V4 and V5 wallets, use different `subwallet_id` combinations. Alternatively, generate unique keypairs per user, though this increases key management complexity.
+Implementation requires a wallet generation strategy. The most common approach uses a deterministic scheme based on a master seed and user identifiers. For V4 and V5 wallets, use different `subwallet_id` combinations. Alternatively, generate unique keypair per user, though this increases key management complexity.
 
-<Aside type="danger">
+<Aside
+  type="danger"
+>
   In Ton funds sent to the non-existent address are not recoverable, be careful with wallet generation code
 </Aside>
 
-Wallet deployment happens lazily when users first request their deposit address. Generate the address deterministically without deploying the contract. When the user sends their first deposit to the undeployed address, send the transaction in non-bounceable mode. The contract doesn't exist yet, so bounceable messages would return the funds. After the first deposit arrives, deploy the contract using funds from that deposit or from an external source.
+Wallet deployment happens lazily when users first request their deposit address. Generate the address deterministically without deploying the contract. When the user sends their first deposit to the un-deployed address, send the transaction in non-bounceable mode. The contract doesn't exist yet, so bounceable messages would return the funds. After the first deposit arrives, deploy the contract using funds from that deposit or from an external source.
 
 Monitor all user wallets by maintaining a list of deployed addresses and polling their transactions. For large user bases, this becomes resource-intensive. Optimization strategies include monitoring only active wallets (those with recent deposits), using batched RPC calls to check multiple wallets per request.
 
 TON's sharding mechanism splits the network across multiple chains based on address prefixes. The shard prefix comes from the first bits of the address hash. Deploying wallets in the same shard reduces cross-shard communication overhead.
 
-<Aside type='tip'>
- Each wallet requires separate key management. Store private keys encrypted and implement access controls. Lazy deployment means undeployed addresses can receive funds but cannot send them until deployment completes. Monitor for deployment status and automate deployment when deposits arrive. Validate that incoming transactions genuinely target the user's address and not another address with a similar hash.
+<Aside type="tip">
+  Each wallet requires separate key management. Store private keys encrypted and implement access controls. Lazy deployment means un-deployed addresses can receive funds but cannot send them until deployment completes. Monitor for deployment status and automate deployment when deposits arrive. Validate that incoming transactions genuinely target the user's address and not another address with a similar hash.
 </Aside>
 
 Withdrawal processing must gather funds from multiple wallets. Either maintain a minimum balance in each wallet for gas fees or implement a fund collection system that periodically sweeps deposits to a central hot wallet. Highload wallets handle batch withdrawals efficiently, while standard V4/V5 wallets process messages sequentially using `seqno`, creating bottlenecks under high load.
 
 **Advantages**:
+
 - No comment parsing removes a major source of user error
 - Better security since each user has a unique keypair
 - Transaction monitoring is straightforward - any incoming transaction to a user's address is their deposit
 
 **Disadvantages**:
+
 - Higher operational complexity managing multiple wallets
 - Deployment costs multiply by the number of users
 - Withdrawal processing requires coordination across wallets
-- Storage fees apply to each deployed contract (currently ~0.001 TON per year per contract)
+- Storage fees apply to each deployed contract (currently \~0.001 TON per year per contract)
 
 Reference education-only implementation: [Unique address Toncoin deposits](https://github.com/ton-org/docs-examples/blob/processing/guidebook/payment-processing/src/deposits/unique-addresses.ts).
 
