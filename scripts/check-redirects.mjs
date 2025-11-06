@@ -40,13 +40,15 @@ import {
  */
 
 /**
- * Check that all sources in the redirects array are unique
+ * Check that all sources in the redirects array are unique,
+ * don't point to themselves, and don't override the existing structure paths
  *
  * @param config {Readonly<DocsConfig>} Local docs.json configuration
  * @return {CheckResult}
  */
 const checkUnique = (config) => {
-  const redirectSources = getRedirects(config).map((it) => it.source);
+  const redirects = getRedirects(config);
+  const redirectSources = redirects.map((it) => it.source);
   const duplicates = redirectSources.filter((source, index) => redirectSources.indexOf(source) !== index);
   if (duplicates.length !== 0) {
     return {
@@ -57,6 +59,31 @@ const checkUnique = (config) => {
         'Redirect sources in docs.json must be unique!',
       ),
     };
+  }
+  /** @param src {string} */
+  const fmt = (src) => prefixWithSlash(src).replace(/#.*$/, '').replace(/\?.*$/, '');
+  const loops = redirects.filter((it) => fmt(it.source) == fmt(it.destination)).map((it) => it.source);
+  if (loops.length !== 0) {
+    return {
+      ok: false,
+      error: composeErrorList(
+        'Found sources that lead to themselves, i.e., circular references:',
+        loops,
+        'Redirect sources in docs.json must not self-reference in destinations!',
+      ),
+    }
+  }
+  const navLinks = getNavLinksSet(config);
+  const navOverrides = redirectSources.filter((it) => navLinks.has(fmt(it)));
+  if (navOverrides.length !== 0) {
+    return {
+      ok: false,
+      error: composeErrorList(
+        'Found sources that override pages in the docs.json structure:',
+        navOverrides,
+        'Redirect sources in docs.json must not replace existing paths!',
+      ),
+    }
   }
   // Otherwise
   return { ok: true };
