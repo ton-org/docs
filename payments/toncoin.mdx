@@ -5,20 +5,33 @@ sidebarTitle: "Toncoin"
 
 import { Aside } from "/snippets/aside.jsx";
 
-Processing Toncoin payments requires choosing between two architectural approaches: invoice-based deposits to a single address or unique deposit addresses per user. Each approach has different security characteristics, implementation complexity, and operational requirements.
+Processing Toncoin payments requires choosing between two architectural approaches: invoice-based deposits to a single address, common to all users or unique deposit addresses per user. Each approach has different security characteristics, implementation complexity, and operational requirements.
+
+**Invoice-based flow**
+
+```mermaid
+graph LR
+  U1[User A] -- invoice UUID --> SW[Shared Wallet]
+  U2[User B] -- invoice UUID --> SW
+  SW --> EX[Exchange Ledger]
+```
+
+**Unique deposit address flow**
+```mermaid
+graph LR
+  U1[User A] --> W1[Wallet A]
+  W1 --> EX[Exchange Ledger]
+  U2[User B] --> W2[Wallet B]
+  W2 --> EX
+```
 
 ## Invoice-based deposits
 
-Invoice-based processing uses a single wallet address to receive payments from multiple users. Each payment includes a unique identifier in the transaction comment field, allowing the service to attribute deposits to specific users.
+Invoice-based processing uses one wallet address to receive payments from all users. Each payment includes a unique identifier in the transaction comment field, allowing the service to attribute deposits to specific users.
 
-The implementation deploys one wallet contract (typically [Highload](/standard/wallets/highload/overview)) and generates unique invoice identifiers for each deposit. Users send Toncoin to this shared address with their invoice identifier as the comment. The service polls the wallet's transaction history, extracts comments from incoming messages, matches them against stored invoices, and credits user accounts accordingly.
+The implementation deploys one wallet contract (typically [Highload](/standard/wallets/highload/overview)) and generates unique invoice identifiers for each deposit. Users send Toncoin to this shared address with their invoice identifier as the comment. TODO: link. The service polls the wallet's transaction history, extracts comments from incoming messages, matches them against stored invoices, and credits user accounts accordingly.
 
 Transaction comments in TON use the text message format with opcode `0x00000000` (first 32 bits of incoming internal message body) followed by UTF-8 encoded text. When parsing incoming messages, check the message body's first 32 bits for this opcode before reading the comment. Some wallets may send empty comments or messages without text format, so handle these cases gracefully.
-
-<Aside type='tip'>
-  Users can send transactions with arbitrary comments, including duplicates of valid invoice identifiers. Validate that invoice identifiers haven't been used previously and match expected formats. Implement amount verification to ensure deposits meet minimum requirements. Mark invoices as used immediately after crediting to prevent double-spending if the same invoice appears in multiple transactions.
-</Aside>
-
 
 **Advantages**:
 - Single wallet simplifies key management
@@ -27,10 +40,11 @@ Transaction comments in TON use the text message format with opcode `0x00000000`
 - The approach scales well for high transaction volumes
 
 **Disadvantages**:
-- Privacy is reduced since all users deposit to the same observable address
+- Access leak to the singlew hot wallet could lead to all user funds loss
 - Users must correctly input the invoice identifier, and mistakes result in lost or misdirected funds
 - Comment parsing adds complexity
-- Some wallets don't support comments, limiting accessibility
+- Some user wallet applications don't support comments, limiting accessibility
+- Single wallet network load [won't be sharded](/foundations/shards)
 
 Reference education-only implementation: [Invoice-based Toncoin deposits](https://github.com/ton-org/docs-examples/blob/processing/guidebook/payment-processing/src/deposits.ts).
 
@@ -38,11 +52,15 @@ Reference education-only implementation: [Invoice-based Toncoin deposits](https:
 
 Unique address deposits generate a separate wallet contract for each user. The user deposits to their dedicated address, and the service monitors all deployed wallets for incoming transactions. No comment parsing is required since each address maps to exactly one user.
 
-Implementation requires a wallet generation strategy. The most common approach uses a deterministic scheme based on a master seed and user identifiers. For V4 and V5 wallets, use different `subwallet_id` combinations. Alternatively, generate unique keypairs per user, though this increases key management complexity. (TODO: security!)
+Implementation requires a wallet generation strategy. The most common approach uses a deterministic scheme based on a master seed and user identifiers. For V4 and V5 wallets, use different `subwallet_id` combinations. Alternatively, generate unique keypairs per user, though this increases key management complexity.
+
+<Aside type="danger">
+  In Ton funds sent to the non-existent address are not recoverable, be careful with wallet generation code
+</Aside>
 
 Wallet deployment happens lazily when users first request their deposit address. Generate the address deterministically without deploying the contract. When the user sends their first deposit to the undeployed address, send the transaction in non-bounceable mode. The contract doesn't exist yet, so bounceable messages would return the funds. After the first deposit arrives, deploy the contract using funds from that deposit or from an external source.
 
-Monitor all user wallets by maintaining a list of deployed addresses and polling their transactions. For large user bases, this becomes resource-intensive. Optimization strategies include monitoring only active wallets (those with recent deposits), using batched RPC calls to check multiple wallets per request.
+Monitor all user wallets by maintaining a list of deployed addresses and polling their transactions. For large user bases, this becomes resource-intensive. Optimization strategies include monitoring only active wallets (those with recent deposits), using batched RPC calls to check multiple wallets per request. TODO: batch
 
 TON's sharding mechanism splits the network across multiple chains based on address prefixes. The shard prefix comes from the first bits of the address hash. Deploying wallets in the same shard reduces cross-shard communication overhead. TODO: ton/core prefix
 
@@ -54,7 +72,7 @@ Withdrawal processing must gather funds from multiple wallets. Either maintain a
 
 **Advantages**:
 - No comment parsing removes a major source of user error
-- Better privacy since each user has a unique address
+- Better security since each user has a unique keypair
 - Transaction monitoring is straightforward - any incoming transaction to a user's address is their deposit
 
 **Disadvantages**:
@@ -66,6 +84,13 @@ Withdrawal processing must gather funds from multiple wallets. Either maintain a
 ## Withdrawal batching
 
 [Highload wallets](/standard/wallets/highload/overview) support parallel message processing by storing processed request identifiers instead of sequential `seqno`. This enables batching multiple withdrawals into one transaction, reducing fees and improving throughput.
+
+## Common abuse patterns
+
+- Reusing a previously settled invoice identifier to trigger duplicate credits when the backend does not invalidate the invoice after first use.
+- Changing the Toncoin amount but leaving the original invoice identifier to obtain services at a lower price if expected amounts are not enforced.
+- Crafting comments that mimic another users invoice identifier in order to hijack their pending credit.
+- Submitting large numbers of dust payments to inflate processing costs or exhaust rate limits on transaction polling.
 
 ## Monitoring best practices
 
