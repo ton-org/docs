@@ -1,0 +1,61 @@
+---
+title: "Blockchain sharding"
+---
+
+import { Image } from '/snippets/image.jsx';
+
+TON Blockchain is a collection of blockchains that are called _workchains_. Each workchain might have different formats of [account addresses](/foundations/addresses/overview), formats of [transactions](/foundations/transaction), and different virtual machines for smart contracts.
+
+TON Blockchain dynamically splits workchains into halves when the transaction rate is above the threshold, and merges them when it decreases below the threshold. This is called _Infinite Sharding Paradigm_.
+
+Each account is the sole citizen of its corresponding blockchain, _accountchain_. Each accountchain describes the state and state transitions of only one account. An accountchain is a virtual concept used in explanations.
+
+Regularly creating empty blocks for rarely updated accountchains would be too expensive. To reduce the cost, accountchains are grouped into _shardchains_, where each block is a collection of blocks of accountchains that have been assigned to this shard.
+
+<Image
+  src="/resources/images/blockchain_sharding.png"
+  alt="Blockchain hierarchy"
+/>
+
+## Sharding process
+
+There might be up to `2^32` workchains, identified with `workchain_id`. Each workchain might use its own format for [`account_id`](/foundations/addresses/overview#account-id), but every such ID must be at least 64-bit long. A pair of `workchain_id` and `account_id` uniquely identifies an account.
+
+Each shardchain is identified by a pair `(workchain_id, shard_prefix)`, where `shard_prefix` is a bit string of length at most `60`. Accounts that have `account_id` starting with `shard_prefix` (have `shard_prefix` as the most significant bits) will be assigned to this shardchain.
+
+When the volume of transactions per block exceeds the threshold, validators decide to split shards into halves.
+
+Assume a workchain initially has one shardchain with an empty `shard_prefix`, i.e., it contains all accounts of that workchain. Then the load exceeded the threshold and the validators decide to split this shardchain into two with `shard_prefix` equal to `0` and `1`, respectively. After that, all accounts with an `account_id` starting with bit `0` will be assigned to the first shardchain, and all accounts with `account_id` starting with bit `1` will be assigned to the second shardchain.
+
+If some shardchain with `shard_prefix` equal to `p` needs to be split, then two new shardchains with `shard_prefix` equal to `p0` and `p1` will be created.
+
+When a merge is needed, two shardchains with `shard_prefix` equal to `p0` and `p1` merge into one shardchain with `shard_prefix` equal to `p`. After the merge, all accounts with `account_id` starting with `p` will be assigned to this new single shardchain.
+
+As a result of sharding process, the number of shardchains in each workchain is a power of two, and can vary dynamically from `1` to `2^60`.
+
+## Messages between shardchains
+
+Shardchains can exchange messages with each other. It works both for shardchains of the same and different workchains.
+
+Size of the block sets a limit to how many transactions a shardchain can process in a single block. Every shardchain can do computations asynchronously and in isolation from each other, so due to mismatch in the rate of message processing there might be an congestion: one shard sends messages to another, and it cannot process them at the moment.
+
+During congestion, handling of messages that do not fit into current block is delayed to next blocks. Unprocessed messages are still stored only in blocks of sending shardchains, and receiving shardchain would have to check for all the possible sending shardchains for possible unprocessed messages. In the case of a large number of shardchains, the inspection time for all sending shardchains may be too long. In addition, if a shardchain can receive messages from all other shardchains, then its blocks can fill up very quickly, which will lead to a large delay in outgoing messages in the remaining shardchains.
+
+Minimizing the time it takes to transfer data between different shardchains is crucial for complex protocols, such as token processing and decentralized exchanges (DEX). In these scenarios, different participants may be located in different shardchains, making it essential to optimize the communication process.
+
+To reduce the number of possible sending shardchains to only `16 * 15` _neighboring shardchains_, a _hypercube routing_ mechanism is used.
+
+### Hypercube routing
+
+The set of all shardchains of a given workchain and their connection to neighboring shardchains can be represented as a hypercube. Each vertex of the hypercube corresponds to a shardchain, and two shardchains are connected by an edge if they are neighbors. Omitting the technical details, the neighborhood relation is determined using the differences in the `shard_prefix` of the two shardchains. Finally, messages are routed between shardchains by moving them along the edges of such hypercube.
+
+As a simple example, consider a workchain that has eight shardchains with `shard_prefix` equal to `000`, `001`, `010`, `011`, `100`, `101`, `110`, and `111`. These shardchains can be represented as vertices of a three-dimensional cube, where two shardchains are connected by an edge if their `shard_prefix` differ by exactly one bit. Thus, a message from `001` shardchain to `110` shardchain will be routed along the edges of the cube following the path `001 -> 101 -> 111 -> 110`. Hence, there are three hops between `001` and `110` shardchains.
+
+<Image
+  src="/resources/images/hypercube_routing.png"
+  alt="Hypercube routing"
+/>
+
+TON Blockchain uses a more complex version. The hypercube has `15` dimensions, and each shardchain has up to `16` neighboring shardchains (include itself) along each dimension. Hence, each shardchain has up to `16 * 15 = 240` neighboring shardchains in total and the maximum number of hops between any two shardchains in the same workchain is `15`. If the source and destination shardchains belong to different workchains, then an additional hop between workchains is needed.
+
+The hypercube routing mechanism also has some additional features to ensure reliability and efficiency of message delivery, such as preventing double delivery of messages, processing messages in order of their logical time creation, and so on. For a detailed acquaintance with these processes, the reader can refer to the [TON Blockchain whitepaper](/foundations/whitepapers/tblkch#2-2-hypercube-routing-protocol).

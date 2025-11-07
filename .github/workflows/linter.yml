@@ -2,6 +2,7 @@ name: 💅 Linting suite
 
 env:
   HUSKY: 0
+  NODE_VERSION: 20
 
 on:
   pull_request:
@@ -30,7 +31,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
 
       - name: Install dependencies
@@ -62,7 +63,7 @@ jobs:
           echo
           npx remark --no-stdout --quiet --frail --silently-ignore $(echo -e "${ALL_CHANGED_FILES[@]}" | tr '\n' ' ')
 
-      - name: ${{ steps.check-fmt.conclusion == 'failure' && '👀' }} How to fix the formatting? See these suggestions!
+      - name: ${{ steps.check-fmt.conclusion == 'failure' && '👀 How to fix the formatting? See these suggestions!' || '...' }}
         env:
           ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
         if: failure()
@@ -93,32 +94,55 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
 
       - name: Install dependencies
         run: |
           corepack enable
           npm ci
-          npm install -g mdx2vast
 
-      - name: Get changed MDX and Markdown files
-        id: changed-files
-        uses: tj-actions/changed-files@24d32ffd492484c1d75e0c0b894501ddb9d30d62 # v47
+      - name: Run CSpell on changed files
+        # This action also annotates the PR
+        uses: streetsidesoftware/cspell-action@v7
         with:
-          files: |
-            **.md
-            **.mdx
-          separator: ","
+          check_dot_files: explicit
+          suggestions: true
 
-      - name: Run Vale to spellcheck changed files
-        id: check-spell
-        if: steps.changed-files.outputs.all_changed_files != ''
-        uses: errata-ai/vale-action@v2.1.1
+  redirects-check:
+    name: "Redirects"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          version: "3.12.0"
-          files: '${{ steps.changed-files.outputs.all_changed_files }}'
-          separator: ","
-          fail_on_error: true
-          filter_mode: "nofilter"
-          reporter: "github-pr-check"
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          corepack enable
+          npm ci
+
+      - name: Check uniqueness of redirect sources in docs.json
+        if: ${{ !cancelled() }}
+        run: node scripts/check-redirects.mjs unique
+
+      - name: Check existence of redirect destinations in docs.json
+        if: ${{ !cancelled() }}
+        run: node scripts/check-redirects.mjs exist
+
+      - name: Check redirects against the previous TON Documentation
+        if: ${{ !cancelled() }}
+        run: node scripts/check-redirects.mjs previous
+
+      # NOTE: Re-enable before the release,
+      #       see: https://github.com/ton-org/docs/issues/39
+      # - name: Check redirects against the upstream docs.json structure
+      #   if: ${{ !cancelled() }}
+      #   run: node scripts/check-redirects.mjs upstream

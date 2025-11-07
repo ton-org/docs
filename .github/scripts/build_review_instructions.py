@@ -28,13 +28,28 @@ Scope and priorities:
 2. Only after style compliance, check for obvious, provable, blocking errors not covered by the guide (e.g., an incorrect calculation or an unsafe, non‑runnable step) and report them with proof. If not certain from repo content alone, omit.
 
 Review protocol:
-- Inspect only .md/.mdx files touched by this PR. Ignore all other file types.
+- Inspect only content files touched by this PR: `.md`, `.mdx`, and `docs.json`.
+- It is acceptable to report findings that originate in `docs.json` (e.g., broken or duplicate paths/slugs, invalid sidebar grouping, typos in titles). When the problem is in `docs.json`, cite its exact lines.
 - Examine only the lines changed in this diff (use surrounding context as needed). Do not flag issues that exist solely in unchanged content.
 - Report every issue you see in this diff; do not postpone or soften problems.
 - Location links must be repo-relative paths such as pending/discover/web3-basics/glossary.mdx?plain=1#L10-L12 (no https:// prefix).
 - When a style rule applies, cite it using contribute/style-guide-extended.mdx?plain=1#L<start>-L<end>. Only add the citation after running a verification command such as `rg "<term>" contribute/style-guide-extended.mdx` or `sed -n '<start>,<end>p'` and inspecting the output to confirm the line range.
 - If no style rule applies (e.g., factual error, typo), explain the issue clearly without a style link.
 - Keep findings direct, professional, and concise. Suggestions must describe the required fix.
+- Code identifiers: if the issue is lack of code font, preserve the token’s original case and wrap it in backticks. Only change case when the style guide explicitly mandates a canonical case for that exact identifier and you cite the relevant line range.
+
+HARD SCOPE WALL — CONTENT ONLY (MANDATORY):
+- You MUST NEVER read, open, cite, or rely on any non‑content files. This includes but is not limited to CI configs (`.github/**`), workflows (`*.yml`), code (`*.ts`, `*.tsx`, `*.js`, `*.py`, `*.go`, etc.), configuration/manifests (`package.json`, `pnpm-lock.yaml`, `*.toml`, `*.yaml`), tests, scripts, or build tool files.
+- Allowed inputs are limited to the changed `.md`/`.mdx` files, `docs.json`, and `contribute/style-guide-extended.mdx` (for rule citations).
+- Do not search outside these allowed files. Do not run commands that read or display non‑content files. Treat them as inaccessible.
+
+Context for `docs.json`:
+- Purpose: defines the site navigation tree, groupings, and slug mapping used by the docs site (metadata that directly affects the rendered docs experience).
+- Legit uses during review:
+  • Findings may target `docs.json` when the issue is there (e.g., broken/duplicate slug, incorrect path, wrong ordering/grouping).
+  • You may also use `docs.json` to verify that changed frontmatter `slug`/title or links in `.md`/`.mdx` remain valid.
+  • Cite `docs.json` lines when it is the source of the problem; otherwise cite the offending `.md`/`.mdx` lines.
+  • If an issue relates to both `docs.json` and `.md`/`.mdx`, report it only on `docs.json`.
 - Do not speculate about Mintlify runtime behavior or external systems; rely solely on repository content.
 
 Severity policy:
@@ -50,7 +65,18 @@ Goal: deliver exhaustive, high-confidence feedback that brings these TON Docs ch
 """
     )
 
-    print(style_block + body)
+    link_rules = textwrap.dedent(
+        """
+        
+        LINK FORMATTING — REQUIRED (overrides earlier bullets):
+        - Style‑guide citations: use a compact Markdown link with a short label, e.g. [Style rule — <short title>](contribute/style-guide-extended.mdx?plain=1#L<start>-L<end>). Verify the exact line range first (e.g., `rg "<term>" contribute/style-guide-extended.mdx` or `sed -n '<start>,<end>p'`).
+        - General code/location references: output a plain repo‑relative link on its own line, with no Markdown/backticks/prefix text so GitHub renders a rich preview. Example line:
+          pending/discover/web3-basics/glossary.mdx?plain=1#L10-L12
+        - Do not use https:// prefixes for repo‑relative links.
+        """
+    )
+
+    print(style_block + body + link_rules)
 
 
 if __name__ == "__main__":
