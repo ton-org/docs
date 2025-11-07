@@ -1,14 +1,20 @@
 ---
-title: "Vanity"
+title: "Using vanity contract"
 ---
 
-A [vanity contract](https://github.com/ton-community/vanity-contract) allows _customizing_ the address of a smart contract that is being deployed. It does that by making its own StateInit depend on some constant data that is then randomly generated many times until a desired address is found. It is often used to deploy smart contracts with some specific prefix or a suffix so that it's visible in explorers.
+A [vanity contract](https://github.com/ton-community/vanity-contract) allows customizing the address of a smart contract being deployed. It does this by making its own `StateInit` depend on constant data that is randomly generated many times until a desired address is found. It is often used to deploy contracts with a specific prefix or suffix so it is visible in block explorers.
 
-Actual code and data of the smart contract being deployed are included in the deploy message of the vanity contract, which it takes and simply replaces its own state with that. As a result, the smart contract is initially deployed with a certain StateInit producing the desired address (see [Addresses overview](/foundations/addresses/overview#account-id)), and actual state is then immediately set based on what is provided.
+Include the contract code and data in the vanity deploy message. The vanity contract replaces its own state with the provided code and data. The contract is first deployed with a `StateInit` that produces the desired address (see [Addresses overview](/foundations/addresses/overview#account-id)), then immediately sets its actual state from the payload.
+
+### Prerequisites
+
+- Python 3 and `pyopencl`
+- OpenCL‑capable GPU
+- [Blueprint](/contract-dev/blueprint/overview)
 
 ## How it works
 
-The code of vanity contract:
+The vanity contract code:
 
 ```func
 (int) slice_equal(slice s1, slice s2) asm "SDEQ";
@@ -38,23 +44,28 @@ The code of vanity contract:
 }
 ```
 
-It checks whether the message is coming from an owner specified in data, and replaces its code and data with the new ones provided in the incoming message. This logic is trivial and the whole trick is in the 256-bit salt that is present in this contract's StateInit apart from 5 padding bits and owner address. Salt is skipped in the contract code with `ds~skip_bits(256);` as it's not needed during the execution, but it serves a purpose of deciding what address the contract will have.
+It checks whether the message comes from the owner specified in data, then replaces its code and data with the ones provided in the incoming message. The key is a 256‑bit salt stored in this contract’s `StateInit` in addition to five padding bits and the owner address. The salt is skipped in the contract code with `ds~skip_bits(256);`, but it determines the resulting address.
 
-Since contract addresses depend on the hash of StateInit, it is possible to add some data to that StateInit in order to change the address randomly. Vanity contract utilizes this by generating millions of random salt parameters that are included in StateInit and searching for ones that produce the desired address. This is pretty similar to how mining works in proof-of-work blockchains. The salt generation logic lives in a separate Python script that uses OpenCL for faster search on GPU.
+Since contract addresses depend on the hash of `StateInit`, adding data to `StateInit` changes the address deterministically. The vanity contract uses this by generating many random salt values included in `StateInit` and searching for ones that produce the desired address. This is analogous to proof‑of‑work nonce search. The salt generation logic lives in a separate Python script that uses OpenCL for faster search on a GPU.
 
-## Generating salt
+## Generate salt
 
-To generate the salt, copy the code available in [src/generator](https://github.com/ton-community/vanity-contract/tree/main/src/generator) directory of the same [vanity contract](https://github.com/ton-community/vanity-contract) repository. It includes `run.py` script and `vanity.cl` OpenCL kernel.
+To generate the salt, copy the code available in [src/generator](https://github.com/ton-community/vanity-contract/tree/main/src/generator) of the same [vanity contract](https://github.com/ton-community/vanity-contract) repository. It includes the `run.py` script and the `vanity.cl` OpenCL kernel.
 
-Then run a command with desired search parameters, including `-w` for workchain and the owner address which will be allowed to perform the deployment. For example, the following command is for search in basechain for `TEST` suffix.
+Run the command with the desired search parameters, including `-w` for the workchain and the owner address that is allowed to perform the deployment. The example below searches on basechain for the specified suffix.
 
 ```bash
-python3 run.py -w 0 --end 'TEST' --case-sensitive UQCSQnz9h3iilIHMueOPs8RaryGqzb-bJpReZuZAUsm6TDRo
+python3 run.py -w <WORKCHAIN> --end '<SUFFIX>' --case-sensitive <OWNER_ADDR>
 ```
 
-After running, it will print some logs and then start the search, printing every found salt. It also writes found salts into `found.txt` file. The search will continue until you stop it, or after the first found salt if `--only-one` flag is used. Example output:
+Where:
+- `<WORKCHAIN>` — workchain id; use `0` for basechain. See [workchain](/foundations/addresses/overview#workchain-id).
+- `<SUFFIX>` — desired address suffix; case sensitive when `--case-sensitive` is set.
+- `<OWNER_ADDR>` — address allowed to deploy via the vanity contract.
 
-```
+After running, the script prints logs and starts the search, printing every found salt. It also writes found salts into the `found.txt` file. The search continues until stopped, or exits after the first match when `--only-one` is set. Example output:
+
+```text
 Searching wallets case-sensitive, with "TEST" in the end
 Owner:  UQCSQnz9h3iilIHMueOPs8RaryGqzb-bJpReZuZAUsm6TDRo
 Flags:  1100
@@ -76,11 +87,11 @@ Speed: 203 Mh/s, miss: 2, found: 3
 Speed: 203 Mh/s, miss: 3, found: 3
 ```
 
-The more specific search is, the rarer the matches, and the more compute will be spent to find one. It takes just a couple of seconds to find a 4 character match on a laptop. Once the salt is found, it can be used to deploy an arbitrary smart contract on that address.
+The more specific the search, the rarer the matches, and the more compute is required to find one. A 4‑character match typically appears in a few seconds on a laptop. Once a salt is found, it can be used to deploy an arbitrary smart contract at that address.
 
-## Deploying contract
+## Deploy the contract
 
-[Blueprint](/contract-dev/blueprint/overview#blueprint-overview) will be used further. Let's suppose that some `ExampleContract` will be deployed. A vanity contract wrapper at `wrappers/VanityContract.ts` is also needed:
+[Blueprint](/contract-dev/blueprint/overview) is used in this example. Define a vanity contract wrapper at `wrappers/VanityContract.ts`:
 
 ```ts
 import { Address, beginCell, Cell, Contract, contractAddress, ContractProvider, Sender, SendMode } from '@ton/core';
@@ -128,7 +139,7 @@ export class VanityContract implements Contract {
 }
 ```
 
-Now a script for deployment can be implemented at `scripts/deployExampleContract.ts`:
+Create `scripts/deployExampleContract.ts`:
 
 ```ts
 import { toNano, Address } from '@ton/core';
@@ -139,8 +150,8 @@ import { compile, NetworkProvider } from '@ton/blueprint';
 export async function run(provider: NetworkProvider) {
     const vanityContract = provider.open(
         VanityContract.createFromConfig({
-            owner: Address.parse('UQCSQnz9h3iilIHMueOPs8RaryGqzb-bJpReZuZAUsm6TDRo'),
-            salt: Buffer.from('06ba57939d1baf392b9664c79cc08cd4b684727589451a9a11bbf16146877a5b', 'hex'),
+            owner: Address.parse('<OWNER_ADDR>'),
+            salt: Buffer.from('<SALT_HEX>', 'hex'),
         }),
     );
 
@@ -157,4 +168,8 @@ export async function run(provider: NetworkProvider) {
 }
 ```
 
-Now it's possible to run the script via `npx blueprint run` and the contract should be deployed if the salt and owner are correct. The `ExampleContract` can be replaced with any contract and can have any code and data, since vanity contract does not care about these specifics.
+Where:
+- `<OWNER_ADDR>` — address allowed to deploy via the vanity contract.
+- `<SALT_HEX>` — 32‑byte salt in hex found by the generator.
+
+Run the script via `npx blueprint run`. The deployment succeeds when `<OWNER_ADDR>` matches the address of the wallet used for actual deployment. `ExampleContract` can be replaced with any contract; the vanity contract does not depend on the specifics of the code or data.
