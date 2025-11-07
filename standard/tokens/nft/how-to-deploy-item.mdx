@@ -1,23 +1,28 @@
 ---
-title: "How to deploy NFT item"
-sidebarTitle: "How to deploy NFT item"
+title: "How to deploy an NFT item"
+sidebarTitle: "Deploy an NFT item"
 ---
 
-import { Aside } from '/snippets/aside.jsx';
 import { Image } from '/snippets/image.jsx';
 
-The creator sends a message to the collection contract, which deploys a new NFT item with the specified data, including initial owner and item‑specific content. The [TEP‑62](https://github.com/ton-blockchain/TEPs/blob/1fbc23cac69723c53251f686ec90d81bf0e83443/text/0062-nft-standard.md) standard does not prescribe exactly how this data must be supplied. Custom modifications of NFT contracts can implement this logic differently. Typically the creator provides the initial owner and item‑specific content for each NFT, or this information is derived from the collection itself (see [cNFT](/standard/tokens/nft/cNFT-how-it-works)).
+The creator sends a message to the collection contract, which deploys a new non‑fungible token (NFT) item with the specified data: the initial owner and the item‑specific content. The [TEP‑62](https://github.com/ton-blockchain/TEPs/blob/1fbc23cac69723c53251f686ec90d81bf0e83443/text/0062-nft-standard.md) standard does not prescribe how this data must be supplied; implementations may vary. Typically, the creator provides the initial owner and item‑specific content for each NFT, or this information is derived from the collection itself (see [cNFT](/standard/tokens/nft/cNFT-how-it-works)).
 
 <Image
   src="/resources/images/nft/nft_deploy.svg"
   alt="NFT deployment"
 />
 
-Since the deployment process is not specified by the standard, the logic can vary and recipes listed on this page might not apply. But the [reference NFT implementation](/standard/tokens/nft/reference-implementation) and most modifications follow the same path where collection's owner sends a message with deploy parameters to collection, and collection then actually deploys the item.
+Since the deployment process is not specified by the standard, logic can vary and the recipes on this page might not apply to every contract. The [reference NFT implementation](/standard/tokens/nft/reference-implementation) and most modifications follow the same path: the collection owner sends a message with deploy parameters to the collection, and the collection deploys the item.
 
 ## Deploy with wallet
 
-To deploy an item from a [wallet](/standard/wallets/how-it-works) we have to send a message from that wallet to collection contract. The following example uses @ton/ton stack for TypeScript. These libraries provide interfaces to work with wallet contracts and composse messages.
+To deploy an item from a [wallet](/standard/wallets/how-it-works), send a message from the wallet to the collection contract. The following example uses the @ton/ton stack for TypeScript. These libraries provide interfaces to work with wallet contracts and compose messages.
+
+### Prerequisites
+
+- Node.js 22+
+- Packages: `@ton/ton`, `@ton/core`, `@ton/crypto`
+- A funded Testnet wallet mnemonic in `MNEMONIC` environment variable
 
 ```ts
 import { Address, beginCell, internal, toNano } from "@ton/core";
@@ -26,26 +31,24 @@ import { mnemonicToPrivateKey } from "@ton/crypto";
 
 async function main() {
   const msg = internal({
-    to: Address.parse("EQASkeWqAUdq4-9AS68fsvxuHr8sze7KushNeDKHdCDCFCVF"), // collection
-    value: toNano("0.01"), // 0.01 ton for fees
+    to: Address.parse("<COLLECTION_ADDR>"),
+    value: toNano("0.01"), // 0.01 TON for fees
     bounce: true,
     body: beginCell()
       .storeUint(1, 32) // deploy opcode
-      .storeUint(123, 64) // query id
+      .storeUint(0, 64) // query id
       .storeUint(0, 64) // item index
-      .storeCoins(toNano("0.005")) // 0.005 ton will be sent to item contract on deployment
+      .storeCoins(toNano("0.005")) // 0.005 TON will be sent to item contract on deployment
       .storeRef(
         beginCell()
-          .storeAddress(
-            Address.parse("UQBKgXCNLPexWhs2L79kiARR1phGH1LwXxRbNsCFF9doczSI"),
-          ) // owner
-          .storeRef(beginCell().storeStringTail("0.json").endCell()) // individual content
+          .storeAddress(Address.parse("<OWNER_ADDR>"))
+          .storeRef(beginCell().storeStringTail("<ITEM_CONTENT>").endCell()) // individual content
           .endCell(),
       )
       .endCell(),
   });
 
-  // testnet toncenter endpoint
+  // Testnet Toncenter endpoint
   const client = new TonClient({
     endpoint: "https://testnet.toncenter.com/api/v2/jsonRPC",
   });
@@ -60,7 +63,7 @@ async function main() {
     }),
   );
 
-  // send the mint message through your wallet
+  // send the mint message through the wallet
   const seqno = await walletContract.getSeqno();
   await walletContract.sendTransfer({
     seqno: seqno,
@@ -74,11 +77,26 @@ async function main() {
 void main();
 ```
 
+Where
+
+- `<COLLECTION_ADDR>` — the collection contract address.
+- `<OWNER_ADDR>` — the initial owner address for the new item.
+- `<ITEM_CONTENT>` — item‑specific content path or key (for example, `0.json`).
+
+### Verify
+
+- Confirm the transaction succeeded in a block explorer for `<COLLECTION_ADDR>`.
+- Call `get_nft_address_by_index(0)` on the collection to fetch the new item address, or open the item link in the explorer.
+
 It composes a message, creates a `TonClient` object to interact with the chain through [Toncenter](/ecosystem/api/toncenter/overview), initializes a wallet from mnemonic, and send a message.
 
 ## Deploy with smart contract
 
-To deploy an item from a smart contract we have to send a message from that smart contract to collection contract. The following example implements a minimal reproducible example, without any extra logic apart from the item deployment. In realistic cases this would be integrated as a part of some larger logic.
+To deploy an item from a smart contract, send a message from the contract to the collection contract. The following example provides a minimal example that implements only the item deployment logic. In realistic cases this is integrated into a larger flow.
+
+### Prerequisites
+
+- Enough Testnet TON to cover fees for contract and item deployments
 
 ```tolk
 // SnakeString describes a (potentially long) string inside a cell;
@@ -117,18 +135,18 @@ fun onInternalMessage(in: InMessage) {
     // usually be gated behind some auth and other checks.
 
     val deploy = DeployNft {
-        queryId: 123,
+        queryId: 0,
         itemIndex: 0,
         attachTonAmount: ton("0.005"), // will be sent to item contract on deployment
         initParams: NftItemInitAtDeployment {
-            ownerAddress: address("UQBKgXCNLPexWhs2L79kiARR1phGH1LwXxRbNsCFF9doczSI"),
-            content: ("0.json" as SnakeString).toCell()
+            ownerAddress: address("<OWNER_ADDR>"),
+            content: ("<ITEM_CONTENT>" as SnakeString).toCell()
         }.toCell()
     };
 
     val msg = createMessage({
         bounce: true,
-        dest: address("EQDmJlN-cAQp9AQFmJ6an8MTF90FDsjNazuQg4YbKZwlzNnz"), // collection
+        dest: address("<COLLECTION_ADDR>"),
         value: ton("0.01"),
         body: deploy
     });
@@ -137,4 +155,15 @@ fun onInternalMessage(in: InMessage) {
 }
 ```
 
-Top of the snippet define structs for the deploy message, and can be modified depending on the NFT implementation specifics. The sending logic lives in `onInternalMessage` for simplicity. It composes a message with hardcoded example values and sends that message to collection contract.
+Where
+
+- `<COLLECTION_ADDR>` — the collection contract address.
+- `<OWNER_ADDR>` — the initial owner address for the new item.
+- `<ITEM_CONTENT>` — item‑specific content path or key (for example, `0.json`).
+
+The top of the snippet defines structs for the deploy message and can be modified depending on the NFT implementation specifics. The sending logic lives in `onInternalMessage` for simplicity. It composes a message with hard‑coded example values and sends that message to the collection contract.
+
+### Verify
+
+- Confirm the transaction succeeded in a block explorer for `<COLLECTION_ADDR>`.
+- Call `get_nft_address_by_index(0)` on the collection to fetch the new item address, or open the item link in the explorer.
