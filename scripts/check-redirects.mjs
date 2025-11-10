@@ -14,7 +14,7 @@
 ╚─────────────────────────────────────────────────────────────────────────────*/
 
 // Node.js
-import { existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { existsSync, statSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -71,7 +71,7 @@ const checkUnique = (config) => {
         loops,
         'Redirect sources in docs.json must not self-reference in destinations!',
       ),
-    }
+    };
   }
   const navLinks = getNavLinksSet(config);
   const navOverrides = redirectSources.filter((it) => navLinks.has(fmt(it)));
@@ -83,7 +83,7 @@ const checkUnique = (config) => {
         navOverrides,
         'Redirect sources in docs.json must not replace existing paths!',
       ),
-    }
+    };
   }
   // Otherwise
   return { ok: true };
@@ -111,7 +111,11 @@ const checkExist = (config) => {
       return false;
     }
     const rel = it.replace(/^\/+/, '').replace(/#.*$/, '').replace(/\?.*$/, '');
-    return [rel === '' ? `index.mdx` : `${rel}/index.mdx`, `${rel}.mdx`, `${rel}`].some(existsSync) === false;
+    return (
+      [rel === '' ? `index.mdx` : `${rel}/index.mdx`, `${rel}.mdx`, `${rel}`].some(
+        (path) => existsSync(path) && statSync(path).isFile(),
+      ) === false
+    );
   });
   if (repoIssuesDestsExist) {
     console.log(composeWarning('Found GitHub issue destinations!'));
@@ -304,11 +308,11 @@ const main = async () => {
       console.log(res.error);
     } else {
       console.log(composeSuccess(rawSuccessMsg));
-    };
+    }
     if (shouldRunAll) {
       console.log(); // intentional break
     }
-  }
+  };
 
   if (shouldRunAll || argUnique) {
     console.log('🏁 Checking the uniqueness of redirect sources in docs.json...');
