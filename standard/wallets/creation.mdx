@@ -1,11 +1,11 @@
 ---
-title: "How to create TON wallet"
-sidebarTitle: "How to create"
+title: "How to interact with TON wallet"
+sidebarTitle: "How to interact"
 ---
 
 import { Aside } from '/snippets/aside.jsx'
 
-In this article we will overview how to create wallet programmatically, how to match it with wallets created from mnemonic in user applications (e.g. TonKeeper, TonWallet) and how to deploy it, if it has state uninit
+In this article we will overview how to create wallet programmatically, how to match it with wallets created from mnemonic in user applications (e.g. TonKeeper, TonWallet) and how to deploy it, if it has state uninit. Also we will look at
 
 ## Wallet address
 
@@ -153,3 +153,43 @@ main();
 ```
 
 After creating wallet contract instance, you can use it to [send messages to the blockchain](/standard/wallets/v5-api).
+
+## Transfer comments
+
+TON [wallet apps](/ecosystem/wallet-apps/overview) can attach short human-readable notes — commonly called _comments_ — to outgoing internal messages. On-chain they are just message bodies with a specific layout that wallets agree to interpret as text.
+
+### Comment format
+
+- The first 32 bits of the incoming message body must be the opcode `0x00000000`. This value signals that the rest of the payload should be treated as a comment.
+- The remaining bytes are UTF-8 encoded text. Wallets should decode the bytes as-is and tolerate invalid or empty strings — many senders emit messages without a comment or with zero-length payloads.
+- When parsing, always inspect the opcode before assuming a text comment. If the opcode differs, fall back to handling other contract-specific payloads.
+
+Because comments ride inside ordinary internal messages, the format works identically for:
+
+- native Toncoin transfers between wallets;
+- Jetton transfers, where the wallet forwards an internal message to the token wallet along with the comment payload;
+- NFT transfers, where the comment travels in the same forwarding message that moves the ownership record.
+
+### Attaching a comment when sending
+
+To include a comment in an outgoing transfer, construct an internal message body that starts with `0x00000000` and append the UTF-8 bytes of the note you want to share. Most wallet libraries expose helpers for this, but the underlying steps are:
+
+1. Allocate a cell.
+1. Store the 32-bit zero opcode.
+1. Store the text as a [byte string](/languages/TL-B/simple-examples) (UTF-8 encoded).
+1. Send the internal message along with the desired Toncoin, [Jettons](/standard/tokens/jettons/how-it-works), or [NFT](/standard/tokens/nfts/how-it-works) payload.
+
+Receivers that follow the convention will display the decoded text to the user. Contracts that do not recognize the opcode will simply ignore it or treat the message body as opaque data, so comments are backward-compatible with existing transfers.
+
+### Example: Sending a comment with `@ton/ton`
+
+```ts
+import { Cell, beginCell } from '@ton/core';
+
+function createCommentCell(comment: string): Cell {
+    return beginCell()
+        .storeUint(0, 32) // opcode for comment
+        .storeStringTail(comment) // UTF-8 encoded text in snake encoding
+        .endCell();
+}
+```
