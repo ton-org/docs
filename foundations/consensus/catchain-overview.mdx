@@ -5,7 +5,7 @@ sidebarTitle: "Catchain overview"
 
 import {Aside} from "/snippets/aside.jsx";
 
-Catchain is a communication protocol between actors. It does not execute the consensus algorithm itself but prepares the data required for the decision-making of a higher-level component: [BCP - Block Consensus Protocol](/foundations/consensus/bcp-overview). The main purpose of the protocol is to allow validators to send messages that explicitly depend on other messages, possibly produced by different actors. Dependencies are encoded in such a way that a node receiving a message can download the referenced messages and verify their validity. The protocol defines how to select the neighbors of a node. Neighbors of node `A` are the nodes, that `A` communicates with directly.
+Catchain is a communication protocol between actors. It does not execute the consensus algorithm itself but prepares the data required for the decision-making of a higher-level component: [BCP - Block Consensus Protocol](/foundations/consensus/bcp-overview). The main purpose of the protocol is to allow validators to send messages that explicitly depend on other messages, possibly produced by different actors. Dependencies are encoded in such a way that a node receiving a message can download the referenced messages and verify their validity.
 
 ## Problem
 
@@ -18,30 +18,35 @@ Actors are assumed to [intentionally try](https://en.wikipedia.org/wiki/Byzantin
 
 ## Assumptions
 
-Each validator knows the [ADNL](/foundations/network/adnl) address and the public key of every other validator. Thus, every pair of validators can ensure each other's authenticity, and establish an encrypted channel.
+Each node knows the [ADNL](/foundations/network/adnl) address and the public key of every other node. Thus, every pair of nodes can ensure each other's authenticity and establish an encrypted channel. The ADNL protocol is used to set up a [private ADNL overlay network](//foundations/network/adnl), which allows node to send encrypted messages to a specific address or broadcast messages.
 
-## Protocol goals
+## Возможности протокола
 
-(No clear path between problems/assumptions and goals)
+### Логические возможности
 
-Catchain helps to address the issues above by describing:
+На логическом уровне протокол обеспечивает Causality Preservation при отправке сообщений. Другими словами, протокол позволяет задать, какие сообщения являются причиной других сообщений, и гарантирует, что обработка сообщения A, зависящего от сообщений B и C, будет выполнена только после того, как будут обработаны сообщения B и C.
 
-- how to choose "neighbor" nodes;
-- the format of messages that list other messages as explicit dependencies;
-- how to fetch dependencies;
-- how to detect and penalize nodes that try to disrupt the system.
+### Формальные возможности
+
+Протокол имплементирует [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type) относительно множества сообщений известных каждой нод и позволяет добиться [eventual consistency](https://en.wikipedia.org/wiki/Eventual_consistency). Как способ сихронизации, протокол использует [vector clock](https://en.wikipedia.org/wiki/Vector_clock) с модификациями, позволяющими добиться eventual consistency, даже если некоторые nodes являются Византийскими.
+
+<Aside type="node">
+  За целостность сообщений, гарантии доставки at least once, а так же authenticity сообщений отвечает протокол [ADNL](/foundations/network/adnl).
+</Aside>
 
 ## Choosing neighbor nodes
 
-(Words in CAPS are unclear)
+Catchain selects [five](https://github.com/ton-blockchain/ton/blob/34823b1ea378edbe3bc59f3bcc48126480a0b768/catchain/catchain-receiver.cpp#L36) neighbors at random and periodically refreshes the list (random interval between 60 and 120 seconds in the current configuration). The neighbor relation is not symmetric: if B is a neighbor of A, it does not imply that A is also a neighbor of B.
 
-Catchain selects FIVE neighbors at random and periodically refreshes the list (EVERY random interval between 60 and 120 seconds in the current configuration). The neighbor relation is not symmetric: if B is a neighbor of A, it does not imply that A is also a neighbor of B.
+<Aside type="tip">
+  In current implementation, [Mersenne Twister](https://en.wikipedia.org/wiki/Mersenne_Twister) is used for selecting random interval of neighbor list refreshing. It is initialized by values from [std::random_device](https://en.cppreference.com/w/cpp/numeric/random/random_device.html), which behaviour is platform-dependent.
+</Aside>
 
 ## Message identification
 
 (Words in CAPS are unclear)
 
-Every catchain message is uniquely identified by the pair `(sender; sender's SEQUENCE NUMBER)`. Also, every catchain message has a REFERENCE to previous message from the same sender. If this is the first message from the current node, then the previous message for it is `GENESIS`.
+Every catchain message is uniquely identified by the pair `(sender; sender's SEQUENCE NUMBER)`. Also, every catchain message has a REFERENCE to the previous message from the same sender. If this is the first message from the current node, then the previous message for it is `genesis`: the name for some initial state of the system.
 
 <Aside type="note">
   The same set of participants can take part in multiple catchain rounds, so the message identifier is extended with the round identifier to distinguish messages of this round from messages of previous rounds. However, for the sake of this overview the possibility of multiple rounds is omitted.
