@@ -18,20 +18,20 @@ Actors are assumed to [intentionally try](https://en.wikipedia.org/wiki/Byzantin
 
 ## Assumptions
 
-Each node knows the [ADNL](/foundations/network/adnl) address and the public key of every other node. Thus, every pair of nodes can ensure each other's authenticity and establish an encrypted channel. The ADNL protocol is used to set up a [private ADNL overlay network](//foundations/network/adnl), which allows node to send encrypted messages to a specific address or broadcast messages.
+Each node knows the [ADNL](/foundations/network/adnl) address and the public key of every other node. Thus, every pair of nodes can ensure each other's authenticity and establish an encrypted channel. The ADNL protocol is used to set up a [private ADNL overlay network](//foundations/network/adnl), which allows a node to send encrypted messages to a specific address or broadcast messages.
 
-## Возможности протокола
+## Protocol capabilities
 
-### Логические возможности
+### Logical capabilities
 
-На логическом уровне протокол обеспечивает Causality Preservation при отправке сообщений. Другими словами, протокол позволяет задать, какие сообщения являются причиной других сообщений, и гарантирует, что обработка сообщения A, зависящего от сообщений B и C, будет выполнена только после того, как будут обработаны сообщения B и C.
+At the logical level, the protocol provides causality preservation when sending messages. In other words, it lets a validator declare which messages cause other messages and guarantees that processing message A, which depends on messages B and C, only happens after messages B and C are processed.
 
-### Формальные возможности
+### Formal capabilities
 
-Протокол имплементирует [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type) относительно множества сообщений известных каждой нод и позволяет добиться [eventual consistency](https://en.wikipedia.org/wiki/Eventual_consistency). Как способ сихронизации, протокол использует [vector clock](https://en.wikipedia.org/wiki/Vector_clock) с модификациями, позволяющими добиться eventual consistency, даже если некоторые nodes являются Византийскими.
+The protocol implements a [CRDT](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type) over the set of messages known to each node and achieves [eventual consistency](https://en.wikipedia.org/wiki/Eventual_consistency). As a synchronization mechanism, it uses a [vector clock](https://en.wikipedia.org/wiki/Vector_clock) with modifications that preserve eventual consistency even when some nodes are Byzantine.
 
 <Aside type="node">
-  За целостность сообщений, гарантии доставки at least once, а так же authenticity сообщений отвечает протокол [ADNL](/foundations/network/adnl).
+  The [ADNL](/foundations/network/adnl) protocol is responsible for message integrity, at-least-once delivery guarantees, and message authenticity.
 </Aside>
 
 ## Choosing neighbor nodes
@@ -39,7 +39,7 @@ Each node knows the [ADNL](/foundations/network/adnl) address and the public key
 Catchain selects [five](https://github.com/ton-blockchain/ton/blob/34823b1ea378edbe3bc59f3bcc48126480a0b768/catchain/catchain-receiver.cpp#L36) neighbors at random and periodically refreshes the list (random interval between 60 and 120 seconds in the current configuration). The neighbor relation is not symmetric: if B is a neighbor of A, it does not imply that A is also a neighbor of B.
 
 <Aside type="tip">
-  In current implementation, [Mersenne Twister](https://en.wikipedia.org/wiki/Mersenne_Twister) is used for selecting random interval of neighbor list refreshing. It is initialized by values from [std::random_device](https://en.cppreference.com/w/cpp/numeric/random/random_device.html), which behaviour is platform-dependent.
+  In the current implementation, [Mersenne Twister](https://en.wikipedia.org/wiki/Mersenne_Twister) is used to pick the random interval for refreshing the neighbor list. It is seeded with values from [std::random_device](https://en.cppreference.com/w/cpp/numeric/random/random_device.html), whose behavior is platform-dependent.
 </Aside>
 
 ## Message identification
@@ -52,9 +52,7 @@ Every catchain message is uniquely identified by the pair `(sender; sender's SEQ
   The same set of participants can take part in multiple catchain rounds, so the message identifier is extended with the round identifier to distinguish messages of this round from messages of previous rounds. However, for the sake of this overview the possibility of multiple rounds is omitted.
 </Aside>
 
-Each actor is responsible for indexing its own messages and increasing the sequence counter. Because nodes can be Byzantine, honest validators must verify that counters are monotonically increasing.
-
-(Is it sequence number or sequence counter?)
+Each actor is responsible for indexing its own messages and increasing the sequence number. Because nodes can be Byzantine, honest validators must verify that the numbers are monotonically increasing.
 
 ### Example message flow
 
@@ -88,19 +86,17 @@ Every message `(X; i)` (except the genesis message `(X; 0)`) depends on `(X; i -
 
 ## Node state
 
-State holds the information about all processed messages by the current node. Since messages are ordered for each node, denote this information by the vector
+The node state stores information about all messages processed by the current node. Since messages are ordered for each node, denote this information by the vector
 <code>(A<sub>i</sub>, B<sub>j</sub>, C<sub>k</sub>, D<sub>m</sub> ...)</code>
-This vector hold an information about the last processed message for the validator. So, if A<sub>i</sub> is stored, and A<sub>i+2</sub> comes, than A<sub>i+1</sub> should be downloaded.
+This vector tracks the last processed message for each validator. So, if A<sub>i</sub> is stored and A<sub>i+2</sub> arrives, the node must download A<sub>i+1</sub>.
 
 (Link to https://en.wikipedia.org/wiki/Vector_clock)
 
 ## Dependency retrieval process
 
-("Every 0.1–0.2 seconds" -- why a range?)
+Roughly every 0.1–0.2 seconds a node selects three random neighbors out of its five and starts a synchronization round with them. Synchronization can be performed in two ways:
 
-Every 0.1–0.2 seconds a node selects three random neighbors out of five and starts a synchronization round with them. Synchronization can be performed in two ways:
-
-- Send a vector of Node state. If the neighbor has more recent blocks, it provides them.
+- Send its node-state vector. If the neighbor has more recent blocks, it provides them.
 - Perform targeted downloads of specific messages. This is usually used if, after the bulk synchronization above, there are still individual missing dependencies.
 
 ## Encryption
