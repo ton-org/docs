@@ -3,26 +3,34 @@ title: "How to deploy an NFT item"
 sidebarTitle: "Deploy an NFT item"
 ---
 
+import { Aside } from '/snippets/aside.jsx';
 import { Image } from '/snippets/image.jsx';
 
-The creator sends a message to the collection contract, which deploys a new non‑fungible token (NFT) item with the specified data: the initial owner and the item‑specific content. The [TEP‑62](https://github.com/ton-blockchain/TEPs/blob/1fbc23cac69723c53251f686ec90d81bf0e83443/text/0062-nft-standard.md) standard does not prescribe how this data must be supplied; implementations may vary. Typically, the creator provides the initial owner and item‑specific content for each NFT, or this information is derived from the collection itself (see [cNFT](/standard/tokens/nft/cNFT-how-it-works)).
+The creator sends a message to the collection contract, which deploys a new NFT item with the specified data: the initial owner and the item‑specific content. The [NFT standard](/standard/tokens/nft/overview) does not prescribe how this data must be supplied; implementations may vary. Typically, the creator provides the initial owner and item‑specific content for each NFT, or this information is derived from the collection itself (see [cNFT](/standard/tokens/nft/cNFT-how-it-works)).
 
 <Image
   src="/resources/images/nft/nft_deploy.svg"
-  alt="NFT deployment"
+  alt="Diagram of an NFT item deployment from a collection contract"
 />
 
-Since the deployment process is not specified by the standard, logic can vary and the recipes on this page might not apply to every contract. The [reference NFT implementation](/standard/tokens/nft/reference-implementation) and most modifications follow the same path: the collection owner sends a message with deploy parameters to the collection, and the collection deploys the item.
+Since the deployment process is not specified by the standard, logic can vary, and the recipes on this page might not apply to every contract. The [NFT reference implementation — Deploy single item](/standard/tokens/nft/reference-implementation#deploy-single-item) and most modifications follow the same path: the collection owner sends a message with deploy parameters to the collection, and the collection deploys the item.
 
-## Deploy with wallet
+## Deploy an item with a wallet
 
-To deploy an item from a [wallet](/standard/wallets/how-it-works), send a message from the wallet to the collection contract. The following example uses the @ton/ton stack for TypeScript. These libraries provide interfaces to work with wallet contracts and compose messages.
+To deploy an item from a [wallet](/standard/wallets/how-it-works), send a message from the wallet to the collection contract.
 
 ### Prerequisites
 
 - Node.js 22+
 - Packages: `@ton/ton`, `@ton/core`, `@ton/crypto`
-- A funded Testnet wallet mnemonic in `MNEMONIC` environment variable
+- A funded Testnet wallet mnemonic in the `MNEMONIC` environment variable
+- The sending wallet must be the collection owner; otherwise the collection rejects deployments
+
+<Aside type="danger" title="Funds and secrets">
+  This procedure spends funds, uses a wallet mnemonic, and interacts with a collection contract. Run it on Testnet first to test the desired behavior.
+</Aside>
+
+The following example uses the @ton/ton stack for TypeScript. These libraries provide interfaces to work with wallet contracts and compose messages.
 
 ```ts
 import { Address, beginCell, internal, toNano } from "@ton/core";
@@ -30,31 +38,42 @@ import { TonClient, WalletContractV5R1, SendMode } from "@ton/ton";
 import { mnemonicToPrivateKey } from "@ton/crypto";
 
 async function main() {
+  const collectionAddress = Address.parse("<COLLECTION_ADDRESS>");
+  const recipientAddress = Address.parse("<RECIPIENT_ADDRESS>");
+
+  // Toncenter endpoint (Testnet)
+  const client = new TonClient({
+    endpoint: "https://testnet.toncenter.com/api/v2/jsonRPC",
+  });
+
+  // Obtain the next item index
+  const nextItemIndex = (
+    await client.runMethod(collectionAddress, "get_collection_data")
+  ).stack.readBigNumber();
+  // Read the next item index. See the explanation after the code.
+
+  // Compose deploy message
   const msg = internal({
-    to: Address.parse("<COLLECTION_ADDR>"),
-    value: toNano("0.01"), // 0.01 TON for fees
+    to: collectionAddress,
+    value: toNano("0.01"), // Total attached to the collection. Must cover the forwarded amount below (0.005) plus execution/storage fees; keep a safety margin (e.g., 0.01–0.02 TON).
     bounce: true,
     body: beginCell()
       .storeUint(1, 32) // deploy opcode
       .storeUint(0, 64) // query id
-      .storeUint(0, 64) // item index
-      .storeCoins(toNano("0.005")) // 0.005 TON will be sent to item contract on deployment
+      .storeUint(nextItemIndex, 64)
+      .storeCoins(toNano("0.005")) // Forwarded to the new item as its initial balance. Ensure `value` >= this amount + all fees.
       .storeRef(
         beginCell()
-          .storeAddress(Address.parse("<OWNER_ADDR>"))
+          .storeAddress(recipientAddress)
           .storeRef(beginCell().storeStringTail("<ITEM_CONTENT>").endCell()) // individual content
           .endCell(),
       )
       .endCell(),
   });
 
-  // Testnet Toncenter endpoint
-  const client = new TonClient({
-    endpoint: "https://testnet.toncenter.com/api/v2/jsonRPC",
-  });
-
+  // Initialize wallet
   const MNEMONIC = process.env.MNEMONIC;
-  if (!MNEMONIC) throw new Error("Set MNEMONIC to a test mnemonic (testnet).");
+  if (!MNEMONIC) throw new Error("Set MNEMONIC to a test mnemonic (Testnet).");
   const keyPair = await mnemonicToPrivateKey(MNEMONIC.split(" "));
   const walletContract = client.open(
     WalletContractV5R1.create({
@@ -63,12 +82,12 @@ async function main() {
     }),
   );
 
-  // send the mint message through the wallet
+  // Send the mint message through the wallet
   const seqno = await walletContract.getSeqno();
   await walletContract.sendTransfer({
     seqno: seqno,
     secretKey: keyPair.secretKey,
-    // good practice to use these modes for regular wallet transfers
+    // Good practice to use these modes for regular wallet transfers
     sendMode: SendMode.IGNORE_ERRORS | SendMode.PAY_GAS_SEPARATELY,
     messages: [msg],
   });
@@ -79,24 +98,46 @@ void main();
 
 Where
 
-- `<COLLECTION_ADDR>` — the collection contract address.
-- `<OWNER_ADDR>` — the initial owner address for the new item.
+- `<COLLECTION_ADDRESS>` — the collection contract address.
+- `<RECIPIENT_ADDRESS>` — the initial owner address for the new item.
 - `<ITEM_CONTENT>` — item‑specific content path or key (for example, `0.json`).
+
+Explanation of body cell composition:
+- `.storeUint(1, 32)` — operation code `1` selects "deploy single item" in the reference collection contract (see [NFT reference implementation — Deploy single item](/standard/tokens/nft/reference-implementation#deploy-single-item)). TEP‑62 does not specify this opcode, so in custom implementations, this can differ.
+- `.storeUint(0, 64)` — `query_id`. Used for correlating responses with requests. It has no impact on deployment logic and `0` is a commonly used placeholder in cases where no extra logic relies on it.
+- `.storeUint(nextItemIndex, 64)` — `item_index`. Index of the item to deploy, obtained from the collection's `get_collection_data` get‑method. See [Return collection data](/standard/tokens/nft/reference-implementation#return-collection-data).
+- `.storeCoins(toNano("0.005"))` — amount forwarded to the new item at deployment to cover its initial balance/fees. Adjust if extra item contract logic requires more.
+
+TL‑B for the reference implementation
+
+```tlb
+deploy_nft#00000001 query_id:uint64 item_index:uint64 amount:Coins content:^Cell = InternalMsgBody;
+```
+
+In the reference contract, the body for `op=1` consists of `query_id`, `item_index`, `amount`, and a reference to `content`. See the [NFT reference implementation — Deploy single item](/standard/tokens/nft/reference-implementation#deploy-single-item) and [TL‑B overview](/languages/TL-B/overview).
 
 ### Verify
 
-- Confirm the transaction succeeded in a block explorer for `<COLLECTION_ADDR>`.
-- Call `get_nft_address_by_index(0)` on the collection to fetch the new item address, or open the item link in the explorer.
+- In a block explorer, confirm the transaction for `<COLLECTION_ADDRESS>` succeeded and inspect the transaction trace to see the internal message that deployed the item.
+- To verify via code: call [`get_nft_address_by_index(<INDEX>)`](/standard/tokens/nft/reference-implementation#return-item-address-by-index) on the collection with the item index used in the deploy message to obtain the item address, then call [`get_nft_data`](/standard/tokens/nft/reference-implementation#return-item-data) on the item and check that the owner is `<RECIPIENT_ADDRESS>` and the content is `<ITEM_CONTENT>`.
 
-It composes a message, creates a `TonClient` object to interact with the chain through [Toncenter](/ecosystem/api/toncenter/overview), initializes a wallet from mnemonic, and send a message.
 
-## Deploy with smart contract
+## Deploy an item with a smart contract
 
-To deploy an item from a smart contract, send a message from the contract to the collection contract. The following example provides a minimal example that implements only the item deployment logic. In realistic cases this is integrated into a larger flow.
+To deploy an item from a smart contract, send a message from the contract to the collection contract.
 
 ### Prerequisites
 
-- Enough Testnet TON to cover fees for contract and item deployments
+- A deployed calling contract that can send internal messages
+- Enough Testnet funds on the calling contract to cover fees and attached value (for example, ≥ 0.02 TON)
+- `<COLLECTION_ADDRESS>`, `<RECIPIENT_ADDRESS>`, `<INDEX>`, `<ITEM_CONTENT>`
+- The calling contract must be the collection owner; otherwise the collection rejects deployments
+
+<Aside type="danger" title="Funds and secrets">
+  This smart contract interacts with a collection contract. Run it on Testnet first to test the desired behavior.
+</Aside>
+
+The following example is a minimal smart contract that only implements the item deployment logic. In real deployments, this is integrated into a larger flow.
 
 ```tolk
 // SnakeString describes a (potentially long) string inside a cell;
@@ -105,7 +146,7 @@ To deploy an item from a smart contract, send a message from the contract to the
 type SnakeString = slice
 
 fun SnakeString.unpackFromSlice(mutate s: slice) {
-    // SnakeString can be only the last: it's "the remainder";
+    // SnakeString can only be the last: it's "the remainder";
     // for correctness, it's better to validate it has no more refs:
     assert (s.remainingRefsCount() <= 1) throw 5;
     val snakeRemainder = s;
@@ -118,7 +159,7 @@ fun SnakeString.packToBuilder(self, mutate b: builder) {
 }
 
 struct NftItemInitAtDeployment {
-    ownerAddress: address
+    recipientAddress: address
     content: Cell<SnakeString>
 }
 
@@ -131,22 +172,22 @@ struct (0x00000001) DeployNft {
 
 fun onInternalMessage(in: InMessage) {
     // The whole logic will be in `onInternalMessage`
-    // for example purposes. In realistic cases this should
-    // usually be gated behind some auth and other checks.
+    // for demonstration purposes. In real deployments this should
+    // usually be gated behind authorization and other checks.
 
     val deploy = DeployNft {
         queryId: 0,
-        itemIndex: 0,
-        attachTonAmount: ton("0.005"), // will be sent to item contract on deployment
+        itemIndex: <INDEX>,
+        attachTonAmount: ton("0.005"), // will be sent to the item contract on deployment
         initParams: NftItemInitAtDeployment {
-            ownerAddress: address("<OWNER_ADDR>"),
+            recipientAddress: address("<RECIPIENT_ADDRESS>"),
             content: ("<ITEM_CONTENT>" as SnakeString).toCell()
         }.toCell()
     };
 
     val msg = createMessage({
         bounce: true,
-        dest: address("<COLLECTION_ADDR>"),
+        dest: address("<COLLECTION_ADDRESS>"),
         value: ton("0.01"),
         body: deploy
     });
@@ -157,13 +198,14 @@ fun onInternalMessage(in: InMessage) {
 
 Where
 
-- `<COLLECTION_ADDR>` — the collection contract address.
-- `<OWNER_ADDR>` — the initial owner address for the new item.
+- `<COLLECTION_ADDRESS>` — the collection contract address.
+- `<RECIPIENT_ADDRESS>` — the initial owner address for the new item.
+- `<INDEX>` — item's index. Note that obtaining the actual index on‑chain is [not possible](/from-ethereum#on-chain-get-methods), so a smart contract that performs these deployments should handle that logic itself (for example, store the latest used index and increment it on each deployment).
 - `<ITEM_CONTENT>` — item‑specific content path or key (for example, `0.json`).
 
 The top of the snippet defines structs for the deploy message and can be modified depending on the NFT implementation specifics. The sending logic lives in `onInternalMessage` for simplicity. It composes a message with hard‑coded example values and sends that message to the collection contract.
 
 ### Verify
 
-- Confirm the transaction succeeded in a block explorer for `<COLLECTION_ADDR>`.
-- Call `get_nft_address_by_index(0)` on the collection to fetch the new item address, or open the item link in the explorer.
+- In a block explorer, confirm the transaction from the calling contract to `<COLLECTION_ADDRESS>` succeeded and inspect the transaction trace to see the internal message that deployed the item.
+- To verify via code: call [`get_nft_address_by_index(<INDEX>)`](/standard/tokens/nft/reference-implementation#return-item-address-by-index) on the collection to obtain the item address, then call [`get_nft_data`](/standard/tokens/nft/reference-implementation#return-item-data) on the item and check that the owner is `<RECIPIENT_ADDRESS>` and the content is `<ITEM_CONTENT>`.
