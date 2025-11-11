@@ -11,6 +11,7 @@ There are several anti-patterns and potential attack vectors that smart contract
 Improper handling of signed integers can allow attackers to exploit overflow/underflow conditions.
 
 ### Vulnerable code
+
 ```func
 (cell,()) transfer_voting_power(cell votes, slice from, slice to, int amount) impure {
     int from_votes = get_voting_power(votes, from);
@@ -26,6 +27,7 @@ Improper handling of signed integers can allow attackers to exploit overflow/und
 ```
 
 ### Secure implementation
+
 ```func
 (cell,()) transfer_voting_power(cell votes, slice from, slice to, int amount) impure {
     int from_votes = get_voting_power(votes, from);
@@ -41,6 +43,7 @@ Improper handling of signed integers can allow attackers to exploit overflow/und
     return (votes,());
 }
 ```
+
 ## Sending sensitive data on-chain
 
 **Severity:** 🔴 **Critical**
@@ -48,6 +51,7 @@ Improper handling of signed integers can allow attackers to exploit overflow/und
 The entire smart contract computation is transparent, and if you have confidential values at runtime, they can be retrieved through simple emulation.
 
 ### Vulnerable code
+
 ```func
 ;; DON'T: Storing password hash or private data
 cell private_data = begin_cell()
@@ -63,6 +67,7 @@ cell private_data = begin_cell()
 Destroying accounts without proper checks can lead to fund loss in race conditions.
 
 ### Vulnerable code
+
 ```func
 () recv_internal(msg_value, in_msg_full, in_msg_body) {
     if (in_msg_body.slice_empty?()) {
@@ -75,6 +80,7 @@ Destroying accounts without proper checks can lead to fund loss in race conditio
 ```
 
 ### Secure approach
+
 ```func
 () recv_internal(msg_value, in_msg_full, in_msg_body) {
     ;; Proper validation before any destruction
@@ -94,6 +100,7 @@ Destroying accounts without proper checks can lead to fund loss in race conditio
 Replay protection is a security mechanism that prevents an attacker from reusing a previous message. External messages without replay protection can be re-executed multiple times.
 
 ### Secure implementation
+
 ```func
 () recv_external(slice in_msg) impure {
     slice ds = get_data().begin_parse();
@@ -114,7 +121,6 @@ Replay protection is a security mechanism that prevents an attacker from reusing
 **Severity:** 🔴 **Critical**
 
 Exit codes `0` and `1` indicate normal execution of the compute phase of the transaction. Execution can be unexpectedly aborted by calling a `throw` directly with exit codes `0` and `1`. This can make debugging very difficult since such aborted execution would be indistinguishable from a normal one.
-
 
 ## Gas limitation
 
@@ -141,7 +147,6 @@ contract VoteCounter() {
 }
 ```
 
-
 ## Insecure random numbers
 
 **Severity:** 🔴 **Critical**
@@ -150,16 +155,17 @@ Generating truly secure random numbers in TON is challenging. The built-in rando
 
 ### Secure approach
 
-* For critical applications, avoid relying solely on on-chain solutions.
+- For critical applications, avoid relying solely on on-chain solutions.
 
-* Use built-in random function with randomized logical time to enhance security by making predictions harder for attackers without access to a validator node. Note, however, that it is still not entirely foolproof.
+- Use built-in random function with randomized logical time to enhance security by making predictions harder for attackers without access to a validator node. Note, however, that it is still not entirely foolproof.
 
-* Consider using the _commit-and-disclose scheme_:
+- Consider using the _commit-and-disclose scheme_:
+
 1. Participants generate random numbers off-chain and send their hashes to the contract.
-2. Once all hashes are received, participants disclose their original numbers.
-3. Combine the disclosed numbers (e.g., summing them) to produce a secure random value.
+1. Once all hashes are received, participants disclose their original numbers.
+1. Combine the disclosed numbers (e.g., summing them) to produce a secure random value.
 
-* Don't use randomization in external message receivers, as it remains vulnerable even with randomized logical time.
+- Don't use randomization in external message receivers, as it remains vulnerable even with randomized logical time.
 
 ## Executing third-party code
 
@@ -168,6 +174,7 @@ Generating truly secure random numbers in TON is challenging. The built-in rando
 Executing untrusted code can compromise contract security.
 
 ### Prevention
+
 ```func
 ;; Validate all external code before execution
 throw_unless(error::untrusted_code, verify_code_signature(code));
@@ -280,6 +287,7 @@ Furthermore, once a signature is used in a transaction, it becomes publicly visi
 If excess gas is not returned to the sender, the funds will accumulate in your contracts over time. This isn’t terrible in principle, just a suboptimal practice. You can add a function to rake out excess, but popular contracts like TON Jetton still return it to the sender with the Message using the `0xd53276db` opcode.
 
 ### Secure gas handling
+
 ```func
 message(0xd53276db) Excesses {}
 message Vote { votes: Int as int32 }
@@ -369,6 +377,7 @@ contract AnotherContract(
 [TON addresses](/foundations/addresses/formats) have multiple formats that must be handled correctly.
 
 ### Address formats
+
 ```func
 ;; Raw: 0:b4c1b2ede12aa76f4a44353944258bcc8f99e9c7c474711a152c78b43218e296
 ;; Bounceable: EQC0wbLt4Sqnb0pENTlEJYvMj5npx8R0cRoVLHi0MhjilkPX
@@ -385,6 +394,7 @@ force_chain(to_address);
 Function or variable names can collide with built-in functions or reserved keywords.
 
 ### Best practice
+
 ```func
 ;; Use descriptive, unique names
 int user_balance = 0;  ;; Instead of just 'balance'
@@ -398,6 +408,7 @@ int user_balance = 0;  ;; Instead of just 'balance'
 Reading or writing incorrect data types can corrupt contract state.
 
 ### Vulnerable code
+
 ```func
 ;; Writing uint but reading int
 storage~store_uint(value, 32);
@@ -405,6 +416,7 @@ int read_value = storage~load_int(32);  ;; Type mismatch
 ```
 
 ### Secure implementation
+
 ```func
 ;; Consistent type usage
 storage~store_uint(value, 32);
@@ -418,11 +430,13 @@ int read_value = storage~load_uint(32);
 Ignoring function return values can lead to logic errors and unexpected behavior.
 
 ### Vulnerable code:
+
 ```func
 dictinfos~udict_delete?(32, index);  ;; Ignoring success flag
 ```
 
 ### Secure implementation:
+
 ```func
 int success = dictinfos~udict_delete?(32, index);
 throw_unless(error::fail_to_delete_dict, success);
@@ -435,6 +449,7 @@ throw_unless(error::fail_to_delete_dict, success);
 Contracts can be updated if not properly protected, changing their behavior unexpectedly.
 
 ### Secure implementation
+
 ```func
 () update_code(cell new_code) impure {
     throw_unless(error::unauthorized, authorized_admin?(sender()));
