@@ -727,7 +727,7 @@ Notice that the built-in TVM primitives for dictionary manipulation need to know
 - The simplest case is when $X = \text{\textasciicircum}Y$ for some other type $Y$. In this case the serialization of $X$ itself always consists of one reference to a cell, which in fact must contain a value of type $Y$, something that is not relevant for dictionary manipulation primitives.
 - Another simple case is when the serialization of any value of type $X$ always consists of $0\leq b\leq 1023$ data bits and $0\leq r\leq 4$ references. Integers $b$ and $r$ can then be passed to a dictionary manipulation primitive as a simple description of $X$. (Notice that the previous case corresponds to $b=0$, $r=1$.)
 - A more sophisticated case can be described by four integers $1\leq b_0,b_1\leq 1023$, $0\leq r_0,r_1\leq 4$, with $b_i$ and $r_i$ used when the first bit of the serialization equals $i$. When $b_0=b_1$ and $r_0=r_1$, this case reduces to the previous one.
-- Finally, the most general description of the serialization of a type $X$ is given by a *splitting function* $\text{split}_X$ for $X$, which accepts one *Slice* parameter $s$, and returns two *Slice*s, $s'$ and $s''$, where $s'$ is the only prefix of $s$ that is the serialization of a value of type $X$, and $s''$ is the remainder of $s$. If no such prefix exists, the splitting function is expected to throw an exception. Notice that a compiler for a high-level language, which supports some or all algebraic TL-B types, is likely to automatically generate splitting functions for all types defined in the program.
+- Finally, the most general description of the serialization of a type $X$ is given by a *splitting function* $\mathit{split}_X$ for $X$, which accepts one *Slice* parameter $s$, and returns two *Slice*s, $s'$ and $s''$, where $s'$ is the only prefix of $s$ that is the serialization of a value of type $X$, and $s''$ is the remainder of $s$. If no such prefix exists, the splitting function is expected to throw an exception. Notice that a compiler for a high-level language, which supports some or all algebraic TL-B types, is likely to automatically generate splitting functions for all types defined in the program.
 
 ### 3.3.9. A simplifying assumption on the serialization of $X$
 
@@ -1099,7 +1099,7 @@ The conditional and iterated execution primitives described in [4.2](#4-2-contro
 ### 4.6.2. Y-combinator solution: pass a continuation as an argument to itself
 
 One way of dealing with the problem of recursion is by passing a copy of the continuation representing the body of a recursive function as an extra argument to itself. Consider, for example, the following code for a factorial function:
-```asm
+```
 71      PUSHINT 1
 9C      PUSHCONT {
 22        PUSH s2
@@ -2592,7 +2592,7 @@ $$
 
 The source code of the function, in a programming language similar to C, might look as follows:
 
-```c
+```
 (int, int) f(int a, int b, int c, int d, int e, int f) {
   int D = a*d - b*c;
   int Dx = e*d - b*f;
@@ -2607,7 +2607,7 @@ We assume (cf. [2.1](#2-1-stack-calling-conventions)) that the register machines
 
 The machine code (or rather the corresponding assembly code) for a three-address register machine (cf. [2.1.7](#2-1-7-arguments-to-arithmetic-primitives-on-register-machines)) might look as follows:
 
-```asm
+```
 IMUL r6,r0,r3  // r6 := r0 * r3 = ad
 IMUL r7,r1,r2  // r7 := bc
 SUB r6,r6,r7   // r6 := ad-bc = D
@@ -2628,7 +2628,7 @@ We have used 12 operations and at least 23 bytes (each operation uses $3\times 4
 
 The machine code for a two-address register machine might look as follows:
 
-```asm
+```
 MOV r6,r0   // r6 := r0 = a
 MOV r7,r1   // r7 := b
 IMUL r6,r3  // r6 := r6*r3 = ad
@@ -2653,7 +2653,7 @@ We have used 16 operations; optimistically assuming each of them (with the excep
 
 The machine code for a one-address register machine might look as follows:
 
-```asm
+```
 MOV r8,r0  // r8 := r0 = a
 XCHG r1    // r0 <-> r1; r0 := b, r1 := a
 MOV r6,r0  // r6 := b
@@ -2685,7 +2685,7 @@ We have used 23 operations; if we assume one-byte encoding for all arithmetic op
 
 The machine code for a stack machine equipped with basic stack manipulation primitives described in [2.2.1](#2-2-1-basic-stack-manipulation-primitives) might look as follows:
 
-```asm
+```
 PUSH s5    // a b c d e f a
 PUSH s3    // a b c d e f a d
 IMUL       // a b c d e f ad
@@ -2726,7 +2726,8 @@ The code presented above might have been produced by a rather unsophisticated co
 ### C.1.6. Stack machine with compound stack primitives
 
 A stack machine with compound stack primitives (cf. [2.2.3](#2-2-3-compound-stack-manipulation-primitives)) would not significantly improve code density of the code presented above, at least in terms of bytes used. The only difference is that, if we were not allowed to use commutativity of multiplication, the extra $\texttt{XCHG s1}$ inserted before the third $\texttt{IMUL}$ might be combined with two previous operations $\texttt{XCHG s3}$, $\texttt{PUSH s2}$ into one compound operation $\texttt{PUXC s2,s3}$; we provide the resulting code below. To make this less redundant, we show a version of the code that computes subexpression $af$ before $ec$ as specified in the original source file. We see that this replaces six operations (starting from line 15) with five other operations, and disables the $\texttt{ROT}$ optimization:
-```asm
+
+```
 PUSH s5    // a b c d e f a
 PUSH s3    // a b c d e f a d
 IMUL       // a b c d e f ad
@@ -2765,7 +2766,8 @@ Yet again, notice that the above code might have been generated by an unsophisti
 The previous version of code for a stack machine with compound stack primitives can be manually optimized as follows.
 
 By interchanging $\texttt{XCHG}$ operations with preceding $\texttt{XCHG}$, $\texttt{PUSH}$, and arithmetic operations whenever possible, we obtain code fragment $\texttt{XCHG s2,s6}$; $\texttt{XCHG s1,s0}$; $\texttt{XCHG s0,s5}$, which can then be replaced by compound operation $\texttt{XCHG3 s6,s0,s5}$. This compound operation would admit a two-byte encoding, thus leading to 27-byte code using only 21 operations:
-```asm
+
+```
 PUSH2 s5,s2    // a b c d e f a d
 IMUL           // a b c d e f ad
 PUSH2 s5,s4    // a b c d e f ad b c
@@ -2802,9 +2804,9 @@ The meaning of the columns in [Table 1](#c-2-comparison-of-machine-code-for-samp
 - "Code bytes" — The total amount of code bytes used.
 - "Opcode space" — The portion of "opcode space" (i.e., of possible choices for the first byte of the encoding of an instruction) used by data and arithmetic instructions in the assumed instruction encoding. For example, the "optimistic" encoding for the three-address machine assumes two-byte encodings for all arithmetic instructions *op* $\texttt{r}(i)\texttt{, r}(j)\texttt{, r}(k)$. Each arithmetic instruction would then consume portion $16/256=1/16$ of the opcode space. Notice that for the stack machine we have assumed one-byte encodings for $\texttt{XCHG s}(i)$, $\texttt{PUSH s}(i)$ and $\texttt{POP s}(i)$ in all cases, augmented by $\texttt{XCHG s1,s}(i)$ for the basic stack instructions case only. As for the compound stack operations, we have assumed two-byte encodings for $\texttt{PUSH3}$, $\texttt{XCHG3}$, $\texttt{XCHG2}$, $\texttt{XCPU}$, $\texttt{PUXC}$, $\texttt{PUSH2}$, but not for $\texttt{XCHG s1,s}(i)$.
 
-| Machine | data | arith | total | data | arith | **total** | data | arith | **total** |
-|---------|------|-------|-------|------|-------|-----------|------|-------|-----------|
-|  |  |  | **Operations** |  |  | **Code bytes** |  |  | **Opcode space** |
+| Machine | Operations |  |  | Code bytes |  |  | Opcode space |  |  |
+|---------|------------|-------|-------|------------|-------|-------|--------------|-------|-------|
+|         | data | arith | total | data | arith | **total** | data | arith | **total** |
 | 3-addr. (opt.) | 0 | 11 | 12 | 0 | 22 | **23** | 0/256 | 64/256 | **65/256** |
 | 3-addr. (real.) | 0 | 11 | 12 | 0 | 30 | **31** | 0/256 | 34/256 | **35/256** |
 | 2-addr. | 4 | 11 | 16 | 8 | 22 | **31** | 1/256 | 4/256 | **6/256** |
@@ -2850,16 +2852,15 @@ This case is the most painful one for the called function. It is especially diff
 
 In order to estimate the consequences of assuming $m=n=16$, we will assume that all our register machines are equipped with a stack, and with one-byte instructions $\texttt{PUSH r}(i)$ and $\texttt{POP r}(i)$, which push or pop a register into/from the stack. For example, the three-address machine code provided in [C.1.2](#c-1-2-three-address-register-machine) destroys the values in registers $\texttt{r2}$, $\texttt{r3}$, $\texttt{r6}$, and $\texttt{r7}$; this means that the code of this function must be augmented by four instructions $\texttt{PUSH r2}$; $\texttt{PUSH r3}$; $\texttt{PUSH r6}$; $\texttt{PUSH r7}$ at the beginning, and by four instructions $\texttt{POP r7}$; $\texttt{POP r6}$; $\texttt{POP r3}$; $\texttt{POP r2}$ right before the $\texttt{RET}$ instruction, in order to restore the original values of these registers from the stack. These four additional $\texttt{PUSH}$/$\texttt{POP}$ pairs would increase the operation count and code size in bytes by $4\times 2=8$. A similar analysis can be done for other register machines as well, leading to [Table 2](#c-2-3-case-m-n-16).
 
-| Machine | $r$ | data | arith | total | data | arith | **total** | data | arith | **total** |
-|---------|-----|------|-------|-------|------|-------|-----------|------|-------|-----------|
-|  |  |  |  | **Operations** |  |  | **Code bytes** |  |  | **Opcode space** |
+| Machine | $\mathit{r}$ | Operations |  |  | Code bytes |  |  | Opcode space |  |  |
+|---------|--------------|------------|-------|-------|------------|-------|-------|--------------|-------|-------|
+|         |              | data | arith | total | data | arith | **total** | data | arith | **total** |
 | 3-addr. (opt.) | 4 | 8 | 11 | 20 | 8 | 22 | **31** | 32/256 | 64/256 | **97/256** |
 | 3-addr. (real.) | 4 | 8 | 11 | 20 | 8 | 30 | **39** | 32/256 | 34/256 | **67/256** |
 | 2-addr. | 5 | 14 | 11 | 26 | 18 | 22 | **41** | 33/256 | 4/256 | **38/256** |
 | 1-addr. | 6 | 23 | 11 | 35 | 29 | 11 | **41** | 49/256 | 64/256 | **114/256** |
 | stack (basic) | 0 | 16 | 11 | 28 | 16 | 11 | **28** | 64/256 | 4/256 | **69/256** |
 | stack (comp.) | 0 | 9 | 11 | 21 | 15 | 11 | **27** | 84/256 | 4/256 | **89/256** |
-
 
 **Table 2.** A summary of machine code properties for hypothetical 3-address, 2-address, 1-address, and stack machines, generated for a sample leaf function (cf. [C.1.1](#c-1-1-sample-source-file-for-a-leaf-function)), assuming all of the 16 registers must be preserved by called functions ($m=n=16$). The new column labeled $r$ denotes the number of registers to be saved and restored, leading to $2r$ more operations and code bytes compared to [Table 1](#c-2-comparison-of-machine-code-for-sample-leaf-function). Newly-added $\texttt{PUSH}$ and $\texttt{POP}$ instructions for register machines also utilize 32/256 of the opcode space. The two rows corresponding to stack machines remain unchanged.
 
@@ -2870,9 +2871,9 @@ We see that under these assumptions the stack machines are the obvious winners i
 The analysis of this case is similar to the previous one. The results are summarized in [Table 3](#c-2-4-case-m%3D8%2C-n%3D16%3A-registers-r8…r15-must-be-preserved).
 
 
-| Machine | $r$ | data | arith | total | data | arith | **total** | data | arith | **total** |
-|---------|-----|------|-------|-------|------|-------|-----------|------|-------|-----------|
-|  |  |  |  | **Operations** |  |  | **Code bytes** |  |  | **Opcode space** |
+| Machine | $\mathit{r}$ | Operations |  |  | Code bytes |  |  | Opcode space |  |  |
+|---------|--------------|------------|-------|-------|------------|-------|-------|--------------|-------|-------|
+|         |              | data | arith | total | data | arith | **total** | data | arith | **total** |
 | 3-addr. (opt.) | 0 | 0 | 11 | 12 | 0 | 22 | **23** | 32/256 | 64/256 | **97/256** |
 | 3-addr. (real.) | 0 | 0 | 11 | 12 | 0 | 30 | **31** | 32/256 | 34/256 | **67/256** |
 | 2-addr. | 0 | 4 | 11 | 16 | 8 | 22 | **31** | 33/256 | 4/256 | **38/256** |
@@ -2895,9 +2896,9 @@ Now that we can use any number of bits to encode an instruction, we can choose a
 We can see that the performance of the various machines is much more balanced, with the stack machine still the winner in terms of the code density, but with the three-address machine enjoying the second place it really merits. If we were to consider the decoding speed and the possibility of parallel execution of instructions, we would have to choose the three-address machine, because it uses only 12 instructions instead of 21.
 
 
-| Machine | $r$ | data | arith | total | data | arith | **total** | data | arith | **total** |
-|---------|-----|------|-------|-------|------|-------|-----------|------|-------|-----------|
-|  |  |  |  | **Operations** |  |  | **Code bytes** |  |  | **Opcode space** |
+| Machine | $\mathit{r}$ | Operations |  |  | Code bytes |  |  | Opcode space |  |  |
+|---------|--------------|------------|-------|-------|------------|-------|-------|--------------|-------|-------|
+|         |              | data | arith | total | data | arith | **total** | data | arith | **total** |
 | 3-addr. | 0 | 0 | 11 | 12 | 0 | 27.5 | **28.5** | 64/256 | 4/256 | **69/256** |
 | 2-addr. | 0 | 4 | 11 | 16 | 6 | 22 | **29** | 64/256 | 4/256 | **69/256** |
 | 1-addr. | 1 | 13 | 11 | 25 | 16 | 16.5 | **32.5** | 64/256 | 4/256 | **69/256** |
@@ -2943,7 +2944,7 @@ Because our sample function does not use built-in arithmetic instructions at all
 
 We first assume that $m=0$ (i.e., that all subroutines are free to destroy the values of all registers). In this case, our machine code for $\texttt{r\_f}$ does not have to preserve any registers, but has to save all registers containing useful values into the stack before calling any subroutines. A size-optimizing compiler might produce the following code:
 
-```asm
+```
 PUSH r4     // STACK: e
 PUSH r1     // STACK: e b
 PUSH r0     //     .. e b a
@@ -2996,7 +2997,8 @@ Now we have eight registers, $\texttt{r8}$ to $\texttt{r15}$, that are preserved
 ### C.3.4. Three-address and two-address register machines, $m=16$ preserved registers
 
 This time *all* registers must be preserved by the subroutines, excluding those used for returning the results. This means that our code must preserve the original values of $\texttt{r2}$ to $\texttt{r5}$, as well as any other registers it uses for temporary values. A straightforward way of writing the code of our subroutine would be to push registers $\texttt{r2}$ up to, say, $\texttt{r8}$ into the stack, then perform all the operations required, using $\texttt{r6}$—$\texttt{r8}$ for intermediate values, and finally restore registers from the stack. However, this would not optimize code size. We choose another approach:
-```asm
+
+```
 PUSH r0     // STACK: a
 PUSH r1     // STACK: a b
 MOV r0,r1   // b
@@ -3045,7 +3047,8 @@ We have used 39 instructions: 11 one-byte, 17 two-byte (among them 5 "new" instr
 For our one-address register machine, we assume that new register-stack instructions work through the accumulator only. Therefore, we have three new instructions, $\texttt{LD s}(j)$ (equivalent to $\texttt{MOV r0,s}(j)$ of two-address machines), $\texttt{ST s}(j)$ (equivalent to $\texttt{MOV s}(j)\texttt{,r0}$), and $\texttt{XCHG s}(j)$ (equivalent to $\texttt{XCHG r0,s}(j)$). To make the comparison with two-address machines more interesting, we assume one-byte encodings for these new instructions, even though this would consume $48/256=3/16$ of the opcode space.
 
 By adapting the code provided in [C.3.2](#c-3-2-three-address-and-two-address-register-machines%2C-preserved-registers-2) to the one-address machine, we obtain the following:
-```asm
+
+```
 PUSH r4     // STACK: e
 PUSH r1     // STACK: e b
 PUSH r0     //     .. e b a
@@ -3151,7 +3154,8 @@ We have used 40 instructions: 18 one-byte, 11 two-byte, and 11 three-byte, for a
 ### C.3.8. Stack machine with basic stack primitives
 
 We reuse the code provided in [C.1.5](#c-1-5-stack-machine-with-basic-stack-primitives), simply replacing arithmetic primitives (VM instructions) with subroutine calls. The only substantive modification is the insertion of the previously optional $\texttt{XCHG s1}$ before the third multiplication, because even an optimizing compiler cannot now know whether $\texttt{CALL r\_mul}$ is a commutative operation. We have also used the "tail recursion optimization" by replacing the final $\texttt{CALL r\_div}$ followed by $\texttt{RET}$ with $\texttt{JMP r\_div}$.
-```asm
+
+```
 PUSH s5     // a b c d e f a
 PUSH s3     // a b c d e f a d
 CALL r_mul  // a b c d e f ad
@@ -3188,7 +3192,8 @@ We have used 29 instructions; assuming one-byte encodings for all stack operatio
 ### C.3.9. Stack machine with compound stack primitives
 
 We again reuse the code provided in [C.1.7](#c-1-7-stack-machine-with-compound-stack-primitives-and-manually-optimized-code), replacing arithmetic primitives with subroutine calls and making the tail recursion optimization:
-```asm
+
+```
 PUSH2 s5,s2    // a b c d e f a d
 CALL r_mul     // a b c d e f ad
 PUSH2 s5,s4    // a b c d e f ad b c
@@ -3219,17 +3224,17 @@ This code uses only 20 instructions, 9 stack-related and 11 control flow-related
 
 [Table 5](#c-4-comparison-of-machine-code-for-sample-non-leaf-function) summarizes the properties of machine code corresponding to the same source file provided in [C.3.1](#c-3-1-sample-source-code-for-a-non-leaf-function). We consider only the "realistically" encoded three-address machines. Three-address and two-address machines have the same code density properties, but differ in the utilization of opcode space. The one-address machine, somewhat surprisingly, managed to produced shorter code than the two-address and three-address machines, at the expense of using up more than half of all opcode space. The stack machine is the obvious winner in this code density contest, without compromizing its excellent extendability (measured in opcode space used for arithmetic and other data transformation instructions).
 
-| Machine | $m$ | Operations |  |  | Code bytes |  |  | Opcode space |  |  |
-|---------|-----|------|------|-------|------|------|-------|------|-------|-------|
-|         |     | data | cont.| total | data | cont.| total | data | arith | total |
-| 3-addr. | 0,8 | 29 | 12 | 41 | 42 | 34 | 76 | 35/256 | 34/256 | 72/256 |
-|         | 16  | 27 | 12 | 39 | 44 | 34 | 78 |        |        |        |
-| 2-addr. | 0,8 | 29 | 12 | 41 | 42 | 34 | 76 | 37/256 | 4/256  | 44/256 |
-|         | 16  | 27 | 12 | 39 | 44 | 34 | 78 |        |        |        |
-| 1-addr. | 0,8 | 33 | 12 | 45 | 33 | 34 | 67 | 97/256 | 64/256 | 164/256|
-|         | 16  | 28 | 12 | 40 | 39 | 34 | 73 |        |        |        |
-| stack (basic) | - | 18 | 11 | 29 | 18 | 33 | 51 | 64/256 | 4/256 | 71/256 |
-| stack (comp.) | - | 9  | 11 | 20 | 15 | 33 | 48 | 84/256 | 4/256 | 91/256 |
+| Machine          | $m$   | **Operations** |     |     | **Code bytes** |     |     | **Opcode space** |     |     |
+|------------------|--------|---------------|-----|-----|----------------|-----|-----|------------------|-----|-----|
+|                  |        | data | cont. | total | data | cont. | **total** | data | **arith** | total |
+| 3-addr.          | *0,8*  | 29 | 12 | 41 | 42 | 34 | **76** | 35/256 | **34/256** | 72/256 |
+|                  | *16*   | 27 | 12 | 39 | 44 | 34 | **78** |          |        |          |
+| 2-addr.          | *0,8*  | 29 | 12 | 41 | 42 | 34 | **76** | 37/256 | **4/256** | 44/256 |
+|                  | *16*   | 27 | 12 | 39 | 44 | 34 | **78** |          |        |          |
+| 1-addr.          | *0,8*  | 33 | 12 | 45 | 33 | 34 | **67** | 97/256 | **64/256** | 164/256 |
+|                  | *16*   | 28 | 12 | 40 | 39 | 34 | **73** |          |        |          |
+| stack (basic)    | $-$    | 18 | 11 | 29 | 18 | 33 | **51** | 64/256 | **4/256** | 71/256 |
+| stack (comp.)    | $-$    | 9 | 11 | 20 | 15 | 33 | **48** | 84/256 | **4/256** | 91/256 |
 
 **Table 5**: A summary of machine code properties for hypothetical 3-address, 2-address, 1-address, and stack machines, generated for a sample non-leaf function (cf. [C.3.1](#c-3-1-sample-source-code-for-a-non-leaf-function)), assuming $m$ of the 16 registers must be preserved by called subroutines.
 
@@ -3243,17 +3248,18 @@ We see that the stack machine beats all register machines on non-leaf functions.
 
 Similarly to [C.2.5](#c-2-5-a-fairer-comparison-using-a-binary-code-instead-of-a-byte-code), we may offer a fairer comparison of different register machines and the stack machine by using arbitrary binary codes instead of byte codes to encode instructions, and matching the opcode space used for data manipulation and arithmetic instructions by different machines. The results of this modified comparison are summarized in [Table 6](#c-4-2-a-fairer-comparison-using-a-binary-code-instead-of-a-byte-code). We see that the stack machines still win by a large margin, while using less opcode space for stack/data manipulation.
 
-| Machine | $m$ | Operations |  |  | Code bytes |  |  | Opcode space |  |  |
-|---------|-----|------|------|-------|------|------|-------|------|-------|-------|
-|         |     | data | cont.| total | data | cont.| total | data | arith | total |
-| 3-addr. | 0,8 | 29 | 12 | 41 | 35.5 | 34 | 69.5 | 110/256 | 4/256 | 117/256 |
-|         | 16  | 27 | 12 | 39 | 35.5 | 34 | 69.5 |         |       |         |
-| 2-addr. | 0,8 | 29 | 12 | 41 | 35.5 | 34 | 69.5 | 110/256 | 4/256 | 117/256 |
-|         | 16  | 27 | 12 | 39 | 35.5 | 34 | 69.5 |         |       |         |
-| 1-addr. | 0,8 | 33 | 12 | 45 | 33   | 34 | 67   | 112/256 | 4/256 | 119/256 |
-|         | 16  | 28 | 12 | 40 | 33.5 | 34 | 67.5 |         |       |         |
-| stack (basic) | - | 18 | 11 | 29 | 18 | 33 | 51 | 64/256 | 4/256 | 71/256 |
-| stack (comp.) | - | 9  | 11 | 20 | 15 | 33 | 48 | 84/256 | 4/256 | 91/256 |
+| Machine          | $m$   | **Operations** |     |     | **Code bytes** |     |     | **Opcode space** |     |     |
+|------------------|--------|---------------|-----|-----|----------------|-----|-----|------------------|-----|-----|
+|                  |        | data | cont. | total | data | cont. | **total** | data | **arith** | total |
+| 3-addr.          | *0,8*  | 29 | 12 | 41 | 35.5 | 34 | **69.5** | 110/256 | **4/256** | 117/256 |
+|                  | *16*   | 27 | 12 | 39 | 35.5 | 34 | **69.5** |          |        |          |
+| 2-addr.          | *0,8*  | 29 | 12 | 41 | 35.5 | 34 | **69.5** | 110/256 | **4/256** | 117/256 |
+|                  | *16*   | 27 | 12 | 39 | 35.5 | 34 | **69.5** |          |        |          |
+| 1-addr.          | *0,8*  | 33 | 12 | 45 | 33 | 34 | **67** | 112/256 | **4/256** | 119/256 |
+|                  | *16*   | 28 | 12 | 40 | 33.5 | 34 | **67.5** |          |        |          |
+| stack (basic)    | $-$    | 18 | 11 | 29 | 18 | 33 | **51** | 64/256 | **4/256** | 71/256 |
+| stack (comp.)    | $-$    | 9 | 11 | 20 | 15 | 33 | **48** | 84/256 | **4/256** | 91/256 |
+
 
 **Table 6**: A summary of machine code properties for hypothetical 3-address, 2-address, 1-address, and stack machines, generated for a sample non-leaf function (cf. [C.3.1](#c-3-1-sample-source-code-for-a-non-leaf-function)), assuming $m$ of the 16 registers must be preserved by called subroutines. This time we use fractions of bytes to encode instructions, enabling a fairer comparison. Otherwise, this table is similar to [Table 5](#c-4-comparison-of-machine-code-for-sample-non-leaf-function).
 
