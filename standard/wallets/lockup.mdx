@@ -1,0 +1,182 @@
+---
+title: "Lockup wallet"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Lockup wallet is a specialized wallet contract that locks funds until a specified time. The [repository](https://github.com/ton-blockchain/lockup-wallet-contract) contains two implementations with different unlocking mechanisms.
+
+## Universal Lockup Wallet
+
+[Universal Lockup Wallet](https://github.com/ton-blockchain/lockup-wallet-contract/tree/c2c9f73394853780621e6215410a95475ac7cf4f/universal) implements time-based fund locking with allowlist functionality. All funds unlock simultaneously when the time restrictions expire.
+
+Source code: [`universal/uni-lockup-wallet.fc`](https://github.com/ton-blockchain/lockup-wallet-contract/blob/c2c9f73394853780621e6215410a95475ac7cf4f/universal/uni-lockup-wallet.fc)
+
+### Use cases
+
+Escrow services. Lock funds until conditions are met, with allowlist of valid recipients.
+
+### Persistent memory layout
+
+```tlb
+storage$_
+  seqno:uint32
+  subwallet_id:uint32
+  public_key:uint256
+  config_public_key:uint256
+  allowed_destinations:(PfxHashmapE 267 ^Cell)
+  total_locked_value:Coins
+  locked:HashmapE 32 Coins
+  total_restricted_value:Coins
+  restricted:HashmapE 32 Coins
+  = Storage;
+```
+
+- `seqno`: 32-bit sequence number for replay protection.
+- `subwallet_id`: 32-bit wallet identifier.
+- `public_key`: 256-bit Ed25519 public key for signing external messages (wallet operations).
+- `config_public_key`: 256-bit Ed25519 public key for signing internal messages that add locked funds. This separation allows a third party to initialize and fund the lockup wallet without having access to spend the funds.
+- `allowed_destinations`: Prefix dictionary of allowlisted destination addresses (uses `pfxdict_get?` for prefix matching).
+- `total_locked_value`: Total amount of locked funds (unrestricted destinations).
+- `locked`: Dictionary mapping unlock timestamps to locked amounts.
+- `total_restricted_value`: Total amount of restricted funds (allowlist-only).
+- `restricted`: Dictionary mapping unlock timestamps to restricted amounts.
+
+### Message layout
+
+#### External message body layout
+
+- `signature`: 512-bit Ed25519 signature.
+- `subwallet_id`: 32-bit subwallet identifier.
+- `valid_until`: 32-bit Unix timestamp.
+- `msg_seqno`: 32-bit sequence number.
+- Message list: References to messages to send.
+
+The contract unlocks expired funds, reserves locked amounts using `raw_reserve(effectively_locked, 2)`, and sends messages. Each message is sent with its specified mode, but if mode is not 2, it's forced to mode 3 (pay fees separately, ignore errors).
+
+#### Internal message body layout
+
+Internal messages with `op = 0x82eaf9c4` (`rwallet_op`) allow adding locked funds:
+
+```tlb
+rwallet_op#82eaf9c4
+  signature:(## 512)
+  cmd:(## 32)
+  only_restrict:(## 1)
+  timestamp:(## 32)
+  = InternalMsgBody;
+```
+
+Message requirements:
+
+- Must carry ≥1 TON value.
+- Contain valid signature from `config_public_key`.
+- `cmd` must be `0x373aa9f4` (`restricted_transfer`).
+- `only_restrict`: Flag determining lock type: `1` for restricted funds, `0` for locked funds.
+- `timestamp`: Unix timestamp for unlock.
+
+<Aside type="note">
+  Internal messages with other opcodes from allowlisted addresses are silently ignored.
+</Aside>
+
+### Get methods
+
+1. `int seqno()` returns current sequence number.
+1. `int wallet_id()` returns current subwallet ID.
+1. `int get_public_key()` returns stored public key.
+1. `(int, int, int) get_balances_at(int time)` returns balance, restricted value, and locked value at specified time.
+1. `(int, int, int) get_balances()` returns current balance, restricted value, and locked value.
+1. `int check_destination(slice destination)` returns whether destination address is allowlisted.
+
+<Aside type="note">
+  There is no get-method for `config_public_key`. This is by design — the configuration key is only used internally for adding locked funds.
+</Aside>
+
+### Exit codes
+
+| Exit code | Description                                       |
+| --------- | ------------------------------------------------- |
+| 31        | Signature verification failed (`wrong_signature`) |
+| 32        | Config signature verification failed              |
+| 33        | Message value too small (\< 1 TON)                |
+| 34        | Sequence number mismatch (`wrong_seqno`)          |
+| 35        | Subwallet ID mismatch (`wrong_subwallet_id`)      |
+| 36        | Message expired (`replay_protection`)             |
+| 40        | Unknown operation code (`unknown_op`)             |
+| 41        | Unknown command (`unknown_cmd`)                   |
+
+## Vesting Wallet
+
+[Vesting Wallet](https://github.com/ton-blockchain/lockup-wallet-contract/tree/c2c9f73394853780621e6215410a95475ac7cf4f/vesting) implements gradual fund unlocking over time with an optional cliff period. The funds unlock linearly according to a vesting schedule.
+
+Available through [web interface](https://toncenter.github.io/lockup-sender). [Source code](https://github.com/ton-blockchain/lockup-wallet-contract/blob/c2c9f73394853780621e6215410a95475ac7cf4f/vesting/vesting-lockup-wallet.fc).
+
+### Use cases
+
+Employee token vesting. Lock employee tokens with vesting schedule (e.g., 4 years with 1-year cliff).
+
+### Persistent memory layout
+
+```tlb
+storage$_
+  stored_seqno:uint32
+  stored_subwallet:uint32
+  public_key:uint256
+  start_time:uint64
+  total_duration:uint32
+  unlock_period:uint32
+  cliff_duration:uint32
+  total_amount:Coins
+  allow_elector:Bool
+  = Storage;
+```
+
+- `stored_seqno`: 32-bit sequence number (replay protection).
+- `stored_subwallet`: 32-bit wallet identifier.
+- `public_key`: 256-bit Ed25519 public key for signing external messages.
+- `start_time`: 64-bit Unix timestamp when vesting begins.
+- `total_duration`: 32-bit total vesting duration in seconds.
+- `unlock_period`: 32-bit period between unlocks in seconds.
+- `cliff_duration`: 32-bit cliff period before first unlock.
+- `total_amount`: Total amount subject to vesting.
+- `allow_elector`: Boolean flag that bypasses vesting restrictions for transfers to [Elector](/foundations/system#elector) and [Config](/foundations/system#config) contracts.
+
+### Message layout
+
+#### External message body layout
+
+- `signature`: 512-bit Ed25519 signature.
+- `subwallet_id`: 32-bit subwallet identifier.
+- `valid_until`: 32-bit Unix timestamp.
+- `msg_seqno`: 32-bit sequence number.
+- Optional: One message reference. If present, mode MUST be 3 (pay fees separately, ignore errors).
+
+The contract calculates locked amount based on vesting schedule:
+
+- Before `start_time + cliff_duration`: All funds locked.
+- During vesting: Linear unlock based on `unlock_period`.
+- After `start_time + total_duration`: All funds unlocked.
+
+When `allow_elector` is enabled, vesting restrictions are bypassed for transfers to system contracts (see `allow_elector` field description above).
+
+#### Internal message body layout
+
+Internal messages are ignored (no operations performed).
+
+### Get methods
+
+1. `int seqno()` returns current sequence number.
+1. `int get_public_key()` returns stored public key.
+1. `int get_locked_amount(int now_time)` returns locked amount at specified time.
+1. `(int, int, int, int, int, int) get_lockup_data()` returns `(start_time, total_duration, unlock_period, cliff_duration, total_amount, allow_elector)`.
+
+### Exit codes
+
+| Exit code | Description                                      |
+| --------- | ------------------------------------------------ |
+| 33        | Sequence number mismatch                         |
+| 34        | Subwallet ID mismatch                            |
+| 35        | Signature verification failed                    |
+| 36        | Message expired (`valid_until` check failed)     |
+| 37        | Invalid number of message references             |
+| 38        | Invalid send mode (must be 3 if message present) |

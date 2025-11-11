@@ -23,49 +23,59 @@ Let's first explore message structure, that is used to perform different actions
 
 ## TL-B
 
-This is TL-B for V5 wallet actions, it includes some [complex TL-B patterns](/languages/TL-B/complex-and-non-trivial-examples.mdx). You can also find it on [GitHib](https://github.com/ton-blockchain/wallet-contract-v5/blob/321186127e8cc5e395ad3b2f1870839237c56f5f/types.tlb), in the wallet repo.
+This is TL-B for V5 wallet actions, it includes some [complex TL-B patterns](/languages/TL-B/complex-and-non-trivial-examples.mdx). You can also find it on [GitHub](https://github.com/ton-blockchain/wallet-contract-v5/blob/321186127e8cc5e395ad3b2f1870839237c56f5f/types.tlb), in the wallet repo.
 
 ```tlb expandable
-// Standard actions from block.tlb:
-out_list_empty$_ = OutList 0;
-out_list$_ {n:#} prev:^(OutList n) action:OutAction = OutList (n + 1);
-action_send_msg#0ec3c86d mode:(## 8) out_msg:^(MessageRelaxed Any) = OutAction;
+// Contract state
+contract_state$_
+  is_signature_allowed: (## 1)
+  seqno:                #
+  wallet_id:            #
+  public_key:           (## 256)
+  extensions_dict:      (HashmapE 256 int1)
+= ContractState;
 
 // Extended actions in W5:
-action_list_basic$_ {n:#} actions:^(OutList n) = ActionList n 0;
-action_list_extended$_ {m:#} {n:#} action:ExtendedAction prev:^(ActionList n m) = ActionList n (m+1);
+add_extension#02 addr:MsgAddressInt = W5ExtendedAction;
+delete_extension#03 addr:MsgAddressInt = W5ExtendedAction;
+set_signature_auth_allowed#04 allowed:Bool = W5ExtendedAction;
 
-action_add_ext#02 addr:MsgAddressInt = ExtendedAction;
-action_delete_ext#03 addr:MsgAddressInt = ExtendedAction;
-action_set_signature_auth_allowed#04 allowed:(## 1) = ExtendedAction;
+// note: `m = extended actions count - 1`, so the last ref is not empty cell
+extended_list_last$_ action:W5ExtendedAction = W5ExtendedActionList 0;
+extended_list_action$_ {n:#} action:W5ExtendedAction prev:^(W5ExtendedActionList n) = W5ExtendedActionList (n + 1);
 
-signed_request$_             // 32 (opcode from outer)
-  wallet_id:    #            // 32
-  valid_until:  #            // 32
-  msg_seqno:    #            // 32
-  inner:        InnerRequest //
-  signature:    bits512      // 512
-= SignedRequest;             // Total: 688 .. 976 + ^Cell
+// `OutList m` is standard actions from block.tlb:
+w5_actions_request$_ {m:#} {n:#} out_actions:(Maybe ^(OutList m)) extended_actions:(Maybe (W5ExtendedActionList n)) = W5InnerRequest m n;
 
-internal_signed#73696e74 signed:SignedRequest = InternalMsgBody;
-internal_extension#6578746e query_id:(## 64) inner:InnerRequest = InternalMsgBody;
-external_signed#7369676e signed:SignedRequest = ExternalMsgBody;
+w5_signed_request$_ {m:#} {n:#}
+  wallet_id:    #
+  valid_until:  #
+  msg_seqno:    #
+  inner:        (W5InnerRequest m n)
+  signature:    bits512
+= W5SignedRequest m n;
 
-actions$_ out_actions:(Maybe OutList) has_other_actions:(## 1) {m:#} {n:#} other_actions:(ActionList n m) = InnerRequest;
+// actions_count = m, extended_actions_count - 1 = n
+w5_internal_signed_request#73696e74 {m:#} {n:#} request:(W5SignedRequest m n) = W5MsgBody m n;
+w5_external_signed_request#7369676e {m:#} {n:#} request:(W5SignedRequest m n) = W5MsgBody m n;
 
-// Contract state
-contract_state$_ is_signature_allowed:(## 1) seqno:# wallet_id:(## 32) public_key:(## 256) extensions_dict:(HashmapE 256 int1) = ContractState;
+w5_extension_action_request#6578746e {m:#} {n:#} query_id:uint64 request:(W5InnerRequest m n) = W5MsgBody m n;
+
+// opcode detection, actual InternalMsgBody / ExternalMsgBody is in W5MsgBody
+w5_internal_signed_request#73696e74 rest:Any = InternalMsgBody;
+w5_external_signed_request#7369676e rest:Any = InternalMsgBody;
+w5_extension_action_request#6578746e rest:Any = InternalMsgBody;
 ```
 
 Three types of messages that were described above can be seen here:
 
 ```tlb
-internal_signed#73696e74 signed:SignedRequest = InternalMsgBody;
-internal_extension#6578746e query_id:(## 64) inner:InnerRequest = InternalMsgBody;
-external_signed#7369676e signed:SignedRequest = ExternalMsgBody;
+w5_internal_signed_request#73696e74 {m:#} {n:#} request:(W5SignedRequest m n) = W5MsgBody m n;
+w5_external_signed_request#7369676e {m:#} {n:#} request:(W5SignedRequest m n) = W5MsgBody m n;
+w5_extension_action_request#6578746e {m:#} {n:#} query_id:uint64 request:(W5InnerRequest m n) = W5MsgBody m n;
 ```
 
-Each of them includes the same `InnerRequest` field that dictates whats need to be done by wallet contract. In case of signed messages, the request needs to be verified, so `InnerRequest` is wrapped in `SignedRequest` structure, which contains necessary information for this.
+Each of them includes the same `W5InnerRequest` field that dictates whats need to be done by wallet contract. In case of signed messages, the request needs to be verified, so `W5InnerRequest` is wrapped in `W5SignedRequest` structure, which contains necessary information for this.
 
 Let's break down these data structures.
 
@@ -80,7 +90,10 @@ You can skip to [Examples section](#examples), where we would use existing high-
 Inner request is defined as follows:
 
 ```tlb
-actions$_ out_actions:(Maybe OutList) has_other_actions:(## 1) {m:#} {n:#} other_actions:(ActionList n m) = InnerRequest;
+w5_actions_request$_ {m:#} {n:#}
+  out_actions:(Maybe ^(OutList m))
+  extended_actions:(Maybe (W5ExtendedActionList n))
+= W5InnerRequest m n;
 ```
 
 V5 wallet supports two main types of actions that can be performed:
@@ -173,7 +186,7 @@ Signed message is a message that was signed using owners private key from his de
 
 Before V5 standard, there was only one way to deliver signed message to wallet contract - via external-in message. However, external messages has certain limitations, e.g. you can only send external-out messages from the smart contracts themselves. This means that it wasn't possible to deliver signed message from inside the blockchain, from another smart contract. V5 standard adds this functionality, partially enabling [gasless transaction](/standard/wallets/v5#preparing-for-gasless-transactions).
 
-Besides `InnerRequest` field that contains actual actions that will be performed, `Signed message` structure contains usual wallet message fields that were in-place in previous versions, read more about them [here](/standard/wallets/how-it-works).
+Besides `W5InnerRequest` field that contains actual actions that will be performed, `W5SignedRequest` structure contains usual wallet message fields that were in-place in previous versions, read more about them [here](/standard/wallets/how-it-works).
 
 ## Examples
 
@@ -266,9 +279,9 @@ function packExtendedActionsRec(extendedActions: OutActionExtended[]): Cell {
 }
 ```
 
-Now we have to deal with basic action serialization. However, since these are the messages that are described in [block.tlb](/languages/TL-B/overview), we can use contract-agnostic code from serialization library to store them.
+Now we have to deal with basic action serialization. However, since these are the messages that are described in [`block.tlb`](/languages/TL-B/overview), we can use contract-agnostic code from serialization library to store them.
 
-Here is an code snippet for storing V5 wallet actions as per `Inner Request` TL-B:
+Here is a code snippet for storing V5 wallet actions as per `Inner Request` TL-B:
 
 ```ts expandable
 import {
@@ -346,12 +359,12 @@ export type WalletV5BasicSendArgs = {
     privateKey: Buffer;
 }
 
-// internal_signed#73696e74 signed:SignedRequest = InternalMsgBody;
-// external_signed#7369676e signed:SignedRequest = ExternalMsgBody;
+// w5_internal_signed_request#73696e74 {m:#} {n:#} request:(W5SignedRequest m n) = W5MsgBody m n;
+// w5_external_signed_request#7369676e {m:#} {n:#} request:(W5SignedRequest m n) = W5MsgBody m n;
 export type WalletV5SendArgsSinged = WalletV5BasicSendArgs
     & { authType?: 'external' | 'internal';};
 
-// internal_extension#6578746e query_id:(## 64) inner:InnerRequest = InternalMsgBody;
+// w5_extension_action_request#6578746e {m:#} {n:#} query_id:uint64 request:(W5InnerRequest m n) = W5MsgBody m n;
 export type Wallet5VSendArgsExtensionAuth = WalletV5BasicSendArgs & {
     authType: 'extension';
     queryId?: bigint;
@@ -380,7 +393,6 @@ export function createWalletTransferV5R1<T extends WalletV5SendArgs>(
 
     // store each message type according to its TL-B
 
-    // internal_extension#6578746e query_id:(## 64) inner:InnerRequest = InternalMsgBody;
     if (args.authType === 'extension') {
         return beginCell()
             .storeUint(OpCodes.authExtension, 32)
@@ -390,8 +402,6 @@ export function createWalletTransferV5R1<T extends WalletV5SendArgs>(
             .endCell();
     }
 
-    // internal_signed#73696e74 signed:SignedRequest = InternalMsgBody;
-    // external_signed#7369676e signed:SignedRequest = ExternalMsgBody;
     const signingMessage = beginCell()
         .storeUint(args.authType === 'internal'
             ? OpCodes.authSignedInternal
@@ -438,7 +448,7 @@ const serializedExternal = external({
   body: msgCell
 });
 
-// boc is BoC, bag of cells
+// BoC: bag of cells
 const boc = beginCell()
   .store(storeMessage(serializedExternal))
   .endCell()
