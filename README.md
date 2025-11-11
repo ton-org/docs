@@ -91,3 +91,10 @@ See the [`snippets/` directory](./snippets) and the corresponding docs in [`cont
 
 - [Mintlify documentation](https://mintlify.com/docs)
 - [Mintlify community](https://mintlify.com/community)
+
+## License
+
+This project is dual-licensed:
+
+- All documentation and non-code text are licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)
+- All code snippets are licensed under [MIT](https://opensource.org/license/mit)
