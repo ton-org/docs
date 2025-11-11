@@ -137,3 +137,102 @@ No arguments. Outputs:
 | `destination` | `MsgAddress` | address to send royalty          |
 
 Royalty share is `numerator / denominator`. For example, if `numerator = 11` and `denominator = 1000`, then royalty share is `11 / 1000 * 100% = 1.1%`.
+
+## [TEP-85](https://github.com/ton-blockchain/TEPs/blob/c5bfe285ef91810fab02c5352593f5a1455458bf/text/0085-sbt-standard.md)
+
+### SBT Item
+
+#### Prove ownership message layout
+
+| Field             | Type         | Description                                                            |
+| ----------------- | ------------ | ---------------------------------------------------------------------- |
+| `prove_ownership` | `uint32`     | tag equal to `0x04ded148`                                              |
+| `query_id`        | `uint64`     | arbitrary request number                                               |
+| `destination`     | `MsgAddress` | address of the contract to which the ownership should be proven        |
+| `forward_payload` | `^Cell`      | any data for sending to the destination address from SBT               |
+| `with_content`    | `Bool`       | if true, SBT's individual content cell will be included in the message |
+
+<Aside type="caution">Should be rejected if sender address is not the owner's address.</Aside>
+
+#### Request owner message layout
+
+| Field             | Type         | Description                                                            |
+| ----------------- | ------------ | ---------------------------------------------------------------------- |
+| `request_owner`   | `uint32`     | tag equal to `0xd0c3bfea`                                              |
+| `query_id`        | `uint64`     | arbitrary request number                                               |
+| `destination`     | `MsgAddress` | address of the contract to which the ownership should be proven        |
+| `forward_payload` | `^Cell`      | any data for sending to the destination address from SBT               |
+| `with_content`    | `Bool`       | if true, SBT's individual content cell will be included in the message |
+
+#### Destroy message layout
+
+| Field      | Type     | Description               |
+| ---------- | -------- | ------------------------- |
+| `destroy`  | `uint32` | tag equal to `0x1f04537a` |
+| `query_id` | `uint64` | arbitrary request number  |
+
+<Aside type="caution">Should be rejected if sender address is not the owner's address. Sets the owner's address and authority to null, and sends an excesses message with the contract's balance.</Aside>
+
+#### Revoke message layout
+
+| Field      | Type     | Description               |
+| ---------- | -------- | ------------------------- |
+| `revoke`   | `uint32` | tag equal to `0x6f89f5e3` |
+| `query_id` | `uint64` | arbitrary request number  |
+
+<Aside type="caution">Should be rejected if sender address is not the authority's address or if already revoked. Sets `revoked_at` to current unix time.</Aside>
+
+#### Ownership proof message layout
+
+| Field                | Type          | Description                                                      |
+| -------------------- | ------------- | ---------------------------------------------------------------- |
+| `ownership_proof`    | `uint32`      | tag equal to `0x0524c7ae`                                        |
+| `query_id`           | `uint64`      | should be equal to request's `query_id`                          |
+| `item_id`            | `uint256`     | id of SBT                                                        |
+| `owner`              | `MsgAddress`  | SBT owner's address                                              |
+| `data`               | `^Cell`       | data cell passed in `prove_ownership`                            |
+| `revoked_at`         | `uint64`      | unix time when SBT was revoked, 0 if it was not                  |
+| `individual_content` | `Maybe ^Cell` | SBT's individual content if `with_content` was true, null if not |
+
+#### Owner info message layout
+
+| Field        | Type          | Description                                           |
+| ------------ | ------------- | ----------------------------------------------------- |
+| `owner_info` | `uint32`      | tag equal to `0x0dd607e3`                             |
+| `query_id`   | `uint64`      | should be equal to request's `query_id`               |
+| `item_id`    | `uint256`     | id of SBT                                             |
+| `initiator`  | `MsgAddress`  | address of request initiator                          |
+| `owner`      | `MsgAddress`  | SBT owner's address                                   |
+| `data`       | `^Cell`       | data cell equal to request's `forward_payload`        |
+| `revoked_at` | `uint64`      | unix time when SBT was revoked, 0 if it was not       |
+| `content`    | `Maybe ^Cell` | SBT's content if `with_content` was true, null if not |
+
+#### get\_nft\_data()
+
+Same as [NFT standard](/standard/tokens/nft/api#get-nft-data). No arguments. Outputs:
+
+| Field                | Type         | Description                                                               |
+| -------------------- | ------------ | ------------------------------------------------------------------------- |
+| `init?`              | `int`        | if not zero, then this SBT is fully initialized and ready for interaction |
+| `index`              | `int`        | numerical index of this SBT in the collection                             |
+| `collection_address` | `MsgAddress` | address of the smart contract of the collection to which this SBT belongs |
+| `owner_address`      | `MsgAddress` | SBT owner's address                                                       |
+| `individual_content` | `Cell`       | individual SBT content in any format                                      |
+
+#### get\_authority\_address()
+
+No arguments. Outputs:
+
+| Field       | Type    | Description                                                                                |
+| ----------- | ------- | ------------------------------------------------------------------------------------------ |
+| `authority` | `slice` | authority's address that can revoke SBT, returns `addr_none` (2 zero bits) if no authority |
+
+<Aside type="note">This method is mandatory for SBT. If there is no authority it should return `addr_none` (2 zero bits).</Aside>
+
+#### get\_revoked\_time()
+
+No arguments. Outputs:
+
+| Field        | Type  | Description                                           |
+| ------------ | ----- | ----------------------------------------------------- |
+| `revoked_at` | `int` | unix time of when SBT was revoked, 0 when not revoked |
