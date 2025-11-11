@@ -20,7 +20,7 @@ View your local preview at `http://localhost:3000`.
 
 ### Spell checks
 
-> [!NOTE]
+> \[!NOTE]
 > Automatic spelling checks are performed for changed files in each Pull Request.
 
 To check spelling of **all** files, run:
@@ -51,7 +51,7 @@ See more: [CSpell docs on custom dictionaries](https://cspell.org/docs/dictionar
 
 ### Format checks
 
-> [!NOTE]
+> \[!NOTE]
 > Automatic formatting checks are performed for changed files in each Pull Request.
 
 To check formatting of **all** files, run:
