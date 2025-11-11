@@ -4,64 +4,59 @@ title: "Signing messages"
 
 import { Aside } from '/snippets/aside.jsx';
 
-Cryptographic signatures are the foundation of access control in TON. Contracts verify signatures on-chain and implement their own authorization policies for wallet operations, server-authorized actions, gasless transactions, multisig, and delegation. See [wallet ownership verification](/standard/wallets/how-it-works#how-ownership-verification-works).
+Cryptographic signatures are the foundation of access control. Contracts verify signatures on-chain and implement their own authorization policies for [wallet operations](/standard/wallets/how-it-works#how-ownership-verification-works), server-authorized actions, [gasless transactions](/standard/wallets/v5#gasless-transactions), [multisig](/standard/wallets/multisig), and delegation.
 
 ## Ed25519 in TON
 
-TON uses [Ed25519](https://en.wikipedia.org/wiki/EdDSA#Ed25519) as the standard signature scheme. All [wallets](/standard/wallets/history) (v1–v5) and [highload wallets](/standard/wallets/highload/overview) rely on Ed25519.
+TON uses [Ed25519](https://en.wikipedia.org/wiki/EdDSA#Ed25519) as the [standard](/foundations/whitepapers/tblkch#a-3-10-cryptographic-ed25519-signatures) signature scheme. All [wallets](/standard/wallets/history) (v1–v5) and [highload wallets](/standard/wallets/highload/overview) rely on Ed25519.
 
 Specification:
 
 - Public key size: 256 bits
 - Signature size: 512 bits
-- Curve: Ed25519 (Edwards form over Curve25519)
-
-See [TON Cryptography — Ed25519](/foundations/whitepapers/tblkch#a-3-10-cryptographic-ed25519-signatures) for cryptographic details.
+- Curve: Ed25519
 
 <Aside
   type="caution"
 >
-  The public key is **not** the wallet address. The address is derived from the contract's `StateInit` (code + initial data). Multiple contracts can use the same public key but have different addresses. See [Addresses in TON](/foundations/addresses/overview).
+  The public key is _not_ the wallet address. The address is derived from the contract's `StateInit` (code + initial data). Multiple contracts can use the same public key but have [different addresses](/foundations/addresses/overview).
 </Aside>
 
-<Aside
-  type="note"
-  title="Other cryptographic primitives in TVM"
->
-  TVM exposes additional cryptographic primitives beyond Ed25519. These are useful for cross-chain compatibility and advanced protocols:
+## Other primitives
 
-  | Primitive                                                                                     | Purpose                                                                      |
-  | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-  | [secp256k1](https://en.wikipedia.org/wiki/Secp256k1)                                          | Ethereum-style ECDSA via `ECRECOVER`; x-only pubkey operations (TVM v9+)     |
-  | [secp256r1 (P-256)](https://en.wikipedia.org/wiki/Elliptic_Curve_Digital_Signature_Algorithm) | ECDSA verification via `P256_CHKSIGNS` and `P256_CHKSIGNU`                   |
-  | [BLS12-381](https://en.wikipedia.org/wiki/BLS_digital_signature)                              | Pairing-based operations for signature aggregation and zero-knowledge proofs |
-  | [Ristretto255](https://en.wikipedia.org/wiki/Curve25519#Ristretto)                            | Prime-order group over Curve25519 for advanced cryptographic constructions   |
+TVM exposes additional cryptographic primitives beyond Ed25519. These are useful for cross-chain compatibility and advanced protocols:
 
-  For details, see crypto instructions in [TVM instructions](/tvm/instructions), [TVM changelog](/tvm/changelog), or [GlobalVersions.md](https://github.com/ton-blockchain/ton/blob/5c0349110bb03dd3a241689f2ab334ae1a554ffb/doc/GlobalVersions.md).
+| Primitive                                                                                     | Purpose                                                                      |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| [secp256k1](https://en.wikipedia.org/wiki/Secp256k1)                                          | Ethereum-style ECDSA via `ECRECOVER`; x-only pubkey operations (TVM v9+)     |
+| [secp256r1 (P-256)](https://en.wikipedia.org/wiki/Elliptic_Curve_Digital_Signature_Algorithm) | ECDSA verification via `P256_CHKSIGNS` and `P256_CHKSIGNU`                   |
+| [BLS12-381](https://en.wikipedia.org/wiki/BLS_digital_signature)                              | Pairing-based operations for signature aggregation and zero-knowledge proofs |
+| [Ristretto255](https://en.wikipedia.org/wiki/Curve25519#Ristretto)                            | Prime-order group over Curve25519 for advanced cryptographic constructions   |
 
-  This guide focuses on Ed25519, usually used for TON.
-</Aside>
+For details, see crypto instructions in [TVM instructions](/tvm/instructions), [TVM changelog](/tvm/changelog), or [GlobalVersions.md](https://github.com/ton-blockchain/ton/blob/5c0349110bb03dd3a241689f2ab334ae1a554ffb/doc/GlobalVersions.md).
+
+This guide focuses on Ed25519, usually used for TON.
 
 ## Signing pipeline
 
-Ed25519 signatures in TON typically work with hashes rather than raw data:
+Ed25519 signatures in TON typically work with hashes rather than raw data, because signing the hash takes a smaller and constant amount of time.
 
-1. Off-chain:
+- Off-chain (TypeScript)
+  - Serialize message data into a cell
+  - Compute its hash (256 bits)
+  - Sign the hash with private key
+  - Signature (512 bits)
+- On-chain (Tolk)
+  - Contract receives signature and data
+  - Recomputes the hash
+  - Verifies signature matches the hash and public key
 
-- Serialize message data into a cell
-- Compute its hash (256 bits)
-- Sign the hash with private key
-- Signature (512 bits)
 
-1. On-chain:
+TVM provides two signature verification methods:
+- [`CHKSIGNS`](/tvm/instructions#f911-chksigns) checks signature of data;
+- [`CHKSIGNU`](/tvm/instructions#f910-chksignu) checks signature of hash.
 
-- Contract receives signature and data
-- Recomputes the hash
-- Verifies signature matches the hash and public key
-
-<Aside type="note">
-  TVM provides two signature verification methods: `CHKSIGNS` (checks signature of data) and `CHKSIGNU` (checks signature of hash). Hash-based verification (`CHKSIGNU`) is preferred because `CHKSIGNS` only processes data from a single cell (up to 1016 bits) and ignores cell references. For messages containing multiple cells or references, hashing the entire structure first is required.
-</Aside>
+Hash-based verification (`CHKSIGNU`) is preferred because `CHKSIGNS` only processes data from a single cell (up to $127 * 8 = 1016$ bits) and ignores cell references. For messages containing multiple cells or references, hashing the entire structure first is required.
 
 ## Signature interaction patterns
 
