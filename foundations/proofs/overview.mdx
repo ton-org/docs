@@ -8,14 +8,14 @@ A **proof** is a tree-based structure that contains the necessary data and can b
 To prove something means to construct such a structure. The exact structure may differ depending on the use case. For example, suppose a proof is to be validated off-chain and requires multiple cell trees; the native TON approach is to construct a Bag of Cells (BoC) containing all the necessary cells. This is precisely what a liteserver does when data is requested from the blockchain.
 
 <Aside>
-  It is highly recommended to familiarize yourself with [Exotic cells](/tvm/serialization/merkle) first. This article primarily covers situations where you want to verify a proof in a smart contract. However, the same techniques can be used to validate proofs off-chain.
+  It is highly recommended to familiarize yourself with [Exotic cells](/foundations/serialization/merkle) first. This article primarily covers situations where you want to verify a proof in a smart contract. However, the same techniques can be used to validate proofs off-chain.
 </Aside>
 
 There are several key points to consider when proving anything on-chain.
 
-- The only trusted information available in a smart contract is a few recent MasterChain blocks.
+- The only trusted information available in a smart contract is a few recent masterchain blocks.
 - Some data is stored directly within **blocks**.
-- Additional information is maintained within the WorkChain **state**.
+- Additional information is maintained within the workchain **state**.
 - **Blocks** serve as diffs that reflect changes to the **state** over time. Think of **blocks** as Git commits and the **state** as your repository.
 - Latest TL-B schemas can be found in the [TON Monorepo](https://github.com/ton-blockchain/ton/blob/master/crypto/block/block.tlb). They may evolve, typically in backward-compatible ways.
 
@@ -23,14 +23,14 @@ There are several key points to consider when proving anything on-chain.
 
 We need to examine the block layout to determine what we can prove and how to do it.
 
-Each block (ShardChain block, MasterChain block) has a unique block ID:
+Each block (shardchain block, masterchain block) has a unique block ID:
 
 ```tlb
 block_id_ext$_ shard_id:ShardIdent seq_no:uint32
   root_hash:bits256 file_hash:bits256 = BlockIdExt;
 ```
 
-- `ShardIdent` contains information about the WorkChain and the shard the block belongs to.
+- `ShardIdent` contains information about the workchain and the shard the block belongs to.
 - `seq_no` is the sequence number of the current block.
 - `root_hash` is the hash of the block data (block header).
 - `file_hash` helps validators optimize processes; typically, you don’t need it.
@@ -44,7 +44,7 @@ block#11ef55aa global_id:int32
   extra:^BlockExtra = Block;
 ```
 
-The most relevant field here is `state_update`. This `MERKLE_UPDATE` cell stores the old and new hashes of the ShardChain state. Note that the MasterChain always consists of a single shard, so inspecting a MasterChain block reveals the MasterChain state hash.
+The most relevant field here is `state_update`. This `MERKLE_UPDATE` cell stores the old and new hashes of the shardchain state. Note that the masterchain always consists of a single shard, so inspecting a masterchain block reveals the masterchain state hash.
 
 Another relevant field is `extra`:
 
@@ -57,7 +57,7 @@ block_extra in_msg_descr:^InMsgDescr
   custom:(Maybe ^McBlockExtra) = BlockExtra;
 ```
 
-Inspecting a MasterChain block reveals the `McBlockExtra` field:
+Inspecting a masterchain block reveals the `McBlockExtra` field:
 
 ```tlb
 masterchain_block_extra#cca5
@@ -71,35 +71,35 @@ masterchain_block_extra#cca5
 = McBlockExtra;
 ```
 
-The `shard_hashes` field is essential, as it holds the latest known ShardChain blocks, which are critical for BaseChain proofs.
+The `shard_hashes` field is essential, as it holds the latest known shardchain blocks, which are critical for basechain proofs.
 
 For detailed inspections, it is convenient to use the [official explorer](https://explorer.toncoin.org/).
 
 ## High-level overview of proofs
 
-### Prove a transaction in MasterChain
+### Prove a transaction in masterchain
 
-To prove a transaction's existence in the **MasterChain**:
+To prove a transaction's existence in the **masterchain**:
 
-1. Obtain a trusted MasterChain block `root_hash` using TVM instructions (`PREVMCBLOCKS`, `PREVMCBLOCKS_100`, `PREVKEYBLOCKS`).
-1. The user provides a complete MasterChain block that should be validated against the trusted hash.
+1. Obtain a trusted masterchain block `root_hash` using TVM instructions (`PREVMCBLOCKS`, `PREVMCBLOCKS_100`, `PREVKEYBLOCKS`).
+1. The user provides a complete masterchain block that should be validated against the trusted hash.
 1. Parse the block to extract the transaction.
 
-### Prove a transaction in BaseChain
+### Prove a transaction in basechain
 
-For **BaseChain** transactions:
+For **basechain** transactions:
 
-1. Follow _steps 1-2_ above to get a trusted `MasterChain` block.
-1. Extract the `shard_hashes` field from the MasterChain block.
-1. User provides the full ShardChain block that should be validated against the trusted hash.
-1. Parse the ShardChain block to find the transaction.
+1. Follow _steps 1-2_ above to get a trusted `masterchain` block.
+1. Extract the `shard_hashes` field from the masterchain block.
+1. User provides the full shardchain block that should be validated against the trusted hash.
+1. Parse the shardchain block to find the transaction.
 
 ### Prove account states
 
-Sometimes, data is not in block diffs but within the ShardState itself. To prove an account's state in the **BaseChain**:
+Sometimes, data is not in block diffs but within the `ShardState` itself. To prove an account's state in the **basechain**:
 
-1. Parse the ShardChain block’s `state_update` field. This exotic cell contains two ShardState hashes (before and after the block).
-1. The user provides a ShardState that must be validated against the hash obtained in _step 1_.
+1. Parse the shardchain block’s `state_update` field. This exotic cell contains two `ShardState` hashes (before and after the block).
+1. The user provides a `ShardState` that must be validated against the hash obtained in _step 1_.
 
 <Aside>
   You can only prove the state at block boundaries (not intermediate states).
@@ -177,7 +177,7 @@ This is an example of the proof composition technique described above. It is con
 - the account state itself
 - a BoC containing two proofs
 
-The first is a ShardChain block proof, and the second is a shard state proof.
+The first is a shardchain block proof, and the second is a shard state proof.
 
 We will save gas and improve parsing convenience by concatenating the `AccountState` with the `ShardState` proof, which is a cell tree where all branches are pruned except for the path from the root to the `AccountState`. The `AccountState` itself is also pruned so that we will substitute the pruned `AccountState` with the actual one.
 
@@ -223,9 +223,9 @@ inline fun findShardInBinTree(root: Cell, address: Address, shardBitLen: Int): S
 // ...
 
 let mcBlockExtra = McBlockExtra.fromCell(blockHeader.extra.loadRef().beginParse().preloadIthRef(3));
-// shardHashes is a hashmap (WorkChain -> ShardDescr)
-// Therefore, we only need to retrieve the ShardDescr for WorkChain 0, as we are working in BaseChain.
-// We can use a non-null assertion, as we already proved that it is a valid block, and a valid MasterChain block must have a ShardDescr for WorkChain 0.
+// shardHashes is a hashmap (workchain -> ShardDescr)
+// Therefore, we only need to retrieve the ShardDescr for workchain 0, as we are working in basechain.
+// We can use a non-null assertion, as we already proved that it is a valid block, and a valid masterchain block must have a ShardDescr for workchain 0.
 let binTreeWithShardDescr: Cell = mcBlockExtra.shardHashes.get(0)!!;
 let shardDescr = findShardInBinTree(binTreeWithShardDescr, jettonMaster, shardBitLen);
 ```
