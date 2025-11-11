@@ -12,7 +12,7 @@ export const TvmInstructionTable = () => {
 
   const PERSIST_KEY = "tvm-instruction-table::filters";
 
-  const SPEC_REPO = "https://github.com/hacker-volodya/tvm-spec-docs-builder";
+  const SPEC_REPO = "https://github.com/ton-org/tvm-spec-docs-builder";
   const SPEC_COMMIT = "refs/heads/master";
   const SPEC_URL = `${SPEC_REPO.replace(
     "github.com",
