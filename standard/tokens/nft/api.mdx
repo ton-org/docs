@@ -1,0 +1,238 @@
+---
+title: "API"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+NFT messages and methods specified in TEPs.
+
+## [TEP-62](https://github.com/ton-blockchain/TEPs/blob/1fbc23cac69723c53251f686ec90d81bf0e83443/text/0062-nft-standard.md)
+
+### NFT Item
+
+#### Transfer message layout
+
+| Field                  | Type                | Description                                                              |
+| ---------------------- | ------------------- | ------------------------------------------------------------------------ |
+| `transfer`             | `uint32`            | tag equal to `0x5fcc3d14`                                                |
+| `query_id`             | `uint64`            | arbitrary request number                                                 |
+| `new_owner`            | `MsgAddress`        | address of the new owner of the NFT item                                 |
+| `response_destination` | `MsgAddress`        | optional address to receive excess Toncoin, usually the sender's address |
+| `custom_payload`       | `Maybe ^Cell`       | optional custom data                                                     |
+| `forward_amount`       | `VarUInteger 16`    | the amount of Toncoin to be sent to the new owner                        |
+| `forward_payload`      | `Either Cell ^Cell` | optional data that should be forwarded to the new owner                  |
+
+#### Forward payload formats
+
+To send a simple comment in the `forward_payload`, the `forward_payload` must start with `0x00000000` (32-bit unsigned integer equal to zero); the remainder of the `forward_payload` contains the comment.
+
+If the comment does not begin with the byte `0xff`, the comment is a text one; it can be displayed "as is" to the end user of a wallet (after filtering invalid and control characters and checking that it is a valid UTF-8 string). For instance, users may indicate the purpose ("for coffee") of a simple transfer from their wallet to the wallet of another user in this text field.
+
+On the other hand, if the comment begins with the byte `0xff`, the remainder is a "binary comment", which should not be displayed to the end user as text (only as a hex dump if necessary). The intended use of "binary comments" is, e.g., to contain a purchase identifier for payments in a store, to be automatically generated and processed by the store's software.
+
+If the `forward_payload` contains a binary message for interacting with the destination smart contract (for example, with DEX), then there are no prefixes.
+
+#### Ownership assigned message layout
+
+| Field                | Type                | Description                                    |
+| -------------------- | ------------------- | ---------------------------------------------- |
+| `ownership_assigned` | `uint32`            | tag equal to `0x05138d91`                      |
+| `query_id`           | `uint64`            | should be equal to request's `query_id`        |
+| `prev_owner`         | `MsgAddress`        | address of the previous owner of this NFT item |
+| `forward_payload`    | `Either Cell ^Cell` | should be equal to request's `forward_payload` |
+
+#### Excesses message layout
+
+| Field      | Type     | Description                             |
+| ---------- | -------- | --------------------------------------- |
+| `excesses` | `uint32` | tag equal to `0xd53276db`               |
+| `query_id` | `uint64` | should be equal to request's `query_id` |
+
+#### Get static data message layout
+
+| Field             | Type     | Description               |
+| ----------------- | -------- | ------------------------- |
+| `get_static_data` | `uint32` | tag equal to `0x2fcb26a2` |
+| `query_id`        | `uint64` | arbitrary request number  |
+
+#### Report static data message layout
+
+| Field                | Type         | Description                                                               |
+| -------------------- | ------------ | ------------------------------------------------------------------------- |
+| `report_static_data` | `uint32`     | tag equal to `0x8b771735`                                                 |
+| `query_id`           | `uint64`     | should be equal to request's `query_id`                                   |
+| `index`              | `uint256`    | numerical index of this NFT in the collection                             |
+| `collection`         | `MsgAddress` | address of the smart contract of the collection to which this NFT belongs |
+
+<Aside type="caution">Verify that item belongs to collection via [get method in collection](/standard/tokens/nft/api#get-nft-address-by-index), see more [here](/standard/tokens/nft/how-to-verify-item)</Aside>
+
+#### get\_nft\_data()
+
+No arguments. Outputs:
+
+| Field                | Type         | Description                                                               |
+| -------------------- | ------------ | ------------------------------------------------------------------------- |
+| `init?`              | `int`        | if not zero, then this NFT is fully initialized and ready for interaction |
+| `index`              | `int`        | numerical index of this NFT in the collection                             |
+| `collection_address` | `MsgAddress` | address of the smart contract of the collection to which this NFT belongs |
+| `owner_address`      | `MsgAddress` | address of the current owner of this NFT                                  |
+| `individual_content` | `Cell`       | individual NFT content in any format                                      |
+
+<Aside type="caution">Verify that item belongs to collection via [get method in collection](/standard/tokens/nft/api#get-nft-address-by-index), see more [here](/standard/tokens/nft/how-to-verify-item)</Aside>
+
+### NFT Collection
+
+#### get\_collection\_data()
+
+No arguments. Outputs:
+
+| Field                | Type         | Description                                              |
+| -------------------- | ------------ | -------------------------------------------------------- |
+| `next_item_index`    | `int`        | the count of currently deployed NFT items in collection  |
+| `collection_content` | `Cell`       | collection content in a format that complies with TEP-64 |
+| `owner_address`      | `MsgAddress` | collection owner address, zero address if no owner       |
+
+#### get\_nft\_address\_by\_index()
+
+Argument: `index` as `int`.
+
+Output: `address` as `MsgAddress`.
+
+#### get\_nft\_content()
+
+Arguments:
+
+- `index` as `int`
+- `individual_content` as `Cell`
+
+Output: `full_content` as `Cell`.
+
+## [TEP-66](https://github.com/ton-blockchain/TEPs/blob/c5bfe285ef91810fab02c5352593f5a1455458bf/text/0066-nft-royalty-standard.md)
+
+### Get royalty params message layout
+
+| Field                | Type     | Description               |
+| -------------------- | -------- | ------------------------- |
+| `get_royalty_params` | `uint32` | tag equal to `0x693d3950` |
+| `query_id`           | `uint64` | arbitrary request number  |
+
+### Report royalty params message layout
+
+| Field                   | Type         | Description                             |
+| ----------------------- | ------------ | --------------------------------------- |
+| `report_royalty_params` | `uint32`     | tag equal to `0xa8cb00ad`               |
+| `query_id`              | `uint64`     | should be equal to request's `query_id` |
+| `numerator`             | `uint16`     | royalty numerator                       |
+| `denominator`           | `uint16`     | royalty denominator                     |
+| `destination`           | `MsgAddress` | address to send royalty                 |
+
+### royalty\_params()
+
+No arguments. Outputs:
+
+| Field         | Type         | Description                      |
+| ------------- | ------------ | -------------------------------- |
+| `numerator`   | `int`        | royalty numerator (e.g., 11)     |
+| `denominator` | `int`        | royalty denominator (e.g., 1000) |
+| `destination` | `MsgAddress` | address to send royalty          |
+
+Royalty share is `numerator / denominator`. For example, if `numerator = 11` and `denominator = 1000`, then royalty share is `11 / 1000 * 100% = 1.1%`.
+
+## [TEP-85](https://github.com/ton-blockchain/TEPs/blob/c5bfe285ef91810fab02c5352593f5a1455458bf/text/0085-sbt-standard.md)
+
+### SBT Item
+
+#### Prove ownership message layout
+
+| Field             | Type         | Description                                                            |
+| ----------------- | ------------ | ---------------------------------------------------------------------- |
+| `prove_ownership` | `uint32`     | tag equal to `0x04ded148`                                              |
+| `query_id`        | `uint64`     | arbitrary request number                                               |
+| `destination`     | `MsgAddress` | address of the contract to which the ownership should be proven        |
+| `forward_payload` | `^Cell`      | any data for sending to the destination address from SBT               |
+| `with_content`    | `Bool`       | if true, SBT's individual content cell will be included in the message |
+
+<Aside type="caution">Should be rejected if sender address is not the owner's address.</Aside>
+
+#### Request owner message layout
+
+| Field             | Type         | Description                                                            |
+| ----------------- | ------------ | ---------------------------------------------------------------------- |
+| `request_owner`   | `uint32`     | tag equal to `0xd0c3bfea`                                              |
+| `query_id`        | `uint64`     | arbitrary request number                                               |
+| `destination`     | `MsgAddress` | address of the contract to which the ownership should be proven        |
+| `forward_payload` | `^Cell`      | any data for sending to the destination address from SBT               |
+| `with_content`    | `Bool`       | if true, SBT's individual content cell will be included in the message |
+
+#### Destroy message layout
+
+| Field      | Type     | Description               |
+| ---------- | -------- | ------------------------- |
+| `destroy`  | `uint32` | tag equal to `0x1f04537a` |
+| `query_id` | `uint64` | arbitrary request number  |
+
+<Aside type="caution">Should be rejected if sender address is not the owner's address. Sets the owner's address and authority to null, and sends an excesses message with the contract's balance.</Aside>
+
+#### Revoke message layout
+
+| Field      | Type     | Description               |
+| ---------- | -------- | ------------------------- |
+| `revoke`   | `uint32` | tag equal to `0x6f89f5e3` |
+| `query_id` | `uint64` | arbitrary request number  |
+
+<Aside type="caution">Should be rejected if sender address is not the authority's address or if already revoked. Sets `revoked_at` to current unix time.</Aside>
+
+#### Ownership proof message layout
+
+| Field                | Type          | Description                                                      |
+| -------------------- | ------------- | ---------------------------------------------------------------- |
+| `ownership_proof`    | `uint32`      | tag equal to `0x0524c7ae`                                        |
+| `query_id`           | `uint64`      | should be equal to request's `query_id`                          |
+| `item_id`            | `uint256`     | id of SBT                                                        |
+| `owner`              | `MsgAddress`  | SBT owner's address                                              |
+| `data`               | `^Cell`       | data cell passed in `prove_ownership`                            |
+| `revoked_at`         | `uint64`      | unix time when SBT was revoked, 0 if it was not                  |
+| `individual_content` | `Maybe ^Cell` | SBT's individual content if `with_content` was true, null if not |
+
+#### Owner info message layout
+
+| Field        | Type          | Description                                           |
+| ------------ | ------------- | ----------------------------------------------------- |
+| `owner_info` | `uint32`      | tag equal to `0x0dd607e3`                             |
+| `query_id`   | `uint64`      | should be equal to request's `query_id`               |
+| `item_id`    | `uint256`     | id of SBT                                             |
+| `initiator`  | `MsgAddress`  | address of request initiator                          |
+| `owner`      | `MsgAddress`  | SBT owner's address                                   |
+| `data`       | `^Cell`       | data cell equal to request's `forward_payload`        |
+| `revoked_at` | `uint64`      | unix time when SBT was revoked, 0 if it was not       |
+| `content`    | `Maybe ^Cell` | SBT's content if `with_content` was true, null if not |
+
+#### get\_nft\_data()
+
+Same as [NFT standard](/standard/tokens/nft/api#get-nft-data). No arguments. Outputs:
+
+| Field                | Type         | Description                                                               |
+| -------------------- | ------------ | ------------------------------------------------------------------------- |
+| `init?`              | `int`        | if not zero, then this SBT is fully initialized and ready for interaction |
+| `index`              | `int`        | numerical index of this SBT in the collection                             |
+| `collection_address` | `MsgAddress` | address of the smart contract of the collection to which this SBT belongs |
+| `owner_address`      | `MsgAddress` | SBT owner's address                                                       |
+| `individual_content` | `Cell`       | individual SBT content in any format                                      |
+
+#### get\_authority\_address()
+
+No arguments. Outputs:
+
+| Field       | Type    | Description                                                                                |
+| ----------- | ------- | ------------------------------------------------------------------------------------------ |
+| `authority` | `slice` | authority's address that can revoke SBT, returns `addr_none` (2 zero bits) if no authority |
+
+<Aside type="note">This method is mandatory for SBT. If there is no authority it should return `addr_none` (2 zero bits).</Aside>
+
+#### get\_revoked\_time()
+
+No arguments. Outputs:
+
+| Field        | Type  | Description                                           |
+| ------------ | ----- | ----------------------------------------------------- |
+| `revoked_at` | `int` | unix time of when SBT was revoked, 0 when not revoked |

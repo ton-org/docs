@@ -4,6 +4,8 @@ sidebarTitle: "Compiler directives"
 noindex: "true"
 ---
 
+import { Aside } from '/snippets/aside.jsx';
+
 Compiler directives are keywords that begin with `#`, instructing the compiler to perform specific actions, enforce checks, or modify parameters.
 
 These directives can only be used at the outermost level of a source file and cannot be placed inside function definitions.
@@ -15,10 +17,18 @@ The `#include` directive enables the inclusion of another FunC source file parse
 **Syntax:**
 
 ```func
-#include "filename.fc";
+#include "<path_to_filename>";
 ```
 
-Files are automatically checked for multiple inclusions. By default, the compiler will ignore redundant inclusions if the same file is included more than once. A warning will be issued if the verbosity level is 2 or higher.
+where `<path_to_filename>` is the path to the FunC source file to include.
+
+Files are automatically checked for multiple inclusions.
+By default, the compiler will ignore redundant inclusions if the same file is included more than once.
+This also applies to inclusions along a path of nested inclusions.
+A warning will be issued if the verbosity level is 2 or higher.
+
+For example, suppose that `main.fc` contains the `main` function. Suppose also that `main.fc` includes a file `A.fc`, which in turn includes a file `B.fc`,
+which in turn includes `main.fc`. When `main.fc` is compiled, the inclusion of `main.fc` in `B.fc` will be ignored.
 
 If an error occurs while parsing an included file, the compiler displays an inclusion stack, showing the locations of each file in the inclusion chain.
 
@@ -30,78 +40,158 @@ The `#pragma` directive provides additional information to the compiler beyond w
 
 The `#pragma` version directive enforces using a specific FunC compiler version when compiling the file.
 
-The version is specified in **semantic versioning (semver)** format: _a.b.c_, where:
+**Syntax:**
 
-- _a_ is the major version;
-- _b_ is the minor version;
-- _c_ is the patch version.
+```func
+#pragma version <op><sem_version>;
+```
 
-**Supported comparison operators**
+where `<op>` is an optional [version operator](#operators) that allows to specify a constraint, and `<sem_version>` is specified
+in [**semantic versioning (semver)** format](https://en.wikipedia.org/wiki/Software_versioning): _a.b.c_, where:
+
+- _a_ is the major version
+- _b_ is the minor version
+- _c_ is the patch version
+
+Example:
+
+```func
+#pragma version 2.3.4;
+#pragma version >2.3.4;
+```
+
+The first example does not use an operator and it means that the compiler must have exactly version `2.3.4`.
+The second uses the greater than operator `>`, and it means that the compiler must have a version greater
+than `2.3.4` (see [precedence](#equality-and-precedence) and [operators](#operators) below for details).
+
+#### Equality and precedence
+
+Two versions are **equal** if their respective major, minor, and patch numbers are equal. Two versions are **not equal** if at least one of those numbers differ.
+
+Example:
+
+- _1.2.3_ is equal to _1.2.3_
+- _3.4.5_ is not equal to _3.1.5_
+
+**Precedence** of two versions _a.b.c_ and _d.e.f_ is determined the following way:
+
+- If _a_ is smaller than _d_, then _a.b.c_ precedes _d.e.f_
+- If _a_ is equal to _d_, and _b_ is smaller than _e_, then _a.b.c_ precedes _d.e.f_
+- If _a_ is equal to _d_, and _b_ is equal to _e_, and _c_ is smaller than _f_, then _a.b.c_ precedes _d.e.f_
+
+If _a.b.c_ precedes _d.e.f_, then it is said that _a.b.c_ is smaller than _d.e.f_, or equivalently, that _d.e.f_ is greater than _a.b.c_.
+
+Example:
+
+- _1.0.0_ precedes _2.0.0_. Equivalently: _1.0.0_ is smaller than _2.0.0_ or _2.0.0_ is greater than _1.0.0_.
+- _2.0.0_ precedes _2.1.0_. Equivalently: _2.0.0_ is smaller than _2.1.0_ or _2.1.0_ is greater than _2.0.0_.
+- _2.1.0_ precedes _2.1.1_. Equivalently: _2.1.0_ is smaller than _2.1.1_ or _2.1.1_ is greater than _2.1.0_.
+
+#### Operators
 
 Developers can specify version constraints using the following operators:
 
-- _a.b.c_ or _=a.b.c_—Requires **exactly** version _a.b.c_ of the compiler;
-- _>a.b.c_—Requires the compiler version to be **greater** than _a.b.c._;
-  - _>=a.b.c_—Requires the compiler version to be **greater** than or **equal** to _a.b.c_;
-- _\<a.b.c_— Requires the compiler version to be **less** than _a.b.c_;
-  - _\<=a.b.c_—Requires the compiler version to be **less** than or **equal** to _a.b.c_;
-- _^a.b.c_—Requires the major compiler version to be **equal** to the _a_ part and the minor to be **no lower** than the _b_ part;
-  - _^a.b_—Requires the major compiler version to be \*_equal_ to _a_ part and minor be **no lower** than _b_ part;
-  - _^a_—Requires the major compiler version to be **no lower** than _a_ part.
+- _a.b.c_ or _=a.b.c_ - Requires **exactly** version _a.b.c_ of the compiler
+- _>a.b.c_ - Requires the compiler version to be **greater** than _a.b.c._
+- _>=a.b.c_ - Requires the compiler version to be **greater** than or **equal** to _a.b.c_
+- _\<a.b.c_ - Requires the compiler version to be **less** than _a.b.c_
+- _\<=a.b.c_ - Requires the compiler version to be **less** than or **equal** to _a.b.c_
+- _^a.b.c_ - Requires the major part of the compiler version to be **equal** to the _a_ part, the minor to be **equal** to the _b_ part, and the patch to be **no lower** than the _c_ part
+- _^a.b_ - Requires the major compiler version to be **equal** to the _a_ part and the minor to be **no lower** than the _b_ part
+- _^a_ - Requires the major compiler version to be **no lower** than the _a_ part
 
-For comparison operators (_=_, _>_, _>=_, _\<_, _\<=_) , omitted parts default to zero.
+For the comparison operators _=_, _>_, _>=_, _\<_, _\<=_, omitted parts default to zero.
 For example:
 
-- _>a.b_ is equivalent to _>a.b.0_ and **does not** match version _a.b.0._;
-- _\<=a_ is equivalent to _\<=a.0.0_ and **does not** match version _a.0.1_ version;
-- _^a.b.0_ is **not the same** as _^a.b_
+- _>a.b_ is equivalent to _>a.b.0_
+- _\<=a_ is equivalent to _\<=a.0.0_
 
-**Examples:**
+For the operator ^, omitted parts do **not** default to zero. For example:
 
-- _^a.1.2_ matches _a.1.3_ but not _a.2.3_ or _a.1.0_;
-- _^a.1_ matches all of them.
+- _^a.b_ is not equivalent to _^a.b.0_
+- _^a_ is not equivalent to _^a.0.0_
 
-The `#pragma` version directive can be used multiple times, and the compiler must satisfy all specified conditions.
+Here are some examples of constraints:
+
+- _^5.1.2_ matches compiler version _5.1.3_ because patch `3` is no lower than patch `2`.
+- _^5.1.2_ does not match compiler version _5.2.3_ because minor `2` does not equal minor `1`.
+- _^5.1.2_ does not match compiler version _5.1.1_ because patch `1` is lower than patch `2`.
+- _^5.1_ matches compiler version _5.1.3_ because minor `1` is no lower than minor `1`.
+- _^5.1_ matches compiler version _5.2.3_ because minor `2` is no lower than minor `1`.
+- _^5.1_ matches compiler version _5.1.0_ because minor `1` is no lower than minor `1`.
+- _^5.1_ does not match compiler version _5.0.2_ because minor `0` is lower than minor `1`.
+- _^5_ matches compiler version _5.1.0_ because major `5` is no lower than major `5`.
+- _^5_ does not match compiler version _4.1.0_ because major `4` is lower than major `5`.
+- _>5.1.2_ matches compiler version _5.1.3_ because patch `3` is bigger than patch `2`.
+- _>5.1.2_ matches compiler version _5.2.0_ because minor `2` is bigger than minor `1`.
+- _>5.1.2_ matches compiler version _6.0.0_ because major `6` is bigger than major `5`.
+- _=5.1.2_ does not match compiler version _5.2.2_ because minor `2` is not equal to minor `1`.
+
+<Aside>
+  The `#pragma` version directive can be used multiple times, and the compiler must satisfy all specified constraints.
+</Aside>
 
 ### `#pragma not-version`
 
-The syntax of `#pragma not-version` is identical to `#pragma version`, but it fails if the specified condition is met.
+The `#pragma not-version` is similar to `#pragma version`, but it fails if the specified condition is met.
 
-This directive is applicable for blocking specific compiler versions known to have issues.
+**Syntax:**
+
+```func
+#pragma not-version <op><sem_version>;
+```
+
+where `<op>` is an optional [version operator](#operators) that allows to specify a constraint, and `<sem_version>` is identical as
+in [`#pragma version`](#%23pragma-version).
+
+This directive is useful for blocking specific compiler versions known to have issues.
+
+Here are some examples:
+
+```func
+#pragma not-version >2.1.3;
+#pragma not-version ^3.4;
+#pragma not-version 1.2.3;
+```
+
+In the first example, `not-version >2.1.3` matches any compiler version that is _not_ bigger than _2.1.3_, like _2.1.2_, _2.0.5_ and even _2.1.3_ itself.
+
+In the second example, `not-version ^3.4` matches any compiler version that does _not_ match _^3.4_, like _3.3.1_, _4.4.0_, and _3.3.9_
+
+In the third example, `not-version 1.2.3` matches any compiler version different from _1.2.3_.
 
 ### `#pragma allow-post-modification`
 
 _Introduced in FunC v0.4.1_
 
-Using a variable before it is modified within the same expression is prohibited by default.
+In Func, using a variable before it is modified within the same [expression](./expressions) is prohibited by default.
 
-For example, the following code **will not compile**:
+For example, the following code will **not** compile, because `ds` is used before it is modified in `ds~load_uint(8)`.
+See [modifying notation](./expressions#modifying-notation) for more details on using symbol `~`.
 
 ```func
-(x, y) = (ds, ds~load_uint(8))
+(x, y) = (ds, ds~load_uint(8));
 ```
 
-However, this version is **valid**:
+However, this version is **valid**, since `ds` is used after it is modified:
 
 ```func
 (x, y) = (ds~load_uint(8), ds)
 ```
 
-To override this restriction, use `#pragma allow-post-modification`. This allows variables to be modified after usage in mass assignments and function calls while sub-expressions are still computed **left to right**.
+To override this restriction, use `#pragma allow-post-modification`.
+This allows variables to be modified after usage in mass assignments and function calls while sub-expressions are still computed **left to right**.
 
-In the following example, `x` will contain the initial value of `ds`:
+In the following example, `x` will contain the initial value of `ds`, while `y` the modified value of `ds`:
 
 ```func
 #pragma allow-post-modification
 (x, y) = (ds, ds~load_bits(8));
 ```
 
-Here, in `f(ds, ds~load_bits(8));`:
-
-- The first argument of `f` will contain the initial value of `ds`.
-- The second argument will contain the 8-bit-modified value of `ds`.
-
-`#pragma allow-post-modification` works only for code after the pragma.
+<Aside>
+  `#pragma allow-post-modification` works only for code after the pragma.
+</Aside>
 
 ### `#pragma compute-asm-ltr`
 
@@ -113,12 +203,12 @@ _Introduced in FunC v0.4.1_
 idict_set_ref(ds~load_dict(), ds~load_uint(8), ds~load_uint(256), ds~load_ref())
 ```
 
-The execution order is:
+The evaluation order of the call arguments is:
 
 1. `load_ref()`
-2. `load_uint(256)`
-3. `load_dict()`
-4. `load_uint(8)`
+1. `load_uint(256)`
+1. `load_dict()`
+1. `load_uint(8)`
 
 This happens due to the corresponding `asm` declaration:
 
@@ -126,26 +216,26 @@ This happens due to the corresponding `asm` declaration:
 cell idict_set_ref(cell dict, int key_len, int index, cell value) asm(value index dict key_len) "DICTISETREF";
 ```
 
-Here, the `asm(value index dict key_len)` notation dictates a reordering of arguments.
+Here, the `asm(value index dict key_len)` notation dictates a [rearrangement of arguments](/languages/func/asm-functions#rearranging-stack-entries).
 
-To ensure strict left-to-right computation order, use `#pragma compute-asm-ltr`. With this directive enabled, the same function call:
+To ensure strict left-to-right computation order of the arguments, use `#pragma compute-asm-ltr`.
+With this directive enabled, the same function call:
 
 ```func
 #pragma compute-asm-ltr
-...
+;; ...
 idict_set_ref(ds~load_dict(), ds~load_uint(8), ds~load_uint(256), ds~load_ref());
 ```
 
-will be evaluated in the following order:
+will evaluate its arguments in the following order:
 
 1. `load_dict()`
-2. `load_uint(8)`
-3. `load_uint(256)`
-4. `load_ref()`
+1. `load_uint(8)`
+1. `load_uint(256)`
+1. `load_ref()`
 
-All `asm` reordering will occur only after computation.
+and only _after_ the evaluation of all these arguments, the `asm` rearrangement will occur.
 
-`#pragma compute-asm-ltr` works only for code after the pragma.
-
-**Note:** `#pragma compute-asm-ltr` applies only to the code after the directive in the file.
-
+<Aside>
+  `#pragma compute-asm-ltr` works only for code after the pragma.
+</Aside>
