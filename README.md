@@ -92,4 +92,7 @@ See the [`snippets/` directory](./snippets) and the corresponding docs in [`cont
 
 ## License
 
-[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) © [TON Studio](https://github.com/ton-studio) and others.
+This project is dual-licensed:
+
+- All documentation and non-code text are licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)
+- All code snippets are licensed under [MIT](https://opensource.org/license/mit)
