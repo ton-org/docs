@@ -25,35 +25,90 @@ The straightforward approach is to keep a precomputed mapping of recipient → a
 
 Keep a precomputed mapping of recipient → allocation in the contract. When a user sends a claim message, the contract releases the preassigned amount. This works until the list becomes too large, starting at roughly 3,000 entries, problems begin to surface with the external limit (see more in [limits](/foundations/limits#message-and-transaction-limits)).
 
-## The scalable design: shard and prove
+## Scalable airdrop architecture
 
-To scale, we split the state across many contracts ([contract sharding](/contract-dev/contract-sharding)) and keep only a compact commitment to the list on-chain: a root hash of a dictionary (see [hashmap](/languages/TL-B/complex-and-non-trivial-examples#hashmap)). Users then present a [Merkle proof](/foundations/proofs/overview) to claim.
+A scalable airdrop consists of two independent modules:
 
-We must also prevent double-claims. The airdrop has a small per-user marker contract that records whether the user has already claimed. This marker blocks any subsequent attempts.
+1. **Double-claim prevention** — ensures each user can claim only once
+1. **Eligibility verification** — proves the user is entitled to claim a specific drop
 
-<Aside>
-  Why not simply update the Merkle root with each claim?
+These modules are independent and can be combined in different ways.
 
-  With many users, several claims are likely to arrive concurrently. After the first update, all other in-flight proofs become stale, causing many transactions to fail.
-</Aside>
+### Double-claim prevention
 
-## How to prepare
+#### Markers 
+Each user has a small marker contract at a deterministic address derived from their address.
+
+How it works:
+
+1. User sends a message that deploys their marker contract.
+1. Marker contract checks it has not been deployed before.
+1. If already deployed, the claim is rejected (user already claimed).
+1. If not deployed, the marker is created and the claim proceeds.
+
+### Eligibility verification
+
+This module proves which users can claim and how much. Two approaches exist.
+
+#### Merkle proof
+
+The airdrop contract stores a root hash of a dictionary (see [hashmap](/languages/TL-B/complex-and-non-trivial-examples#hashmap)) containing all allocations. Users present a [Merkle proof](/foundations/proofs/overview) to verify their allocation against this root.
+
+On-chain state:
+
+- Root hash (256 bits)
+
+How to prepare:
 
 1. Prepare a list of eligible recipients and their allocations, and construct a dictionary.
 1. Store the root hash in the airdrop contract.
-1. Provide each user with their [Merkle proof](/foundations/proofs/overview) (or enable self-service proof retrieval).
+1. Provide each user with their Merkle proof.
 
-## Claim flow
+#### Signed proof
 
-1. The user sends a message that deploys their per-user marker contract along with their Merkle proof.
-1. If valid, the marker records that the claim has been made and rejects further requests.
-1. The airdrop contract verifies the [Merkle proof](/foundations/proofs/overview) and transfers the asset to the address specified in the proof.
+The airdrop contract stores a backend public key. The backend signs authorization messages for eligible users. Users present the signature to claim.
+
+On-chain state:
+
+- Backend public key (256 bits)
+
+How to prepare:
+
+1. Deploy airdrop contract with backend public key.
+1. Backend validates eligibility criteria on demand (database, external API, business logic).
+1. Backend signs authorization messages for eligible users.
+
+For signature implementation details and security considerations, see [signing messages](/contract-dev/signing).
+
+### Claim flow
+
+The claim process combines both modules.
+
+1. User sends a message that deploys their marker contract along with Merkle proof.
+1. Marker contract checks it has not been deployed before (double-claim prevention).
+1. Airdrop contract verifies proof (eligibility verification).
+1. Airdrop contract transfers assets to recipient.
 
 <Image
   src="/resources/images/merkle_claim_light.svg"
   darkSrc="/resources/images/merkle_claim_dark.svg"
-  alt="Merkle claim"
+  alt="Airdrop claim flow"
 />
+
+### Choosing an approach
+
+Merkle proof fits when:
+
+- Trustless, verifiable distribution is required.
+- Eligibility list is static or changes infrequently.
+- Backend control over claims is not desired.
+
+Signed authorization fits when:
+
+- Eligibility rules change frequently or depend on external data.
+- Trust in the backend is acceptable (centralized projects, known organizations).
+- Lower gas costs per claim are a priority.
+
 
 ## Examples
 
