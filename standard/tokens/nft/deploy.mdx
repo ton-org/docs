@@ -21,8 +21,8 @@ To deploy an item from a [wallet](/standard/wallets/how-it-works), send a messag
 
 ### Prerequisites
 
-- Node.js 22+
-- Packages: `@ton/ton`, `@ton/core`, `@ton/crypto`
+- [Node.js](https://nodejs.org/en/download) 22+
+- Packages: [`@ton/ton`](https://github.com/ton-org/ton), [`@ton/core`](https://github.com/ton-org/ton-core), [`@ton/crypto`](https://github.com/ton-org/ton-crypto)
 - A funded Testnet wallet mnemonic in the `MNEMONIC` environment variable
 - The sending wallet must be the collection owner; otherwise the collection rejects deployments
 
@@ -35,65 +35,90 @@ To deploy an item from a [wallet](/standard/wallets/how-it-works), send a messag
 
 The following example uses the `@ton/ton` stack for TypeScript. These libraries provide interfaces to work with wallet contracts and compose messages.
 
-```ts
+```ts expandable
 import { Address, beginCell, internal, toNano } from "@ton/core";
 import { TonClient, WalletContractV5R1, SendMode } from "@ton/ton";
 import { mnemonicToPrivateKey } from "@ton/crypto";
 
+const collectionAddress = Address.parse("<COLLECTION_ADDRESS>");
+const recipientAddress = Address.parse("<RECIPIENT_ADDRESS>");
+const itemContent = "<ITEM_CONTENT>";
+
 async function main() {
-  const collectionAddress = Address.parse("<COLLECTION_ADDRESS>");
-  const recipientAddress = Address.parse("<RECIPIENT_ADDRESS>");
+    // Toncenter endpoint (Testnet)
+    const client = new TonClient({
+        endpoint: "https://testnet.toncenter.com/api/v2/jsonRPC",
+    });
 
-  // Toncenter endpoint (Testnet)
-  const client = new TonClient({
-    endpoint: "https://testnet.toncenter.com/api/v2/jsonRPC",
-  });
+    // Obtain the next item index
+    const nextItemIndex = (
+        await client.runMethod(
+            collectionAddress,
+            "get_collection_data",
+        )
+    ).stack.readBigNumber();
+    // Read the next item index. See the explanation after the code.
 
-  // Obtain the next item index
-  const nextItemIndex = (
-    await client.runMethod(collectionAddress, "get_collection_data")
-  ).stack.readBigNumber();
-  // Read the next item index. See the explanation after the code.
+    // individual content
+    const content = beginCell()
+        .storeStringTail(itemContent)
+        .endCell();
 
-  // Compose deploy message
-  const msg = internal({
-    to: collectionAddress,
-    value: toNano("0.01"), // Total attached to the collection. Must cover the forwarded amount below (0.005) plus execution/storage fees; keep a safety margin (e.g., 0.01–0.02 TON).
-    bounce: true,
-    body: beginCell()
-      .storeUint(1, 32) // deploy opcode
-      .storeUint(0, 64) // query id
-      .storeUint(nextItemIndex, 64)
-      .storeCoins(toNano("0.005")) // Forwarded to the new item as its initial balance. Ensure `value` >= this amount + all fees.
-      .storeRef(
-        beginCell()
-          .storeAddress(recipientAddress)
-          .storeRef(beginCell().storeStringTail("<ITEM_CONTENT>").endCell()) // individual content
-          .endCell(),
-      )
-      .endCell(),
-  });
+    const body = beginCell()
+        // deploy opcode
+        .storeUint(1, 32)
+        // query id
+        .storeUint(0, 64)
+        .storeUint(nextItemIndex, 64)
+        // Forwarded to the new item as its initial balance.
+        // Ensure `value` >= this amount + all fees.
+        .storeCoins(toNano("0.005"))
+        .storeRef(
+            beginCell()
+                .storeAddress(recipientAddress)
+                .storeRef(content)
+                .endCell(),
+        )
+        .endCell();
 
-  // Initialize wallet
-  const MNEMONIC = process.env.MNEMONIC;
-  if (!MNEMONIC) throw new Error("Set MNEMONIC to a test mnemonic (Testnet).");
-  const keyPair = await mnemonicToPrivateKey(MNEMONIC.split(" "));
-  const walletContract = client.open(
-    WalletContractV5R1.create({
-      workchain: 0, // basechain
-      publicKey: keyPair.publicKey,
-    }),
-  );
+    // Compose deploy message
+    const msg = internal({
+        to: collectionAddress,
+        // Total attached to the collection. Must cover
+        // the forwarded amount below (0.005) plus
+        // execution/storage fees;
+        // keep a safety margin (e.g., 0.01-0.02 TON)
+        value: toNano("0.01"),
+        bounce: true,
+        body,
+    });
 
-  // Send the mint message through the wallet
-  const seqno = await walletContract.getSeqno();
-  await walletContract.sendTransfer({
-    seqno: seqno,
-    secretKey: keyPair.secretKey,
-    // Good practice to use these modes for regular wallet transfers
-    sendMode: SendMode.IGNORE_ERRORS | SendMode.PAY_GAS_SEPARATELY,
-    messages: [msg],
-  });
+    // Initialize wallet
+    const mnemonic = process.env.MNEMONIC;
+    if (!mnemonic) {
+        throw new Error("Set MNEMONIC");
+    }
+    const keyPair = await mnemonicToPrivateKey(
+        mnemonic.split(" ")
+    );
+    const walletContract = client.open(
+        WalletContractV5R1.create({
+            workchain: 0, // basechain
+            publicKey: keyPair.publicKey,
+        }),
+    );
+
+    // Send the mint message through the wallet
+    const seqno = await walletContract.getSeqno();
+    await walletContract.sendTransfer({
+        seqno: seqno,
+        secretKey: keyPair.secretKey,
+        // Good practice to use these modes for
+        // regular wallet transfers
+        sendMode: SendMode.IGNORE_ERRORS |
+            SendMode.PAY_GAS_SEPARATELY,
+        messages: [msg],
+    });
 }
 
 void main();
@@ -107,7 +132,7 @@ Where
 
 Explanation of body cell composition:
 
-- `.storeUint(1, 32)` — operation code `1` selects "deploy single item" in the [reference collection contract](/standard/tokens/nft/reference#deploy-single-item). TEP-62 does not specify this opcode, so in custom implementations, this can differ.
+- `.storeUint(1, 32)` — operation code `1` selects "deploy single item" in the [reference collection contract](/standard/tokens/nft/reference#deploy-single-item). [TEP-62](https://github.com/ton-blockchain/TEPs/blob/f10a373fcb9276ba92b225f294998a43af53dcbf/text/0062-nft-standard.md) does not specify this opcode, so in custom implementations, this can differ.
 - `.storeUint(0, 64)` — `query_id`. Used for correlating responses with requests. It has no impact on deployment logic and `0` is a commonly used placeholder in cases where no extra logic relies on it.
 - `.storeUint(nextItemIndex, 64)` — `item_index`. Index of the item to deploy, obtained from the collection's `get_collection_data` get-method. See [Return collection data](/standard/tokens/nft/reference#return-collection-data).
 - `.storeCoins(toNano("0.005"))` — amount forwarded to the new item at deployment to cover its initial balance/fees. Adjust if extra item contract logic requires more.
@@ -183,7 +208,8 @@ fun onInternalMessage(in: InMessage) {
     val deploy = DeployNft {
         queryId: 0,
         itemIndex: <INDEX>,
-        attachTonAmount: ton("0.005"), // will be sent to the item contract on deployment
+        // will be sent to the item contract on deployment
+        attachTonAmount: ton("0.005"),
         initParams: NftItemInitAtDeployment {
             recipientAddress: address("<RECIPIENT_ADDRESS>"),
             content: ("<ITEM_CONTENT>" as SnakeString).toCell()
