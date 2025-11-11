@@ -1,0 +1,186 @@
+---
+title: "How to interact with wallet"
+sidebarTitle: "How to interact"
+---
+
+import { Aside } from '/snippets/aside.jsx'
+
+Creating a wallet involves several steps
+- Generate a mnemonic; wallet will be still in [`nonexist`](http://localhost:3000/foundations/status#status-variety) status.
+- Derive the public key and the wallet address out of it.
+- Put some funds to the address; wallet account will move to [`uninit`](http://localhost:3000/foundations/status#status-variety) status.
+- Deploy code of wallet contract to that address; account will move to [`active`](http://localhost:3000/foundations/status#status-variety) status.
+
+## Derive wallet address
+
+The following algorithm is used by [wallet apps](/ecosystem/wallet-apps/overview), and has to be replicated if the same wallet address should be generated programmatically.
+
+A wallet account's address is derived from [`StateInit`](/foundations/addresses/overview) that stores in its `data` field two values:
+
+- `public_key`, dependent on the [mnemonic](/standard/wallets/mnemonics);
+- `wallet_id`, a special [salt-like](https://en.wikipedia.org/wiki/Salt_\(cryptography\)) field, dependent on the wallet contract type and the `network_id`.
+
+<Aside type="note">
+  Sometimes `wallet_id` is also called `subwallet_id` in some of the libraries and documentation. They mean the same thing.
+</Aside>
+
+This means that the mnemonic alone does not determine an address uniquely: `wallet_id` has to be known to compute the address.
+
+### Default `wallet_id` values
+
+| Network | [V4R2](/standard/wallets/v4)              | [V5](/standard/wallets/v5)                 |
+| ------- | ------------------------ | ------------------------- |
+| Mainnet | `0x29a9a317` (698983191) | `0x7FFFFF11` (2147483409) |
+| Testnet | `0x29a9a317` (698983191) | `0x7FFFFFFD` (2147483645) |
+
+For Wallet V4R2 `wallet_id` is defined as first 4 bytes from TON mainnet blockchain initial state hash. There is no specific logic why this number was chosen, community needed some default value and this one works well enough.
+
+For Wallet V5, `wallet_id` is different between Mainnet and Testnet for security reasons. There will be different wallet addresses for different networks with the same mnemonic. This prevents replaying transactions from testnet on mainnet, and ensuing loss of funds. The `wallet_id` value is obtained from
+
+- `network_id`: `-239` for mainnet, `-3` for testnet,
+- `wallet_version`: currently always `0`,
+- `subwallet_number`: `0` by default,
+- `workchain`: `0` for basechain
+
+by the following algorithm:
+
+```ts
+type WalletIdV5 = {
+    // currently always 0
+    readonly walletVersion: number;
+    // -239 for mainnet, -3 for testnet
+    readonly networkGlobalId: number;
+    // 0 for basechain
+    readonly workchain: number;
+    // 0 for the first wallet with this mnemonic
+    readonly subwalletNumber: number;
+}
+
+export function storeWalletIdV5(walletId: WalletIdV5) {
+    return (builder: Builder) => {
+        builder.storeInt(walletId.networkGlobalId, 32);
+        builder.storeInt(walletId.workchain, 8);
+        builder.storeUint(walletId.walletVersion, 8);
+        builder.storeUint(walletId.subwalletNumber, 32);
+    }
+}
+```
+
+<Aside type="note">
+  Algorithm here is presented for educational purposes, in most cases there is no need to reimplement it. Use the existing implementation from TON SDKs instead.
+</Aside>
+
+### Examples
+
+The following examples use wrappers for wallet contracts from the [`@ton/ton`](https://github.com/ton-org/ton) TypeScript SDK.
+
+#### Wallet V4R2
+
+```ts expandable
+import { mnemonicToPrivateKey } from '@ton/crypto';
+import { WalletContractV4 } from '@ton/ton';
+
+// 12‑ or 24‑word mnemonic (space‑separated)
+const mnemonic = 'bread table ...';
+
+// async function for await
+const main = async () => {
+    const keyPair = await mnemonicToPrivateKey(
+        mnemonic.split(' ')
+    );
+    const walletContractV4 = WalletContractV4.create({
+        workchain: 0,
+        publicKey: keyPair.publicKey,
+        // this magic number is default wallet_id for V4R2 wallet contract
+        walletId: 0x29a9a317,
+    });
+    console.log(walletContractV4.address);
+}
+
+void main();
+```
+
+#### Wallet V5
+
+```ts expandable
+import { mnemonicToPrivateKey } from '@ton/crypto';
+import { WalletContractV5R1 } from '@ton/ton';
+
+// 12‑ or 24‑word mnemonic (space‑separated).
+const mnemonic = 'foo bar baz ...';
+
+// async function for await
+const main = async () => {
+    const keyPair = await mnemonicToPrivateKey(
+        mnemonic.split(' '),
+    );
+
+    // testnet
+    const testnetV5Wallet = WalletContractV5R1.create({
+        walletId: {
+            networkGlobalId: -3,
+        },
+        publicKey: keyPair.publicKey,
+        workchain: 0,
+    });
+
+    console.log(testnetV5Wallet.address);
+
+    // mainnet
+    const mainnetV5Wallet = WalletContractV5R1.create({
+        walletId: {
+            networkGlobalId: -239,
+        },
+        publicKey: keyPair.publicKey,
+        workchain: 0,
+    });
+
+    console.log(mainnetV5Wallet.address);
+};
+
+void main();
+```
+
+This wallet contract instance can be used to [send messages](/standard/wallets/v5-api) to the blockchain.
+
+## Comments
+
+TON [wallet apps](/ecosystem/wallet-apps/overview) can attach short human-readable notes — commonly called _comments_ — to outgoing internal messages. On-chain they are just message bodies with a specific layout that ecosystem agreed to interpret as text.
+
+### Comment format
+
+- The first 32 bits of the incoming message body must be the opcode `0x00000000`. This value signals that the rest of the payload should be treated as a comment.
+- The remaining bytes are UTF-8 encoded text. Wallet apps should tolerate invalid or empty strings — many senders emit messages without a comment or with zero-length payloads.
+- When parsing, always inspect the opcode before assuming a text comment. If the opcode differs, fall back to handling other contract-specific payloads.
+
+Because comments ride inside ordinary internal messages, the format works identically for:
+
+- native Toncoin transfers between wallets;
+- [Jetton transfers](/standard/tokens/jettons/api#forward-payload-formats), where the wallet forwards an internal message to the token wallet along with the comment payload;
+- [NFT transfers](/standard/tokens/nft/api#forward-payload-formats), where the comment travels in the same forwarding message that moves the ownership record.
+
+### Attaching a comment when sending
+
+To include a comment in an outgoing transfer, construct an internal message body that starts with `0x00000000` and append the UTF-8 bytes of the note YOU want to share. Most wallet libraries expose helpers for this, but the underlying steps are:
+
+1. Allocate a cell.
+1. Store the 32-bit zero opcode.
+1. Store the text as a [byte string](/standard/tokens/metadata#snake-data-encoding) (UTF-8 encoded).
+1. Send the internal message along with the desired Toncoin, [Jettons](/standard/tokens/jettons/how-it-works), or [NFT](/standard/tokens/nft/how-it-works) payload.
+
+Receivers that follow the convention will display the decoded text to the user. Contracts that do not recognize the opcode will simply ignore it or treat the message body as opaque data, so comments are backward-compatible with existing transfers.
+
+### Example: Sending a comment with `@ton/core`
+
+```ts
+import { Cell, beginCell } from '@ton/core';
+
+function createCommentCell(comment: string): Cell {
+    return beginCell()
+        // opcode for comment
+        .storeUint(0, 32)
+        // UTF-8 encoded text in snake encoding
+        .storeStringTail(comment)
+        .endCell();
+}
+```
