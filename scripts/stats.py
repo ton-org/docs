@@ -110,29 +110,44 @@ def split_fences(s: str) -> Tuple[str, str]:
     return "\n".join(prose_lines), "\n".join(code_lines)
 
 
-def extract_counts(s: str) -> Tuple[int, int, int]:
-    """Return prose_words, code_block_lines, inline_code_count.
+def extract_counts(s: str) -> Tuple[int, int]:
+    """Return prose_words and code_block_lines.
 
-    - prose_words: words after removing fenced code, inline code, links/images/tags
+    Inline code policy: count words inside inline code spans, but if a span
+    contains more than 20 words, treat it as prose (drop backticks and keep
+    the content in the prose stream) rather than as special inline code.
+
+    - prose_words: words after removing fenced code and markup, plus words from
+      small inline code spans (≤ 20 words). Large spans (> 20 words) are kept in prose.
     - code_block_lines: non-empty lines inside fenced blocks (``` or ~~~)
-    - inline_code_count: number of inline code spans (`...`) outside fences
     """
     s = strip_frontmatter(s)
     s = strip_imports(s)
     prose, code_blocks = split_fences(s)
     # inline code (outside fences)
-    inline_codes = re.findall(r"`([^`]+)`", prose)
-    inline_code_count = len(inline_codes)
-    # remove inline code spans from prose
-    prose = re.sub(r"`[^`]+`", " ", prose)
+    inline_small_words = 0
+    pattern = re.compile(r"`([^`]+)`")
+
+    def repl(m: re.Match) -> str:
+        nonlocal inline_small_words
+        content = m.group(1)
+        wc = len(re.findall(r"\w+", content))
+        if wc > 20:
+            # treat as prose: drop backticks, keep content
+            return f" {content} "
+        inline_small_words += wc
+        # remove small inline span from prose; we'll add its words separately
+        return " "
+
+    prose = pattern.sub(repl, prose)
     # drop images/links/tags from prose
     prose = re.sub(r"!\[[^\]]*\]\([^\)]+\)", " ", prose)
     prose = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", prose)
     prose = re.sub(r"<[^>]+>", " ", prose)
-    prose_words = len(re.findall(r"\w+", prose))
+    prose_words = len(re.findall(r"\w+", prose)) + inline_small_words
     # count non-empty lines in fenced blocks
     code_block_lines = sum(1 for ln in code_blocks.splitlines() if ln.strip())
-    return prose_words, code_block_lines, inline_code_count
+    return prose_words, code_block_lines
 
 
 def count_words(s: str) -> int:
@@ -193,7 +208,7 @@ def run_latest() -> None:
             warnings.append(f"Unresolved slug: {slug}")
             continue
         content = (REPO_ROOT / rel).read_text("utf-8")
-        prose_words, code_block_lines, inline_code_count = extract_counts(content)
+        prose_words, code_block_lines = extract_counts(content)
         row = {
             "slug": slug,
             "path": rel,
@@ -201,7 +216,6 @@ def run_latest() -> None:
             "words": prose_words,
             "images": count_images(content),
             "codeBlockLines": code_block_lines,
-            "inlineCodeCount": inline_code_count,
         }
         pages_all.append(row)
         if row["stub"]:
@@ -213,7 +227,6 @@ def run_latest() -> None:
         "words": sum(p["words"] for p in included),
         "images": sum(p["images"] for p in included),
         "codeBlockLines": sum(p.get("codeBlockLines", 0) for p in included),
-        "inlineCodeCount": sum(p.get("inlineCodeCount", 0) for p in included),
     }
     dist = summarize([p["words"] for p in included])
 
@@ -236,7 +249,6 @@ def run_latest() -> None:
     print(f"Words:  {totals['words']}")
     print(f"Images: {totals['images']}")
     print(f"Code block lines:  {totals['codeBlockLines']}")
-    print(f"Inline code spans: {totals['inlineCodeCount']}")
     print(
         f"Distribution: min={dist['min']} p25={dist['p25']} median={dist['median']} p75={dist['p75']} max={dist['max']} avg={dist['average']}"
     )
@@ -312,7 +324,7 @@ def compute_snapshot(docs_json_str: str, sha: str) -> Tuple[Dict, Dict, List[Dic
         if not hit:
             continue
         rel, content = hit
-        prose_words, code_block_lines, inline_code_count = extract_counts(content)
+        prose_words, code_block_lines = extract_counts(content)
         row = {
             "slug": slug,
             "path": rel,
@@ -320,7 +332,6 @@ def compute_snapshot(docs_json_str: str, sha: str) -> Tuple[Dict, Dict, List[Dic
             "words": prose_words,
             "images": count_images(content),
             "codeBlockLines": code_block_lines,
-            "inlineCodeCount": inline_code_count,
         }
         if not row["stub"]:
             pages.append(row)
@@ -331,7 +342,6 @@ def compute_snapshot(docs_json_str: str, sha: str) -> Tuple[Dict, Dict, List[Dic
         "words": sum(p["words"] for p in pages),
         "images": sum(p["images"] for p in pages),
         "codeBlockLines": sum(p.get("codeBlockLines", 0) for p in pages),
-        "inlineCodeCount": sum(p.get("inlineCodeCount", 0) for p in pages),
     }
     dist = summarize([p["words"] for p in pages])
     return totals, dist, stubs
