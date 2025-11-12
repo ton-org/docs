@@ -45,6 +45,8 @@ The dictionaries (or vocabularies) for custom words are placed under `resources/
 
 The primary dictionary is `resources/dictionaries/custom.txt` — extend it in case a word exists but was flagged by CSpell as invalid, or in cases where the word does not exist and shall be prohibited. For the latter, use the `!` prefix when adding words.
 
+If an existing two-letter word was flagged as forbidden, remove it from the `resources/dictionaries/two-letter-words-ban.txt` file.
+
 See more: [CSpell docs on custom dictionaries](https://cspell.org/docs/dictionaries/custom-dictionaries).
 
 ### Format checks
