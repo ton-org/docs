@@ -5,11 +5,9 @@ sidebarTitle: "SBT: How it works"
 
 import { Aside } from '/snippets/aside.jsx';
 
-This article describes the basic ideas and processes behind the implementation of SBT (Soul-Bound Token) in the TON Blockchain.
+Soul-Bound Tokens (SBTs) represent non-transferable digital credentials in the TON ecosystem. Unlike standard NFTs, SBTs are permanently bound to their owner and cannot be transferred to another address after minting. The canonical specification is defined in [TEP-85](https://github.com/ton-blockchain/TEPs/blob/c5bfe285ef91810fab02c5352593f5a1455458bf/text/0085-sbt-standard.md).
 
-SBT is a variation of an NFT Item, but has some differences. The canonical specification is defined in [TEP-85](https://github.com/ton-blockchain/TEPs/blob/c5bfe285ef91810fab02c5352593f5a1455458bf/text/0085-sbt-standard.md).
-
-It is important to keep in mind that SBT standards provide only a general scheme of interaction, leaving the specific implementation of related contracts to developers.
+The SBT standard provides a general interaction scheme while leaving the specific implementation of related contracts to developers.
 
 ## Contract data storage
 
@@ -32,20 +30,18 @@ The SBT standard defines what data must be stored in the contract. Each SBT cont
 
 Interactions with SBT contracts, which are most often encountered by users and developers, are:
 
-- prove ownership: sending proof of SBT ownership to a target contract.
+- prove ownership: sending proof of SBT ownership to a destination contract.
 - request current owner: requesting current owner information from SBT.
 - destroy SBT: destroying the SBT contract and returning remaining balance.
 - revoke SBT: marking the SBT as revoked by authority.
 
-<Aside
-  type="caution"
->
-  In all schemes below you will see the `query_id` field. Nowadays the field is almost deprecated, and protocols themselves don't need it. It is mostly used for easier off-chain parsing and other web2 processing.
+<Aside type="note">
+  All message schemes include the `query_id` field. This field is primarily used for off-chain parsing and linking request-response pairs. The protocol itself does not require it for on-chain logic.
 </Aside>
 
 ## Bound to single owner
 
-The `owner` of SBT is set at the minting time and never changes. Below is a simple explanation of the key operations and their message flows.
+The `owner` field is set during minting and remains immutable. The following sections describe the key operations and their message flows.
 
 ## Prove ownership
 
@@ -53,7 +49,7 @@ The `owner` of SBT is set at the minting time and never changes. Below is a simp
 sequenceDiagram
   participant U as Owner
   participant S as SBT
-  participant D as dest (target contract)
+  participant D as Destination
 
   U->>S: prove_ownership
   alt owner
@@ -63,51 +59,51 @@ sequenceDiagram
   end
 ```
 
-This message flow allows the `owner` to ask the SBT to send a proof to a target contract confirming that they own this SBT. You may include arbitrary `forward_payload` and optionally attach `content`.
+This message flow allows the `owner` to ask the SBT to send a proof to a destination contract confirming that they own this SBT. May include arbitrary `forward_payload` and optionally attach `content`.
 
 ### Prove ownership message (inbound to SBT)
 
 ```tlb title="TL-B"
 ;; Inbound message to SBT
-prove_ownership#04ded148 query_id:uint64 dest:MsgAddress
+prove_ownership#04ded148 query_id:uint64 destination:MsgAddress
   forward_payload:^Cell with_content:Bool = InternalMsgBody;
 ```
 
-| Name              | Type         | Description                                                                                                                                                 |
-| ----------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `query_id`        | `uint64`     | Links the request `prove_ownership` and the response `ownership_proof` to each other. To ensure this process works correctly, always use a unique query ID. |
-| `dest`            | `MsgAddress` | Address of the target contract to receive the proof.                                                                                                        |
-| `forward_payload` | `Cell`       | Arbitrary data forwarded to the target contract.                                                                                                            |
-| `with_content`    | `Bool`       | If `true`, attach SBT `content`.                                                                                                                            |
+| Name              | Type         | Description                                                    |
+| ----------------- | ------------ | -------------------------------------------------------------- |
+| `query_id`        | `uint64`     | Arbitrary identifier to link request and response.             |
+| `destination`     | `MsgAddress` | Address of the destination contract to receive the proof.     |
+| `forward_payload` | `Cell`       | Arbitrary data forwarded to the destination contract.          |
+| `with_content`    | `Bool`       | If `true`, attach SBT `content` to the proof.                 |
 
-### Ownership proof message (SBT -> target contract)
+### Ownership proof message (SBT -> destination contract)
 
 ```tlb title="TL-B"
-;; SBT response to the target contract (if checks pass)
+;; SBT response to the destination contract (if checks pass)
 ownership_proof#0524c7ae query_id:uint64 item_id:uint256 owner:MsgAddress
   data:^Cell revoked_at:uint64 content:(Maybe ^Cell) = InternalMsgBody;
 ```
 
-| Name         | Type         | Description                                                                                                                                                  |
-| ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `query_id`   | `uint64`     | Links the request `prove_ownership` and this `ownership_proof` response to each other. To ensure this process works correctly, always use a unique query ID. |
-| `item_id`    | `uint256`    | Identifier of the SBT item.                                                                                                                                  |
-| `owner`      | `MsgAddress` | Current owner address.                                                                                                                                       |
-| `data`       | `Cell`       | Custom data forwarded to the target contract, equal to `forward_payload`.                                                                                    |
-| `revoked_at` | `uint64`     | Revoke time if SBT is revoked, `0` otherwise.                                                                                                                |
-| `content`    | `Maybe Cell` | SBT content if it was requested with `with_content=true`.                                                                                                    |
+| Name         | Type         | Description                                                |
+| ------------ | ------------ | ---------------------------------------------------------- |
+| `query_id`   | `uint64`     | Matches the `query_id` from the request.                  |
+| `item_id`    | `uint256`    | Identifier of the SBT item.                                |
+| `owner`      | `MsgAddress` | Current owner address.                                     |
+| `data`       | `Cell`       | Equals `forward_payload` from the request.                 |
+| `revoked_at` | `uint64`     | Revoke time if SBT is revoked, `0` otherwise.              |
+| `content`    | `Maybe Cell` | SBT content if requested with `with_content=true`.         |
 
-Rejected transaction if the sender is not the `owner`.
+The transaction is rejected if the sender is not the `owner`.
 
 ## Request current owner
 
-This message flow allows any initiator to ask the SBT to send the current `owner` (and optionally the `content`) to a target contract.
+This message flow allows any initiator to ask the SBT to send the current `owner` (and optionally the `content`) to a destination contract.
 
 ```mermaid
 sequenceDiagram
   participant I as Initiator
   participant S as SBT
-  participant D as dest (target contract)
+  participant D as Destination
 
   I->>S: request_owner
   S->>D: owner_info
@@ -117,34 +113,34 @@ sequenceDiagram
 
 ```tlb title="TL-B"
 ;; Inbound message to SBT
-request_owner#d0c3bfea query_id:uint64 dest:MsgAddress
+request_owner#d0c3bfea query_id:uint64 destination:MsgAddress
   forward_payload:^Cell with_content:Bool = InternalMsgBody;
 ```
 
-| Name              | Type         | Description                                                                                                                                          |
-| ----------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `query_id`        | `uint64`     | Links the request `request_owner` and the response `owner_info` to each other. To ensure this process works correctly, always use a unique query ID. |
-| `dest`            | `MsgAddress` | Address of the target contract to receive the response.                                                                                              |
-| `forward_payload` | `Cell`       | Arbitrary data forwarded to the target contract.                                                                                                     |
-| `with_content`    | `Bool`       | If `true`, attach SBT `content` in the response.                                                                                                     |
+| Name              | Type         | Description                                               |
+| ----------------- | ------------ | --------------------------------------------------------- |
+| `query_id`        | `uint64`     | Arbitrary identifier to link request and response.        |
+| `destination`     | `MsgAddress` | Address of the destination contract to receive the info. |
+| `forward_payload` | `Cell`       | Arbitrary data forwarded to the destination contract.     |
+| `with_content`    | `Bool`       | If `true`, attach SBT `content` in the response.          |
 
-### Owner info message (SBT -> target contract)
+### Owner info message (SBT -> destination contract)
 
 ```tlb title="TL-B"
-;; SBT response to the target contract
+;; SBT response to the destination contract
 owner_info#0dd607e3 query_id:uint64 item_id:uint256 initiator:MsgAddress owner:MsgAddress
   data:^Cell revoked_at:uint64 content:(Maybe ^Cell) = InternalMsgBody;
 ```
 
-| Name         | Type         | Description                                                                                                                                           |
-| ------------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `query_id`   | `uint64`     | Links the request `request_owner` and this `owner_info` response to each other. To ensure this process works correctly, always use a unique query ID. |
-| `item_id`    | `uint256`    | Identifier of the SBT item.                                                                                                                           |
-| `initiator`  | `MsgAddress` | Address of the requester.                                                                                                                             |
-| `owner`      | `MsgAddress` | Current owner address.                                                                                                                                |
-| `data`       | `Cell`       | Custom data forwarded to the target, equal to `forward_payload`.                                                                                      |
-| `revoked_at` | `uint64`     | Revoke time if revoked, `0` otherwise.                                                                                                                |
-| `content`    | `Maybe Cell` | SBT content if it was requested.                                                                                                                      |
+| Name         | Type         | Description                                    |
+| ------------ | ------------ | ---------------------------------------------- |
+| `query_id`   | `uint64`     | Matches the `query_id` from the request.      |
+| `item_id`    | `uint256`    | Identifier of the SBT item.                    |
+| `initiator`  | `MsgAddress` | Address of the requester.                      |
+| `owner`      | `MsgAddress` | Current owner address.                         |
+| `data`       | `Cell`       | Equals `forward_payload` from the request.     |
+| `revoked_at` | `uint64`     | Revoke time if revoked, `0` otherwise.         |
+| `content`    | `Maybe Cell` | SBT content if requested.                      |
 
 ## Destroy
 
@@ -171,9 +167,9 @@ sequenceDiagram
 destroy#1f04537a query_id:uint64 = InternalMsgBody;
 ```
 
-| Name       | Type     | Description                                                                                                                                  |
-| ---------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `query_id` | `uint64` | Links the request `destroy` and the response `excesses` to each other. To ensure this process works correctly, always use a unique query ID. |
+| Name       | Type     | Description                                       |
+| ---------- | -------- | ------------------------------------------------- |
+| `query_id` | `uint64` | Arbitrary identifier to link request and response. |
 
 ### Excesses message (SBT -> sender)
 
@@ -182,11 +178,11 @@ destroy#1f04537a query_id:uint64 = InternalMsgBody;
 excesses#d53276db query_id:uint64 = InternalMsgBody;
 ```
 
-| Name       | Type     | Description                                                                                                                                   |
-| ---------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `query_id` | `uint64` | Links the request `destroy` and this `excesses` response to each other. To ensure this process works correctly, always use a unique query ID. |
+| Name       | Type     | Description                               |
+| ---------- | -------- | ----------------------------------------- |
+| `query_id` | `uint64` | Matches the `query_id` from the request. |
 
-Rejected transaction if the sender is not the `owner`.
+The transaction is rejected if the sender is not the `owner`.
 
 ## Revoke SBT
 
@@ -212,11 +208,11 @@ sequenceDiagram
 revoke#6f89f5e3 query_id:uint64 = InternalMsgBody;
 ```
 
-| Name       | Type     | Description                                                                                                                  |
-| ---------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `query_id` | `uint64` | Identifies the `revoke` request for off-chain parsing. To ensure this process works correctly, always use a unique query ID. |
+| Name       | Type     | Description                                         |
+| ---------- | -------- | --------------------------------------------------- |
+| `query_id` | `uint64` | Arbitrary identifier for off-chain parsing.         |
 
-Rejected transaction if:
+The transaction is rejected if:
 
 - the sender is not the `authority`;
 - the SBT was already revoked.
