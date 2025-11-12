@@ -15,13 +15,13 @@ StateInit is distinct from the account's current state. StateInit is the initial
 If it's known how to compose the contract's initial `code` and `data`, it's enough to follow the general algorithm mentioned above as is. Code and data form a StateInit, and [workchain](/foundations/addresses/overview#workchain-id) is usually hardcoded. Below is one of the most common patterns, when `code` is a constant cell known in advance, and `data` is composed at runtime.
 
 ```tolk
-// Compose an address builder using the AutoDeployAddress helper.
+// Compose an address builder using the AutoDeployAddress built-in.
 fun calculateAddress(code: cell, data: cell, workchain: int): builder {
-    val deployTarget = AutoDeployAddress {
+    val addr = AutoDeployAddress {
         workchain,
         stateInit: ContractState { code, data }
     };
-    return deployTarget.buildAddress();
+    return addr.buildAddress();
 }
 
 // Placeholder for the code cell encoded as BoC.
@@ -52,35 +52,20 @@ fun main() {
 
 The `b5ee9c724101010100020000004cacb9cd` in `getCode` function is a placeholder for a hardcoded code cell in [BoC](/foundations/serialization/boc) format known at compile-time. The `getData` function is a placeholder for building a data cell, and actual implementation depends on the storage layout of the target smart contract. Usually data is composed in a parametrized way, but this does not alter the rest of the logic — only the `getData` function.
 
-The `calculate_address` function first composes a StateInit, following the required format:
-
-```tlb
-_ fixed_prefix_length:(Maybe (## 5)) special:(Maybe TickTock)
-  code:(Maybe ^Cell) data:(Maybe ^Cell)
-  library:(Maybe ^Cell) = StateInit;
-```
-
-Only `code` and `data` fields are serialized for this simple case. Binary `00110` corresponds to each of the `Maybe` types, with `0` and `1` showing whether the field is absent or present.
-
-Once StateInit is composed, it is hashed with `cell_hash` function that computes [representation hash](/foundations/serialization/cells#standard-cell-representation-and-its-hash) and the address is composed as type [`MsgAddressInt`](/foundations/whitepapers/tblkch#3-1-2-tl-b-scheme-for-addresses) with tag [`addr_std`](/foundations/addresses/overview#internal-addresses) and with no `anycast`.
-
-```tlb
-addr_std$10 anycast:(Maybe Anycast)
-  workchain_id:int8 address:bits256 = MsgAddressInt;
-```
+The `calculateAddress` function uses the `AutoDeployAddress` built-in that handles all the underlying StateInit and address composing logic. The `buildAddress` method returns a builder containing the resulting address, that can be cheaply stored in another builder, which is the most common use case.
 
 ### Contract sharding
 
 When working with [contract sharding](/contract-dev/contract-sharding#contract-sharding) pattern, child contracts usually have StateInit that depends on parent. The same logic from [simple](#simple) case works here, and only `getData` has to be changed. Since parent is the one that has to derive child addresses often, then handling that dependence is trivial. In the example below the dependence is implemented by adding parent address in child StateInit.
 
 ```tolk
-// Compose an address builder using the AutoDeployAddress helper.
+// Compose an address builder using the AutoDeployAddress built-in.
 fun calculateAddress(code: cell, data: cell, workchain: int): builder {
-    val deployTarget = AutoDeployAddress {
+    val addr = AutoDeployAddress {
         workchain,
         stateInit: ContractState { code, data }
     };
-    return deployTarget.buildAddress();
+    return addr.buildAddress();
 }
 
 // Placeholder for the code cell encoded as BoC.
@@ -94,7 +79,7 @@ fun getChildData(parentAddress: address): cell {
     .endCell();
 }
 
-fun main(): address {
+fun main() {
     val code = getCode();
     val parentAddress = contract.getAddress();
     val data = getChildData(parentAddress);
@@ -107,8 +92,6 @@ fun main(): address {
         .storeBuilder(builderWithAddress)
     .endCell();
     debug.print(exampleCell);
-
-    return address.fromValidBuilder(builderWithAddress);
 }
 ```
 
@@ -116,58 +99,48 @@ Child contracts also often have some kind of index or additional data that they 
 
 ### Vanity
 
-A [vanity contract](https://github.com/ton-community/vanity-contract) allows _customizing_ the address of a smart contract that is being deployed. It does that by making its own StateInit depend on some constant data that is then randomly generated many times until a desired address is found, usually by prefix or a suffix.
+A [vanity contract](/contract-dev/vanity) allows _customizing_ the address of a smart contract that is being deployed. It does that by making its own StateInit depend on some constant data that is then randomly generated many times until a desired address is found, usually by prefix or a suffix.
 
-Actual code and data of the smart contract being deployed are included in the deploy message of the vanity contract, which it takes and simply replaces its own state with that. As a result, the smart contract is initially deployed with a certain StateInit producing the desired address, and actual state is then immediately set based on what is provided.
-
-In this case there's no real correlation between data contract holds and its address. The only way to actually derive the address is by hardcoding constant StateInit that was used to deploy the contract, which has to be retrieved from blockchain history via API.
-
-But if StateInit is a constant, there is really no point in calculating its hash at runtime. It's better to obtain the address in advance and hardcode it.
+In this case there's no real correlation between data contract holds and its final address. So there is no way to actually _derive_ the address. The only option left is to define a constant with the actual address that is obtained in advance.
 
 ```tolk
-// Hardcode the desired address in both formats.
+// Constant address in raw format.
 const VANITY_ADDRESS_RAW: address = address("0:4de24b95c1c3c9b6a94231460716192c7d2b4e444ca6ae9a98bc5c4b3fcdef3f");
+
+// Constant address in user-friendly format.
 const VANITY_ADDRESS_USER_FRIENDLY: address = address("EQBN4kuVwcPJtqlCMUYHFhksfStOREymrpqYvFxLP83vP-Ci");
 
 fun main() {
     debug.print(VANITY_ADDRESS_RAW);
     debug.print(VANITY_ADDRESS_USER_FRIENDLY);
 }
-
-```
-
-Or, if the workchain is not known in advance, it is still possible to hardcode the StateInit hash, and compose address from it at runtime.
-
-```tolk
-// Constant StateInit hash for composing the address at runtime when only the hash is known.
-const VANITY_STATEINIT_HASH: uint256 = 0x4de24b95c1c3c9b6a94231460716192c7d2b4e444ca6ae9a98bc5c4b3fcdef3f;
-
-fun calculateAddressFromHash(stateInitHash: uint256, workchain: int8): builder {
-    return beginCell()
-        .storeUint(0b100, 3) // addr_std without anycast
-        .storeInt(workchain, 8)
-        .storeUint(stateInitHash, 256);
-}
-
-fun main(): address {
-    val builderWithAddress = calculateAddressFromHash(VANITY_STATEINIT_HASH, BASECHAIN);
-
-    val exampleCell = beginCell()
-        .storeBuilder(builderWithAddress)
-    .endCell();
-    debug.print(exampleCell);
-}
 ```
 
 ### Prefixed
 
-The `fixed_prefix_length` field in StateInit allows smart contracts to have a specific prefix in address, for the purpose of deploying it to a certain shardchain. This can be useful for cross-contract latency optimization, as in [Jetton 2.0](/standard/tokens/jettons/comparison#jetton-2-0).
+The `toShard` field in `AutoDeployAddress` allows smart contracts to have a specific prefix in address, for the purpose of deploying it to a certain shardchain. This can be useful for cross-contract latency optimization, as in [Jetton 2.0](/standard/tokens/jettons/comparison#jetton-2-0).
 
-This can seem similar to the [vanity](#vanity) case, but they serve different purposes. Vanity generator finds such StateInit that an address composed from its hash will have certain letters in a prefix or suffix. The `fixed_prefix_length` does not affect other fields of the state, and tells blockchain to not validate the first few bits in the address to which the contract is getting deployed against the expected hash.
+This can seem similar to the [vanity](#vanity) case, but they serve different purposes. Vanity generator finds such StateInit that an address composed from its hash will have certain letters in a prefix or suffix. The `toShard` does not alter the whole address, and only tells blockchain to replace the first few bits in the address to which the contract is getting deployed against the expected hash.
 
-As a result, the logic here is more similar to the [simple](#simple) case. The only difference is that StateInit should also include `fixed_prefix_length` and address should have first few bits replaced with desired ones.
+As a result, the logic here is more similar to the [simple](#simple) case. The only difference is that additional `toShard` field.
 
 ```tolk
+// Compose an address builder using the AutoDeployAddress built-in.
+fun deriveAddress(target: address, prefixLength: int): builder {
+    val code = getCode();
+    val data = getData();
+    val workchain = BASECHAIN;
+    val addr = AutoDeployAddress {
+        workchain,
+        stateInit: ContractState { code, data },
+        toShard: {
+            fixedPrefixLength: prefixLength,
+            closeTo: target
+        }
+    };
+    return addr.buildAddress();
+}
+
 // Placeholder for the code cell encoded as BoC.
 fun getCode(): cell asm "B{b5ee9c724101010100020000004cacb9cd} B>boc PUSHREF";
 
@@ -176,32 +149,20 @@ fun getData(): cell {
     return beginCell().endCell();
 }
 
-fun deriveAddress(target: address): builder {
-    val code = getCode();
-    val data = getData();
-    val workchain = BASECHAIN;
-    val prefixLength = 8;
-    val deployTarget = AutoDeployAddress {
-        workchain,
-        stateInit: ContractState { code, data },
-        toShard: {
-            fixedPrefixLength: prefixLength,
-            closeTo: target
-        }
-    };
-    return deployTarget.buildAddress();
-}
-
 fun main() {
-    // Example 1: using hardcoded constant as a target
+    // Using a constant as a target.
     val constTarget: address = address("0:AA00000000000000000000000000000000000000000000000000000000000000");
-    val constBuilder = deriveAddress(constTarget);
+    val constBuilder = deriveAddress(constTarget, 8);
+
+    // Example usage if the derived address has to be written in another cell.
     val constCell = beginCell().storeBuilder(constBuilder).endCell();
     debug.print(constCell);
 
-    // Example 2: using contract's own address as a target
+    // Using contract's own address as a target.
     val runtimeTarget = contract.getAddress();
-    val runtimeBuilder = deriveAddress(runtimeTarget);
+    val runtimeBuilder = deriveAddress(runtimeTarget, 8);
+
+    // Example usage if the derived address has to be written in another cell.
     val runtimeCell = beginCell().storeBuilder(runtimeBuilder).endCell();
     debug.print(runtimeCell);
 }
@@ -279,39 +240,19 @@ console.log(addr); // EQAE74NUORgCfJQqcKy6GTCEs1hlZ--um6PWEmWX25fgDuuZ
 
 ### Vanity
 
-Similarly to the [on-chain example](#vanity), it only makes sense to hardcode either the StateInit or address due to how vanity contract works.
+Similarly to the [on-chain example](#vanity), there is no way to _derive_ the address, so we have to define a constant with that address that is obtained in advance.
 
 ```ts
 import { contractAddress, Cell, beginCell, Address } from "@ton/core";
 
-// EXAMPLE 1: constant address
 const addr1 = Address.parse("EQBKgXCNLPexWhs2L79kiARR1phGH1LwXxRbNsCFF9doc2lN");
 
 console.log(addr1); // EQBKgXCNLPexWhs2L79kiARR1phGH1LwXxRbNsCFF9doc2lN
-
-// EXAMPLE 2: constant stateinit
-
-// constant code and data from BoC
-const code = Cell.fromBoc(
-  Buffer.from("b5ee9c724101010100020000004cacb9cd", "hex"),
-)[0];
-const data = Cell.fromBoc(
-  Buffer.from("b5ee9c724101010100020000004cacb9cd", "hex"),
-)[0];
-
-const init = {
-  code,
-  data,
-};
-
-const addr2 = contractAddress(0, init);
-
-console.log(addr2); // EQCtMet2LmiPwbohV11DWbD5xIc4r2U-FmojMwC9xrKa6fCK
 ```
 
 ### Prefixed
 
-The logic mirrors the [on-chain example](#prefixed). In `@ton/core` the init field is named `splitDepth` due to legacy naming.
+The logic mirrors the [on-chain example](#prefixed). Since `@ton/core` does not define helpers for prefixed addresses, the prefix must be replaced manually.
 
 ```ts
 import { contractAddress, Cell, beginCell } from "@ton/core";
@@ -327,13 +268,13 @@ const data = beginCell()
   .storeStringTail("hello, world!")
   .endCell();
 
-const init = {
-  splitDepth: 8,
+const init = {'
+  splitDepth: 8, // prefix length
   code,
   data,
 };
 
-const addr = contractAddress(0, init);
+const addr = contractAddress(0, init); // 0 - basechain
 addr.hash[0] = parseInt("00000000", 2); // replace first byte with 0x00
 
 console.log(addr); // EQAAO5BKgRAfcMawxnHYUkZ2Ga74iZMA7uPoD_JkwWfyOwMA
