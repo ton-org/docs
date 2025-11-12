@@ -1,0 +1,2125 @@
+---
+title: "Tolk vs FunC: in detail"
+sidebarTitle: "In detail"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+<Aside
+  type="note"
+  title="Compact version"
+>
+  [Tolk vs FunC: in short](/languages/tolk/from-func/in-short)
+</Aside>
+
+### Comment syntax
+
+|            FunC           |            Tolk           |
+| :-----------------------: | :-----------------------: |
+|        `;; comment`       |        `// comment`       |
+| `{- multiline comment -}` | `/* multiline comment */` |
+
+### Identifiers
+
+- An identifier starts with <code style={{display: 'inline-block'}}>{'[a-zA-Z$]'}</code> and continue with <code style={{display: 'inline-block'}}>{'[a-zA-Z0-9$]'}</code>.
+
+- Characters such as `?` or `:` are invalid, so names like `found?` or `op::increase` are not allowed.
+
+- Identifiers such as `cell` or `slice` are valid.
+
+Example:
+
+```tolk
+var cell = ...
+var cell: cell = ...
+```
+
+It is similar to how `number` is a valid identifier in TypeScript.
+
+**FunC vs Tolk**
+
+In FunC, almost any character can be part of an identifier.
+For example, `2+2` without spaces is treated as a single identifier, and a variable can be declared with such a name.
+
+In Tolk, spaces are not required. `2+2` is `4`, not an identifier. Identifiers can only contain alphanumeric characters.
+`2+2` evaluates to `4`, and `3+~x` is interpreted as `3 + (~x)`, and so on.
+
+|                   FunC                   |         Tolk        |
+| :--------------------------------------: | :-----------------: |
+| `return 2+2;  ;; undefined function 2+2` | `return 2+2;  // 4` |
+
+Backticks can be used to enclose an identifier, allowing any symbols to be included.
+This feature is intended primarily for code generation, where keywords may need to appear as identifiers.
+
+|                  FunC                  |                   Tolk                   |
+| :------------------------------------: | :--------------------------------------: |
+|     `const op::increase = 0x1234;`     |       `const OP_INCREASE = 0x1234`       |
+| `int 2+2 = 5; ;; even 2%&!2 is valid ` | ` var  '2+2' = 5; // don't do like this` |
+
+### Impure by default, no function call elimination
+
+FunC has an `impure` function specifier. When absent, a function is treated as pure. If its result is unused, its call is deleted by the compiler.
+
+For example, functions that do not return a value, such as those that throw an exception on a mismatch, are removed. This issue is spoiled by FunC not validating the function body, allowing impure operations to be executed within pure functions.
+
+In Tolk, all functions are impure by default. A function can be marked as pure using an annotation. In pure functions, impure operations such as throwing exceptions, modifying globals, or calling non-pure functions are disallowed.
+
+### Function syntax updates
+
+- `fun` keyword
+
+|               FunC               |                  Tolk                 |
+| :------------------------------: | :-----------------------------------: |
+|  `cell parse_data(slice cs) { }` | `fun parse_data(cs: slice): cell { }` |
+| `(cell, int) load_storage() { }` | `fun load_storage(): (cell, int) { }` |
+|        `() main() { ... }`       |          `fun main() { ... }`         |
+
+- Types of variables — on the right:
+
+|                 FunC                |                    Tolk                   |
+| :---------------------------------: | :---------------------------------------: |
+|          `slice cs = ...;`          |           `var cs: slice = ...;`          |
+| `(cell c, int n) = parse_data(cs);` | `var (c: cell, n: int) = parse_data(cs);` |
+|        `global int stake_at;`       |           `global stake_at: int`          |
+
+- Modifiers such as `inline` — with `@` annotations:
+
+|                 FunC                 |               Tolk              |
+| :----------------------------------: | :-----------------------------: |
+|       `int f(cell s) inline {`       | `@inline fun f(s: cell): int {` |
+| `() load_data() impure inline_ref {` | `@inline_ref fun load_data() {` |
+|        `global int stake_at;`        |      `global stake_at: int`     |
+
+- `forall` — this way:
+
+|                     FunC                     |                    Tolk                    |
+| :------------------------------------------: | :----------------------------------------: |
+| `forall X -> tuple cons(X head, tuple tail)` | `fun cons<X>(head: X, tail: tuple): tuple` |
+
+- `asm` implementation — same as in FunC, but properly aligned:
+
+```tolk
+@pure
+fun third<X>(t: tuple): X
+    asm "THIRD"
+
+@pure
+fun builder.storeSlice(mutate self, s: slice): self
+    asm(s self) "STSLICE"
+
+@pure
+fun mulDivFloor(x: int, y: int, z: int): int
+    builtin
+```
+
+- There is also a `@deprecated` attribute, not affecting compilation but for developers and IDE.
+
+### get instead of method\_id
+
+In FunC, `method_id` without arguments declares a get method.
+In Tolk, a direct get syntax is used:
+
+|               FunC              |              Tolk              |
+| :-----------------------------: | :----------------------------: |
+| `int seqno() method_id { ... }` | `get fun seqno(): int { ... }` |
+
+For `method_id(xxx)` — uncommon in practice but valid — Tolk uses an annotation:
+
+|                              FunC                             |                              Tolk                              |
+| :-----------------------------------------------------------: | :------------------------------------------------------------: |
+| `() after_code_upgrade(cont old_code) impure method_id(1666)` | `@method_id(1666) fun afterCodeUpgrade(oldCode: continuation)` |
+
+### Parameter types are required, local types are optional
+
+```tolk
+// not allowed
+fun do_smth(c, n)
+// types are mandatory
+fun do_smth(c: cell, n: int)
+```
+
+Parameter types are mandatory, but the return type is optional when it can be inferred.
+If omitted, it's auto-inferred:
+
+```tolk
+fun x() { ... }  // auto infer from return statements
+```
+
+Local variable types are optional:
+
+```tolk
+var i = 10;                      // ok, int
+var b = beginCell();             // ok, builder
+var (i, b) = (10, beginCell());  // ok, two variables, int and builder
+
+// types can be specified manually, of course:
+var b: builder = beginCell();
+var (i: int, b: builder) = (10, beginCell());
+```
+
+Default values for parameters are supported:
+
+```tolk
+fun increment(x: int, by: int = 1) {
+    return x + by
+}
+```
+
+### Variables cannot be redeclared in the same scope
+
+```tolk
+var a = 10;
+...
+var a = 20;  // error, correct is `a = 20`
+if (1) {
+    var a = 30;  // ok, it's another scope
+}
+```
+
+As a consequence, partial reassignment is not allowed:
+
+```tolk
+var a = 10;
+...
+var (a, b) = (20, 30);  // error, releclaration of a
+```
+
+This is not an issue for methods like `loadUint()`.
+
+In FunC, such methods returned a modified object, so a pattern like
+`var (cs, int value) = cs.load_int(32)` is common.
+
+In Tolk, such methods mutate the object: `var value = cs.loadInt(32)`, so redeclaration is rarely needed:
+
+```tolk
+fun send(msg: cell) {
+    var msg = ...;  // error, redeclaration of msg
+
+    // solution 1: intruduce a new variable
+    var msgWrapped = ...;
+    // solution 2: use `redef`, though not recommended
+    var msg redef = ...;
+```
+
+### String postfixes removed, compile-time functions added
+
+Tolk removes FunC-style string postfixes like `"..."c` and replaces them with compile-time functions.
+
+|   FunC   |            Tolk           |
+| :------: | :-----------------------: |
+| `"..."c` |    `stringCrc32("...")`   |
+|    `—`   |    `stringCrc16("...")`   |
+| `"..."H` |   `stringSha256("...")`   |
+| `"..."h` |  `stringSha256_32("...")` |
+| `"..."a` |      `address("...")`     |
+| `"..."s` | `stringHexToSlice("...")` |
+| `"..."u` |  `stringToBase256("...")` |
+
+These functions are:
+
+- compile-time only
+- for constant strings only
+- usable in constant initialization
+
+```tolk
+// type will be `address`
+const BASIC_ADDR = address("EQDKbjIcfM6ezt8KjKJJLshZJJSqX7XOA4ff-W72r5gqPrHF")
+
+// return type will be `int`
+fun minihashDemo() {
+    return stringSha256_32("transfer(slice, int)");
+}
+```
+
+The naming highlights that these functions arrived from string postfixes and operate on string values.
+At runtime, there are no strings, only slices.
+
+### Trailing comma support
+
+Tolk supports trailing commas in the following contexts:
+
+- tensors
+- tuples
+- function calls
+- function parameters
+
+```tolk
+var items = (
+    totalSupply,
+    verifiedCode,
+    validatorsList,
+);
+```
+
+Note that `(5)` is not a tensor. It's the integer `5` in parentheses.
+With a trailing comma `(5,)` it's still `(5)`.
+
+### Optional semicolon for the last statement in a block
+
+In Tolk, the semicolon after the final statement in a block can be omitted.
+While semicolons are still required between statements, the trailing semicolon on the last statement is now optional.
+
+```tolk
+fun f(...) {
+	doSomething();
+	return result   // <-- valid without semicolon
+}
+
+// or
+if (smth) {
+	return 1
+} else {
+	return 2
+}
+```
+
+### ton("...") function for readable Toncoin amounts
+
+|              FunC             |            Tolk            |
+| :---------------------------: | :------------------------: |
+|     `int cost = 50000000;`    |  `val cost = ton("0.05");` |
+| `const ONE_TON = 1000000000;` | `const ONE_TON = ton("1")` |
+
+The function `ton()` only accepts constant values. For example, `ton(some_var)` is invalid.
+Its type is `coins`, not `int`, although it’s treated as a regular `int` by the TVM.
+Arithmetic operations on `coins` degrade to `int` — for example, `cost << 1` or `cost + ton("0.02")` are both valid.
+
+### Type system changes
+
+In Tolk v0.7, the type system was rewritten from scratch.
+To introduce booleans, fixed-width integers, nullability, structures, and generics, Tolk required a static type system similar to TypeScript or Rust.
+
+The types are:
+
+- `int`, `bool`, `cell`, `slice`, `builder`, untyped `tuple`
+- typed tuple `[T1, T2, ...]`
+- tensor `(T1, T2, ...)`
+- callables `(TArgs) -> TResult`
+- nullable types `T?`, compile-time null safety
+- union types `T1 | T2 | ...`, handled with pattern matching
+- `coins` and function `ton("0.05")`
+- `int32`, `uint64`, and other fixed-width integers — int at TVM — [details](https://github.com/ton-blockchain/ton/pull/1559)
+- `bytesN` and `bitsN` — similar to `intN` — backed by slices at TVM
+- `address` — internal/external/none, a slice at TVM
+- `void` — more canonical to be named `unit`, but `void` is more reliable
+- `self`, to make chainable methods, described below; it's not a type, it can only occur instead of return type of a function
+- `never` — an always-throwing function returns `never`, for example; an _impossible type_ is also `never`
+- structures and generics
+
+The type system obeys the following rules:
+
+- Variable types can be specified manually or are inferred from declarations, and never change after being declared.
+- Function parameters must be strictly typed.
+- Function return types, if unspecified, are inferred from return statements similar to TypeScript. In the case of recursion, direct or indirect, the return type must be explicitly declared.
+- Generic functions are supported.
+
+### Clear and readable type mismatch errors
+
+In FunC, type mismatch errors are hard to interpret:
+
+```
+error: previous function return type (int, int)
+cannot be unified with implicit end-of-block return type (int, ()):
+cannot unify type () with int
+```
+
+In Tolk, errors are human-readable:
+
+```
+1) can not assign `(int, slice)` to variable of type `(int, int)`
+2) can not call method for `builder` with object of type `int`
+3) can not use `builder` as a boolean condition
+4) missing `return`
+...
+```
+
+### bool type, casting boolVar as int
+
+At the TVM level, `bool` is represented as -1 or 0, but in the type system, `bool` and `int` are distinct types.
+
+- Comparison operators `== / >= /...` return `bool`.
+- Logical operators `&& ||` return `bool`.
+- Constants `true` and `false` have the `bool` type.
+  Many standard library functions now return `bool`, not `int`:
+
+```tolk
+var valid = isSignatureValid(...);    // bool
+var end = cs.isEnd();                 // bool
+```
+
+- Operator `!x` supports both `int` and `bool`.
+- `if` conditions and similar statements accept both `int` values that are not equal to zero and `bool`.
+- Logical operators `&&` and `||` accept both `bool` and `int`, preserving compatibility with constructs like `a && b` where `a` and `b` are nonzero integers.
+- Arithmetic operators are restricted to integers. Only bitwise and logical operations are allowed for `bool`.
+
+```tolk
+valid && end;    // ok
+valid & end;     // ok, bitwise & | ^ also work if both are bools
+if (!end)        // ok
+
+if (~end)        // error, use !end
+valid + end;     // error
+8 & valid;       // error, int & bool not allowed
+```
+
+Logical operators `&&` and `||`, which are absent in FunC, use the `if/else` `asm` representation.
+In the future, for optimization, they could be automatically replaced with `&` or `|` when safe to do so, for example, `a > 0 && a < 10`.
+
+To manually optimize gas consumption, `&` and `|` can be used for `bool`, but they are not short-circuited.
+
+- `bool` can be cast to `int` using `as` operator:
+
+```tolk
+var i = boolValue as int;  // -1 / 0
+```
+
+There are no runtime transformations. `bool` is guaranteed to be -1 or 0 at the TVM level, so this is a type-only cast.
+Such casts are rarely necessary, except for tricky bitwise optimizations.
+
+### Generic functions and instantiations like f\<int>(...)
+
+Tolk introduces properly made generic functions. The syntax reminds mainstream languages:
+
+```tolk
+fun replaceNulls<T1, T2>(tensor: (T1?, T2?), v1IfNull: T1, v2IfNull: T2): (T1, T2) {
+    var (a, b) = tensor;
+    return (a == null ? v1IfNull : a, b == null ? v2IfNull : b);
+}
+```
+
+A generic parameter `T` may represent any type, including complex ones:
+
+```tolk
+fun duplicate<T>(value: T): (T, T) {
+    var copy: T = value;
+    return (value, copy);
+}
+
+duplicate(1);         // duplicate<int>
+duplicate([1, cs]);   // duplicate<[int, slice]>
+duplicate((1, 2));    // duplicate<(int, int)>
+```
+
+Function types are also supported:
+
+```tolk
+fun callAnyFn<TObj, TResult>(f: TObj -> TResult, arg: TObj) {
+    return f(arg);
+}
+
+fun callAnyFn2<TObj, TCallback>(f: TCallback, arg: TObj) {
+    return f(arg);
+}
+```
+
+Although the generic type `T` is usually inferred from the arguments, there are edge cases where `T` cannot be inferred because it does not depend on them.
+
+```tolk
+fun tupleLast<T>(t: tuple): T
+    asm "LAST"
+
+var last = tupleLast(t);    // error, can not deduce T
+```
+
+To make this valid, `T` must be specified externally:
+
+```tolk
+var last: int = tupleLast(t);       // ok, T=int
+var last = tupleLast<int>(t);       // ok, T=int
+var last = tupleLast(t) as int;     // ok, T=int
+
+someF(tupleLast(t));       // ok, T=(paremeter's declared type)
+return tupleLast(t);       // ok if function specifies return type
+```
+
+- For asm functions, `T` must occupy exactly one stack slot.
+- For user-defined functions, `T` may represent any structure.
+- Otherwise, the `asm` body cannot handle it properly.
+
+### #include → import
+
+|           FunC           |        Tolk        |
+| :----------------------: | :----------------: |
+| `#include "another.fc";` | `import "another"` |
+
+In Tolk, symbols from another file cannot be used without explicitly importing it — **import what is used**.
+
+All standard library functions are available by default. Downloading the stdlib and including it manually `#include "stdlib.fc"` is unnecessary. See [embedded stdlib](/languages/tolk/from-func/in-detail#stdlib-is-now-embedded%2C-not-downloaded-from-github).
+
+There is a global naming scope. If the same symbol is declared in multiple files, it results in an error.
+`import` brings all file-level symbols into scope. The `export` keyword is reserved for future use.
+
+### #pragma → compiler options
+
+In FunC, **experimental** features such as `allow-post-modifications` were enabled with `#pragma` directives inside `.fc` files, which caused inconsistencies across files. These flags are compiler options, not file-level pragmas.
+
+In Tolk, all pragmas were removed. `allow-post-modification` and `compute-asm-ltr` are merged into Tolk sources and behave as if they were always enabled in FunC. Instead of pragmas, experimental behavior is set through compiler options.
+
+There is one experimental option: `remove-unused-functions`, which excludes unused symbols from the Fift output.
+
+`#pragma version xxx` is replaced with `tolk xxx`, no `>=`, only strict versioning. If the version does not match, Tolk shows a warning.
+
+```tolk
+tolk 0.12
+```
+
+### Late symbols resolution and AST representation
+
+In FunC, as in C, a function cannot be accessed before its declaration:
+
+```func
+int b() { a(); }   ;; error
+int a() { ... }    ;; since it's declared below
+```
+
+To avoid an error, a forward declaration is required because symbol resolution occurs during the parsing process.
+
+Tolk compiler separates parsing and symbol resolution into two distinct steps. The code above is valid, since _symbols are resolved after parsing_.
+
+This required introducing an intermediate AST representation, which is absent in FunC. The AST enables future language extensions and semantic code analysis.
+
+### null keyword
+
+Creating null values and checking variables for null is now straightforward.
+
+|          FunC          |       Tolk       |
+| :--------------------: | :--------------: |
+|      `a = null()`      |    `a = null`    |
+|     `if (null?(a))`    | `if (a == null)` |
+|    `if (~ null?(b))`   | `if (b != null)` |
+| `if (~ cell_null?(c))` | `if (c != null)` |
+
+### throw and assert keywords
+
+Tolk simplifies exception handling.
+
+While FunC provides `throw()`, `throw_if()`, `throw_arg_if()`, and the corresponding unless forms, Tolk offers two primitives: `throw` and `assert`:
+
+|               FunC               |             Tolk            |
+| :------------------------------: | :-------------------------: |
+|          `throw(excNo)`          |        `throw excNo`        |
+|      `throw_arg(arg, excNo)`     |     `throw (excNo, arg)`    |
+| `throw_unless(excNo, condition)` |  `assert(condition, excNo)` |
+|   `throw_if(excNo, condition)`   | `assert(!condition, excNo)` |
+
+The `!condition` is valid, as logical NOT is supported.
+
+A verbose form `assert(condition, excNo)` is also available:
+
+```tolk
+assert(condition) throw excNo;
+// with a possibility to include arg to throw
+```
+
+Tolk swaps `catch` arguments: `catch (excNo, arg)`, both of which are optional since arg is usually empty.
+
+|               FunC               |               Tolk              |
+| :------------------------------: | :-----------------------------: |
+|    `try { } catch (_, _) { }`    |       `try { } catch { }`       |
+|  `try { } catch (_, excNo) { }`  |    `try { } catch(excNo) { }`   |
+| `try { } catch (arg, excNo) { }` | `try { } catch(excNo, arg) { }` |
+
+### do ... until → do ... while
+
+|                FunC               |               Tolk               |
+| :-------------------------------: | :------------------------------: |
+| `do { ... } until (~ condition);` |  `do { ... } while (condition);` |
+|  `do { ... } until (condition);`  | `do { ... } while (!condition);` |
+
+The `!condition` is valid, as logical NOT is supported.
+
+### Operator precedence aligned with C++ and JavaScript
+
+In FunC, the code `if (slices_equal() & status == 1)` is parsed as `if ((slices_equal() & status) == 1)`. This causes errors in real-world contracts.
+
+In Tolk, `&` has a lower priority, identical to C++ and JavaScript.
+
+Tolk generates errors on potentially incorrect operator usage to prevent such mistakes:
+
+```tolk
+if (flags & 0xFF != 0)
+```
+
+Produces a compilation error:
+
+```
+& has lower precedence than ==, probably this code won't work as you expected.  Use parenthesis: either (... & ...) to evaluate it first, or (... == ...) to suppress this error.
+```
+
+Code should be rewritten as:
+
+```tolk
+// Evaluate it first (this case)
+if ((flags & 0xFF) != 0)
+// Or emphasize the behavior (not used here)
+if (flags & (0xFF != 0))
+```
+
+Tolk detects a common mistake in bitshift operators: `a << 8 + 1` is equivalent to `a << 9`, which may be unexpected.
+
+```
+int result = a << 8 + low_mask;
+
+error: << has lower precedence than +, probably this code won't work as you expected.  Use parenthesis: either (... << ...) to evaluate it first, or (... + ...) to suppress this error.
+```
+
+Operators `~% ^% /% ~/= ^/= ~%= ^%= ~>>= ^>>=` are no longer supported.
+
+### Immutable variables declared with val
+
+Like in Kotlin, `var` declares mutable variables and `val` declares immutable variables, optionally specifying a type. FunC has no equivalent of `val`.
+
+```tolk
+val flags = msgBody.loadMessageFlags();
+flags &= 1;         // error, modifying an immutable variable
+
+val cs: slice = c.beginParse();
+cs.loadInt(32);     // error, since loadInt() mutates an object
+cs.preloadInt(32);  // ok, it's a read-only method
+```
+
+Function parameters are mutable within the function, but arguments are passed by value and remain unchanged. This behavior matches FunC.
+
+```tolk
+fun some(x: int) {
+    x += 1;
+}
+
+val origX = 0;
+some(origX);      // origX remains 0
+
+fun processOpIncrease(msgBody: slice) {
+    val flags = msgBody.loadInt(32);
+    ...
+}
+
+processOpIncrease(msgBody);  // by value, not modified
+```
+
+In Tolk, functions can declare `mutate` parameters. It's a generalization of FunC `~` tilde functions.
+
+### Deprecated command-line options removed
+
+Command-line flags such as `-A` and `-P` are removed. The default usage:
+
+```
+/path/to/tolk <INPUT_FILE>
+```
+
+- Use `-v` to print the version and exit.
+- Use `-h` to list all available flags.
+
+Only one input file can be specified. Additional files must be **imported**.
+
+### stdlib functions renamed to clear names, camelCase style
+
+All standard library functions now use longer, descriptive names in camelCase style.
+
+|             FunC             |                Tolk               |
+| :--------------------------: | :-------------------------------: |
+|          `cur_lt()`          |     `blockchain.logicalTime()`    |
+|           `car(l)`           |          `listGetHead(l)`         |
+| `get_balance().pair_first()` |  `contract.getOriginalBalance()`  |
+|     `raw_reserve(count)`     | `reserveToncoinsOnBalance(count)` |
+|    `dict~idict_add?(...)`    |     `dict.addIfNotExists(...)`    |
+|  `t~tpush(triple(x, y, z))`  |        `t.push([x, y, z])`        |
+|       `s.slice_bits()`       |      `s.remainingBitsCount()`     |
+|          `~dump(x)`          |          `debug.print(x)`         |
+
+The former `stdlib.fc` was split into multiple files, including `common.tolk` and `tvm-dicts.tolk`.
+
+See the full comparison: [Tolk vs FunC: standard library](/languages/tolk/from-func/stdlib).
+
+### stdlib is now embedded, not downloaded from GitHub
+
+|                FunC               |            Tolk           |
+| :-------------------------------: | :-----------------------: |
+| 1. Download stdlib.fc from GitHub | 1. Use standard functions |
+|      2. Save into the project     |             –             |
+|   3. \`#include "stdlib.fc";\`\`  |             –             |
+|      4.Use standard functions     |             –             |
+
+In Tolk, the standard library is part of the distribution. It is inseparable, as maintaining the **language, compiler, and standard library** together is required for proper release management.
+
+The compiler automatically locates the standard library. If Tolk is installed using an apt package, stdlib sources are downloaded and stored on disk, so the compiler locates them by system paths. When using the WASM wrapper, stdlib is provided by `tolk-js`.
+
+The standard library is split into multiple files:
+
+- `common.tolk` for most common functions,
+- `gas-payments.tolk` for gas calculations,
+- `tvm-dicts.tolk`, and others.
+
+Functions from `common.tolk` are available and implicitly imported by the compiler. Other files must be explicitly imported.
+
+```tolk
+import "@stdlib/gas-payments"       // ".tolk" optional
+
+var fee = calculateStorageFee(...);
+```
+
+The rule **import what is used** applies to `@stdlib/...` files as well, with the only exception of `common.tolk`.
+
+IDE plugins automatically detect the stdlib folder and insert required imports while typing.
+
+### Logical operators && ||, logical not !
+
+In FunC, only bitwise operators `~ & | ^` exist. Using them as logical operators leads to errors because their behavior is different:
+
+|    `a & b`    |       `a && b`       |         note        |
+| :-----------: | :------------------: | :-----------------: |
+|  `0 & X = 0`  |      `0 & X = 0`     | sometimes identical |
+| `-1 & X = -1` |     `-1 & X = -1`    | sometimes identical |
+|  `1 & 2 = 0`  | `1 && 2 = -1 (true)` |    generally not    |
+
+|        `~ found`        |     `!found`    |         note        |
+| :---------------------: | :-------------: | :-----------------: |
+| `true (-1) → false (0)` |     `-1 → 0`    | sometimes identical |
+| `false (0) → true (-1)` |     `0 → -1`    | sometimes identical |
+|         `1 → -2`        | `1 → 0 (false)` |    generally not    |
+
+|    `condition & f()`   |               `condition && f()`               |
+| :--------------------: | :--------------------------------------------: |
+| `f()` is called always |       `f()` is called only if `condition`      |
+|   `condition \| f()`   |              `condition \|\| f()`              |
+| `f()` is called always | `f()` is called only if `condition` is `false` |
+
+Tolk supports logical operators. They behave as expected, as shown in the right column.. `&&` and `||` may produce suboptimal Fift code, but the effect is negligible. Use them as in other languages.
+
+|                       FunC                       |                    Tolk                    |
+| :----------------------------------------------: | :----------------------------------------: |
+|                  `if (~ found?)`                 |                `if (!found)`               |
+| `if (~ found?) {if (cs~load_int(32) == 0) {...}` | `if (!found && cs.loadInt(32) == 0) {...}` |
+|         `ifnot (cell_null?(signatures))`         |          `if (signatures != null)`         |
+|             `elseifnot (eq_checksum)`            |           `else if (!eqChecksum)`          |
+
+Keywords `ifnot` and `elseifnot` are removed because logical NOT is now available. For optimization, Tolk compiler generates `IFNOTJMP`. The `elseif` keyword is replaced by the standard `else if`.
+
+A boolean `true` transformed as `int` is -1, not 1. This reflects TVM representation.
+
+### Indexed access tensorVar.0 and tupleVar.0
+
+Use `tensorVar.{i}` to access i-th component of a tensor. Modifying it changes the tensor.
+
+```tolk
+var t = (5, someSlice, someBuilder);   // 3 stack slots
+t.0         			// 5
+t.0 = 10;   			// t is now (10, ...)
+t.0 += 1;               // t is now (11, ...)
+increment(mutate t.0);  // t is now (12, ...)
+t.0.increment();        // t is now (13, ...)
+
+t.1         // slice
+t.100500    // compilation error
+```
+
+Use `tupleVar.{i}` to access the i-th element of a tuple, uses INDEX internally. Modifying it changes the tuple, SETINDEX internally.
+
+```tolk
+var t = [5, someSlice, someBuilder];   // 1 tuple on a stack with 3 items
+t.0                     // "0 INDEX", reads 5
+t.0 = 10;               // "0 SETINDEX", t is now [10, ...]
+t.0 += 1;               // also works: "0 INDEX" to read 10, "0 SETINDEX" to write 11
+increment(mutate t.0);  // also, the same way
+t.0.increment();        // also, the same way
+
+t.1         // "1 INDEX", it's slice
+t.100500    // compilation error
+```
+
+It also works for untyped tuples, though the compiler does not guarantee index correctness.
+
+```tolk
+var t = createEmptyTuple();
+t.tuplePush(5);
+t.0                     // will head 5
+t.0 = 10                // t will be [10]
+t.100500                // will fail at runtime
+```
+
+- Supports nesting `var.{i}.{j}`
+- Supports nested tensors, nested tuples, and tuples inside tensors
+- Supports `mutate` and global variables
+
+```tolk
+t.1.2 = 10;    // "1 INDEX" + "2 SETINDEX" + "1 SETINDEX"
+t.1.2 += 10;   // "1 INDEX" + "2 INDEX" + sum + "2 SETINDEX" + "1 SETINDEX"
+
+globalTuple.1.2 += 10;  // "GETGLOB" + ... + "SETGLOB"
+```
+
+### Type address
+
+In TVM, all binary data is represented as **a slice**. The same applies to addresses: TL-B defines the `MsgAddress` type, and the TVM assembler provides instructions to load and validate addresses.
+
+However, at the low level, an address is a slice. Thus, in FunC's standard library, `loadAddress` returns `slice` and `storeAddress` accepts `slice`.
+
+Tolk introduces a dedicated `address` type. It remains a TVM slice at runtime — internal, external, or none — but differs from an **abstract slice** in terms of the type system:
+
+1. Integrated with auto-serialization: the compiler knows how to pack and unpack it using `LDMSGADDR` and `STSLICE`.
+1. Comparable: operators `==` and `!=` supported for addresses.
+
+```tolk
+if (senderAddress == msg.owner)
+```
+
+3. Introspectable: provides `address.isNone()`, `address.isInternal()`, `address.isExternal()`, `address.getWorkchain()` and `address.getWorkchainAndHash()`, valid for internal addresses.
+
+Passing a slice instead leads to an error:
+
+```tolk
+var a: slice = s.loadAddress();  // error, can not assign `address` to `slice`
+```
+
+**Embedding a const address into a contract**
+
+Use the built-in `address()` function, which accepts a standard address. In FunC, this was done using the postfix `"..."a`, which returned a slice.
+
+```tolk
+address("EQCRDM9h4k3UJdOePPuyX40mCgA4vxge5Dc5vjBR8djbEKC5")
+address("0:527964d55cfa6eb731f4bfc07e9d025098097ef8505519e853986279bd8400d8")
+```
+
+**Casting `slice` to `address` and vice versa**
+
+A raw slice that represents an address can be cast using the `as` operator.
+
+This occurs when an address is manually constructed in a builder using its binary representation:
+
+```tolk
+var b = beginCell()
+       .storeUint(0b01)   // addr_extern
+       ...;
+var s = b.endCell().beginParse();
+return s as address;   // `slice` as `address`
+```
+
+A reversed cast is also valid: `someAddr as slice`.
+
+**Different types of addresses**
+
+There are different types of [addresses](/foundations/addresses/overview). The most frequently used is an [internal address](/foundations/addresses/overview#internal-addresses) — the address of a smart contract. But also, there are **external** and **none** addresses. In a binary TL-B representation:
+
+- `10` (**internal** prefix) + `0` (anycast, always 0) + workchain (8 bits) + hash (256 bits) — that's `EQ...`: it's 267 bits
+- `01` (**external** prefix) + len (9 bits) + len bits — external addresses
+- `00` (**none** prefix) — address **none**, 2 bits
+
+The `address` type can represent any address, although it is most commonly **internal**.
+The type system does not enforce this distinction, as it would require heavy runtime checks.
+
+When receiving an `address` from untrusted input, validate it:
+
+```tolk
+val newOwner = msg.nextOwnerAddress;
+assert(newOwner.isInternal()) throw 403;
+assert(newOwner.getWorkchain() == BASECHAIN) throw 403;
+```
+
+In general, if inputs are untrusted, validate everything — numbers, payloads, and addresses.
+If the input originates from a trusted source, it can be relied upon safely.
+The compiler does not insert hidden instructions.
+
+### Type aliases type NewName = \<existing type>
+
+Tolk supports type aliases, like in TypeScript and Rust.
+An alias creates a new name for an existing type and **remains fully interchangeable with it**.
+
+```tolk
+type UserId = int32
+type MaybeOwnerHash = bytes32?
+
+fun calcHash(id: UserId): MaybeOwnerHash { ... }
+
+var id: UserId = 1;       // ok
+var num: int = id;        // ok
+var h = calcHash(id);
+if (h != null) {
+    h as slice;           // bytes32 as slice
+}
+```
+
+### Nullable types T?, null safety, smart casts, operator !
+
+Tolk supports nullable types: `int?`, `cell?`, and `T?` in general, including tensors.
+Non-nullable types, such as `int` and `cell`, cannot hold null values.
+
+The compiler enforces **null safety**: nullable types cannot be accessed without a null check.
+Checks are applied through smart casts. Smart casts exist only at compile time and do not affect gas or stack usage.
+
+```tolk
+var value = x > 0 ? 1 : null;  // int?
+
+value + 5;               // error
+s.storeInt(value);       // error
+
+if (value != null) {
+    value + 5;           // ok, smart cast
+    s.storeInt(value);   // ok, smart cast
+}
+```
+
+When a variable's type is not declared, it is inferred from the initial assignment and never changes:
+
+```tolk
+var i = 0;
+i = null;       // error, can't assign `null` to `int`
+i = maybeInt;   // error, can't assign `int?` to `int`
+```
+
+Variables that may hold null must be **explicitly declared as nullable**:
+
+```tolk
+// incorrect
+var i = null;
+if (...) {
+    i = 0;     // error
+}
+
+// correct
+var i: int? = null;
+// or
+var i = null as int?;
+```
+
+Smart casts handle nullable types automatically, enabling code such as:
+
+```tolk
+if (lastCell != null) {
+    // here lastCell is `cell`, not `cell?`
+}
+```
+
+```tolk
+if (lastCell == null || prevCell == null) {
+    return;
+}
+// both lastCell and prevCell are `cell`
+```
+
+```tolk
+var x: int? = ...;
+if (x == null) {
+    x = random();
+}
+// here x is `int`
+```
+
+```tolk
+while (lastCell != null) {
+    lastCell = lastCell.beginParse().loadMaybeRef();
+}
+// here lastCell is 100% null
+```
+
+```tolk
+// t: (int, int)?
+t.0                // error
+t!.0               // ok
+if (t.0 != null) {
+    t.0            // ok
+}
+```
+
+Smart casts do not apply to global variables; they operate only on local variables.
+
+The `!` operator in Tolk provides a compile-time non-null assertion, similar to `!` in TypeScript and `!!`in Kotlin.
+It bypasses the compiler's check for variables that are guaranteed to be non-null.
+
+```tolk
+fun doSmth(c: cell);
+
+fun analyzeStorage(nCells: int, lastCell: cell?) {
+    if (nCells) {           // then lastCell 100% not null
+        doSmth(lastCell!);  // use ! for this fact
+    }
+}
+```
+
+Functions that always throw can be declared with the return type `never`:
+
+```tolk
+fun alwaysThrows(): never {
+    throw 123;
+}
+
+fun f(x: int) {
+    if (x > 0) {
+        return x;
+    }
+    alwaysThrows();
+    // no `return` statement needed
+}
+```
+
+The `never` type occurs implicitly when a condition is impossible to satisfy:
+
+```tolk
+var v = 0;
+// prints a warning
+if (v == null) {
+    // v is `never`
+    v + 10;   // error, can not apply `+` `never` and `int`
+}
+// v is `int` again
+```
+
+Encountering `never` in compilation errors usually indicates a warning in the preceding code.
+
+Non-atomic nullable types are supported, e.g., `(int, int)?`, `(int?, int?)?`, or `()?`.
+A special _value presence_ stack slot is added automatically.
+
+It stores `0` for null values and `-1` for non-null values.
+
+```tolk
+// t: (int, int)?
+t = (1, 2);    // 1 2 -1
+t = (3, 4);    // 3 4 -1
+t = null;      // null null 0
+
+// t: ()?
+t = ();         // -1
+t = null;       // 0
+```
+
+Nullability improves type safety and reliability.
+Nullable types prevent runtime errors by enforcing explicit handling of optional values.
+
+### Union types T1 | T2 | ..., operators match, is, !is
+
+Union types allow a variable to hold multiple types, similar to TypeScript.
+
+```tolk
+fun whatFor(a: bits8 | bits256): slice | UserId { ... }
+
+var result = whatFor(...);  // slice | UserId
+```
+
+Nullable types `T?` are equivalent to `T | null`.
+Union types support intersection properties. For example, `B | C` can be passed and assigned to `A | B | C | D`.
+
+The only way to handle union types in code is through **pattern matching**:
+
+```tolk
+match (result) {
+    slice  => { /* result is smart-casted to slice  */ }
+    UserId => { /* result is smart-casted to UserId */ }
+}
+```
+
+Example:
+
+```tolk
+match (result) {
+    slice => {
+        return result.loadInt(32);
+    }
+    UserId => {
+        if (result < 0) {
+            throw 123;
+        }
+        return loadUser(result).parentId;
+    }
+}
+```
+
+The `match` must cover all union cases and can be used as an expression.
+
+```tolk
+type Pair2 = (int, int)
+type Pair3 = (int, int, int)
+
+fun getLast(tensor: Pair2 | Pair3) {
+    return match (tensor) {
+        Pair2 => tensor.1,
+        Pair3 => tensor.2,
+    }
+}
+```
+
+**Syntax details:**
+
+- Commas are optional inside `{}` but required in expressions.
+- A trailing comma is allowed.
+- No semicolon is required after `match` when used as a statement.
+- For match-expressions, an arm that terminates has the type `never`.
+
+```tolk
+return match (msg) {
+    ...
+    CounterReset => throw 403,  // forbidden
+}
+```
+
+Variable declaration inside `match` is allowed:
+
+```tolk
+match (val v = getPair2Or3()) {
+    Pair2 => {
+        // use v.0 and v.1
+    }
+    Pair3 => {
+        // use v.0, v.1, and v.2
+    }
+}
+```
+
+<Accordion
+  title="How are union types represented on the stack, at the TVM level?"
+>
+  At the TVM level, union types are stored as tagged unions, similar to enums in Rust:
+
+  - Each type is assigned a unique type ID, stored alongside the value.
+  - The union occupies N + 1 stack slots, where N is the maximum size of any type in the union.
+  - A nullable type `T?` is a union with `null` (type ID = 0). Atomic types like `int?` use a single stack slot.
+
+  ```tolk
+  var v: int | slice;    // 2 stack slots: value and typeID
+  // - int:   (100, 0xF831)
+  // - slice: (CS{...}, 0x29BC)
+  match (v) {
+  int =>     // IF TOP == 0xF831 { ... }
+    // v.slot1 contains int, can be used in arithmetics
+    slice =>   // ELSE { IF TOP == 0x29BC { ... } }
+  // v.slot1 contains slice, can be used to loadInt()
+  }
+
+  fun complex(v: int | slice | (int, int)) {
+  // Stack representation:
+  // - int:        (null, 100, 0xF831)
+  // - slice:      (null, CS{...}, 0x29BC)
+  // - (int, int): (200, 300, 0xA119)
+  }
+
+  complex(v);   // passes (null, v.slot1, v.typeid)
+  complex(5);   // passes (null, 5, 0xF831)
+  ```
+</Accordion>
+
+Union types can also be tested using `is`. Smart casts behave as follows:
+
+```tolk
+fun f(v: cell | slice | builder) {
+    if (v is cell) {
+        v.cellHash();
+    } else {
+        // v is `slice | builder`
+        if (v !is builder) { return }
+        // v is `slice`
+        v.sliceHash();
+    }
+    // v is `cell | slice`
+    if (v is int) {
+        // v is `never`
+        // a warning is also printed, condition is always false
+    }
+}
+```
+
+### Pattern matching for expressions (switch-like behavior)
+
+`match` can be used with constant expressions, similar to `switch`:
+
+```tolk
+val nextValue = match (curValue) {
+    1 => 0,
+    0 => 1,
+    else => -1
+};
+```
+
+**Rules:**
+
+- Only constant expressions are allowed on the left-hand side, e.g.,`1`, `SOME_CONST`, `2 + 3`.
+- Branches may include `return` or `throw`.
+- `else` is required for expression form and optional for statement form.
+
+```tolk
+// statement form
+match (curValue) {
+    1 => { nextValue = 0 }
+    0 => { nextValue = 1 }
+    -1 => throw NEGATIVE_NOT_ALLOWED
+}
+
+// expression form, else branch required
+val nextValue = match (curValue) {
+    ...
+    else => <expression>
+}
+```
+
+### Structures
+
+Similar to TypeScript, but executed at the TVM level.
+
+```tolk
+struct Point {
+    x: int
+    y: int
+}
+
+fun calcMaxCoord(p: Point) {
+    return p.x > p.y ? p.x : p.y;
+}
+
+// declared like a JS object
+var p: Point = { x: 10, y: 20 };
+calcMaxCoord(p);
+
+// called like a JS object
+calcMaxCoord({ x: 10, y: 20 });
+
+// works with shorthand syntax
+fun createPoint(x: int, y: int): Point {
+    return { x, y }
+}
+```
+
+- A struct is a **named tensor**.
+- `Point` is equivalent to `(int, int)` at the TVM level.
+- Field access `p.x` corresponds to tensor element access `t.0` for reading and writing.
+
+There is **no bytecode overhead**; tensors can be replaced with structured types.
+
+Fields can be separated by newlines, which is recommended, or by `;` or `,,`. Both of which are valid, similar to TypeScript.
+
+When creating an object, either `StructName { ... }` or `{ ... }` can be used if the type is clear from context, such as return type or assignment:
+
+```tolk
+var s: StoredInfo = { counterValue, ... };
+var s: (int, StoredInfo) = (0, { counterValue, ... });
+
+// also valid
+var s = StoredInfo { counterValue, ... };
+```
+
+Default values for fields are supported:
+
+```tolk
+struct DefDemo {
+    f1: int = 0
+    f2: int? = null
+    f3: (int, coins) = (0, ton("0.05"))
+}
+
+var d: DefDemo = {};         // ok
+var d: DefDemo = { f2: 5 };  // ok
+```
+
+Structs can include methods as extension functions.
+
+Fields support the following modifiers:
+
+- `private` — accessible only within methods.
+- `readonly` — immutable after object creation.
+
+```tolk
+struct PositionInTuple {
+    private readonly t: tuple
+    currentIndex: int
+}
+
+fun PositionInTuple.create(t: tuple): PositionInTuple {
+    // the only way to create an object with a private field
+    // is from a static method (or asm function)
+    return { t, currentIndex: 0 }
+}
+
+fun PositionInTuple.next(mutate self) {
+    // self.t can not be modified: it's readonly
+    self.currentIndex += 1;
+}
+
+var p = PositionInTuple.create(someTuple);
+// p.t is unavailable here: it's private
+```
+
+### Generic structs and aliases
+
+Generic structs and type aliases exist only at the type level and incur no runtime cost.
+
+```tolk
+struct Container<T> {
+    isAllowed: bool
+    element: T?
+}
+
+struct Nothing
+
+type Wrapper<T> = Nothing | Container<T>
+```
+
+Example usage:
+
+```tolk
+fun checkElement(c: Container<T>) {
+    return c.element != null;
+}
+
+var c: Container<int32> = { isAllowed: false, element: null };
+
+var v: Wrapper<int> = Nothing {};
+var v: Wrapper<int32> = Container { value: 0 };
+```
+
+For generic types, type arguments must be specified when using them:
+
+```tolk
+fun getItem(c: Container)        // error, specify type arguments
+fun getItem(c: Container<int>)   // ok
+fun getItem<T>(c: Container<T>)  // ok
+
+var c: Container = { ... }       // error, specify type arguments
+var c: Container<int> = { ... }  // ok
+```
+
+For generic functions, the compiler can automatically infer type arguments from a call:
+
+```tolk
+fun doSmth<T>(value: Container<T>) { ... }
+
+doSmth({ item: 123 });         // T = int
+doSmth({ item: cellOrNull });  // T = cell?
+```
+
+Demo: `Response<TResult, TError>`:
+
+```tolk
+struct Ok<TResult> { result: TResult }
+struct Err<TError> { err: TError }
+
+type Response<R, E> = Ok<R> | Err<E>
+
+fun tryLoadMore(slice: slice): Response<cell, int32> {
+    return ...
+        ? Ok { result: ... }
+        : Err { err: ErrorCodes.NO_MORE_REFS }
+}
+
+match (val r = tryLoadMore(inMsg)) {
+    Ok => { r.result }
+    Err => { r.err }
+}
+```
+
+### Methods: for any types, including structures
+
+Methods are declared as extension functions, similar to Kotlin.
+A method that accepts the first `self` parameter acts as an instance method; without `self`, it is a static method.
+
+```tolk
+fun Point.getX(self) {
+    return self.x
+}
+
+fun Point.create(x: int, y: int): Point {
+    return { x, y }
+}
+```
+
+Methods can be defined **for any type**, including aliases, unions, and built-in types:
+
+```tolk
+fun int.isZero(self) {
+    return self == 0
+}
+
+type MyMessage = CounterIncrement | ...
+
+fun MyMessage.parse(self) { ... }
+// this is identical to
+// fun (CounterIncrement | ...).parse(self)
+```
+
+Methods work with `asm`, as `self` is treated like a regular variable:
+
+```tolk
+@pure
+fun tuple.size(self): int
+    asm "TLEN"
+```
+
+By default, `self` is immutable, preventing modification or calls to mutating methods.
+To make `self` mutable, declare `mutate self` explicitly:
+
+```tolk
+fun Point.assignX(mutate self, x: int) {
+    self.x = x;   // without mutate, an error "modifying immutable object"
+}
+
+fun builder.storeInt32(mutate self, v: int32): self {
+    return self.storeInt(v, 32);
+}
+```
+
+Methods for generic structs can be created without specifying `<T>`. The compiler interprets unknown symbols in the receiver type as generic arguments during the parsing process.
+
+```tolk
+struct Container<T> {
+    item: T
+}
+
+// compiler treats T (unknown symbol) as a generic parameter
+fun Container<T>.getItem(self) {
+    return self.item;
+}
+
+// and this is a specialization for integer containers
+fun Container<int>.getItem(self) {
+    ...
+}
+```
+
+Example:
+
+```tolk
+struct Pair<T1, T2> {
+    first: T1
+    second: T2
+}
+
+// both <T1,T2>, <A,B>, etc. work: any unknown symbols
+fun Pair<A, B>.create(f: A, s: B): Pair<A, B> {
+    return {
+        first: f,
+        second: s,
+    }
+}
+```
+
+Similarly, any unknown symbol, typically `T`, can be used to define a method that accepts any type:
+
+```tolk
+// any receiver
+fun T.copy(self): T {
+    return self;
+}
+
+// any nullable receiver
+fun T?.isNull(self): bool {
+    return self == null;
+}
+```
+
+When multiple methods match a call to `someObj.method()`, the compiler selects the most specific one:
+
+```tolk
+fun int.copy(self) { ... }
+fun T.copy(self) { ... }
+
+6.copy()              // int.copy
+(6 as int32).copy()   // T.copy with T=int32
+(6 as int32?).copy()  // T.copy with T=int?
+
+type MyMessage = CounterIncrement | CounterReset
+fun MyMessage.check() { ... }
+fun CounterIncrement.check() { ... }
+
+MyMessage{...}.check()         // first
+CounterIncrement{...}.check()  // second
+CounterReset{...}.check()      // first
+```
+
+A generic function can be assigned to a variable, but type arguments must be specified explicitly.
+
+```tolk
+fun genericFn<T>(v: T) { ... }
+fun Container<T>.getItem(self) { ... }
+
+var callable1 = genericFn<slice>;
+var callable2 = Container<int32>.getItem;
+callable2(someContainer32);   // pass it as self
+```
+
+### Enums
+
+```tolk
+// will be 0 1 2
+enum Color {
+    Red
+    Green
+    Blue
+}
+```
+
+**Properties:**
+
+- Similar to TypeScript and C++ enums
+- Distinct type, not `int`
+- Checked during deserialization
+- Exhaustive in `match`
+
+**Enum syntax**
+
+Enum members can be separated by `,` , `;`, or a newline, similar to struct fields.
+Values can be specified manually; unspecified members are auto-calculated.
+
+```tolk
+enum Mode {
+    Foo = 256,
+    Bar,        // implicitly 257
+}
+```
+
+**Enums are distinct types, not integers**
+
+`Color.Red` is `Color`, not `int`, although it holds the value `0` at runtime.
+
+```tolk
+fun isRed(c: Color) {
+    return c == Color.Red
+}
+
+isRed(Color.Blue)    // ok
+isRed(1)             // error, can not pass `int` to `Color`
+```
+
+Since enums are types, they can be:
+
+- Used as variable and parameters
+- Extended with methods an enum
+- Used in struct fields, unions, generics, and other type contexts
+
+```tolk
+struct Gradient {
+    from: Color
+    to: Color? = null
+}
+
+fun Color.isRed(self) {
+    return self == Color.Red
+}
+
+var g: Gradient = { from: Color.Blue };
+g.from.isRed();       // false
+Color.Red.isRed();    // true
+
+match (g.to) {
+    null => ...
+    Color => ...
+}
+```
+
+**Enums are integers under the hood**
+
+At the TVM level, an enum such as `Color` is represented as `int`. Casting between the enum and `int` is allowed:
+
+- `Color.Blue as int` evaluates to `2`
+- `2 as Color` evaluates to `Color.Blue`
+
+Using `as` can produce invalid enum values. This is undefined behavior: for example, `100 as Color` is syntactically valid, but program behavior is unpredictable after this point
+
+During deserialization using `fromCell()`, the compiler performs checks to ensure that encoded integers correspond to valid enum values.
+
+Enums in Tolk differ from Rust. In Rust, each enum member can have a distinct structure. In Tolk, union types provide that capability, so enums are **integer constants**.
+
+**`match` for enums is exhaustive**
+
+Pattern matching on enums requires coverage of all cases:
+
+```tolk
+match (someColor) {
+    Color.Red => {}
+    Color.Green => {}
+    // error: Color.Blue is missing
+}
+```
+
+All enum cases must be covered, or `else` can be used to handle remaining values:
+
+```tolk
+match (someColor) {
+    Color.Red => {}
+    else => {}
+}
+```
+
+The `==` operator can be used to compare integers and addresses:
+
+```tolk
+if (someColor == Color.Red) {}
+else {}
+```
+
+The expression `someColor is Color.Red` is invalid syntax.
+The `is` operator is used for type checks.
+Given `var union: Color | A`, `u is Color` is valid.
+Use `==` to compare enum values.
+
+**Enums are allowed in `throw` and `assert`**
+
+```tolk
+enum Err {
+    InvalidId = 0x100
+    TooHighId
+}
+
+assert (id < 1000) throw Err.TooHighId;  // excno = 257
+```
+
+**Enums and serialization**
+
+Enums can be packed to and unpacked from cells like `intN` or `uintN`, where `N` is:
+
+- Specified manually, e.g., `enum Role: int8 { ... }`
+- Calculated automatically as the minimal N to fit all values
+
+_The serialization type can be specified manually:_
+
+```tolk
+// `Role` will be (un)packed as `int8`
+enum Role: int8 {
+    Admin,
+    User,
+    Guest,
+}
+
+struct ChangeRoleMsg {
+    ownerAddress: address
+    newRole: Role    // int8: -128 <= V <= 127
+}
+```
+
+_Or it will be calculated automatically._ For `Role` above, `uint2` is sufficient to fit values `0, 1, 2`:
+
+```tolk
+// `Role` will (un)packed as `uint2`
+enum Role {
+	Admin,
+	User,
+	Guest,
+}
+```
+
+_During deserialization, the input value is checked for correctness._ For `enum Role: int8` with values `0, 1, 2`, any **input\<0** or **input>2** triggers exception 5, integer out of range.
+
+This check applies to both value ranges and manually specified enum values:
+
+```tolk
+enum OwnerHashes: uint256 {
+    id1 = 0x1234,
+    id2 = 0x2345,
+    ...
+}
+
+// on serialization, just "store uint256"
+// on deserialization, "load uint256" + throw 5 if v not in [0x1234, 0x2345, ...]
+```
+
+### Auto-detect and inline functions
+
+Tolk can inline functions at the compiler level without using `PROCINLINE` as defined by Fift.
+
+```tolk
+fun Point.create(x: int, y: int): Point {
+    return {x, y}
+}
+
+fun Point.getX(self) {
+    return self.x
+}
+
+fun sum(a: int, b: int) {
+    return a + b;
+}
+
+fun main() {
+    var p = Point.create(10, 20);
+    return sum(p.getX(), p.y);
+}
+```
+
+is compiled to:
+
+```fift
+main PROC:<{
+  30 PUSHINT
+}>
+```
+
+The compiler automatically determines which functions to inline.
+
+- `@inline` attribute forces inlining.
+- `@noinline` prevents a function from being inlined.
+- `@inline_ref` preserves an inline reference, suitable for rarely executed paths.
+
+Compiler inlining:
+
+- Efficient for stack manipulation.
+- Supports arguments of any stack width.
+- Works with any functions or methods, except:
+  - Recursive functions
+  - Functions containing `return` statements in the middle
+- Supports `mutate` and `self`.
+
+Simple getters, such as `fun Point.getX(self) { return self.x }`, do not require stack reordering.
+Small functions can be extracted without runtime cost.
+The compiler handles inlining; no inlining is deferred to Fift.
+
+**How does auto-inline work?**
+
+- Simple, small functions are always inlined
+- Functions called only once are always inlined
+
+For every function, the compiler calculates a weight, a heuristic AST-based metric, and the usages count.
+
+- If `weight < THRESHOLD`, the function is always inlined
+- If `usages == 1`, the function is always inlined
+- Otherwise, an empirical formula determines inlining
+
+The `@inline` annotation can be applied to large functions when all usages correspond to hot paths.
+Inlining can also be disabled with `@inline_ref`, even for functions called once. For example, in unlikely execution paths.
+For optimization, use gas benchmarks and experiment with inlining and branch reordering.
+
+**What can NOT be auto-inlined?**
+
+A function is NOT inlined, even if marked with `@inline`, in the following cases:
+
+- The function contains `return` in the middle. Multiple return points are unsupported for inlining.
+- The function participates in a recursive call chain `f -> g -> f`.
+- The function is used as a non-call. For example, when a reference is taken: `val callback = f`.
+
+### No tilde \~ methods, mutate keyword instead
+
+In FunC, both `.methods()` and `~methods()` exist.
+In Tolk, only the **dot syntax** is used, and methods are called as `.method()`.
+Tolk follows expected behavior:
+
+```tolk
+b.storeUint(x, 32);   // modifies a builder, can be chainable
+s.loadUint(32);       // modifies a slice, returns integer
+```
+
+For details, see [Mutability in Tolk](/languages/tolk/from-func/mutability).
+
+### Auto-packing to/from cells/builders/slices
+
+Any struct can be automatically packed into a cell or unpacked from one:
+
+```tolk
+struct Point {
+    x: int8
+    y: int8
+}
+
+var value: Point = { x: 10, y: 20 }
+
+// makes a cell containing "0A14"
+var c = value.toCell();
+// back to { x: 10, y: 20 }
+var p = Point.fromCell(c);
+```
+
+### Universal createMessage: avoid manual cells composition
+
+No need for manual `beginCell().storeUint(...).storeRef(...)` boilerplate — describe the message in a literal and the compiler handles packing.
+
+```tolk
+val reply = createMessage({
+    bounce: false,
+    value: ton("0.05"),
+    dest: senderAddress,
+    body: RequestedInfo { ... }
+});
+reply.send(SEND_MODE_REGULAR);
+```
+
+### map\<K,V> instead of low-level TVM dictionaries
+
+Tolk introduces `map<K, V>`:
+
+- A generic type `map<K, V>` — any serializable keys and values.
+- The compiler automatically generates `asm` instructions and performs (de)serialization on demand.
+- Natural syntax for iterating forwards, backwards, or starting from a specified key.
+- Zero overhead compared to low-level approach.
+
+**Demo: `set`, `exists`, `get`, etc.**
+
+```tolk
+var m: map<int8, int32> = createEmptyMap();
+m.set(1, 10);
+m.addIfNotExists(2, -20);
+m.replaceIfExists(2, 20);
+m.delete(2);   // now: [ 1 => 10 ]
+
+m.exists(1);   // true
+m.exists(2);   // false
+
+val r1 = m.get(1);
+if (r1.isFound) {   // true
+    val v = r1.loadValue();  // 10
+}
+
+val r2 = m.get(2);
+if (r2.isFound) {   // false
+    ...
+}
+
+m.mustGet(1);   // 10
+m.mustGet(2);   // runtime error
+```
+
+`m.get(key)` returns not an "optional value", but `isFound + loadValue()`
+
+```tolk
+// NOT like this
+var v = m.get(key);
+if (v != null) {
+    // "then v is the value" — NO, not like this
+}
+
+// BUT
+var r = m.get(key);
+if (r.isFound) {
+    val v = r.loadValue();   // this is the value
+}
+```
+
+- `m.get(key)` returns a struct, NOT `V?`.
+- `m.mustGet(key)` returns `V` and throws if the key is missing.
+
+**Why "isFound" but not "optional value"?**
+
+- Gas consumption; zero overhead.
+- Nullable values can be supported, such as `map<int32, address?>` or `map<K, Point?>`.
+- Returning `V?`, makes it impossible to distinguish between "key exists but value is null" and "key does not exist".
+
+**Iterating forward and backward**
+
+There is no syntax like `foreach`. Iteration follows this pattern:
+
+- define the starting key: `r = m.findFirst()` or `r = m.findLast()`
+- while `r.isFound`:
+  - use `r.getKey()` and `r.loadValue()`
+  - move the cursor: `r = m.iterateNext(r)` or `r = m.iteratePrev(r)`
+
+Example: iterate all keys forward
+
+```tolk
+// suppose there is a map [ 1 => 10, 2 => 20, 3 => 30 ]
+// this function will print "1 10 2 20 3 30"
+fun iterateAndPrint<K, V>(m: map<K, V>) {
+    var r = m.findFirst();
+    while (r.isFound) {
+        debug.print(r.getKey());
+        debug.print(r.loadValue());
+        r = m.iterateNext(r);
+    }
+}
+```
+
+Example: iterate from key\<=2 backward
+
+```tolk
+// suppose `m` is `[ int => address ]`, already filled
+// for every key<=2, print addr.workchain
+fun printWorkchainsBackwards(m: map<int32, address>) {
+    var r = m.findKeyLessOrEqual(2);
+    while (r.isFound) {
+        val a = r.loadValue();   // it's address
+        debug.print(a.getWorkchain());
+        r = m.iteratePrev(r);
+    }
+}
+```
+
+Iteration over maps uses existing syntax.
+
+Use `while (r.isFound)`, not `while (r == null)`.
+As with `m.get(key)`, existence is checked through `isFound`.
+
+```tolk
+// this is a cursor, it has "isFound" + "getKey()" + "loadValue()"
+// (methods are applicable only if isFound)
+var r = m.findFirst();
+while (r.isFound) {
+    // ... use r.getKey() and r.loadValue()
+    r = m.iterateNext(r);
+}
+
+// similar to map.get() with "isFound" + "loadValue()"
+var f = m.get(key);
+if (f.isFound) {
+    // ... use f.loadValue()
+}
+```
+
+The reason is the same — zero overhead and no hidden runtime instructions or stack manipulations.
+
+Use `m.isEmpty()`, not `m == null`. Since `map` is a dedicated type, it must be checked with `isEmpty()`, because `m == null` does not work.
+
+Suppose a wrapper over dictionaries is implemented:
+
+```tolk
+struct MyMap {
+    tvmDict: cell | null
+}
+
+fun MyMap.isEmpty(self) {}
+```
+
+Given `var m: MyMap`, calling `m.isEmpty()` works. The expression `m == null` is invalid. The compiler issues the following warning:
+
+```text
+variable `m` of type `map<int32, int64>` can never be `null`, this condition is always false
+```
+
+The same rule applies to built-in maps. When transitioning code from low-level dicts to high-level maps, pay attention to compiler warnings in the console.
+
+**A nullable map** is valid: `var m: map<...>?`. This variable can be null and not null. When not null, it can contain an empty map or a non-empty map. The expression `m == null` only makes sense for nullable maps.
+
+**Allowed types for K and V**
+
+All the following key and value types are valid:
+
+```tolk
+// all these types are valid
+map<int32, Point?>
+map<address, address>
+map<Point, map<int3, bool>>
+map<uint256, Cell<SnakeData>>
+map<bits18, slice>
+```
+
+Some types are NOT allowed. General rules:
+
+- Keys must be fixed-width and contain zero references
+  - Valid: int32, uint64, address, bits256, Point
+  - Invalid: int, coins, cell
+- Values must be serializable
+  - Valid: int32, coins, AnyStruct, Cell\<AnyStruct>
+  - Invalid: int, builder
+
+In practice, keys are typically `intN`, `uintN`, or `address`. Values can be any serializable type.
+
+At the TVM level, keys can be numbers or slices. Complex keys, such as `Point`, are automatically serialized and deserialized by the compiler.
+
+```tolk
+struct Point {
+    x: int8
+    y: int8
+}
+
+// the compiler automatically packs Point to a 16-bit slice key
+var m: map<Point, V>
+```
+
+If a key is a struct with a single intN field, it behaves like a number.
+
+```tolk
+struct UserId {
+    v: int32
+}
+
+// works equally to K=int32 without extra serialization
+var m: map<UserId, V>
+```
+
+#### Available methods for maps
+
+JetBrains IDE and VS Code provide method suggestions. Most methods are self-explanatory.
+
+- `createEmptyMap<K, V>(): map<K, V>`
+
+Returns an empty typed map. Equivalent to `PUSHNULL` since TVM NULL represents an empty map.
+
+- `createMapFromLowLevelDict<K, V>(d: dict): map<K, V>`
+
+Converts a low-level TVM dictionary to a typed map. Accepts an optional cell and returns the same optional cell. Incorrect key and value types cause failure at `map.get` or similar methods.
+
+- `m.toLowLevelDict(): dict`
+
+Converts a high-level map to a low-level TVM dictionary. Returns the same optional cell.
+
+- `m.isEmpty(): bool`
+
+Checks whether a map is empty. Use `m.isEmpty()` instead of `m == null`.
+
+- `m.exists(key: K): bool`
+
+Checks whether a key exists in a map.
+
+- `m.get(key: K): MapLookupResult<V>`
+
+Gets an element by key. Returns `isFound = false` if key does not exist.
+
+- `m.mustGet(key: K, throwIfNotFound: int = 9): V`
+
+Gets an element by key and throws if it does not exist.
+
+- `m.set(key: K, value: V): self`
+
+Sets an element by key. Since it returns `self`, calls may be chained.
+
+- `m.setAndGetPrevious(key: K, value: V): MapLookupResult<V>`
+
+Sets an element and returns the previous element. If no previous element, `isFound = false`.
+
+- `m.replaceIfExists(key: K, value: V): bool`
+
+Sets an element only if the key exists. Returns whether an element was replaced.
+
+- `m.replaceAndGetPrevious(key: K, value: V): MapLookupResult<V>`
+
+Sets an element only if the key exists and returns the previous element.
+
+- `m.addIfNotExists(key: K, value: V): bool`
+
+Sets an element only if the key does not exist. Returns true if added.
+
+- `m.addOrGetExisting(key: K, value: V): MapLookupResult<V>`
+
+Sets an element only if the key does not exist. If exists, returns an old value.
+
+- `m.delete(key: K): bool`
+
+Deletes an element by key. Returns true if deleted.
+
+- `m.deleteAndGetDeleted(key: K): MapLookupResult<V>`
+
+Deletes an element by key and returns the deleted element. If not found, `isFound = false`.
+
+- `m.findFirst(): MapEntry<K, V>`
+
+Finds the first (minimal) element. For integer keys, returns minimal integer. For addresses or complex keys, represented as slices, returns lexicographically smallest key. Returns `isFound = false` for an empty map.
+
+- `m.findLast(): MapEntry<K, V>`
+
+Finds the last (maximal) element. For integer keys, returns maximal integer. For addresses or complex keys (represented as slices), returns lexicographically largest key. Returns `isFound = false` for an empty map.
+
+- `m.findKeyGreater(pivotKey: K): MapEntry<K, V>`
+
+Finds an element with key greater than `pivotKey`.
+
+- `m.findKeyGreaterOrEqual(pivotKey: K): MapEntry<K, V>`
+
+Finds an element with key greater than or equal to pivotKey.
+
+- `m.findKeyLess(pivotKey: K): MapEntry<K, V>`
+
+Finds an element with key less than pivotKey.
+
+- `m.findKeyLessOrEqual(pivotKey: K): MapEntry<K, V>`
+
+Finds an element with key less than or equal to pivotKey.
+
+- `m.iterateNext(current: MapEntry<K, V>): MapEntry<K, V>`
+
+Iterates over a map in ascending order.
+
+- `m.iteratePrev(current: MapEntry<K, V>): MapEntry<K, V>`
+
+Iterates over a map in descending order.
+
+**Augmented hashmaps and prefix dictionaries**
+
+These structures are rarely used and are not part of the type system.
+
+- Prefix dictionaries: `import @stdlib/tvm-dicts` and use assembly functions.
+- Augmented hashmaps and Merkle proofs: implement interaction manually.
+
+### Modern onInternalMessage
+
+In Tolk, `msg_cell` does not require manual parsing to retrieve `sender_address` or `fwd_fee`. Fields are accessed directly:
+
+```tolk
+fun onInternalMessage(in: InMessage) {
+    in.senderAddress
+    in.originalForwardFee
+    in.valueCoins   // typically called "msg value"
+
+    in.|   // IDE shows completions
+}
+```
+
+The legacy approach of accepting 4 parameters, as `recv_internal`, works but is less efficient. `InMessage` fields are directly mapped to TVM-11 instructions.
+
+**Recommended pattern:**
+
+1. Define each message as a struct, typically including a 32-bit opcode.
+1. Define a union of all allowed messages.
+1. Use `val msg = lazy MyUnion.fromSlice(in.body)`.
+1. Match on `msg`, handling each branch and possibly an `else`.
+
+Avoid manually extracting `fwd_fee` or other fields at the start of the function. Access them on demand through the `in.smth`.
+
+```tolk
+type AllowedMessageToMinter =
+    | MintNewJettons
+    | BurnNotificationForMinter
+    | RequestWalletAddress
+
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy AllowedMessageToMinter.fromSlice(in.body);
+
+    match (msg) {
+        BurnNotificationForMinter => {
+            var storage = lazy MinterStorage.load();
+            ...
+            storage.save();
+            ...
+        }
+        RequestWalletAddress => ...
+        MintNewJettons => ...
+        else => {
+            // for example:
+            // ignore empty messages, "wrong opcode" for others
+            assert (in.body.isEmpty()) throw 0xFFFF
+        }
+    }
+}
+```
+
+**Separate `onBouncedMessage`**
+
+In FunC, `msg_cell` required parsing, reading 4-bit flags, and testing `flags & 1` to detect a bounced message.
+
+In Tolk, bounced messages are handled through a separate entry point:
+
+```tolk
+fun onBouncedMessage(in: InMessageBounced) {
+}
+```
+
+The compiler automatically routes bounced messages:
+
+```tolk
+fun onInternalMessage(in: InMessage) {
+    // the compiler inserts this automatically:
+    if (MSG_IS_BOUNCED) { onBouncedMessage(...); return; }
+
+    ... // contract logic
+}
+```
+
+If `onBouncedMessage` is not declared, bounced messages are filtered out:
+
+```tolk
+fun onInternalMessage(in: InMessage) {
+    // the compiler inserts this automatically:
+    if (MSG_IS_BOUNCED) { return; }
+
+    ... // contract logic
+}
+```
+
+**Handling 256-bit bounced messages**
+
+In TON Blockchain, bounced messages contain only the first 256 bits, starting with 0xFFFFFFFF; bounced prefix. Fields beyond the prefix must be handled carefully, as only the remaining 224 bits are available for reading.
+
+```tolk
+fun onBouncedMessage(in: InMessageBounced) {
+    in.bouncedBody    // 256 bits
+
+    // typical pattern:
+    in.bouncedBody.skipBouncedPrefix();   // skips 0xFFFFFFFF
+    // handle rest of body, probably with lazy match
+}
+```
+
+### Next steps
+
+Explore the [Tolk vs FunC benchmarks](https://github.com/ton-blockchain/tolk-bench) —real Jetton, NFT, and Wallet contracts migrated from FunC with the same logic.
+
+Use the [FunC-to-Tolk converter](https://github.com/ton-blockchain/convert-func-to-tolk) for incremental migration.
+
+Run `npm create ton@latest` to experiment.
