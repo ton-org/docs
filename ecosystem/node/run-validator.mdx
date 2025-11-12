@@ -1,0 +1,227 @@
+---
+title: "Run a validator"
+description: "Run a validator node with MyTonCtrl"
+---
+
+## Prerequisites
+
+### Minimal hardware requirements
+
+MyTonCtrl is best to install and use on Ubuntu 22.04 LTS or 24.04 LTS.
+
+- 16-core CPU
+- 128 GB RAM
+- 1TB NVMe SSD or provisioned 64+k IOPS storage
+- 1 Gbit/s network connectivity
+- Public IP address (fixed IP address)
+- 100 TB/month traffic at peak load
+
+> Typically, you'll need at least a 1 Gbit/s connection to reliably accommodate peak loads (the average load is expected to be approximately 100 Mbit/s).
+
+> We draw special attention of validators to IOPS disk requirements, it is crucially important for smooth network operation.
+
+### Port forwarding
+
+All types of nodes require a static external IP address, one UDP port forwarded for incoming connections, and all outgoing connections to be open—the node uses random ports for new outgoing connections. The node must also be visible to the outside world over the NAT.
+
+You can work with your network provider or [rent a server](/v3/guidelines/nodes/running-nodes/full-node#recommended-providers) to run a node.
+
+<Info>To determine which UDP ports are open, use the `netstat -tulpn` command.</Info>
+
+### Learn slashing policy
+
+If a validator processes less than 90% of the expected blocks during a validation round, they will be fined by 101 TON.
+
+Learn more about the [slashing policy](/v3/documentation/nodes/validation/staking-incentives#decentralized-system-of-penalties).
+
+### Staking types
+
+This article will focus on staking using a **single nominator pool**, since it is the recommended option for single validators. However, the full list for staking modes:
+
+- **Single nominator pool** — stake will be sent from a [single nominator pool smart contract](https://github.com/ton-blockchain/single-nominator). This is the recommended option for staking
+  as secure and convenient way to stake funds.
+- **Nominator pool** — stake will be sent from a [nominator pool smart contract](https://github.com/ton-blockchain/nominator-pool). Unnecessary complexity for solo validators, requires creation of 2 pool contracts for each round.
+- **Validator wallet** — stake will be sent from a regular validator wallet. This option is highly unrecommended
+  as compromising the server with validator software would lead to loss of funds in the wallet.
+- **Liquid staking** - staking via the [liquid-staking contracts system](https://github.com/ton-blockchain/liquid-staking-contract). This option can be used by companies that provide liquid staking services for their users.
+
+## MyTonCtrl installation
+
+### Prepare the operator account
+
+Create non-root user and switch to it with reconnecting to server via ssh before installing MyTonCtrl:
+
+```bash
+sudo adduser <USERNAME>
+sudo usermod -aG sudo <USERNAME>
+# reconnect as the new user
+ssh <USERNAME>@<SERVER_IP>
+```
+
+### Install MyTonCtrl
+
+To install MyTonCtrl, run:
+
+```shell
+wget https://raw.githubusercontent.com/ton-blockchain/mytonctrl/master/scripts/install.sh
+sudo bash install.sh
+```
+After that the wizard (interactive CLI installer) will be launched, choose `validator` mode and **Single pool** staking mode or other desired [staking mode](#staking-types).
+You can also install `MyTonCtrl` directly in `validator` mode:
+
+```shell
+wget https://raw.githubusercontent.com/ton-blockchain/mytonctrl/master/scripts/install.sh
+sudo bash install.sh -m validator
+```
+
+Or in `validator` mode with `single-nominator` staking type:
+
+```shell
+wget https://raw.githubusercontent.com/ton-blockchain/mytonctrl/master/scripts/install.sh
+sudo bash install.sh -m single-nominator
+```
+
+After installation, launch MyTonCtrl with command `mytonctrl`.
+You need to wait until the node is fully synchronized. To check synchronization status using the command:
+
+```sh
+MyTonCtrl> status
+```
+
+Check the field `Local validator initial sync status: x`, the value should become less than 20.
+You can also set up [alert bot](/v3/guidelines/nodes/maintenance-guidelines/mytonctrl-private-alerting) to receive a notification when the node is synchronized.
+
+### Select staking mode
+
+After MyTonCtrl installation, check that the correct staking mode is selected. In the `MyTonCtrl` console:
+
+```sh
+MyTonCtrl> status_modes
+```
+There you should see that `validator` mode is enabled and the staking type which you selected when installed `MyTonCtrl` via the wizard.
+If you have not installed MyTonCtrl with the staking mode, you can still enable it using the `enable_mode` command:
+
+```sh
+MyTonCtrl> enable_mode single-nominator
+```
+
+## Activate validator wallet
+
+When installing, MyTonCtrl automatically creates a validator wallet for you. You need to top up and activate (deploy) this wallet so MyTonCtrl can operate Single nominator pool smart contract with it.
+
+Check list of wallets:
+
+```sh
+MyTonCtrl> wl
+```
+You should see a wallet named `validator_wallet_001` and its address. Top up this address with enough coins to cover operational costs,
+ensure you have at least 200 TON/month in your validator wallet for operation fees.
+
+After you have topped it up, activate the wallet:
+
+```sh
+MyTonCtrl> aw validator_wallet_001
+```
+
+<Warning> Don't forget to back up the private key of your validator wallet. To print it, use the command:</Warning>
+
+```sh
+MyTonCtrl> ew validator_wallet_001
+```
+
+## Create single nominator pool
+
+1. Create a pool:
+
+```bash
+MyTonCtrl> new_single_pool <pool-name> <owner-address>
+```
+
+As an `owner-address`, specify the beneficiary wallet address who will stake owned funds and receive rewards.
+
+If you have already created a pool, you can import it:
+
+```bash
+MyTonCtrl> import_pool <pool-name> <pool-addr>
+```
+
+2. Display pool addresses using `pools_list`:
+
+```bash
+MyTonCtrl> pools_list
+Name       Status  Balance  Version   Address
+test-pool  empty   0.0      spool_r2  kf_JcC5pn3etTAdwOnc16_tyMmKE8-ftNUnf0OnUjAIdDJpX
+```
+
+3. Activate the pool:
+
+```bash
+MyTonCtrl> activate_single_pool <pool-name>
+```
+
+After successfully activating the pool check it again with `pools_list`:
+
+```bash
+MyTonCtrl> pools_list
+Name       Status  Balance  Version   Address
+test-pool  active  0.99389  spool_r2  kf_JcC5pn3etTAdwOnc16_tyMmKE8-ftNUnf0OnUjAIdDJpX
+```
+
+Now you can top up this pool with funds enough for validation. On the next elections MyTonCtrl will automatically use this pool for staking.
+
+<Info>If the pool's balance is sufficient to participate in both rounds (`balance > min_stake_amount * 2`), MyTonCtrl will automatically participate in both rounds using `stake = balance / 2`, unless you manually set the stake using the `set stake` command. This behavior differs from using a nominator pool but resembles staking with a validator wallet.</Info>
+
+
+### Important measures:
+
+1. Follow [@tonstatus](https://t.me/tonstatus), turn on notifications, and be prepared for urgent updates if needed.
+
+2. Create validator backup. Learn about [backups](/v3/guidelines/nodes/maintenance-guidelines/mytonctrl-backup-restore#automated-backup-location-and-lifecycle).
+
+3. Set up alerting in MyTonCtrl to notify you of critical issues with your validator. For more information, see [MyTonCtrl private alerting bot](/v3/guidelines/nodes/maintenance-guidelines/mytonctrl-private-alerting) or (and) check [MyTonCtrl public alerting bot](https://t.me/validators).
+
+4. Set up monitoring dashboards for RAM, disk, network, CPU usage and other metrics. See also [MyTonCtrl prometheus export](/v3/guidelines/nodes/maintenance-guidelines/mytonctrl-prometheus). For technical assistance, please contact [@mytonctrl_help_bot](https://t.me/mytonctrl_help_bot).
+
+5. Monitor the efficiency of your validator with dashboards.
+
+  - Please verify with `MyTonCtrl` using the `check_ef` command.
+
+  - Check [Build dashboard with APIs](/v3/guidelines/nodes/running-nodes/validator-node#validation-effectiveness-apis).
+
+<Info>`MyTonCtrl` enables you to evaluate the performance of validators using the command `check_ef`. This command provides efficiency data for both the last round and the current round. The data is retrieved by calling the `checkloadall` utility. Make sure that your efficiency is above 90% for the entire round period.</Info>
+
+<Info>If you encounter low efficiency, take action to resolve the issue. If necessary, contact technical support at [@mytonctrl_help_bot](https://t.me/mytonctrl_help_bot).</Info>
+
+## Validation effectiveness APIs
+
+<Info>Please set up dashboards to monitor your validators using the APIs provided below.</Info>
+
+### Penalized validators tracker
+
+You can track penalized validators on each round with [@tonstatus_notifications](https://t.me/tonstatus_notifications).
+
+#### Validation API
+
+You can use this [API](https://elections.toncenter.com/docs) to obtain information about current and past validation rounds (cycles) - including the timing of rounds, which validators participated, their stakes, and more. Information regarding current and past elections for each validation round is also available.
+
+#### Efficiency API
+
+You can use this [API](https://toncenter.com/api/qos/index.html#/) to obtain information about the efficiency of validators over time.
+
+This API analyzes data from the catchain to provide an estimate of a validator's efficiency. It serves as an alternative to the `checkloadall` utility.
+
+Unlike `checkloadall`, which only works on validation rounds, this API allows you to set any time interval to analyze a validator's efficiency.
+
+##### Workflow:
+
+1. To the API, provide the ADNL address of your validator along with a time interval (`from_ts`, `to_ts`). For accurate results, choose a sufficient interval, such as 18 hours ago to the present moment.
+
+2. Retrieve the result. If your efficiency percentage is below 80%, your validator is malfunctioning.
+
+3. Your validator must actively participate in validation and use the same ADNL address throughout the specified time period. For example, if a validator contributes to validation every second round, you should only indicate the intervals during which they participated. Failing to do so may result in an inaccurate underestimate. This requirement applies not only to MasterChain validators (with an index \< 100) but also to other validators (with an index > 100).
+
+## Support
+
+Contact technical support [@mytonctrl_help_bot](https://t.me/mytonctrl_help_bot). This bot is for validators only and will not assist with questions for regular nodes.
+
+If you run a regular node, then contact the group: [@mytonctrl_help](https://t.me/mytonctrl_help).
