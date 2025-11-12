@@ -80,7 +80,7 @@ A BoC is called _complete_ if it does not contain any external references. Most 
 ### Outline of serialization process
 
 <Aside type="note">
-  This and the following paragraphs provide a textual description of the BoC serialization process and the specifications of the TL-B schemas associated with it. The specific implementation of the serialization and TL-B schemes is left to the choice of developers.
+  This paragraphs provide a textual description of the BoC serialization process. The specific implementation of the serialization and TL-B schemes is left to the choice of developers.
 
   For a specific example of TL-B schema and pseudocode of related cell serialization, see [TL-B scheme](/tvm/serialization/boc#a-tl-b-scheme).
 </Aside>
@@ -88,28 +88,19 @@ A BoC is called _complete_ if it does not contain any external references. Most 
 The serialization process of a BoC `B` consisting of `n` cells can be outlined as follows.
 
 - List the cells from B in a [topological order](https://en.wikipedia.org/wiki/Topological_sorting): `c1, ..., cn`(with `c1, ..., ck` as root cells, if `B` is a forest).
-- Choose the smallest power of two `s` that is larger than `n`. Serialize each cell `ci` in a way similar to [standard representation algorithm](/tvm/serialization/cells#standard-cell-representation-and-its-hash), with exceptions:
+- Choose the smallest number of bytes `s` that can contain the binary representation of `n`. Serialize each cell `ci` in a way similar to [standard representation algorithm](/tvm/serialization/cells#standard-cell-representation-and-its-hash), with exceptions:
   - `d1 = r + 8s + 16h + 32l` where `h = 1` if the cell's hashes are explicitly included into the serialization; otherwise, `h = 0` (when `r = 7`, `h` must be `1`);
   - if `h = 1`, after bytes `b1` and `b2` the serialization is continued by `l + 1` 32-byte higher hashes of `c`;
   - unsigned big-endian s-bit integer `j` used instead of hash `Hash(cj)` to represent internal references to cell `cj`.
 - Concatenate the representations of cells `ci` thus obtained in the increasing order of `i`.
-- Optionally, an _index_ can be constructed that consists of `n + 1` `t`-bit integer entries `L1, ..., Ln`, where `Li` is the total byte length of the representations of cells `cj` with `j ≤ i`, and integer `t ≥ 0` is chosen so that `Ln ≤ 2^t`. If the index is included, any cell `ci` the serialized bag of cells may be easily accessed by its index `i` without deserializing all other cells, or even without loading the entire serialized bag of cells in memory.
-- The serialization of the bag of cells now consists of a magic number indicating the precise format of the serialization, followed by integers `s ≥ 0`, `t ≥ 0`, `n ≤ 2^s`, an optional index consisting of $\lceil\frac{(n+1)*t}{8}\rceil$ bytes, and `Ln` bytes with the cell representations.
+- Optionally, an _index_ can be constructed that consists of `n` `t`-bytes integer entries $L_{1}, \ldots, L_{n}$ where:
+  - $L_{i}$ is the total length in bytes of the representations of cells `cj` with `j ≤ i`;
+  - `t` is the smallest number of bytes that can contain the binary representation of $L_{n}$. 
 - An optional [CRC32C](https://en.wikipedia.org/wiki/Cyclic_redundancy_check) may be appended to the serialization for integrity verification purposes.
 
-### A classification of serialization schemes for bags of cells
+If the index is included, any cell `ci` the serialized bag of cells may be easily accessed by its index `i` without deserializing all other cells, or even without loading the entire serialized bag of cells in memory.
 
-Each TL-B scheme for a bag of cells must specify the following parameters.
-
-- The 4-byte magic number (name of TL-B constructor) prepended to the serialization.
-- The number of bits `s` used to represent cell indices. Usually `s` is a multiple of eight.
-- The number of bits `t` used to represent _offsets_ of cell serializations. Usually `t` is also a multiple of eight.
-- A flag indicating whether an index with offsets `L1, ..., Ln` of cell serializations is present. This flag may be combined with `t` by setting `t = 0` when the index is absent.
-- A flag indicating whether the `CRC32C` of the whole serialization is appended to it for integrity verification purposes.
-- The total number of cells `n` present in the serialization.
-- The number of root cells `k ≤ n` present in the serialization. The root cells themselves are $c\_1, \ldots, c\_{k}$. All other cells present in the bag of cells are expected to be reachable by chains of references starting from the root cells.
-- The number of absent cells `l ≤ n − k`, which represent cells that are absent from this bag of cells, but are referred to from it. The absent cells themselves are represented by $c\_{n−l+1}, \ldots, c\_{n}$, and only these cells may (and also must) have `r = 7`. Complete bags of cells have `l = 0`.
-- The total length in bytes `Ln` of the serialization of all cells. If the index is present, `Ln` might not be stored explicitly since it can be recovered as the last entry of the index.
+A final serialization of the bag of cells must include a magic number indicating the precise format of the serialization, followed by integers `s`, `t`, `n`, an optional index consisting of `n * t` bytes, $L_n$ bytes with the cell representations, and an optional `CRC32C` checksum. Each specific implementation of the serialization process must comply with these fields and their order but, for example, may take into account number of roots, number of absent cells, ets.
 
 ## TL-B schema
 
@@ -131,7 +122,17 @@ serialized_boc#b5ee9c72 has_idx:(## 1) has_crc32c:(## 1)
   = BagOfCells;
 ```
 
-Field `cells` is `n`, `roots` is `k`, `absent` is `l`, and `tot_cells_size` is `Ln` (the total size of the serialization of all cells in bytes). If an index is present, parameters `s/8` and `t/8` are serialized separately as `size` and `off_bytes`, respectively, and the flag `has_idx` is set. The index itself is contained in `index`, present only if `has_idx` is set. The field `root_list` contains the (zero-based) indices of the root nodes of the bag of cells. Finally, `cell_data` is a sequence of bits that obtained as a concatenation of the cells representations:
+Fields `size` is `s`, `off_bytes` is `t`, `cells` is `n`, `tot_cells_size` is $L_n$ (the total size of the serialization of all cells in bytes), `index` is the optional index $L_{1}, \ldots, L_{n}$, `cell_data` is the concatenation of the cells representations, and `crc32c` is the optional 4-bytes CRC32C checksum.
+
+This schema additionally includes:
+- the 1-bit `has_idx` flag that indicates whether the index is included in the serialization;
+- the 1-bit `has_crc32c` flag that indicates whether the CRC32C checksum is included in the serialization;
+- the 1-bit `has_cache_bits` and 2-bit `flags` fields that are reserved for future use (`flags` must be zero);
+- the `roots` field that indicates the number of root cells in the BoC;
+- the `absent` field that indicates the number of absent cells in the BoC;
+- the `root_list` field that is an indices sequence of the root cells in the BoC.
+
+Finally, the pseudocode for obtaining `cell_data` is as follows:
 
 ```c
 // d1
