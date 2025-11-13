@@ -102,24 +102,28 @@ If the index is included, any cell `ci` the serialized bag of cells may be easil
 
 A final serialization of the bag of cells must include a magic number indicating the precise format of the serialization, followed by integers `s`, `t`, `n`, an optional index consisting of `n * t` bytes, $L_n$ bytes with the cell representations, and an optional `CRC32C` checksum. Each specific implementation of the serialization process must comply with these fields and their order but, for example, may take into account number of roots, number of absent cells, and so one.
 
-## TL-B schema
+## Serialization
+
+<Aside type="note">
+  Beware this is not an actual TL-B schema. TL-B describes serialization to cells, i.e. bits and refs, with the limit of 1023 bits per cell. This serialization describes serialization into a bitstring of arbitrary length without any refs, even though it uses syntax similar to TL-B.
+</Aside>
 
 Only one [serialization scheme of BoCs](https://github.com/ton-blockchain/ton/blob/24dc184a2ea67f9c47042b4104bbb4d82289fac1/crypto/tl/boc.tlb#L25) is used in TON Blockchain (there are also two outdated BoC serialization schemes in the file):
 
-```tlb
+```tlb PseudoTL-B
 serialized_boc#b5ee9c72 has_idx:(## 1) has_crc32c:(## 1) 
-  has_cache_bits:(## 1) flags:(## 2) { flags = 0 }
-  size:(## 3) { size <= 4 }
-  off_bytes:(## 8) { off_bytes <= 8 } 
-  cells:(##(size * 8)) 
-  roots:(##(size * 8)) { roots >= 1 }
-  absent:(##(size * 8)) { roots + absent <= cells }
-  tot_cells_size:(##(off_bytes * 8))
-  root_list:(roots * ##(size * 8))
-  index:has_idx?(cells * ##(off_bytes * 8))
-  cell_data:(tot_cells_size * [ uint8 ])
-  crc32c:has_crc32c?uint32
-  = BagOfCells;
+    has_cache_bits:(## 1) flags:(## 2) { flags = 0 }
+    size:(## 3) { size <= 4 }
+    off_bytes:(## 8) { off_bytes <= 8 } 
+    cells:(##(size * 8)) 
+    roots:(##(size * 8)) { roots >= 1 }
+    absent:(##(size * 8)) { roots + absent <= cells }
+    tot_cells_size:(##(off_bytes * 8))
+    root_list:(roots * ##(size * 8))
+    index:has_idx?(cells * ##(off_bytes * 8))
+    cell_data:(tot_cells_size * [ uint8 ])
+    crc32c:has_crc32c?uint32
+    = BagOfCells;
 ```
 
 Fields `size` is `s`, `off_bytes` is `t`, `cells` is `n`, `tot_cells_size` is $L_n$ (the total size of the serialization of all cells in bytes), `index` is the optional index $L_{1}, \ldots, L_{n}$, `cell_data` is the concatenation of the cells representations, and `crc32c` is the optional 4-bytes CRC32C checksum.
@@ -133,35 +137,7 @@ This schema additionally includes:
 - the `absent` field that indicates the number of absent cells in the BoC;
 - the `root_list` field that is an indices sequence of the root cells in the BoC.
 
-Finally, the pseudocode for obtaining `cell_data` is as follows:
-
-```c
-// d1
-uint3 level_mask;
-uint1 has_hashes;
-uint1 is_exotic;
-uint3 ref_count;
-
-// d2
-if (ref_count < 7) {
-    uint7 byte_size;
-    uint1 has_padding;
-}
-
-if (has_hashes) {
-    uint256 hashes[GetLevel(level_mask) + 1];
-    uint16 depths[GetLevel(level_mask) + 1];
-}
-
-if (ref_count < 7) {
-    if byte_size + has_padding != 0 {
-        uint8 data_bits[byte_size + has_padding];
-    }
-    ref refs[ref_count];
-}
-```
-
-## An example of a manual serialization
+## Example: manual
 
 Consider the following example of a tree of cells:
 
@@ -193,7 +169,7 @@ fe     -> index 1
 0aaaaa -> index 2
 ```
 
-Now, let’s calculate the descriptor bytes `b1` and `b2` for each of the three unique cells.
+Now, let's calculate the descriptor bytes `b1` and `b2` for each of the three unique cells.
 
 So, we obtain:
 
@@ -260,7 +236,7 @@ _                                          -> CRC32C is not serialized
 
 By combining everything into a single bit string, we get the result of serialization.
 
-## SDK from @ton/core
+## Example: TypeScript
 
 According to the TL-B scheme above there is the [SDK](https://github.com/ton-org/ton-core/blob/4577e94/src/boc/cell/serialization.ts#L1) for serialization and parsing BoC.
 
@@ -269,25 +245,39 @@ Only serialization of BoCs with one root and no absent cells is supported. There
 - `serializeBoc` for serialization. It has two parameters: `root` and options object with two boolean flags: `idx` and `crc32`. They indicate whether indexes and CRC32C will be included in serialization. The output is a Buffer with serialization.
 - `deserializeBoc` for parsing. It has one parameter: `src`, a Buffer that contains a serialized BoC. The output is a roots list of a given BoC.
 
-```typescript
+```ts
 import { beginCell, serializeBoc, deserializeBoc } from "@ton/core";
 
 const innerCell = beginCell()
-  .storeUint(456, 16)
-  .endCell();
+    .storeUint(456, 16)
+    .endCell();
 const rootCell = beginCell()
-  .storeUint(0, 64)
-  .storeRef(innerCell)
-  .endCell();
+    .storeUint(0, 64)
+    .storeRef(innerCell)
+    .endCell();
 
 const boc = serializeBoc(
-  rootCell,
-  {
-    // do not include index
-    idx: false,
-    // do not include CRC-32
-    crc32: false,
-  },
+    rootCell,
+    {
+        // do not include index
+        idx: false,
+        // do not include CRC-32
+        crc32: false,
+    },
 );
 const decodedRootCell = deserializeBoc(boc)[0];
+```
+
+Alternatively, use methods of `Cell`:
+
+```ts
+import { Cell } from "@ton/core";
+
+const hex = 'b5ee9c72410106010082000114ff00f4a413f4bcf2c80b01...';
+
+// deserialze
+const cell = Cell.fromBoc(Buffer.from(hex, 'hex'))[0];
+
+// serialize
+const hexBack = cell.toBoc().toString('hex');
 ```
