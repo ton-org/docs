@@ -1,0 +1,254 @@
+---
+title: "Overall: TVM stack representation"
+sidebarTitle: "Overall: TVM stack"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+A consolidated summary of how each Tolk type is represented on the stack.
+
+<Aside
+  type="caution"
+  title={"Low-level details"}
+>
+  This page assumes prior knowledge of the [Tolk type system](/languages/tolk/types/list-of-types)
+  and [TVM](/tvm/overview).
+  It is intended as a concise low-level reference page.
+</Aside>
+
+## `int`, `intN`, `coins`
+
+All numeric types are backed by TVM `INT`.
+
+A reminder: `intN` uses full 257‑bit precision, so any integer value fits into it.
+Overflow happens only at serialization.
+
+## `bool`
+
+Type `bool` is backed by TVM `INT` with value `-1` or `0` at runtime.
+
+The unsafe cast `someBool as int` is valid and produces `-1` or `0`.
+
+## `address` and `any_address`
+
+Addresses are backed by TVM `SLICE` values containing raw binary data.
+
+A nullable `address?` is either TVM `NULL` or `SLICE`.
+
+The unsafe cast `someAddr as slice` and back is valid.
+
+## `cell`
+
+Type `cell` is backed by TVM `CELL`.
+
+The unsafe cast `someCell as Cell<T>` is valid.
+
+## `Cell<T>`
+
+Type `Cell<T>` is also backed by TVM `CELL`. The type parameter `T` is purely compile‑time metadata.
+
+## `slice`
+
+Type `slice` is backed by TVM `SLICE`.
+
+## `bitsN`
+
+Type `bitsN` is backed by TVM `SLICE`.
+
+The unsafe cast `someSlice as bitsN` and back is valid.
+
+## `RemainingBitsAndRefs`
+
+Type "remaining" is backed by TVM `SLICE`. It's actually an alias for `slice`, handled specially at deserialization.
+
+## `builder`
+
+Type `builder` is backed by TVM `BUILDER`. Note that already written bits cannot be read. The only possible way to access builder's data is converting it to a slice.
+
+## Structures
+
+Fields of a structure are placed sequentially on the stack. For example, `Point` occupies two stack slots, and `Line` — four:
+
+```tolk
+struct Point {
+    x: int
+    y: int
+}
+
+struct Line {
+    start: Point
+    end: Point
+}
+```
+
+When constructing a `Line` value, four integers are placed onto the stack:
+
+```tolk
+fun generateLine() {
+    val l: Line = {
+        start: { x: 10, y: 20 },
+        end: { x: 30, y: 40 },
+    };
+    // on a stack: 10 20 30 40
+    return l;
+}
+```
+
+Therefore, single‑field structures have no overhead compared to plain values.
+
+## Enums
+
+Every enum is backed by TVM `INT`. Tolk supports integer enums only (not addresses, for example).
+
+## Nullable types `T?`
+
+Atomics like `int?` / `address?` / `cell?` / etc. occupy a single stack slot: it holds either TVM `NULL` or a value.
+
+```tolk
+fun demo(maybeAddr: address?) {
+    // maybeAddr is one stack slot: `NULL` or `SLICE`
+}
+```
+
+A nullable structure with one primitive non-nullable field can be also optimized this way:
+
+```tolk
+struct MyId {
+    value: int32
+}
+
+fun demo(maybeId: MyId?) {
+    // maybeId is one stack slot: `NULL` or `INT`
+}
+```
+
+Nullable values of multi‑slot types (e.g., `Point` or a tensor `(bool, cell)`) occupy N+1 slots: the last is used for _typeid_.
+
+```tolk
+struct Point {
+    x: int
+    y: int
+}
+
+fun demo(maybeP: Point?) {
+    // maybeP is 3 stack slots:
+    // when null: "NULL, NULL, INT (0)"
+    // when not:  "INT (x), INT (y), INT (4567)"
+}
+```
+
+For every nullable type, the compiler assigns a unique _typeid_ (e.g., 4567 for `Point`).
+That _typeid_ is stored in an extra slot. Typeid for `null` is `0`.
+Expressions such as `p == null` or `p is Point` check that _typeid_ slot.
+
+A tricky example. A struct below, being nullable, requires an extra stack slot:
+
+```tolk
+struct Tricky {
+    opt: int?
+}
+
+fun demo(v: Tricky?) {
+    // v occupies 2 stack slots,
+    // because either `v == null` or `v.opt == null`:
+    // when v == null: "NULL, INT (0)"
+    // when v != null: "INT/NULL, INT (2345)"
+}
+```
+
+## Union types `T1 | T2 | ...`
+
+Unions are represented as "tagged unions":
+
+- each alternative type is assigned a unique _typeid_ (e.g., 1234 for `int`)
+- the union occupies N+1 stack slots, where N is the maximum size of `T_i`
+- (N+1)-th slot contains _typeid_ of the current value
+
+Thus, `match` is implemented as a comparison of the (N+1)-th slot, and passing/assigning a value is a bit of stack juggling.
+
+```tolk
+fun complex(v: int | slice | (int, int)) {
+    // `v` is 3 stack slots:
+    // - int:        (NULL, 100, 1234)
+    // - slice:      (NULL, CS{...}, 2345)
+    // - (int, int): (200, 300, 3456)
+}
+
+fun demo(someOf: int | slice) {
+    // `someOf` is 2 stack slots: value and type-id
+    // - int:   (100, 1234)
+    // - slice: (CS{...}, 2345)
+    match (someOf) {
+        int => {     // IF TOP == 1234
+            // slot1 is TVM `INT`, can be used in arithmetics
+        }
+        slice => {   // ELSE
+            // slot1 is TVM `SLICE`, can be used to loadInt()
+        }
+    }
+
+    complex(v);   // passes (NULL, v.slot1, v.typeid)
+    complex(5);   // passes (NULL, 5, 1234)
+}
+```
+
+<Aside type="tip">
+  An extra stack slot for _typeid_ is called "tagged union".
+  Union types in Tolk, `enum` in Rust, `std::variant` in C++ — they all are tagged unions.
+</Aside>
+
+`T | null` is called "nullable" and optimized for atomics: `int?` use a single slot. Non-atomics are handled generally, with _typeid_=0.
+
+## Tensors `(T1, T2, ...)`
+
+Tensor components are placed sequentially, identical to struct fields.
+
+For example, `(coins, Point, int?)` occupies 4 slots: "INT (coins), INT (p.x), INT (p.y), INT/NULL".
+
+```tolk
+type MyTensor = (coins, Point, int?)
+
+fun demo(t: MyTensor) {
+    // t is 4 stack slots
+    val p = t.1;
+    // p is 2 stack slots
+}
+```
+
+## `tuple`
+
+Type `tuple` is backed by TVM `TUPLE` — one stack slot regardless of the number of elements in it (up to 255).
+
+## Typed tuple `[T1, T2, ...]`
+
+A typed tuple is also TVM `TUPLE`. Its shape is known at compile-time, but at runtime it's the same `tuple`.
+
+```tolk
+fun demo(t: [int, [int, int]]) {
+    // t is one stack slot (TVM `TUPLE`)
+    // t.0 is TVM `INT`
+    // t.1 is TVM `TUPLE`
+    return t.1.0;    // asm "1 INDEX" + "0 INDEX"
+}
+```
+
+## `map<K, V>`
+
+Every map is one stack slot: either TVM `NULL` or `CELL`.
+
+Non‑empty maps (cells) have a non‑trivial bit‑level layout (follow [hashmaps in TL/B](/languages/tl-b/complex-and-non-trivial-examples#hashmap)).
+
+## Callables `(...ArgsT) -> ResultT`
+
+A callable and `continuation` is backed by TVM `CONT`.
+
+## `void` and `never`
+
+Both represent the absence of a value and occupy zero stack slots.
+
+For example, a `void` function does not place any value onto the stack.
+
+## See also
+
+- [Overall: serialization to binary data](/languages/tolk/types/overall-serialization)
+- [Type system overview](/languages/tolk/types/list-of-types)

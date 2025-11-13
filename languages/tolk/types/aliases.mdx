@@ -2,3 +2,98 @@
 title: "Type aliases"
 ---
 
+Tolk supports type aliases, similar to TypeScript and Rust.
+An alias creates a new name for an existing type and remains fully interchangeable with it.
+
+```tolk
+type UserId = int32
+type MaybeOwnerHash = bytes32?
+
+fun calcHash(id: UserId): MaybeOwnerHash {
+    // ...
+}
+```
+
+## Aliases are interchangeable with underlying types
+
+`UserId` and `int32` from the above are fully equivalent:
+
+- `id + 1` is okay, will be `int`
+- `someF(id)` is okay if `someF` accepts `int32` or `int`
+- methods for `int32` can be called having `UserId` and vice versa (and for `int` also, because `int32` is assignable to `int`)
+- a union `UserId | int32` makes no sense, it is simply `int32`
+
+```tolk
+fun demo() {
+    var id: UserId = 1;       // ok
+    var num: int = id;        // ok
+    var h = calcHash(id);
+    if (h != null) {
+        h as slice;           // bytes32 as slice
+    }
+}
+```
+
+**To obtain a "strict alias"**, which defines a distinct type, use a struct with one field:
+
+```tolk
+struct UniqueId {
+    value: int32
+}
+```
+
+Such a struct has no overhead over `int32`, but it becomes a distinct type with its own methods and semantics.
+
+## Two equal aliases are considered different
+
+If two aliases share the same underlying type,
+
+```tolk
+type AssetsDict = dict
+type BalanceDict = dict
+```
+
+Then they are not assignable to each other. It allows them to have identical methods:
+
+```tolk
+fun AssetsDict.validate(self) { /* ... */ }
+fun BalanceDict.validate(self) { /* ... */ }
+
+fun demo(a: AssetsDict, b: BalanceDict) {
+    a.validate();      // ok, method 1
+    b.validate();      // ok, method 2
+    a = b;             // error, can not assign
+}
+```
+
+This reminds `intN` types: `int32` is assignable to `int` and back, `int64` also, but assigning `int32` to `int64` is something strange.
+Assignment can be done with explicit casting: `b as AssetsDict`, see [operator `as`](/languages/tolk/types/type-checks-and-casts).
+
+## Type aliases can be generic
+
+```tolk
+type Wrapper<T> = Nothing | Container<T>
+```
+
+Read about [generic structs and aliases](/languages/tolk/types/generics).
+
+## Stack layout and serialization
+
+An alias is identical to its underlying type.
+
+Serialization can be overloaded with custom serializers.
+This is useful in tricky cases where binary encoding cannot be expressed using existing types.
+
+```tolk
+type MyString = slice
+
+fun MyString.packToBuilder(self, mutate b: builder) {
+    // custom logic
+}
+
+fun MyString.unpackFromSlice(mutate s: slice) {
+    // custom logic
+}
+```
+
+For details, follow [TVM representation](/languages/tolk/types/overall-tvm-stack) and [Serialization](/languages/tolk/types/overall-serialization).
