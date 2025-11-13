@@ -110,37 +110,33 @@ Replay protection is a security mechanism that prevents an attacker from [reusin
 
 ## Unconditional accepting of external messages
 
-Incoming external messages do not transfer funds and receiving smart contract must pay for their processing from its balance. Upon receiving an external message, a smart contract can spend some free gas (`gas_credit`) in order to decide whether it is ready to accept it or not and then pay for its further processing.
+Incoming external messages do not transfer funds. Receiving smart contract must pay for their processing from its balance. Upon receiving an external message, a smart contract can spend some free gas (`gas_credit`) in order to decide whether it is ready to accept it, and then pay for its further processing.
 
-External messages are usually accepted through the `accept()` instruction, which sets `gas_limit` to its maximum possible value specified in the network configuration and zips `gas_credit`. From this point on, the contract will have to pay for the entire processing of the incoming message. Therefore, the unconditional acceptance of all external messages can quickly spend all the funds on the balance of the contract.
+External messages are usually accepted through the `accept()` instruction, which sets `gas_limit` to its maximum possible value specified in the network configuration, and sets `gas_credit` to zero. From this point on, the contract will have to pay for the entire processing of the incoming message.
+
+Therefore, if there isn't a well-thought condition in front of `accept()`, an attacker might repeatedly send messages, and spend all funds on the balance of the contract.
 
 ### Vulnerable code
 
 ```func
 () recv_external(slice in_msg) {
     accept();
-    ...
+    ;; ...
 }
 ```
 
 ### Secure implementation
 
-There are many additional checks before accepting an external message. The following example is a part of [wallet v3 code](https://github.com/ton-blockchain/ton/blob/53ec9684bd213983e1fe0f7610d3e3453a4ec628/crypto/smartcont/wallet3-code.fc).
+Checks before accepting an external message vary by use case. The following example is a part of [wallet v3 code](https://github.com/ton-blockchain/ton/blob/53ec9684bd213983e1fe0f7610d3e3453a4ec628/crypto/smartcont/wallet3-code.fc), that doesn't accept a message if it isn't signed by the wallet's owner.
 
 ```func
 () recv_external(slice in_msg) impure {
-    var signature = in_msg~load_bits(512);
-    var cs = in_msg;
-    var (subwallet_id, valid_until, msg_seqno) = (cs~load_uint(32), cs~load_uint(32), cs~load_uint(32));
-    throw_if(35, valid_until <= now());
-    var ds = get_data().begin_parse();
-    var (stored_seqno, stored_subwallet, public_key) = (ds~load_uint(32), ds~load_uint(32), ds~load_uint(256));
-    ds.end_parse();
+    ;; parse message and contract storage (omitted)
     throw_unless(33, msg_seqno == stored_seqno);
     throw_unless(34, subwallet_id == stored_subwallet);
     throw_unless(35, check_signature(slice_hash(in_msg), signature, public_key));
     accept_message();
-    ...
+    ;; handle the message (omitted)
 }
 ```
 
