@@ -2,6 +2,77 @@
 title: "Builders and Slices"
 ---
 
-import { Stub } from '/snippets/stub.jsx';
+In TVM, `Cell` type contains only metadata of the cell: level, hashes, and depths. To read actual data, we need to _load_ cell from celldb, key-value storage of the node, which stores cells by their representation hashes. [`CTOS`](/tvm/instructions#d0-ctos) instruction loads a cell by its metadata from `Cell` type, and provides a `Slice`, a read-only wrapper for the cell's content. To simplify coding cell deserializators in smart contracts, instead of behaving like a simple bit/ref array, `Slice` is a "read cursor": it allows to load a piece of data from the beginning of the slice, returning that data and the slice which contains remaining data. On the other hand, there is a `Builder` type, which provides a convenient way to serialize data to a cell. Only `Cell` type can be used outside of TVM: in output actions and in persistent storage.
 
-<Stub issue="737" />
+## Builder
+
+Builder provides a way to construct a cell from sequence of values of following TVM types: integers, cells (as references), slices, and builders. Tuples, continuations, and null are not serializable.
+
+Let's serialize following numbers to a cell:
+
+```
+1 (uint4)
+2 (uint4)
+-1 (int8)
+```
+
+First, create an empty builder using [`NEWC`](/tvm/instructions#c8-newc):
+
+```fift Fift
+NEWC  // returns empty builder x{}
+```
+
+Then, put a number on stack:
+
+```fift Fift
+1 INT  // stack: x{} 1
+```
+
+And call [`STU`](/tvm/instructions#cb-stu) (STore Unsigned integer) to store integer into builder (swapping builder and value to meet `STU` input order):
+
+```fift Fift
+SWAP  // stack: 1 x{}
+4 STU  // stack: x{0001}
+```
+
+Then, store other two numbers:
+
+```fift Fift
+2 INT  // x{0001} 2
+SWAP  // 2 x{0001}
+4 STU  // x{00010010}
+
+-1 INT  // x{00010010} -1
+SWAP  // -1 x{00010010}
+8 STI  // x{0001001011111111}
+```
+
+And, finally, [`ENDC`](/tvm/instructions#c9-endc) instruction finalizes the builder to a cell.
+
+## Slice
+
+Slice allows to read data back from cell, field-by-field. Let's deserialize bitstring `x{0001001011111111}` created above.
+
+[`CTOS`](/tvm/instructions#d0-ctos) loads a `Cell` to a `Slice`.
+
+```fift Fift
+// assume we have a cell with bitstring x{0001001011111111} on the stack
+CTOS  // x{0001001011111111}
+```
+
+Then, call [`LDU`](/tvm/instructions#d3-ldu) to read first value (uint4).
+
+```fift Fift
+4 LDU  // 1 x{001011111111}
+```
+
+`LDU` takes first 4 bits from a slice and creates a new slice without this 4 bits: x{0001|001011111111} slices into a number `0001` and a slice `x{001011111111}`.
+
+Similarly, read another two numbers:
+
+```fift Fift
+4 LDU // 1 2 x{11111111}
+8 LDI // 1 2 -1 x{}
+```
+
+Common way to ensure there is no data left inside slice is to call [`ENDS`](/tvm/instructions#d1-ends).
