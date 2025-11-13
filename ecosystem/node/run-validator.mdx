@@ -3,11 +3,11 @@ title: "Run a validator"
 description: "Run a validator node with MyTonCtrl"
 ---
 
+import { Aside } from '/snippets/aside.jsx';
+
 ## Prerequisites
 
 ### Minimal hardware requirements
-
-MyTonCtrl is best to install and use on Ubuntu 22.04 LTS or 24.04 LTS.
 
 - 16-core CPU
 - 128 GB RAM
@@ -16,70 +16,71 @@ MyTonCtrl is best to install and use on Ubuntu 22.04 LTS or 24.04 LTS.
 - Public IP address (fixed IP address)
 - 100 TB/month traffic at peak load
 
-> Typically, you'll need at least a 1 Gbit/s connection to reliably accommodate peak loads (the average load is expected to be approximately 100 Mbit/s).
 
-> We draw special attention of validators to IOPS disk requirements, it is crucially important for smooth network operation.
+<Aside type="tip">
+Typically, you'll need at least a 1 Gbit/s connection to reliably accommodate peak loads (the average load is expected to be approximately 100 Mbit/s).
+We draw special attention of validators to IOPS disk requirements, it is crucially important for smooth network operation.
+</Aside>
 
-### Port forwarding
+### Software requirements
 
-All types of nodes require a static external IP address, one UDP port forwarded for incoming connections, and all outgoing connections to be open—the node uses random ports for new outgoing connections. The node must also be visible to the outside world over the NAT.
+- Ubuntu 22.04 LTS or 24.04 LTS
+- Python 3.10
+- Clang 16.0.0
 
-You can work with your network provider or [rent a server](/v3/guidelines/nodes/running-nodes/full-node#recommended-providers) to run a node.
 
-<Info>To determine which UDP ports are open, use the `netstat -tulpn` command.</Info>
+### Port forwarding for node
 
-### Learn slashing policy
+<Aside type="caution">
+Mandatory!
+</Aside>
 
-If a validator processes less than 90% of the expected blocks during a validation round, they will be fined by 101 TON.
+Configure your network on server according the following:
+- All outgoing connections to be open.
+- A static external IP address.
+- One UDP port forwarded for incoming connections
+- Server must also be visible to the outside world over the NAT.
 
-Learn more about the [slashing policy](/v3/documentation/nodes/validation/staking-incentives#decentralized-system-of-penalties).
+To determine which UDP ports are open, use the following command:
 
-### Staking types
+```bash
+netstat -tulpn
+```
 
-This article will focus on staking using a **single nominator pool**, since it is the recommended option for single validators. However, the full list for staking modes:
-
-- **Single nominator pool** — stake will be sent from a [single nominator pool smart contract](https://github.com/ton-blockchain/single-nominator). This is the recommended option for staking
-  as secure and convenient way to stake funds.
-- **Nominator pool** — stake will be sent from a [nominator pool smart contract](https://github.com/ton-blockchain/nominator-pool). Unnecessary complexity for solo validators, requires creation of 2 pool contracts for each round.
-- **Validator wallet** — stake will be sent from a regular validator wallet. This option is highly unrecommended
-  as compromising the server with validator software would lead to loss of funds in the wallet.
-- **Liquid staking** - staking via the [liquid-staking contracts system](https://github.com/ton-blockchain/liquid-staking-contract). This option can be used by companies that provide liquid staking services for their users.
-
-## MyTonCtrl installation
-
-### Prepare the operator account
+### Prepare the validator account
 
 Create non-root user and switch to it with reconnecting to server via ssh before installing MyTonCtrl:
 
 ```bash
 sudo adduser <USERNAME>
 sudo usermod -aG sudo <USERNAME>
-# reconnect as the new user
+exit # reconnect as the new user
 ssh <USERNAME>@<SERVER_IP>
 ```
 
-### Install MyTonCtrl
+## Node installation
+
+### Download MyTonCtrl
 
 To install MyTonCtrl, run:
 
 ```shell
 wget https://raw.githubusercontent.com/ton-blockchain/mytonctrl/master/scripts/install.sh
-sudo bash install.sh
-```
-After that the wizard (interactive CLI installer) will be launched, choose `validator` mode and **Single pool** staking mode or other desired [staking mode](#staking-types).
-You can also install `MyTonCtrl` directly in `validator` mode:
-
-```shell
-wget https://raw.githubusercontent.com/ton-blockchain/mytonctrl/master/scripts/install.sh
-sudo bash install.sh -m validator
 ```
 
-Or in `validator` mode with `single-nominator` staking type:
+### Run validator installation
 
-```shell
-wget https://raw.githubusercontent.com/ton-blockchain/mytonctrl/master/scripts/install.sh
-sudo bash install.sh -m single-nominator
+```shell install for Mainnet
+sudo bash install.sh -m single-nominator -n mainnet
 ```
+
+<Accordion title="install for Testnet">
+
+```shell install for Testnet
+sudo bash install.sh -m single-nominator -n mainnet
+```
+</Accordion>
+
 
 After installation, launch MyTonCtrl with command `mytonctrl`.
 You need to wait until the node is fully synchronized. To check synchronization status using the command:
@@ -88,24 +89,17 @@ You need to wait until the node is fully synchronized. To check synchronization 
 MyTonCtrl> status
 ```
 
+
 Check the field `Local validator initial sync status: x`, the value should become less than 20.
+
+<Aside type="tip">
 You can also set up [alert bot](/v3/guidelines/nodes/maintenance-guidelines/mytonctrl-private-alerting) to receive a notification when the node is synchronized.
+</Aside>
 
-### Select staking mode
+## Configure validator
 
-After MyTonCtrl installation, check that the correct staking mode is selected. In the `MyTonCtrl` console:
+### Activate validator wallet
 
-```sh
-MyTonCtrl> status_modes
-```
-There you should see that `validator` mode is enabled and the staking type which you selected when installed `MyTonCtrl` via the wizard.
-If you have not installed MyTonCtrl with the staking mode, you can still enable it using the `enable_mode` command:
-
-```sh
-MyTonCtrl> enable_mode single-nominator
-```
-
-## Activate validator wallet
 
 When installing, MyTonCtrl automatically creates a validator wallet for you. You need to top up and activate (deploy) this wallet so MyTonCtrl can operate Single nominator pool smart contract with it.
 
@@ -122,9 +116,9 @@ After you have topped it up, activate the wallet:
 ```sh
 MyTonCtrl> aw validator_wallet_001
 ```
-
-<Warning> Don't forget to back up the private key of your validator wallet. To print it, use the command:</Warning>
-
+<Aside type="caution">
+ Don't forget to back up the private key of your validator wallet. To print it, use the command:
+</Aside>
 ```sh
 MyTonCtrl> ew validator_wallet_001
 ```
@@ -139,7 +133,7 @@ MyTonCtrl> new_single_pool <pool-name> <owner-address>
 
 As an `owner-address`, specify the beneficiary wallet address who will stake owned funds and receive rewards.
 
-If you have already created a pool, you can import it:
+If you've already created a pool, you can import it:
 
 ```bash
 MyTonCtrl> import_pool <pool-name> <pool-addr>
@@ -225,3 +219,23 @@ Unlike `checkloadall`, which only works on validation rounds, this API allows yo
 Contact technical support [@mytonctrl_help_bot](https://t.me/mytonctrl_help_bot). This bot is for validators only and will not assist with questions for regular nodes.
 
 If you run a regular node, then contact the group: [@mytonctrl_help](https://t.me/mytonctrl_help).
+
+
+
+### Learn slashing policy
+
+If a validator processes less than 90% of the expected blocks during a validation round, they will be fined by 101 TON.
+
+Learn more about the [slashing policy](/v3/documentation/nodes/validation/staking-incentives#decentralized-system-of-penalties).
+
+### Staking types
+
+This article will focus on staking using a **single nominator pool**, since it is the recommended option for single validators. However, the full list for staking modes:
+
+- **Single nominator pool** — stake will be sent from a [single nominator pool smart contract](https://github.com/ton-blockchain/single-nominator). This is the recommended option for staking
+  as secure and convenient way to stake funds.
+- **Nominator pool** — stake will be sent from a [nominator pool smart contract](https://github.com/ton-blockchain/nominator-pool). Unnecessary complexity for solo validators, requires creation of 2 pool contracts for each round.
+- **Validator wallet** — stake will be sent from a regular validator wallet. This option is highly unrecommended
+  as compromising the server with validator software would lead to loss of funds in the wallet.
+- **Liquid staking** - staking via the [liquid-staking contracts system](https://github.com/ton-blockchain/liquid-staking-contract). This option can be used by companies that provide liquid staking services for their users.
+
