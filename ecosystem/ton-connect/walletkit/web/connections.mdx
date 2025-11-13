@@ -9,30 +9,38 @@ import { Aside } from '/snippets/aside.jsx';
   [Initialize the WalletKit](./init) and [set up at least one TON wallet](./wallets) before using examples on this page.
 </Aside>
 
-For dApps to use a wallet service for sending transactions and signing data via its TON wallets, they first need to set up a connection. The wallet services then need to handle connection request and disconnection events.
+To use a wallet service for initiating blockchain transactions and signing data, dApps need to set up a connection over the bridge first. Connection is established via `connect` requests and terminated via `disconnect` requests.
 
 ## Connection flow
 
-1. User scans QR code or clicks a "Connect wallet" or a similar button
-1. WalletKit processes the URL and triggers the `onConnectRequest` event
-1. Then, the dApp shows a connection request waiting for the user's approval
-1. User approves or rejects the connection
+Standard flow looks as follows:
 
-If the connection was approved, the dApp could proceed to send various transaction or data sign requests.
+1. User clicks a "Connect wallet" button in the dApp, selecting the desired wallet service
+1. WalletKit processes the connection URL and triggers the `onConnectRequest()` method
+1. There, WalletKit instructs the dApp to show a connection request preview, waiting for the user's approval
+1. User approves or rejects a connection with the dApp
+
+<Aside>
+  The flow can start by the user scanning a QR code from a dApp in the wallet service, or by pressing a deep link in the wallet service. In both cases, WalletKit will process the URL via the `handleTonConnectUrl()` method, then fire a `connect` event for the `onConnectRequest()` method to handle.
+</Aside>
+
+If the connection was approved, the dApp could proceed to send various transaction or data sign requests. If it was rejected, the dApp can repeat the flow.
+
+If a user decides to disconnect a wallet at any point, the `onDisconnect()` method of WalletKit will handle it.
 
 ## Handlers
 
-The WalletKit expects three kinds of callbacks to handle connections:
+To work with connection-specific requests, the WalletKit offers three methods which expect processing functions as callbacks:
 
-- Within the `onConnectRequest()` method: to process new connect requests and re-connections
-- Within the `onDisconnect()` method: to register dApp disconnects
-- And within the `onRequestError()` method: to [handle errors](./events#handle-request-errors) arising in any of the requests
+- The `onConnectRequest()` method processes connection requests
+- The `onDisconnect()` method processes disconnection requests
+- The `onRequestError()` method allows to [handle errors](./events#handle-request-errors) arising in any of the requests
 
 ### Handle `onConnectRequest`
 
-When a user wants to connect a wallet service from the dApp, the dApp fires the `connect` request over the bridge. The wallet service then handles it with the `onConnectRequest` method of the WalletKit.
+When a user wants to connect a TON wallet from the dApp, the dApp fires the `connect` request over the bridge. The wallet service then handles it with the `onConnectRequest` method of the WalletKit.
 
-On the dApp side, this flow is often initiated by pressing the "Connect a wallet" button, followed by selecting the user's wallet service. Additionally, a dApp can produce a [QR code or a deep link](#qr-codes-and-deep-links), which can also initiate the connection flow from within the wallet service.
+On the dApp side, this flow is often initiated by pressing the "Connect a wallet" button, followed by selecting the user's wallet service. Additionally, a dApp can produce a [QR code or a deep link](#qr-codes-and-deep-links), which initiate the connection flow from within the wallet service.
 
 ```ts title="TypeScript"
 kit.onConnectRequest(async (event) => {
@@ -62,10 +70,6 @@ kit.onConnectRequest(async (event) => {
   }
 });
 ```
-
-<Aside>
-  DApps can also initiate the `restoreConnection` events through the bridge, and they would be processed next to `connect` requests in the same `onConnectRequest` method of the WalletKit.
-</Aside>
 
 #### Wallet selection
 
@@ -118,9 +122,9 @@ kit.onConnectRequest(async (event) => {
 
 #### QR codes and deep links
 
-The `handleTonConnectUrl()` method of the WalletKit parses a TON Connect link and creates a new connection request event.
+The `handleTonConnectUrl()` method of the WalletKit parses a TON Connect link and creates a new [connection request event](#handle-onconnectrequest).
 
-Usually, this link comes from a QR code formed on the dApp side, but it can also be provided within the mobile dApp in form of a deep link.
+Usually, this link comes from a QR code generated on the dApp side, but it can also be provided within the mobile dApp as a deep link.
 
 ```ts title="TypeScript"
 async function handleQrCode(content: string) {
@@ -150,7 +154,7 @@ async function handleDeepLink(url: string) {
 
 ### Handle `onDisconnect`
 
-When a user disconnects a wallet service from the dApp, the dApp fires the `disconnect` request over the bridge. The wallet service then handles it with the `onDisconnect` method of the WalletKit.
+When a user disconnects a wallet service and its TON wallet from the dApp, the dApp fires the `disconnect` request over the bridge. The wallet service then handles it with the `onDisconnect` method of the WalletKit.
 
 ```ts title="TypeScript"
 kit.onDisconnect(async (event) => {
