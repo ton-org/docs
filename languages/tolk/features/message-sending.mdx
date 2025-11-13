@@ -2,7 +2,7 @@
 title: "Sending messages"
 ---
 
-Tolk has a high-level function `createMessage`. In practice, you'll immediately `send` its result:
+Tolk has a high-level function `createMessage`. In practice, it's immediately followed by `send`:
 
 ```tolk
 val reply = createMessage({
@@ -28,29 +28,29 @@ reply.send(SEND_MODE_REGULAR);
 
 There is a variety of interacting between contracts.
 
-- sometimes, you "send to an address (slice)"
+- sometimes, you "send to an address"
 - ... but sometimes, you "build the address (builder) manually"
 - sometimes, you compose `StateInit` from code+data
 - ... but sometimes, you already have `StateInit` as a ready cell
 - sometimes, you send a message to basechain
-- ... but sometimes, you have the `MY_workchain` constant and use it everywhere
-- sometimes, you just attach tons (**msg value**)
+- ... but sometimes, you use a `MY_WORKCHAIN` constant everywhere
+- sometimes, you just attach tons (msg value)
 - ... but sometimes, you also need extra currencies
 - etc.
 
-**How can we describe such a vast variety of options? The solution is union types!**
+**How to describe such a vast variety of options? The solution is union types!**
 
 Let's start exploring this idea by looking at how extra currencies are supported.
 
 ## Extra currencies: union
 
-When you don't need them, you just attach **msg value** as tons:
+In most cases, just attach msg value as tons:
 
 ```tolk
 value: someTonAmount
 ```
 
-When you need them, you attach tons AND extra currencies dict:
+But when extra currencies are needed, attach tons AND a dict:
 
 ```tolk
 value: (someTonAmount, extraDict)
@@ -60,7 +60,7 @@ How does it work? Because the field `value` is a union:
 
 ```tolk
 // how it is declared in stdlib
-type ExtraCurrenciesDict = dict;
+type ExtraCurrenciesDict = dict
 
 struct CreateMessageOptions<TBody> {
     ...
@@ -68,7 +68,7 @@ struct CreateMessageOptions<TBody> {
     value: coins | (coins, ExtraCurrenciesDict)
 ```
 
-That's it! You just attach tons OR tons with extra, and the compiler takes care of composing this into a cell.
+That's it! Just attach tons OR tons with extra, and the compiler takes care of composing this into a cell.
 
 ## Destination: union
 
@@ -95,7 +95,7 @@ struct CreateMessageOptions<TBody> {
 
 ## `StateInit` and workchains
 
-Let's start from an example. From a jetton minter, you are deploying a jetton wallet. You know wallet's code and initial data:
+Let's start from an example. A contract "jetton minter" deploys a "jetton wallet". Wallet's code and initial data are known:
 
 ```tolk
 val walletInitialState: ContractState = {
@@ -104,7 +104,7 @@ val walletInitialState: ContractState = {
 };
 ```
 
-Now, from a minter, you want to send a message to a wallet. But since you are not sure whether the wallet already exists on-chain, you attach its code+data: if a wallet doesn't exist, it's immediately initialized with that code. So, where should you send a message to? What is **destination**? The answer is: **destination is the wallet's `StateInit`**. You need to send a message to a `walletInitialState` because, in TON, the address of a contract is — by definition — a hash of its initial state:
+A minter needs to send a message to a wallet. But since it's unknown whether the wallet already exists on-chain, a message needs wallet's code+data attached: if a wallet doesn't exist, it's immediately initialized with that code. So, where a message should be sent to? What is **destination**? The answer is: **destination is the wallet's StateInit**. In TON, the address of a contract is — by definition — a hash of its initial state:
 
 ```tolk
 // address auto-calculated, code+data auto-attached
@@ -113,7 +113,7 @@ dest: {
 }
 ```
 
-In more complex tasks, you can configure additional fields:
+To serve more complex tasks, configure additional fields:
 
 ```tolk
 dest: {
@@ -136,9 +136,9 @@ struct AutoDeployAddress {
 
 ## Sharding: deploying "close to" another contract
 
-The `createMessage` interface also supports initializing contracts in specific shards. Say you're writing sharded jettons, and you want every jetton wallet to be in the same shard as the owner's wallet.
+The `createMessage` interface also supports initializing contracts in specific shards. Take, for example, sharded jettons — a jetton wallet should be deployed to the same shard as the owner's wallet.
 
-In other words, your intention is:
+In other words, the intention is:
 
 - a jetton wallet must be **close to** the owner's wallet
 - this _closeness_ is determined by a shard depth (syn. _fixed prefix length_, syn. _split depth_)
@@ -152,7 +152,7 @@ Let's illustrate it with numbers for `shard depth` = 8:
 | stateInitHash        | `yyyyyyyy...yyy`     | calculated by code+data              |
 | result (JW addr)     | `01010101...yyy`     | jetton wallet in same shard as owner |
 
-That's how you do it:
+That's how to do it:
 
 ```tolk
 dest: {
@@ -185,7 +185,7 @@ struct AddressShardingOptions {
 
 In TON Blockchain, according to the specification, a message is a cell (flags, dest address, stateInit, etc.), and its _body_ can be either inlined into the same cell or can be placed into its own cell (and be a ref).
 
-In FunC, you had to manually calculate whether it's safe to embed body (you did it _on paper_ or dynamically). In Tolk, you just pass `body`, and the compiler does all calculations for you:
+Fortunately, a developer shouldn't keep this in mind. Just pass `body`, and the compiler does all calculations:
 
 ```tolk
 createMessage({
@@ -201,7 +201,7 @@ The rules are the following:
 
 Why not make a ref always? Because creating cells is expensive. Avoiding cells for small bodies is crucial for gas consumption.
 
-Interestingly, whether the body is **small** is determined **AT COMPILE TIME — no runtime checks are needed**. How? Thanks to generics! Here's how `createMessage` is declared:
+Interestingly, whether the body is **small** is determined **at compile time** — no runtime checks are needed. How? Thanks to generics:
 
 ```tolk
 fun createMessage<TBody>(options: CreateMessageOptions<TBody>): OutMessage;
@@ -212,13 +212,13 @@ struct CreateMessageOptions<TBody> {
 }
 ```
 
-Hence, when you pass `body: RequestedInfo {...}`, then `TBody = RequestedInfo`, and the compiler estimates its size:
+Hence, when called as `body: RequestedInfo {...}`, then `TBody = RequestedInfo`, and the compiler estimates its size:
 
 - it's **small** if its maximum size is less than 500 bits and 2 refs — then **no ref**
 - it's **large** if >= 500 bits or >= 2 refs — then "ref"
 - it's **unpredictable** if contains `builder` or `slice` inside — then **ref**
 
-**Even if body is large/unpredictable, you can force it to be inlined** by wrapping into a special type:
+**Even if body is large/unpredictable, it can be force-inlined** by wrapping into a special type:
 
 ```tolk
 // potentialy 620 bits (if all coins are billions of billions)
@@ -249,8 +249,7 @@ That's why, don't pass `body: someObj.toCell()`, pass just `body: someObj`, let 
 
 ## Body is not restricted to structures
 
-In practice, you use `createMessage` to send a message (sic!) to another contract — in the exact format as the receiver expects.
-You declare a struct with 32-bit opcode and some data in it.
+In practice, `createMessage` is used to send a message (sic!) to another contract — in the exact format as the receiver expects.
 
 ```tolk
 struct (0xd53276db) Excesses {
@@ -258,7 +257,7 @@ struct (0xd53276db) Excesses {
 }
 
 val excessesMsg = createMessage({
-   ...
+   // ...
    body: Excesses {
        queryId: input.queryId,
    }
@@ -283,7 +282,7 @@ The example above just illustrates the power of the type system, no more.
 
 ## Body can be empty
 
-If you don't need any `body` at all, just leave it out:
+Don't need any `body` at all? Just leave it out:
 
 ```tolk
 createMessage({
@@ -305,8 +304,7 @@ struct CreateMessageOptions<TBody = void> {
 }
 ```
 
-Hence, omitting `body` in `createMessage` defaults `TBody` to `void`.
-And by convention, fields having `void` type are not required in a literal.
+Hence, if `body` is omitted, it leads to the default `TBody = never`. And by convention, fields having `never` type are not required in a literal. It's not that obvious, but it is definitely beautiful.
 
 ## Don't confuse `StateInit` and code+data, they are different
 
@@ -331,11 +329,11 @@ struct ContractState {
 
 And that's why a field `stateInit: ContractState | cell` is named **stateInit**, emphasizing that `StateInit` can be initialized automatically from `ContractState` (or can be a well-formed **rich** cell).
 
-## Why not send, but createMessage?
+## Q: Why not send, but createMessage?
 
-You might ask: "why do we follow the pattern `val msg = createMessage(...); msg.send(mode)` instead of just `send(... + mode)` ?"
+In other words: why the pattern `val msg = createMessage(...); msg.send(mode)`, why not `send(... + mode)`?
 
-Typically, yes — you send a message immediately after composing it. But there are also advanced use cases:
+Typically, yes — a message is immediately send after composing it. But there are also advanced use cases:
 
 - not just send, but send and estimate fees,
 - or estimate fees without sending,
@@ -345,7 +343,7 @@ Typically, yes — you send a message immediately after composing it. But there 
 
 So, composing a message cell and THEN doing some action with it is a more flexible pattern.
 
-Moreover, following this pattern requires you to give **a name** to a variable. Advice is not to name it "m" or "msg," but to give a descriptive name like "excessesMsg" or "transferMsg":
+Moreover, following this pattern requires to give **a name** to a variable. Advice is not to name it "m" or "msg," but to give a descriptive name like "excessesMsg" or "transferMsg":
 
 ```tolk
 val excessesMsg = createMessage({
@@ -356,15 +354,15 @@ excessesMsg.send(mode);
 excessesMsg.sendAndEstimateFee(mode);
 ```
 
-This strategy makes the code **easier to read** later. You see — okay, this is about excesses, this one is about burn notification, etc. As opposed to a potential `send(...)` function, you have to dig into what body is actually being sent to understand what's going on.
+This strategy makes the code **easier to read** later. While scanning the code, a reader sees: this is about excesses, this one is about burn notification, etc. As opposed to a potential `send(...)` function, hard to identify what _meaning_ is intended by the exact call.
 
-## Why not provide a separate deploy function?
+## Q: Why not provide a separate deploy function?
 
-You might also ask: why do we join `stateInit` as a **destination** for other use cases? Why not make a `deploy()` function that accepts code+data and drops stateInit from a **regular** createMessage?
+In other words: why `stateInit` is a **destination**? Why not make a `deploy()` function that accepts code+data, and drop stateInit from a regular createMessage?
 
-The answer lies in terminology. Yes, **attaching stateInit** is often referred to as **deployment**, but it's an inaccurate term. **TON Blockchain doesn't have a dedicated deployment mechanism.** You send a message to some _void_  — and if this _void_ doesn't exist, but you've attached a way to initialize it (code+data) — it's initialized immediately and accepts your message.
+The answer lies in terminology. Yes, **attaching stateInit** is often referred to as **deployment**, but it's an inaccurate term. **TON Blockchain doesn't have a dedicated deployment mechanism.** A message is sent to some _void_  — and if this _void_ doesn't exist, but a way to initialize it (code+data) is provided — it's initialized immediately and accepts the message.
 
-If you wish to emphasize the deployment, give it _a name_:
+To emphasize the deployment, give it _a name_:
 
 ```tolk
 val deployMsg = createMessage({
@@ -375,7 +373,7 @@ deployMsg.send(mode);
 
 ## Universal createExternalLogMessage
 
-The philosophy is similar to `createMessage`. But **external outs** don't have **bounce**; you don't attach tons, etc. So, options for creating are different.
+The philosophy is similar to `createMessage`. But **external outs** don't have **bounce**, no attached tons, etc. So, options for creating are different.
 
 **Currently, external messages are used only for emitting logs (for viewing them in indexers).** But theoretically, they can be extended to **send messages to the offchain**.
 
@@ -434,4 +432,4 @@ createExternalLogMessage({
 });
 ```
 
-`ExtOutLogBucket` is a variant of a custom external address for emitting logs **to the outer world.** It includes some **topic** (arbitrary number), that determines the format of the message body. In the example above, you emit **deposit event** (reserving topic `deposit` = 123) — and external indexers will index your emitted logs by destination address without parsing body.
+`ExtOutLogBucket` is a variant of a custom external address for emitting logs **to the outer world.** It includes some **topic** (arbitrary number), that determines the format of the message body. In the example above, a **deposit event** is emitted (reserving topic `deposit` = 123) — and external indexers will index emitted logs by destination address without parsing body.

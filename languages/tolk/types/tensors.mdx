@@ -3,3 +3,128 @@ title: "Tensors (not tuples!)"
 sidebarTitle: "Tensors"
 ---
 
+import { Aside } from '/snippets/aside.jsx';
+
+In Tolk, **a tensor** is `(T1, T2, ...)`.
+For example, `(int, slice)` — two values one by one.
+Large tensors are generally impractical; structures are typically more suitable.
+Essentially, structures are named tensors.
+
+<Aside
+  type="caution"
+>
+  In most languages, `(v1, v2, ...)` is called a tuple.
+  However, in TON, a "tuple" refers to a specific TVM primitive.
+  For this reason, `(v1, v2, ...)` in Tolk is called "a tensor".
+  [Read about tuples](/languages/tolk/types/tuples).
+</Aside>
+
+## Syntax `tensorVar.{i}`
+
+Access tensor components for reading and writing:
+
+```tolk
+// v is `(int, int, builder)`
+var v = (1, 2, beginCell());
+
+// read
+v.0;    // 1
+
+// modify
+v.1 = 123;
+v.2.storeInt(v.0, 16);
+// v is now (1, 123, builder "0x0001")
+
+v.100500  // compilation error
+```
+
+It also works for nested tensors:
+
+```tolk
+fun getNested(): (int, (bool, coins)) {
+    // ...
+}
+
+fun demo() {
+    val v = getNested();
+    v.1.0    // bool
+}
+```
+
+## Structures as named tensors
+
+Struct `User` below and a tensor `(int, slice)` have identical stack layouts and serialization rules:
+
+```tolk
+struct User {
+    id: int
+    name: slice
+}
+```
+
+Furthermore, `obj.{field}` is equivalent to `tensorVar.{i}`:
+
+```tolk
+struct Storage {
+    lastUpdated: int
+    owner: User
+}
+
+fun demo(s: Storage) {
+    s.lastUpdated;       // s.0
+    s.owner.id;          // s.1.0
+}
+```
+
+## Destructuring at assignment
+
+The following syntax is valid:
+
+```tolk
+var (i, j) = (10, 20);
+```
+
+Actually, it's a 2-component tensor `(10, 20)` assigned to two variables:
+
+```tolk
+var tensor = (10, 20);
+var (i, j) = tensor;
+
+// more complex example
+var (str, (i, j)) = ("abcd", (10, 20));
+```
+
+A special placeholder `_` can be used on the left side:
+
+```tolk
+var (_, j) = (10, 20);
+// j = 20
+```
+
+## Empty tensors are also valid values
+
+```tolk
+val empty = ();
+```
+
+This is analogous to creating an instance of an empty struct.
+
+<Aside type="note">
+  In some languages, an empty value is called "unit", and functions that return no value conceptually return a "unit" value.
+  In Tolk, a special type "void" is used for that (like in TypeScript).
+  `void` and `()` are not compatible, although they both hold no value.
+</Aside>
+
+## Tensors vs tuples
+
+**A tuple** is a special TVM primitive: it is a dynamic container capable of holding multiple values within a single stack slot.
+
+For example, a tensor `(int, int, int)` is "3 integers on the stack", whereas a tuple with 3 integers is "one tuple on the stack".
+
+Tolk supports the `tuple` type. [Read about tuples](/languages/tolk/types/tuples).
+
+## Stack layout and serialization
+
+Values are placed on the stack sequentially and serialized in the same order.
+
+For details, follow [TVM representation](/languages/tolk/types/overall-tvm-stack) and [Serialization](/languages/tolk/types/overall-serialization).

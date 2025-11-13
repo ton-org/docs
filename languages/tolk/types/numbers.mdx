@@ -2,3 +2,205 @@
 title: "Numbers"
 ---
 
+import { Aside } from '/snippets/aside.jsx';
+
+Tolk has several types for integers:
+
+- general `int`
+- signed `int32`, `int256`, etc. — any `intN` (0 \< N ≤ 257)
+- unsigned `uint64`, `uint119`, etc. — any `uintN` (0 \< N ≤ 256)
+- `coins` (representing nanotoncoins, 1 TON = 10^9)
+- (rarely used) `varintN` and `varuintN` (N = 16/32)
+
+<Aside
+  type="caution"
+>
+  All these types are **257-bit integers at runtime**.
+  The TVM (virtual machine) has only `INT`, and all intN are actually "just integers" while running.
+  **Overflow happens only at serialization**.
+</Aside>
+
+## Syntax: decimal, hex, and binary literals
+
+All the constants below are just `int`:
+
+```tolk
+const TEN = 0b1010;       // binary
+const MAX_UINT8 = 0xFF;   // hex
+
+// integers up to 2^256-1 are allowed
+const MAX_INT = 115792089237316195423570985008687907853269984665640564039457584007913129639935;
+```
+
+## `intN` describes serialization, `int` does not
+
+To automatically parse binary data, the compiler must correctly load and store integers.
+When a contract schema is designed, it is described in terms such as "queryID is unsigned 64-bit, counterValue is 32-bit", and similar.
+This is expressed directly in Tolk:
+
+```tolk
+struct IncMessage {
+    queryID: uint64
+    counterValue: int32
+}
+```
+
+As a result, `IncMessage` can be serialized to a cell and decoded back.
+
+A general-purpose type `int` is "an integer, but no information how to serialize it". Consider this struct:
+
+```tolk
+struct Point {
+    x: int
+    y: int
+}
+```
+
+Is it valid? Of course, it is! Creating a `Point` variable is pretty fine.
+But a call `p.toCell()` gives an error:
+
+```ansi
+error: auto-serialization via toCell() is not available for type `Point`
+       because field `Point.x` of type `int` can't be serialized
+       because type `int` is not serializable, it doesn't define binary width
+       hint: replace `int` with `int32` / `uint64` / `coins` / etc.
+```
+
+To make it serializable, replace `int` with a specific integer type. For example:
+
+```tolk
+struct Point {
+    x: int8
+    y: int8
+}
+```
+
+## Overflow happens only at serialization
+
+A natural question is: "What about overflow?"
+
+```tolk
+var v: uint8 = 255;
+v += 1;    // ???
+```
+
+The answer — **no runtime overflow or clamping**:
+
+- arithmetic works as usual – `v` becomes 256
+- no extra gas cost – no runtime bounds checks
+- overflow only happens at serialization
+
+```tolk
+struct Resp {
+    outValue: uint8
+}
+
+fun demo(resp: Resp) {
+    resp.outValue = v;     // 256 (no error yet)
+    resp.toCell();         // a runtime "overflow" error
+}
+```
+
+<Aside type="tip">
+  Think of smart contracts as a black box:
+
+  - inputs are encoded (int32, uint64, etc.)
+  - inside the contract, arithmetic uses full 257-bit precision
+  - outputs are serialized again — overflow happens only at this stage
+</Aside>
+
+Analogy: Tolk has `mulDivFloor(x,y,z)`, which uses 513-bit precision internally to prevent rounding errors.
+Similarly, overflow only occurs _at the boundary between the contract and the outside world_.
+
+## Generic `int` implicitly cast to and from any `intN`
+
+- arithmetic operations on `intN` degrade to `int`
+- numeric literals (like 0, 100) are just `int`
+- direct assignment between `intN` and `intM` is disallowed (as a probable error)
+
+```tolk
+fun takeAnyInt(a: int) { /* ... */ }
+fun getAnyInt(): int { /* ... */ }
+
+fun f(op: int32, qid: uint64) {
+    op = qid;               // error
+    op = qid as int32;      // ok
+
+    op + query_id;          // ok, int
+    if (op == qid)          // ok, not assignment
+
+    takeAnyInt(op);         // ok
+    op = getAnyInt();       // ok
+
+    var amount: int32 = 1000;
+    var percent: uint8 = 50;
+    var new = amount * percent / 100; // ok, int
+    amount = new;           // ok, int auto-casted to int32
+}
+```
+
+## Type `coins` and function `ton("0.05")`
+
+Similar to `int32`, Tolk has a dedicated `coins` type representing nanoton values.
+
+**The purpose of `coins` is to have special serialization rules**. It's serialized as "variadic integer":
+small values consume a few bits, large values consume more.
+
+- arithmetic with `coins` degrades to `int`, similar to `intN` (except addition/subtraction)
+- coins can be cast back from `int`, following the same rules as `intN`
+
+**The `ton("0.05")` built-in function** calculates "nanotoncoins" at compile-time.
+It only accepts constant values (e.g., `ton(some_var)` is invalid).
+
+```tolk
+const ONE_TON = ton("1");     // `coins`, value: 1000000000
+
+fun calcCost() {
+    val cost = ton("0.05");   // `coins`, value: 50000000
+    return ONE_TON + cost;
+}
+```
+
+## All of them are first-class types
+
+At runtime, all integers are 257-bit. But they are different from the type system's perspective.
+
+For example, they can be nullable, combined within a union, and so on:
+
+```tolk
+struct Demo {
+    f1: int32?           // nullable
+    f2: int32 | uint64   // union (yes, it's correct)
+    pair: (int8, coins)
+}
+
+fun demo(d: Demo) {
+    if (d.f1 != null) {
+        d.f1    // smart cast to `int32`
+    }
+    d.pair.1    // `coins`
+}
+```
+
+## No floating-point numbers
+
+Note that only integer types (257-bit) are supported by the virtual machine. There are no floating-point numbers.
+
+For example, monetary values are represented as nanotoncoins:
+
+```tolk
+const MIN_BALANCE = ton("1.23")     // 1230000000
+```
+
+## Stack layout and serialization
+
+All numeric types are backed by TVM `INT`. Serialization happens as follows:
+
+- `int` — not serializable, use `intN` and other types
+- `intN` — a fixed N-bit signed integer
+- `uintN` — a fixed N-bit unsigned integer
+- `coins` — alias to `varuint16`
+- `varintN` — variadic N 16/32: 4/5 bits for len + `8*len`-bit number
+- `varuintN` — the same, but unsigned
+
+For details, follow [TVM representation](/languages/tolk/types/overall-tvm-stack) and [Serialization](/languages/tolk/types/overall-serialization).
