@@ -6,66 +6,77 @@ noindex: "true"
 
 import { Aside } from '/snippets/aside.jsx';
 
-The FunC cookbook was created to consolidate all the knowledge and best practices from experienced FunC developers in one place. The goal is to make it easier for future developers to build smart contracts efficiently.
+The FunC cookbook was created to consolidate all the knowledge and best practices from experienced FunC developers in one place.
+The goal is to make it easier for future developers to build smart contracts efficiently.
 
-Unlike the rest of the official FunC documentation, this guide focuses on solving everyday challenges that FunC developers encounter during smart contract development.
+Unlike the rest of the official FunC documentation, this guide focuses on solving everyday challenges that FunC developers encounter
+during smart contract development.
 
-## Basics
+## Statements
 
-### How to write an if statement
+### How to use flags in if statements
 
-Let's say we want to check if any event is relevant. To do this, we use the flag variable. Remember that in FunC `true` is `-1` and `false` is `0`.
+To check whether an event is relevant, use a flag variable of type integer.
+The flag can either be `0`, representing `false`, or `-1`, representing `true`.
+See [absence of boolean type](/languages/func/types#no-boolean-type).
 
-To check whether an event is relevant, use a flag variable. In FunC, `true` is represented by `-1`, and `false` is `0`.
+When checking the flag in [if..else statements](/languages/func/statements#if%E2%80%A6else-statement), it is unnecessary to use
+the [`==` operator](/languages/func/operators#equality%2C-%3D%3D), since a `0` evaluates to `false`, and any nonzero value is
+considered to be `true` in `if..else` statements.
 
 ```func
-int flag = 0; ;; false
+int flag = 0;  ;; false
 
-if (flag) {
+;; ...
+;; ...
+
+if (flag) {    ;; No need to use flag == -1 
     ;; do something
 }
 else {
-    ;; reject the transaction
+    ;; reject
 }
 ```
-
-**Note:** The `==` operator is unnecessary, as `0` already evaluates to `false`, and any nonzero value is considered `true`.
-
-**Reference:** [`If statement` in docs](/languages/func/statements#if-statements)
 
 ### How to write a repeat loop
 
-A repeat loop helps execute an action a fixed number of times. The example below demonstrates exponentiation:
+A [repeat loop](/languages/func/statements#repeat-loop) helps execute an action a fixed number of times. The example below computes
+exponentiation of `number` to the exponent `exponent`, and illustrates it with specific values `number = 2` and `exponent = 5`:
 
 ```func
 int number = 2;
-int multiplier = number;
-int degree = 5;
+int exponent = 5;
 
-repeat(degree - 1) {
+int result = 1;      ;; Will store the final result: number^exponent
 
-    number *= multiplier;
+repeat(exponent) {   ;; The repeat multiplies variable "number", 
+                     ;; exactly an "exponent" number of times
+    result *= number;
 }
+;; result holds value 32 
 ```
-
-**Reference:** [`Repeat loop` in docs](/languages/func/statements#repeat-loop)
 
 ### How to write a while loop
 
-A while loop is useful when the number of iterations is unknown. The following example processes a `cell` which can store up to four references to other cells:
+A [while loop](/languages/func/statements#while-loop) is useful when the number of iterations is unknown.
+The following example processes the references in the message [cell](/foundations/serialization/cells).
+Each cell can store up to four references to other cells:
 
 ```func
 cell inner_cell = begin_cell() ;; Create a new empty builder
         .store_uint(123, 16) ;; Store uint with value 123 and length 16 bits
         .end_cell(); ;; Convert builder to a cell
 
+;; Create a cell, which will have two references to inner_cell
 cell message = begin_cell()
         .store_ref(inner_cell) ;; Store cell as reference
-        .store_ref(inner_cell)
+        .store_ref(inner_cell) ;; A second time
         .end_cell();
 
 slice msg = message.begin_parse(); ;; Convert cell to slice
-while (msg.slice_refs_empty?() != -1) { ;; We should remind that -1 is true
+while (msg.slice_refs_empty?() != -1) { ;; Iterate while there are refs to process
+                                        ;; Recall that -1 is true.
+                                        
     cell inner_cell = msg~load_ref(); ;; Load cell from slice msg
     ;; do something
 }
@@ -73,171 +84,198 @@ while (msg.slice_refs_empty?() != -1) { ;; We should remind that -1 is true
 
 **References:**
 
-- [`While loop` in docs](/languages/func/statements#while-loop)
-- [`Cell` in docs](/tvm/serialization/cells)
-- [`slice_refs_empty?()` in docs](/languages/func/stdlib#slice_refs_empty)
-- [`store_ref()` in docs](/languages/func/stdlib#store_ref)
-- [`begin_cell()` in docs](/languages/func/stdlib#begin_cell)
-- [`end_cell()` in docs](/languages/func/stdlib#end_cell)
-- [`begin_parse()` in docs](/languages/func/stdlib#begin_parse)
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`begin_cell`](/languages/func/stdlib#begin-cell)
+- [`store_uint`](/languages/func/stdlib#store-uint)
+- [`end_cell`](/languages/func/stdlib#end-cell)
+- [`store_ref`](/languages/func/stdlib#store-ref)
+- [`begin_parse`](/languages/func/stdlib#begin-parse)
+- [`slice_refs_empty?`](/languages/func/stdlib#slice-refs-empty%3F)
+- [`load_ref`](/languages/func/stdlib#load-ref)
 
 ### How to write a do until loop
 
-Use a `do-until` loop when the loop must execute at least once.
+Use a [`do..until` loop](/languages/func/statements#until-loop) when the loop must execute at least once.
 
 ```func
 int flag = 0;
 
 do {
-    ;; do something even flag is false (0)
-} until (flag == -1); ;; -1 is true
+    ;; iterate this as long as "flag" is false (0).
+    ;; It would execute at least once even if the flag 
+    ;; were already true before entering the loop.
+} until (flag == -1); ;; Stop when "flag" becomes -1
 ```
 
-**Reference:** [`Until loop` in docs](/languages/func/statements#until-loop)
+## Cells and slices
 
-### How to determine if slice is empty
+### How to determine if a slice is empty
 
-Before working with a `slice`, checking whether it contains any data is essential to ensure proper processing. The `slice_empty?()` method can be used for this purpose. However, it returns `0` (`false`) if the slice contains at least one `bit` of data or one `ref`.
+Before working with a slice, checking whether it contains any data is essential to ensure proper processing.
+The `slice_empty?` method can be used for this purpose. However, it returns `0` (`false`) if the slice contains at least one `bit` of data or one reference.
 
 ```func
 ;; Creating empty slice
-slice empty_slice = "";
+slice empty_slice = "";   ;; compile-time built-in "" produces a slice with no bits
 ;; `slice_empty?()` returns `true` because the slice doesn't have any `bits` and `refs`.
 empty_slice.slice_empty?();
 
 ;; Creating slice which contains bits only
-slice slice_with_bits_only = "Hello, world!";
-;; `slice_empty?()` returns `false` because the slice has `bits`.
+slice slice_with_bits_only = "Hello, world!";  ;; compile-time built-in produces a slice
+                                               ;; containing the ASCII binary code of the string
+;; `slice_empty?()` returns `false` because the slice has bits.
 slice_with_bits_only.slice_empty?();
+
+;; Create an empty dummy cell for use later 
+cell dummy_cell = begin_cell().end_cell();
 
 ;; Creating slice which contains refs only
 slice slice_with_refs_only = begin_cell()
-    .store_maybe_ref
-    .end_cell()
-    .begin_parse();
-;; `slice_empty?()` returns `false` because the slice has `refs`.
+    .store_ref(dummy_cell)      ;; Add the dummy cell as a reference
+    .end_cell()                 ;; this creates the cell
+    .begin_parse();             ;; this creates a slice from the cell
+;; `slice_empty?()` returns `false` because the slice has cell references.
 slice_with_refs_only.slice_empty?();
 
 ;; Creating slice which contains bits and refs
 slice slice_with_bits_and_refs = begin_cell()
-    .store_slice("Hello, world!")
-    .store_ref(null())
+    .store_slice("Hello, world!")   ;; Add bits from the slice computed
+                                    ;; using the compile-time built-in
+    .store_ref(dummy_cell)          ;; Add the dummy cell as a reference
     .end_cell()
     .begin_parse();
-;; `slice_empty?()` returns `false` because the slice has `bits` and `refs`.
+;; `slice_empty?()` returns `false` because the slice has bits and references.
 slice_with_bits_and_refs.slice_empty?();
 ```
 
 **References:**
 
-- [`slice_empty?()` in docs](/languages/func/stdlib#slice_empty)
-- [`store_slice()` in docs](/languages/func/stdlib#store_slice)
-- [`store_ref()` in docs](/languages/func/stdlib#store_ref)
-- [`begin_cell()` in docs](/languages/func/stdlib#begin_cell)
-- [`end_cell()` in docs](/languages/func/stdlib#end_cell)
-- [`begin_parse()` in docs](/languages/func/stdlib#begin_parse)
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`"<ascii string>"` compile-time builtin](/languages/func/literals#string-without-suffix), where `<ascii string>` is an ASCII string
+- [`slice_empty?`](/languages/func/stdlib#slice-empty%3F)
+- [`begin_cell`](/languages/func/stdlib#begin-cell)
+- [`end_cell`](/languages/func/stdlib#end-cell)
+- [`store_ref`](/languages/func/stdlib#store-ref)
+- [`begin_parse`](/languages/func/stdlib#begin-parse)
+- [`store_slice`](/languages/func/stdlib#store-slice)
 
 ### How to determine if slice is empty (no bits, but may have refs)
 
-If only the presence of `bits` matters and `refs` in `slice` can be ignored, use the `slice_data_empty?()`.
+If only the presence of bits matters and the cell references in the slice can be ignored, use the `slice_data_empty?` function.
 
 ```func
 ;; Creating empty slice
-slice empty_slice = "";
-;; `slice_data_empty?()` returns `true` because the slice doesn't have any `bits`.
+slice empty_slice = "";   ;; compile-time built-in "" produces a slice with no bits
+;; `slice_data_empty?()` returns `true` because the slice doesn't have any bits.
 empty_slice.slice_data_empty?();
 
 ;; Creating slice which contains bits only
-slice slice_with_bits_only = "Hello, world!";
-;; `slice_data_empty?()` returns `false` because the slice has  `bits`.
+slice slice_with_bits_only = "Hello, world!";  ;; compile-time built-in produces a slice
+                                               ;; containing the ASCII binary code of the string
+;; `slice_data_empty?()` returns `false` because the slice has bits.
 slice_with_bits_only.slice_data_empty?();
+
+;; Create an empty dummy cell for use later 
+cell dummy_cell = begin_cell().end_cell();
 
 ;; Creating slice which contains refs only
 slice slice_with_refs_only = begin_cell()
-    .store_ref(null())
-    .end_cell()
-    .begin_parse();
-;; `slice_data_empty?()` returns `true` because the slice doesn't have any `bits`
+    .store_ref(dummy_cell)      ;; Add the dummy cell as a reference
+    .end_cell()                 ;; this creates the cell
+    .begin_parse();             ;; this creates a slice from the cell
+;; `slice_data_empty?()` returns `true` because the slice doesn't have any bits
 slice_with_refs_only.slice_data_empty?();
 
 ;; Creating slice which contains bits and refs
 slice slice_with_bits_and_refs = begin_cell()
-    .store_slice("Hello, world!")
-    .store_ref(null())
+    .store_slice("Hello, world!")   ;; Add bits from the slice computed
+                                    ;; using the compile-time built-in
+    .store_ref(dummy_cell)          ;; Add the dummy cell as a reference
     .end_cell()
     .begin_parse();
-;; `slice_data_empty?()` returns `false` because the slice has `bits`.
+;; `slice_data_empty?()` returns `false` because the slice has bits.
 slice_with_bits_and_refs.slice_data_empty?();
 ```
 
 **References:**
 
-- [`slice_data_empty?()` in docs](/languages/func/stdlib#slice_data_empty)
-- [`store_slice()` in docs](/languages/func/stdlib#store_slice)
-- [`store_ref()` in docs](/languages/func/stdlib#store_ref)
-- [`begin_cell()` in docs](/languages/func/stdlib#begin_cell)
-- [`end_cell()` in docs](/languages/func/stdlib#end_cell)
-- [`begin_parse()` in docs](/languages/func/stdlib#begin_parse)
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`"<ascii string>"` compile-time builtin](/languages/func/literals#string-without-suffix), where `<ascii string>` is an ASCII string.
+- [`slice_data_empty?`](/languages/func/stdlib#slice-data-empty%3F)
+- [`begin_cell`](/languages/func/stdlib#begin-cell)
+- [`end_cell`](/languages/func/stdlib#end-cell)
+- [`store_ref`](/languages/func/stdlib#store-ref)
+- [`begin_parse`](/languages/func/stdlib#begin-parse)
+- [`store_slice`](/languages/func/stdlib#store-slice)
 
 ### How to determine if slice is empty (no refs, but may have bits)
 
-In case we are only interested in `refs`, we should check their presence using `slice_refs_empty?()`.
-
-If only `refs` are of interest, their presence can be checked using the `slice_refs_empty?()`.
+If only cell references are of interest, their presence can be checked using the `slice_refs_empty?` function.
 
 ```func
 ;; Creating empty slice
-slice empty_slice = "";
-;; `slice_refs_empty?()` returns `true` because the slice doesn't have any `refs`.
+slice empty_slice = "";   ;; compile-time built-in "" produces a slice with no bits
+;; `slice_refs_empty?()` returns `true` because the slice doesn't have any cell references.
 empty_slice.slice_refs_empty?();
 
 ;; Creating slice which contains bits only
-slice slice_with_bits_only = "Hello, world!";
-;; `slice_refs_empty?()` returns `true` because the slice doesn't have any `refs`.
+slice slice_with_bits_only = "Hello, world!";  ;; compile-time built-in produces a slice
+                                               ;; containing the ASCII binary code of the string
+;; `slice_refs_empty?()` returns `true` because the slice doesn't have any cell references.
 slice_with_bits_only.slice_refs_empty?();
+
+;; Create an empty dummy cell for use later 
+cell dummy_cell = begin_cell().end_cell();
 
 ;; Creating slice which contains refs only
 slice slice_with_refs_only = begin_cell()
-    .store_ref(null())
-    .end_cell()
-    .begin_parse();
-;; `slice_refs_empty?()` returns `false` because the slice has `refs`.
+    .store_ref(dummy_cell)      ;; Add the dummy cell as a reference
+    .end_cell()                 ;; this creates the cell
+    .begin_parse();             ;; this creates a slice from the cell
+;; `slice_refs_empty?()` returns `false` because the slice has cell references.
 slice_with_refs_only.slice_refs_empty?();
 
 ;; Creating slice which contains bits and refs
 slice slice_with_bits_and_refs = begin_cell()
-    .store_slice("Hello, world!")
-    .store_ref(null())
+    .store_slice("Hello, world!")   ;; Add bits from the slice computed
+                                    ;; using the compile-time built-in
+    .store_ref(dummy_cell)          ;; Add the dummy cell as a reference
     .end_cell()
     .begin_parse();
-;; `slice_refs_empty?()` returns `false` because the slice has `refs`.
+;; `slice_refs_empty?()` returns `false` because the slice has cell references.
 slice_with_bits_and_refs.slice_refs_empty?();
 ```
 
 **References:**
 
-- [`slice_refs_empty?()` in docs](/languages/func/stdlib#slice_refs_empty)
-- [`store_slice()` in docs](/languages/func/stdlib#store_slice)
-- [`store_ref()` in docs](/languages/func/stdlib#store_ref)
-- [`begin_cell()` in docs](/languages/func/stdlib#begin_cell)
-- [`end_cell()` in docs](/languages/func/stdlib#end_cell)
-- [`begin_parse()` in docs](/languages/func/stdlib#begin_parse)
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`"<ascii string>"` compile-time builtin](/languages/func/literals#string-without-suffix), where `<ascii string>` is an ASCII string.
+- [`slice_refs_empty?`](/languages/func/stdlib#slice-refs-empty%3F)
+- [`begin_cell`](/languages/func/stdlib#begin-cell)
+- [`end_cell`](/languages/func/stdlib#end-cell)
+- [`store_ref`](/languages/func/stdlib#store-ref)
+- [`begin_parse`](/languages/func/stdlib#begin-parse)
+- [`store_slice`](/languages/func/stdlib#store-slice)
 
 ### How to determine if a cell is empty
 
-To check whether a `cell` contains any data, it must first be converted into a `slice`.
+To check whether a cell contains any data, it must first be converted into a slice.
 
-- If only `bits` matter, use `slice_data_empty?()`.
-- If only `refs` matter, use `slice_refs_empty?()`.
-- If the presence of any data (`bits` or `refs`) needs to be checked, use `slice_empty?()`.
+- If only the data bits matter, use `slice_data_empty?`.
+- If only cell references matter, use `slice_refs_empty?`.
+- If the presence of any data (bits or cell references) needs to be checked, use `slice_empty?`.
 
 ```func
+;; Create an empty dummy cell for use later 
+cell dummy_cell = begin_cell().end_cell();
+
 cell cell_with_bits_and_refs = begin_cell()
     .store_uint(1337, 16)
-    .store_ref(null())
+    .store_ref(dummy_cell)
     .end_cell();
 
-;; Change the `cell` type to slice with `begin_parse()`.
+;; To check that cell_with_bits_and_refs is empty,
+;; first obtain a slice
 slice cs = cell_with_bits_and_refs.begin_parse();
 
 ;; Determine if the slice is empty.
@@ -251,552 +289,22 @@ else {
 
 **References:**
 
-- [`slice_empty?()` in docs](/languages/func/stdlib#slice_empty)
-- [`begin_cell()` in docs](/languages/func/stdlib#begin_cell)
-- [`store_uint()` in docs](/languages/func/stdlib#store_uint)
-- [`end_cell()` in docs](/languages/func/stdlib#end_cell)
-- [`begin_parse()` in docs](/languages/func/stdlib#begin_parse)
-
-### How to determine if a dict is empty
-
-The `dict_empty?()` checks whether a dictionary contains any data. This method is functionally equivalent to `cell_null?()`, as a `null` cell typically represents an empty dictionary.
-
-```func
-cell d = new_dict();
-d~udict_set(256, 0, "hello");
-d~udict_set(256, 1, "world");
-
-if (d.dict_empty?()) { ;; Determine if the dict is empty
-    ;; dict is empty
-}
-else {
-    ;; dict is not empty
-}
-```
-
-**References:**
-
-- [`dict_empty?()` in docs](/languages/func/stdlib#dict_empty)
-- [`new_dict()` in docs](/languages/func/stdlib/#new_dict), creating an empty dict
-- [`dict_set()` in docs](/languages/func/stdlib/#dict_set), adding some elements in dict `d` with function, so it is not empty
-
-### How to determine if a tuple is empty
-
-When working with `tuples`, checking for existing values before extracting them is crucial. Extracting a value from an empty tuple will result in an error: ["not a tuple of valid size" - `exit code 7`](/tvm/exit-codes#7).
-
-```func
-;; Declare tlen function because it's not presented in stdlib
-(int) tlen (tuple t) asm "TLEN";
-
-() main () {
-    tuple t = empty_tuple();
-    t~tpush(13);
-    t~tpush(37);
-
-    if (t.tlen() == 0) {
-        ;; tuple is empty
-    }
-    else {
-        ;; tuple is not empty
-    }
-}
-```
-
-**Note:**
-We are defining the `tlen` assembly function. You can find more details [here](/languages/func/functions#assembler-function-body-definition) and a see a [list of assembler commands](/tvm/instructions).
-
-**References:**
-
-- [`empty_tuple?()` in docs](/languages/func/stdlib#empty_tuple)
-- [`tpush()` in docs](/languages/func/stdlib/#tpush)
-- [`Exit codes` in docs](/tvm/exit-codes)
-
-### How to determine if a lisp-style list is empty
-
-We can use the [cons](/languages/func/stdlib#cons) function to add an element to determine if a lisp-style list is empty. For example, adding 100 to the list ensures it is not empty.
-
-```func
-tuple numbers = null();
-numbers = cons(100, numbers);
-
-if (numbers.null?()) {
-    ;; list-style list is empty
-} else {
-    ;; list-style list is not empty
-}
-```
-
-### How to determine a state of the contract is empty
-
-Consider a smart contract with a `counter` that tracks the number of transactions. This variable does not exist in the contract state during the first transaction because it is empty.
-It is important to handle this scenario by checking if the state is empty and initializing the `counter` accordingly.
-
-```func
-;; `get_data()` will return the data cell from contract state
-cell contract_data = get_data();
-slice cs = contract_data.begin_parse();
-
-if (cs.slice_empty?()) {
-    ;; Contract data is empty, so we create counter and save it
-    int counter = 1;
-    ;; Create cell, add counter and save in contract state
-    set_data(begin_cell().store_uint(counter, 32).end_cell());
-}
-else {
-    ;; Contract data is not empty, so we get our counter, increase it and save
-    ;; we should specify correct length of our counter in bits
-    int counter = cs~load_uint(32) + 1;
-    set_data(begin_cell().store_uint(counter, 32).end_cell());
-}
-```
-
-**Note:**
-The contract state can be determined as empty by verifying whether the [cell is empty](/languages/func/cookbook#how-to-determine-if-a-cell-is-empty).
-
-**References:**
-
-- [`get_data()` in docs](/languages/func/stdlib#get_data)
-- [`begin_parse()` in docs](/languages/func/stdlib/#begin_parse)
-- [`slice_empty?()` in docs](/languages/func/stdlib/#slice_empty)
-- [`set_data()` in docs](/languages/func/stdlib#set_data)
-
-### How to build an internal message cell
-
-When a smart contract needs to send an internal message, it must first construct the message as a `cell`. This includes specifying technical flags, the recipient's address, and additional data.
-
-```func
-;; We use literal `a` to get valid address inside slice from string containing address
-slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
-int amount = 1000000000;
-;; we use `op` for identifying operations
-int op = 0;
-
-cell msg = begin_cell()
-    .store_uint(0x18, 6)
-    .store_slice(addr)
-    .store_coins(amount)
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) ;; default message headers (see sending messages page)
-    .store_uint(op, 32)
-.end_cell();
-
-send_raw_message(msg, 3); ;; mode 3 - pay fees separately and ignore errors
-```
-
-**Note:**
-
-- In this example, we use the literal `a` to obtain an address. More details on string literals can be found in the [documentation](/languages/func/literals#string-literals).
-- You can find more details in the [documentation](/foundations/whitepapers/tblkch#3-1-7-message-layout). A direct link to the [layout](/foundations/whitepapers/tblkch#3-1-7-message-layout) is also available.
-
-**References:**
-
-- [`begin_cell()` in docs](/languages/func/stdlib#begin_cell)
-- [`store_uint()` in docs](/languages/func/stdlib#store_uint)
-- [`store_slice()` in docs](/languages/func/stdlib#store_slice)
-- [`store_coins()` in docs](/languages/func/stdlib#store_coins)
-- [`end_cell()` in docs](/languages/func/stdlib/#end_cell)
-- [`send_raw_message()` in docs](/languages/func/stdlib/#send_raw_message)
-
-### How to contain a body as a ref in an internal message cell
-
-The message body can contain `int`, `slices`, or `cells` following flags and other technical data. If a `cell` is used, a bit must be set to `1` before calling `store_ref()`, indicating that the `cell` will be included.
-
-Alternatively, if there is sufficient space, the message body can be stored in the same `cell` as the header. In this case, the bit should be set to `0`.
-
-```func
-;; We use literal `a` to get valid address inside slice from string containing address
-slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
-int amount = 1000000000;
-int op = 0;
-cell message_body = begin_cell() ;; Creating a cell with message
-    .store_uint(op, 32)
-    .store_slice("❤")
-.end_cell();
-
-cell msg = begin_cell()
-    .store_uint(0x18, 6)
-    .store_slice(addr)
-    .store_coins(amount)
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1) ;; default message headers (see sending messages page)
-    .store_uint(1, 1) ;; set bit to 1 to indicate that the cell will go on
-    .store_ref(message_body)
-.end_cell();
-
-send_raw_message(msg, 3); ;; mode 3 - pay fees separately and ignore errors
-```
-
-**Note:**
-
-- In this example, we use the literal `a` to obtain an address. More details on string literals can be found in the [documentation](/languages/func/literals#string-literals).
-- The example uses [`mode 3`](/foundations/messages/overview), which ensures the contract deducts the specified amount while covering the transaction fee from the contract balance and ignoring errors.
-  - `mode 64` returns all received tokens, subtracting the commission.
-  - `mode 128` transfers the entire balance.
-- The [message](/languages/func/cookbook#how-to-build-an-internal-message-cell) is constructed with the body added separately.
-
-**References:**
-
-- [`begin_cell()` in docs](/languages/func/stdlib#begin_cell)
-- [`store_uint()` in docs](/languages/func/stdlib#store_uint)
-- [`store_slice()` in docs](/languages/func/stdlib#store_slice)
-- [`store_coins()` in docs](/languages/func/stdlib#store_coins)
-- [`end_cell()` in docs](/languages/func/stdlib/#end_cell)
-- [`send_raw_message()` in docs](/languages/func/stdlib/#send_raw_message)
-
-### How to contain a body as a slice in an internal message cell
-
-A message body can be sent as either a `cell` or a `slice`. In this example, the body is sent inside a `slice`.
-
-```func
-;; We use literal `a` to get valid address inside slice from string containing address
-slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
-int amount = 1000000000;
-int op = 0;
-slice message_body = "❤";
-
-cell msg = begin_cell()
-    .store_uint(0x18, 6)
-    .store_slice(addr)
-    .store_coins(amount)
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) ;; default message headers (see sending messages page)
-    .store_uint(op, 32)
-    .store_slice(message_body)
-.end_cell();
-
-send_raw_message(msg, 3); ;; mode 3 - pay fees separately and ignore errors
-```
-
-**Note:**
-
-- The literal `a` is used to obtain an address. See the [documentation](/languages/func/literals#string-literals) for details on string literals.
-- The example uses `mode 3`, `mode 64`, and `mode 128`, as described above.
-- The [message](/languages/func/cookbook#how-to-build-an-internal-message-cell) is constructed with the body included as a slice.
-
-### How to iterate tuples (both directions)
-
-When working with arrays or stacks in FunC, tuples are essential. The first step is learning how to iterate through tuple values for processing.
-
-```func
-(int) tlen (tuple t) asm "TLEN";
-forall X -> (tuple) to_tuple (X x) asm "NOP";
-
-() main () {
-    tuple t = to_tuple([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    int len = t.tlen();
-
-    int i = 0;
-    while (i < len) {
-        int x = t.at(i);
-        ;; do something with x
-        i = i + 1;
-    }
-
-    i = len - 1;
-    while (i >= 0) {
-        int x = t.at(i);
-        ;; do something with x
-        i = i - 1;
-    }
-}
-```
-
-**Note:**
-
-- The `tlen` assembly function is declared [here](/languages/func/functions#assembler-function-body-definition). You can read more about it and explore a [list of all assembler commands](/tvm/instructions).
-- The `to_tuple` function is also declared. This function converts any input into a tuple, so use it carefully.
-
-### How to write custom functions using asm keyword
-
-Many features we use in FunC come from pre-prepared methods inside `stdlib.fc`. However, we have many more capabilities, and learning to write custom functions unlocks new possibilities.
-
-For example, while `tpush`, which adds an element to a `tuple`, exists, there is no built-in `tpop` function. In such cases, we must implement it ourselves.
-
-```func
-;; ~ means it is modifying method
-forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
-```
-
-We must determine its length if we want to iterate over a `tuple`. We can achieve this by writing a new function using the `TLEN` asm instruction.
-
-```func
-int tuple_length (tuple t) asm "TLEN";
-```
-
-Examples of functions from `stdlib.fc`:
-
-```func
-slice begin_parse(cell c) asm "CTOS";
-builder begin_cell() asm "NEWC";
-cell end_cell(builder b) asm "ENDC";
-```
-
-**References:**
-
-- [`modifying method` in docs](/languages/func/statements#modifying-methods)
-- [`stdlib` in docs](/languages/func/stdlib)
-- [`TVM instructions` in docs](/tvm/instructions)
-
-### Iterating n-nested tuples
-
-Sometimes, we need to iterate through nested tuples. The following example iterates through a tuple formatted as: `[[2,6],[1,[3,[3,5]]], 3]` starting from the head.
-
-```func
-int tuple_length (tuple t) asm "TLEN";
-forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
-forall X -> int is_tuple (X x) asm "ISTUPLE";
-forall X -> tuple cast_to_tuple (X x) asm "NOP";
-forall X -> int cast_to_int (X x) asm "NOP";
-forall X -> (tuple) to_tuple (X x) asm "NOP";
-
-;; Define a global variable
-global int max_value;
-
-() iterate_tuple (tuple t) impure {
-    repeat (t.tuple_length()) {
-        var value = t~tpop();
-        if (is_tuple(value)) {
-            tuple tuple_value = cast_to_tuple(value);
-            iterate_tuple(tuple_value);
-        }
-        else {
-            if(value > max_value) {
-                max_value = value;
-            }
-        }
-    }
-}
-
-() main () {
-    tuple t = to_tuple([[2,6], [1, [3, [3, 5]]], 3]);
-    int len = t.tuple_length();
-    max_value = 0; ;; Reset max_value;
-    iterate_tuple(t); ;; Iterate tuple and find max value
-    ~dump(max_value); ;; 6
-}
-```
-
-**References:**
-
-- [`global variables` in docs](/languages/func/global-variables)
-- [`~dump` in docs](/languages/func/built-ins#dump-variable)
-- [`TVM instructions` in docs](/tvm/instructions)
-
-### Basic operations with tuples
-
-```func
-(int) tlen (tuple t) asm "TLEN";
-forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
-
-() main () {
-    ;; creating an empty tuple
-    tuple names = empty_tuple();
-
-    ;; push new items
-    names~tpush("Naito Narihira");
-    names~tpush("Shiraki Shinichi");
-    names~tpush("Akamatsu Hachemon");
-    names~tpush("Takaki Yuichi");
-
-    ;; pop last item
-    slice last_name = names~tpop();
-
-    ;; get first item
-    slice first_name = names.first();
-
-    ;; get an item by index
-    slice best_name = names.at(2);
-
-    ;; getting the length of the list
-    int number_names = names.tlen();
-}
-```
-
-### Resolving type X
-
-If a tuple contains various data types X (cell, slice, int, tuple, etc.), we may need to check the value and cast it accordingly before processing.
-
-```func
-forall X -> int is_null (X x) asm "ISNULL";
-forall X -> int is_int (X x) asm "<{ TRY:<{ 0 PUSHINT ADD DROP -1 PUSHINT }>CATCH<{ 2DROP 0 PUSHINT }> }>CONT 1 1 CALLXARGS";
-forall X -> int is_cell (X x) asm "<{ TRY:<{ CTOS DROP -1 PUSHINT }>CATCH<{ 2DROP 0 PUSHINT }> }>CONT 1 1 CALLXARGS";
-forall X -> int is_slice (X x) asm "<{ TRY:<{ SBITS DROP -1 PUSHINT }>CATCH<{ 2DROP 0 PUSHINT }> }>CONT 1 1 CALLXARGS";
-forall X -> int is_tuple (X x) asm "ISTUPLE";
-forall X -> int cast_to_int (X x) asm "NOP";
-forall X -> cell cast_to_cell (X x) asm "NOP";
-forall X -> slice cast_to_slice (X x) asm "NOP";
-forall X -> tuple cast_to_tuple (X x) asm "NOP";
-forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
-
-forall X -> () resolve_type (X value) impure {
-    ;; Value here is of type X, since we dont know what is the exact value - we would need to check what is the value and then cast it
-
-    if (is_null(value)) {
-        ;; do something with the null
-    }
-    elseif (is_int(value)) {
-        int valueAsInt = cast_to_int(value);
-        ;; do something with the int
-    }
-    elseif (is_slice(value)) {
-        slice valueAsSlice = cast_to_slice(value);
-        ;; do something with the slice
-    }
-    elseif (is_cell(value)) {
-        cell valueAsCell = cast_to_cell(value);
-        ;; do something with the cell
-    }
-    elseif (is_tuple(value)) {
-        tuple valueAsTuple = cast_to_tuple(value);
-        ;; do something with the tuple
-    }
-}
-
-() main () {
-    ;; creating an empty tuple
-    tuple stack = empty_tuple();
-    ;; let's say we have tuple and do not know the exact types of them
-    stack~tpush("Some text");
-    stack~tpush(4);
-    ;; we use var because we do not know type of value
-    var value = stack~tpop();
-    resolve_type(value);
-}
-```
-
-**Reference:** [`TVM instructions` in docs](/tvm/instructions)
-
-### How to get current time
-
-```func
-int current_time = now();
-
-if (current_time > 1672080143) {
-    ;; do some stuff
-}
-```
-
-### How to generate a random number
-
-<Aside
-  type="caution"
->
-  This method is not cryptographically secure.
-  For more details, see [Random number generation](/contract-dev/random) section.
-</Aside>
-
-```func
-randomize_lt(); ;; do this once
-
-int a = rand(10);
-int b = rand(1000000);
-int c = random();
-```
-
-### Modulo operations
-
-As an example, let’s say we need to perform the following calculation for all 256 numbers:
-
-`(xp + zp) * (xp - zp)`.
-
-Since these operations are commonly used in cryptography, we utilize the modulo operator for montgomery curves.
-
-**Note:**
-Variable names like `xp+zp` are valid as long as there are no spaces between the operators.
-
-```func
-(int) modulo_operations (int xp, int zp) {
-   ;; 2^255 - 19 is a prime number for montgomery curves, meaning all operations should be done against its prime
-   int prime = 57896044618658097711785492504343953926634992332820282019728792003956564819949;
-
-   ;; muldivmod handles the next two lines itself
-   ;; int xp+zp = (xp + zp) % prime;
-   ;; int xp-zp = (xp - zp + prime) % prime;
-   (_, int xp+zp*xp-zp) = muldivmod(xp + zp, xp - zp, prime);
-   return xp+zp*xp-zp;
-}
-```
-
-**Reference:** [`muldivmod` in docs](/tvm/instructions#A98C)
-
-### How to throw errors
-
-```func
-int number = 198;
-
-throw_if(35, number > 50); ;; the error will be triggered only if the number is greater than 50
-
-throw_unless(39, number == 198); ;; the error will be triggered only if the number is NOT EQUAL to 198
-
-throw(36); ;; the error will be triggered anyway
-```
-
-[Standard TVM exception codes](/tvm/exit-codes)
-
-### Reversing tuples
-
-Since tuples behave as stacks in FunC, sometimes we need to **reverse** them to access data from the opposite end.
-
-```func
-forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
-int tuple_length (tuple t) asm "TLEN";
-forall X -> (tuple) to_tuple (X x) asm "NOP";
-
-(tuple) reverse_tuple (tuple t1) {
-    tuple t2 = empty_tuple();
-    repeat (t1.tuple_length()) {
-        var value = t1~tpop();
-        t2~tpush(value);
-    }
-    return t2;
-}
-
-() main () {
-    tuple t = to_tuple([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    tuple reversed_t = reverse_tuple(t);
-    ~dump(reversed_t); ;; [10 9 8 7 6 5 4 3 2 1]
-}
-```
-
-**Reference:** [`tpush()` in docs](/languages/func/stdlib/#tpush)
-
-### How to remove an item with a certain index from the list
-
-```func
-int tlen (tuple t) asm "TLEN";
-
-(tuple, ()) remove_item (tuple old_tuple, int place) {
-    tuple new_tuple = empty_tuple();
-
-    int i = 0;
-    while (i < old_tuple.tlen()) {
-        int el = old_tuple.at(i);
-        if (i != place) {
-            new_tuple~tpush(el);
-        }
-        i += 1;
-    }
-    return (new_tuple, ());
-}
-
-() main () {
-    tuple numbers = empty_tuple();
-
-    numbers~tpush(19);
-    numbers~tpush(999);
-    numbers~tpush(54);
-
-    ~dump(numbers); ;; [19 999 54]
-
-    numbers~remove_item(1);
-
-    ~dump(numbers); ;; [19 54]
-}
-```
-
-### Determine if the slices are equal
-
-There are two main ways to check if two slices are equal:
-
-- Comparing their hashes.
-- Using the SDEQ asm instruction.
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`begin_cell`](/languages/func/stdlib#begin-cell)
+- [`end_cell`](/languages/func/stdlib#end-cell)
+- [`store_ref`](/languages/func/stdlib#store-ref)
+- [`begin_parse`](/languages/func/stdlib#begin-parse)
+- [`slice_empty?`](/languages/func/stdlib#slice-empty%3F)
+- [`slice_data_empty?`](/languages/func/stdlib#slice-data-empty%3F)
+- [`slice_refs_empty?`](/languages/func/stdlib#slice-refs-empty%3F)
+
+### Determine if the data bits of slices are equal
+
+There are three ways to check if the data bits of two slices are equal:
+
+1. Comparing their hashes.
+1. Using the SDEQ asm instruction.
+1. Using the `equal_slice_bits` function.
 
 ```func
 int are_slices_equal_1? (slice a, slice b) {
@@ -805,26 +313,64 @@ int are_slices_equal_1? (slice a, slice b) {
 
 int are_slices_equal_2? (slice a, slice b) asm "SDEQ";
 
-() main () {
-    slice a = "Some text";
-    slice b = "Some text";
-    ~dump(are_slices_equal_1?(a, b)); ;; -1 = true
+int are_slices_equal_3? (slice a, slice b) {
+    return equal_slice_bits(a, b);
+}
 
-    a = "Text";
-    ;; We use literal `a` to get valid address inside slice from string containing address
-    b = "EQDKbjIcfM6ezt8KjKJJLshZJJSqX7XOA4ff-W72r5gqPrHF"a;
-    ~dump(are_slices_equal_2?(a, b)); ;; 0 = false
+() main () {
+    slice s1 = "Some text";    ;; load a slice with the ASCII code of the string
+    slice s2 = "Some text";
+    ~dump(are_slices_equal_1?(s1, s2));  ;; -1 = true
+    ~dump(are_slices_equal_2?(s1, s2));  ;; -1 = true
+    ~dump(are_slices_equal_3?(s1, s2));  ;; -1 = true
+
+    s1 = "Text";
+    ;; load a slice with the address encoded in the provided string
+    s2 = "EQDKbjIcfM6ezt8KjKJJLshZJJSqX7XOA4ff-W72r5gqPrHF"a;
+    ~dump(are_slices_equal_1?(s1, s2));  ;; 0 = false
+    ~dump(are_slices_equal_2?(s1, s2));  ;; 0 = false
+    ~dump(are_slices_equal_3?(s1, s2));  ;; 0 = false
 }
 ```
 
+<Aside
+  type="danger"
+>
+  Ways 2 and 3 only check the data bits of the two slices, but way 1 **also** takes into account the cell references in the slices.
+  This means that if the two slices have the same data bits but different cell references, way 1 will answer `0` (`false`), but way 2 and 3 will answer `-1` (`true`).
+  For example, the following two slices have the same data bits, but different cell references.
+  Comparing their hashes would return `0` (`false`), but comparing them using `SDEQ` or `equal_slice_bits` would return `-1` (`true`).
+
+  ```func
+  ;; Create a dummy cell to add as a reference later
+  cell dummy = begin_cell().end_cell();
+
+  slice s1 = begin_cell()
+             .store_slice("Some text")  ;; Add the slice data bits
+             .store_ref(dummy)          ;; Add a dummy reference
+             .end_cell()
+             .begin_parse();            ;; Transform the cell to slice
+
+  slice s2 = "Some text";      ;; This slice contains only data bits
+
+  ~dump(are_slices_equal_1?(s1, s2));  ;; 0 = false
+  ~dump(are_slices_equal_2?(s1, s2));  ;; -1 = true
+  ~dump(are_slices_equal_3?(s1, s2));  ;; -1 = true
+  ```
+</Aside>
+
 **References:**
 
-- [`slice_hash()` in docs](/languages/func/stdlib/#slice_hash)
-- [`SDEQ` in docs](/tvm/instructions#C705)
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`"<ascii string>"` compile-time builtin](/languages/func/literals#string-without-suffix), where `<ascii string>` is an ASCII string.
+- [`"<address string>"a` compile-time builtin](/languages/func/literals#string-with-suffix-a), where `<address string>` is a string encoding an address.
+- [`slice_hash`](/languages/func/stdlib#slice-hash)
+- [`SDEQ` asm instruction](/tvm/instructions#c705-sdeq)
+- `equal_slice_bits`
 
 ### Determine if the cells are equal
 
-We can determine if two cells are equal by comparing their hashes.
+Determine whether two cells are equal by comparing their hashes.
 
 ```func
 int are_cells_equal? (cell a, cell b) {
@@ -840,30 +386,811 @@ int are_cells_equal? (cell a, cell b) {
             .store_uint(123, 16)
             .end_cell();
 
-    ~dump(are_cells_equal?(a, b)); ;; -1 = true
+    ~dump(are_cells_equal?(a, b));   ;; -1 = true
+
+    cell dummy_cell = begin_cell().end_cell();
+
+    cell c = begin_cell()     ;; Like cell a, but it has an extra reference 
+            .store_uint(123, 16)
+            .store_ref(dummy_cell)     
+            .end_cell();
+
+    ~dump(are_cells_equal?(a, c));   ;; 0 = false
 }
 ```
 
-**Reference:** [`cell_hash()` in docs](/languages/func/stdlib/#cell_hash)
+**References:**
 
-### Determine if the tuples are equal
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`cell_hash`](/languages/func/stdlib#cell-hash)
+- [`begin_cell`](/languages/func/stdlib#begin-cell)
+- [`end_cell`](/languages/func/stdlib#end-cell)
+- [`store_uint`](/languages/func/stdlib#store-uint)
+- [`store_ref`](/languages/func/stdlib#store-ref)
 
-A more advanced approach involves iterating through tuples and comparing each value recursively. Since tuples can contain different data types, we must check and cast values dynamically.
+### How to get only the data bits from a slice
+
+If the cell references within a slice are not needed, the raw data bits can be extracted for further processing
+using the function `preload_bits`:
 
 ```func
-int tuple_length (tuple t) asm "TLEN";
+;; Define a slice with data bits and two cell references
+slice s = begin_cell()
+    .store_slice("Some data bits...")
+    .store_ref(begin_cell().end_cell()) ;; some reference
+    .store_ref(begin_cell().end_cell()) ;; some reference
+    .end_cell()
+    .begin_parse();
+
+;; Extract the data bits as a new slice
+slice s_only_data = s.preload_bits(s.slice_bits());
+```
+
+Function `preload_bits` requires as argument the amount of bits to extract.
+`s.slice_bits()` obtains the amount of data bits
+in the slice.
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [Builder primitives](/languages/func/stdlib#builder-primitives)
+- [Slice primitives](/languages/func/stdlib#slice-primitives)
+- [`preload_bits`](/languages/func/stdlib#preload-bits)
+- [`slice_bits`](/languages/func/stdlib#slice-bits)
+
+### How to build a StateInit cell
+
+The code follows the TL-B for `StateInit`:
+
+```
+_ split_depth:(Maybe (## 5)) special:(Maybe TickTock)
+  code:(Maybe ^Cell) data:(Maybe ^Cell)
+  library:(HashmapE 256 SimpleLib) = StateInit;
+```
+
+which states that `code` and `data` should be added as cell references.
+Fields `split_depth` and `special` are usually set to `None` (i.e., `0`)
+in standard programming tasks. The `library` field usually set to `0` as well.
+See more details for the fields in the `StateInit` TL-B in its article.
+
+```func
+cell build_stateinit(cell init_code, cell init_data) {
+  var state_init = begin_cell()
+    .store_uint(0, 1) ;; split_depth: Maybe (## 5), set to "None"
+    .store_uint(0, 1) ;; special: Maybe TickTock, set to "None"
+    .store_uint(1, 1) ;; code: Maybe ^Cell, set to "Some cell", 
+                      ;; but the cell is provided later as a reference 
+    .store_uint(1, 1) ;; data: Maybe ^Cell, set to "Some cell",
+                      ;; but the cell is provided later as a reference 
+    .store_uint(0, 1) ;; library: HashmapE 256 SimpleLib, set to 0
+    .store_ref(init_code)  ;; the code as a cell reference
+    .store_ref(init_data)  ;; the data as a cell reference
+    .end_cell();
+    return state_int;
+}
+```
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- TL-B for StateInit
+- [Builder primitives](/languages/func/stdlib#builder-primitives)
+
+## Data structures
+
+### How to determine if a dict is empty
+
+The `dict_empty?` function checks whether a dictionary contains any data.
+This method is functionally equivalent to `cell_null?`, as a `null` cell typically represents an empty dictionary.
+
+```func
+cell d = new_dict();    ;; Create an empty dictionary
+
+;; Set value of key 0 to be a slice containing the ASCII string "hello" 
+d~udict_set(256, 0, "hello");
+;; Set value of key 1 to be a slice containing the ASCII string "world" 
+d~udict_set(256, 1, "world");
+
+if (d.dict_empty?()) { ;; Determine if the dict is empty
+    ;; dict is empty
+}
+else {
+    ;; dict is not empty.
+    ;; For dictionary d, execution flow will enter this
+    ;; branch, since d has two elements.
+}
+```
+
+In `d~udict_set(256, 0, "hello")`, the function expects unsigned 256-bit integers as keys; also,
+`d~udict_set(256, 0, "hello")` will mutate the dictionary `d`, since `udict_set` is called using
+[modifying notation with the symbol `~`](/languages/func/expressions#modifying-notation).
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [`"<ascii string>"` compile-time builtin](/languages/func/literals#string-without-suffix), where `<ascii string>` is an ASCII string.
+- [`new_dict`](/languages/func/stdlib#new-dict)
+- [`dict_set` primitives](/languages/func/stdlib#dict-set)
+- [`dict_empty?`](/languages/func/stdlib#dict-empty%3F)
+
+### How to store and load a dictionary in permanent storage
+
+The logic for loading a dictionary from local storage is as follows:
+
+```func
+;; Obtain the contract's local persistent storage
+slice local_storage = get_data().begin_parse();
+
+;; This initial assignment ensures that if the condition below 
+;; fails to find a dictionary already in local storage, 
+;; `dictionary_cell` will remain with a new empty dictionary.
+cell dictionary_cell = new_dict();
+
+if (~ slice_empty?(local_storage)) {
+    ;; A dictionary is already in local storage, load it
+    dictionary_cell = local_storage~load_dict();
+}
+```
+
+Storing the dictionary in local storage is also simple:
+
+```func
+set_data(begin_cell().store_dict(dictionary_cell).end_cell());
+```
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [Slice primitives](/languages/func/stdlib#slice-primitives)
+- [`get_data`](/languages/func/stdlib#get-data)
+- [`set_data`](/languages/func/stdlib#set-data)
+- [Builder primitives](/languages/func/stdlib#builder-primitives)
+- [`new_dict`](/languages/func/stdlib#new-dict)
+- [`slice_empty?`](/languages/func/stdlib#slice-empty%3F)
+- [`load_dict`](/languages/func/stdlib#load-dict)
+
+### How to iterate dictionaries
+
+To iterate a dictionary from the smallest to biggest key, first call a [`dict_get_min?` primitive](/languages/func/stdlib#dict-get-min%3F) to obtain the smallest key in the dictionary,
+and then call a [`dict_get_next?` primitive](/languages/func/stdlib#dict-get-next%3F) inside a loop while checking a flag for existence of further key-value pairs to process.
+
+Similarly, to iterate a dictionary from the biggest to smallest key, first call a [`dict_get_max?` primitive](/languages/func/stdlib#dict-get-max%3F) to obtain the biggest key in the dictionary,
+and then call a [`dict_get_prev?` primitive](/languages/func/stdlib#dict-get-prev%3F) inside a loop while checking a flag for existence of further key-value pairs to process.
+
+```func
+;; Initialize an example dictionary.
+;; keys will be unsigned 256-bit integers. Values are slices.
+;; Since keys are unsigned, 
+;; should use 'unsigned' versions of the 
+;; dict_set, dict_get_min?, dict_get_max?, 
+;; dict_get_next?, and dict_get_prev? primitives.
+cell d = new_dict();
+d~udict_set(256, 1, "value 1");   ;; Map key 1 to a slice containing string "value 1"
+d~udict_set(256, 5, "value 2");   ;; Map key 5 to a slice containing string "value 2"
+d~udict_set(256, 12, "value 3");  ;; Map key 12 to a slice containing string "value 3"
+
+;; First, iterate from smallest to biggest key:
+
+;; Obtain the smallest key.
+(int key, slice val, int flag) = d.udict_get_min?(256);   
+
+;; Repeat while there are keys to iterate, indicated by "flag".
+while (flag) {  
+    ;; do something with "key" and "val".
+
+    ;; Obtain the smallest key bigger than "key".
+    ;; i.e., the one next to "key" in numerical value.
+    ;; "flag" will indicate if such key exists.
+    (key, val, flag) = d.udict_get_next?(256, key);
+}
+
+;; Now, iterate from biggest to smallest key:
+
+;; Obtain the biggest key.
+(key, val, flag) = d.udict_get_max?(256);   
+
+;; Repeat while there are keys to iterate, indicated by "flag".
+while (flag) {  
+    ;; do something with "key" and "val".
+
+    ;; Obtain the biggest key smaller than "key",
+    ;; i.e., the one previous to "key" in numerical value.
+    ;; "flag" will indicate if there is a previous key.
+    (key, val, flag) = d.udict_get_prev?(256, key);
+}
+```
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [`"<ascii string>"` compile-time builtin](/languages/func/literals#string-without-suffix), where `<ascii string>` is an ASCII string.
+- [`new_dict`](/languages/func/stdlib#new-dict)
+- [`dict_set` primitives](/languages/func/stdlib#dict-set)
+- [`dict_get_min?` primitives](/languages/func/stdlib#dict-get-min%3F)
+- [`dict_get_max?` primitives](/languages/func/stdlib#dict-get-max%3F)
+- [`dict_get_next?` primitives](/languages/func/stdlib#dict-get-next%3F)
+- [`dict_get_prev?` primitives](/languages/func/stdlib#dict-get-prev%3F)
+
+### How to delete a value from a dictionary
+
+Use the [`dict_delete?` primitives](/languages/func/stdlib#dict-delete%3F) to delete keys in a dictionary.
+
+```func
+;; Initialize an example dictionary.
+;; keys will be unsigned 256-bit integers. Values are slices.
+;; Since keys are unsigned, 
+;; should use 'unsigned' versions of the 
+;; dict_set, dict_delete?, dict_get? primitives.
+cell names = new_dict();
+names~udict_set(256, 27, "Alice");  ;; Map key 27 to a slice containing string "Alice"
+names~udict_set(256, 25, "Bob");
+
+;; Delete key-value pair with key 27
+;; This mutates "names" dictionary, because 
+;; udict_delete? is called using ~
+names~udict_delete?(256, 27);   
+
+;; Look up the key 27
+;; since it was deleted, the "found" flag returns 0 
+(slice val, int found) = names.udict_get?(256, 27);
+~dump(found);   ;; 0, means that key was not found in the dictionary
+```
+
+**References:**
+
+- [`"<ascii string>"` compile-time builtin](/languages/func/literals#string-without-suffix), where `<ascii string>` is an ASCII string.
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [`new_dict`](/languages/func/stdlib#new-dict)
+- [`dict_set` primitives](/languages/func/stdlib#dict-set)
+- [`dict_delete?` primitives](/languages/func/stdlib#dict-delete%3F)
+- [`dict_get?` primitives](/languages/func/stdlib#dict-get%3F)
+
+### How to determine if a tuple is empty
+
+When working with `tuples`, checking for existing values before extracting them is crucial.
+Extracting a value from an empty tuple will result in an error: ["not a tuple of valid size" - `exit code 7`](/tvm/exit-codes#7).
+
+```func
+;; Declare the tlen assembler function because it's not present in stdlib
+;; tlen determines the length of a tuple
+int tlen (tuple t) asm "TLEN";
+
+() main () {
+    tuple t = empty_tuple();  ;; t is []
+    t~tpush(13);              ;; t is [13]
+    t~tpush(37);              ;; t is [13, 37]
+
+    if (t.tlen() == 0) {   ;; Evaluates to false
+        ;; tuple is empty
+    }
+    else {
+        ;; tuple is not empty
+    }
+}
+```
+
+The `tlen` [assembler function](/languages/func/asm-functions) uses
+the [TVM instruction `TLEN`](/tvm/instructions#6f88-tlen) to determine the number of elements in the tuple.
+The `tpush` function appends an element to the tuple, so that it becomes the last element.
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [Assembler functions](/languages/func/asm-functions)
+- [`empty_tuple`](/languages/func/stdlib#empty-tuple)
+- [`tpush`](/languages/func/stdlib#tpush)
+- [TVM Exit codes](/tvm/exit-codes)
+- [TVM instructions](/tvm/instructions)
+
+### Basic operations with tuples
+
+```func
+;; tlen determines the length of a tuple
+int tlen (tuple t) asm "TLEN";
+
+;; tpop removes the last element in the tuple and 
+;; returns the mutated tuple and the element.
+;; The type of the returned element is arbitrary.
 forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
+
+() main () {
+    ;; creating an empty tuple
+    tuple names = empty_tuple();
+
+    ;; push new items
+    ;; Each element is a slice storing an ASCII string
+    names~tpush("Naito");
+    names~tpush("Shiraki");
+    names~tpush("Akamatsu");
+    names~tpush("Takaki");
+
+    ;; names is ["Naito", "Shiraki", "Akamatsu", "Takaki"]
+
+    ;; pop last item, "Takaki"
+    slice last_name = names~tpop();
+
+    ;; get first item, "Naito"
+    slice first_name = names.first();
+
+    ;; get an item by index, "Akamatsu"
+    ;; First element has index 0
+    slice best_name = names.at(2);
+
+    ;; getting the length of the tuple
+    ;; returns 3, because "Takaki" was popped
+    int number_names = names.tlen();
+}
+```
+
+The `tlen` [assembler function](/languages/func/asm-functions) uses the [TVM instruction `TLEN`](/tvm/instructions#6f88-tlen) to determine the number of elements in the tuple.
+
+The `tpop` assembler function uses the [TVM instruction `TPOP`](/tvm/instructions#6f8d-tpop) to detach the last element from the tuple, and
+it returns the mutated tuple and the detached element.
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [Assembler functions](/languages/func/asm-functions)
+- [Polymorphic functions](/languages/func/functions#forall-declarator)
+- [`empty_tuple`](/languages/func/stdlib#empty-tuple)
+- [`tpush`](/languages/func/stdlib#tpush)
+- [`first`](/languages/func/stdlib#first)
+- [`at`](/languages/func/built-ins/#at)
+- [TVM instructions](/tvm/instructions)
+
+### How to iterate tuples (both directions)
+
+When working with arrays or stacks in FunC, tuples are essential. The first step is learning how to iterate through tuple values for processing.
+
+```func
+;; tlen determines the length of a tuple
+int tlen (tuple t) asm "TLEN";
+
+;; Casts any type into a tuple
+forall X -> tuple to_tuple (X x) asm "NOP";
+
+() main () {
+    ;; Cast the fixed length tuple to an arbitrary length tuple.
+    ;; This is necessary, because in FunC, fixed-length tuples 
+    ;; like [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] cannot be assigned
+    ;; directly to arbitrary length tuples.
+    ;; Hence, this does NOT compile:
+    ;; tuple t = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    tuple t = to_tuple([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    int len = t.tlen();   ;; 10
+
+    ;; Iterate tuple starting from index 0  
+    ;; up to index 9
+
+    int i = 0;
+    while (i < len) {
+        int x = t.at(i);    ;; Obtain the i-th element 
+        ;; do something with x
+        i = i + 1;
+    }
+
+    ;; Iterate tuple starting from index 9  
+    ;; down to index 0
+
+    i = len - 1;   ;; 9
+    while (i >= 0) {
+        int x = t.at(i);    ;; Obtain the i-th element 
+        ;; do something with x
+        i = i - 1;
+    }
+}
+```
+
+The `tlen` [assembler function](/languages/func/asm-functions) uses the [TVM instruction `TLEN`](/tvm/instructions#6f88-tlen) to determine the number of elements in the tuple.
+
+The `to_tuple` casts **any** type into an arbitrary length tuple, which leads to run-time errors if `to_tuple` is used to cast non-tuple types.
+Be careful to only cast fixed-length tuples, like `[1, 2]`. The `to_tuple` is essentially a dummy function that does nothing,
+because it uses the [No operation `NOP`](/tvm/instructions#00-nop) instruction. The only purpose of `to_tuple` is to tell the type-checker
+to accept the input to `to_tuple` as a `tuple`.
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [Assembler functions](/languages/func/asm-functions)
+- [Polymorphic functions](/languages/func/functions#forall-declarator)
+- [`at`](/languages/func/built-ins/#at)
+- [TVM instructions](/tvm/instructions)
+
+### Iterating n-nested tuples
+
+Sometimes, while traversing the elements of a tuple, there is the need to iterate through nested tuples.
+The following example iterates through a tuple starting from the last index,
+and finds the biggest number, irrespective if there are nested tuples.
+
+For example, in the tuple `[[2,6],[1,[3,[3,5]]], 3]`, the example finds `6` as the biggest number.
+
+```func
+;; Determines the number of elements in a tuple.
+int tuple_length (tuple t) asm "TLEN";
+
+;; Removes the last element in the tuple and 
+;; returns the mutated tuple and the element.
+;; The type of the returned element is arbitrary.
+forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
+
+;; Checks if the given argument is a tuple
+forall X -> int is_tuple (X x) asm "ISTUPLE";
+
+;; Casts the given argument to an arbitrary length tuple.
+forall X -> tuple to_tuple (X x) asm "NOP";
+
+;; Casts the given argument to an int.
+forall X -> int to_int (X x) asm "NOP";
+
+;; Define a global variable.
+;; It will store the biggest number found.
+global int max_value;
+
+() iterate_tuple (tuple t) impure {
+    repeat (t.tuple_length()) {
+        ;; Remove the last element in the tuple.
+        var value = t~tpop();    
+        if (is_tuple(value)) {
+            ;; If the element is a tuple, cast it to a tuple.
+            tuple tuple_value = to_tuple(value);
+            ;; And then, recursively iterate the element.
+            iterate_tuple(tuple_value);
+        } else {
+            ;; The element is not a tuple, so it must be an int.
+            ;; Cast it to an int.
+            int int_value = to_int(value);
+            if (int_value > max_value) {
+                ;; Remember the value in the global variable 
+                ;; because it is the biggest so far.
+                max_value = int_value;
+            }
+        }
+    }
+}
+
+() main () {
+    ;; Create an example tuple
+    tuple t = to_tuple([[2,6], [1, [3, [3, 5]]], 3]);
+
+    ;; Determine the length of the tuple
+    int len = t.tuple_length();
+
+    ;; Set the maximum so far to 0
+    max_value = 0; 
+
+    ;; Find the maximum value in the tuple
+    iterate_tuple(t);
+
+    ~dump(max_value);    ;; 6
+}
+```
+
+The `tuple_length` [assembler function](/languages/func/asm-functions) uses the [TVM instruction `TLEN`](/tvm/instructions#6f88-tlen) to determine the number of elements in the tuple.
+
+The `tpop` assembler function uses the [TVM instruction `TPOP`](/tvm/instructions#6f8d-tpop) to detach the last element from the tuple, and
+it returns the mutated tuple and the detached element.
+
+The `is_tuple` assembler function uses the [TVM instruction `ISTUPLE`](/tvm/instructions#6f8a-istuple) to determine if the argument is a tuple or not.
+
+The `to_tuple` and `to_int` cast **any** type into an arbitrary length tuple and integer, respectively. This leads to run-time errors if
+`to_tuple` and `to_int` are used to cast non-tuple and non-integer types, respectively. The `to_tuple` and `to_int` are essentially dummy functions that do nothing,
+because they use the [No operation `NOP`](/tvm/instructions#00-nop) instruction. The only purpose of `to_tuple` and `to_int` is to tell the type-checker
+to accept the input to `to_tuple` as a `tuple`, and the input to `to_int` as an `int`.
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [Assembler functions](/languages/func/asm-functions)
+- [Polymorphic functions](/languages/func/functions#forall-declarator)
+- [Global Variables](/languages/func/global-variables)
+- [TVM instructions](/tvm/instructions)
+
+### Casting types in tuples
+
+If a tuple contains various data types `[cell, slice, int, tuple, ...]`, there is the need to check the value and cast it accordingly before processing.
+The following snippet illustrates this idea.
+
+```func
+;; Check if argument is null
+forall X -> int is_null (X x) asm "ISNULL";
+
+;; Check if argument is an int
+forall X -> int is_int (X x) asm "<{ TRY:<{ 0 PUSHINT ADD DROP -1 PUSHINT }>CATCH<{ 2DROP 0 PUSHINT }> }>CONT 1 1 CALLXARGS";
+
+;; Check if argument is a cell
+forall X -> int is_cell (X x) asm "<{ TRY:<{ CTOS DROP -1 PUSHINT }>CATCH<{ 2DROP 0 PUSHINT }> }>CONT 1 1 CALLXARGS";
+
+;; Check if argument is a slice
+forall X -> int is_slice (X x) asm "<{ TRY:<{ SBITS DROP -1 PUSHINT }>CATCH<{ 2DROP 0 PUSHINT }> }>CONT 1 1 CALLXARGS";
+
+;; Check if argument is a tuple 
+forall X -> int is_tuple (X x) asm "ISTUPLE";
+
+;; Cast functions. They do not carry an operation,
+;; since they use the "NOP" TVM instruction.
+;; Their sole purpose is to tell the type-checker
+;; that it should see the argument as having
+;; the desired type.
 forall X -> int cast_to_int (X x) asm "NOP";
 forall X -> cell cast_to_cell (X x) asm "NOP";
 forall X -> slice cast_to_slice (X x) asm "NOP";
 forall X -> tuple cast_to_tuple (X x) asm "NOP";
+
+;; Removes the last element in the tuple and 
+;; returns the mutated tuple and the element.
+;; The type of the returned element is arbitrary.
+forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
+
+;; Process value of arbitrary type
+forall X -> () resolve_type (X value) impure {
+
+    ;; "value" has an arbitrary type.
+    ;; Check its type and cast it.
+
+    if (is_null(value)) {
+        ;; Do something with the null.
+    } elseif (is_int(value)) {
+        int valueAsInt = cast_to_int(value);
+        ;; Do something with the int.
+    } elseif (is_slice(value)) {
+        slice valueAsSlice = cast_to_slice(value);
+        ;; Do something with the slice.
+    } elseif (is_cell(value)) {
+        cell valueAsCell = cast_to_cell(value);
+        ;; Do something with the cell.
+    } elseif (is_tuple(value)) {
+        tuple valueAsTuple = cast_to_tuple(value);
+        ;; Do something with the tuple.
+    }
+}
+
+() main () {
+    ;; Create an initially empty tuple.
+    tuple t = empty_tuple();
+    ;; Add some values of different types to the tuple.
+    t~tpush("Some text");
+    t~tpush(4);
+    ;; The tuple is ["Some text", 4].
+
+    ;; Since the tuple has values of different types,
+    ;; when extracting an element, use the
+    ;; keyword "var".
+    var value = t~tpop();
+
+    ;; Process the value.
+    resolve_type(value);
+}
+```
+
+The `is_int` function uses [Fift code](/languages/fift/overview). Intuitively, the Fift code implements the
+following FunC-like pseudocode:
+
+```func
+forall X -> int is_int (X x) {
+    try {
+        ;; Attempt to add 0 to the argument x.
+        ;; If this fails, then x is not an integer.
+        x + 0;
+        return -1;
+    } catch (_, _) {
+        return 0;
+    }
+}
+```
+
+Similarly, the `is_cell` carries out the following FunC-like pseudocode, which makes use
+of the [CTOS TVM instruction](/tvm/instructions#d0-ctos):
+
+```func
+forall X -> int is_cell (X x) {
+    try {
+        ;; Under the assumption that x is a cell, 
+        ;; CTOS will attempt to get a slice from cell x.
+        ;; If x turns out to be not a cell, CTOS will fail.
+        CTOS(x);
+        return -1;
+    } catch (_, _) {
+        return 0;
+    }
+}
+```
+
+Finally, the `is_slice` carries out the following FunC-like pseudocode, which makes use
+of the [SBITS TVM instruction](/tvm/instructions#d749-sbits):
+
+```func
+forall X -> int is_slice (X x) {
+    try {
+        ;; Under the assumption that x is a slice, 
+        ;; SBITS will attempt to get the number of data bits 
+        ;; in the slice.
+        ;; If x turns out to be not a slice, SBITS will fail.
+        SBITS(x);
+        return -1;
+    } catch (_, _) {
+        return 0;
+    }
+}
+```
+
+**References:**
+
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [Assembler functions](/languages/func/asm-functions)
+- [Polymorphic functions](/languages/func/functions#forall-declarator)
+- [`empty_tuple`](/languages/func/stdlib#empty-tuple)
+- [`tpush`](/languages/func/stdlib#tpush)
+- [TVM instructions](/tvm/instructions)
+
+### Reversing tuples
+
+The following example reverses any tuple. For example, given the input `[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]`,
+the `reverse_tuple` produces the output `[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]`.
+
+```func
+;; Determines the number of elements in a tuple.
+int tuple_length (tuple t) asm "TLEN";
+
+;; Removes the last element in the tuple and 
+;; returns the mutated tuple and the element.
+;; The type of the returned element is arbitrary.
+forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
+
+;; Casts the given argument to an arbitrary length tuple.
+forall X -> tuple to_tuple (X x) asm "NOP";
+
+tuple reverse_tuple (tuple t1) {
+    ;; Create an initially empty tuple.
+    ;; This variable will be the accumulated result.
+    tuple t2 = empty_tuple();
+
+    repeat (t1.tuple_length()) {
+        ;; Take the last element in the original tuple.
+        var value = t1~tpop();  
+        ;; And append it to the new tuple.
+        t2~tpush(value);
+    }
+    return t2;
+}
+
+() main () {
+    ;; Create an example tuple.
+    tuple t = to_tuple([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+
+    ;; Reverse the tuple.
+    tuple reversed_t = reverse_tuple(t);
+
+    ~dump(reversed_t); ;; [10 9 8 7 6 5 4 3 2 1]
+}
+```
+
+The `tuple_length` [assembler function](/languages/func/asm-functions) uses the [TVM instruction `TLEN`](/tvm/instructions#6f88-tlen) to determine the number of elements in the tuple.
+
+The `tpop` assembler function uses the [TVM instruction `TPOP`](/tvm/instructions#6f8d-tpop) to detach the last element from the tuple, and
+it returns the mutated tuple and the detached element.
+
+The `to_tuple` casts **any** type into an arbitrary length tuple, which leads to run-time errors if `to_tuple` is used to cast non-tuple types.
+The `to_tuple` is essentially a dummy function that does nothing,
+because it uses the [No operation `NOP`](/tvm/instructions#00-nop) instruction. The only purpose of `to_tuple` is to tell the type-checker
+to accept the input to `to_tuple` as a `tuple`.
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [Assembler functions](/languages/func/asm-functions)
+- [Polymorphic functions](/languages/func/functions#forall-declarator)
+- [`empty_tuple`](/languages/func/stdlib#empty-tuple)
+- [`tpush`](/languages/func/stdlib#tpush)
+- [TVM instructions](/tvm/instructions)
+
+### How to remove an item with a certain index from a tuple
+
+```func
+;; Determines the number of elements in a tuple.
+int tlen (tuple t) asm "TLEN";
+
+(tuple, ()) remove_item (tuple old_tuple, int place) {
+
+    ;; The result tuple so far. Initially it is empty.
+    tuple new_tuple = empty_tuple();
+
+    int i = 0;
+    while (i < old_tuple.tlen()) {
+        int el = old_tuple.at(i);
+        ;; When the place to delete is reached, skip
+        ;; that element by not pushing it to the result tuple.
+        if (i != place) {
+            ;; Since the current index i is not equal to 
+            ;; the place to delete, push the element to 
+            ;; the end of the result tuple.
+            new_tuple~tpush(el);
+        }
+        i += 1;
+    }
+    return (new_tuple, ());
+}
+
+() main () {
+    ;; Create an example tuple, intially empty
+    tuple numbers = empty_tuple();
+
+    ;; Insert some integers to the tuple
+    numbers~tpush(19);
+    numbers~tpush(999);
+    numbers~tpush(54);
+
+    ~dump(numbers);   ;; [19 999 54]
+
+    numbers~remove_item(1);
+
+    ~dump(numbers); ;; [19 54]
+}
+```
+
+The `tlen` [assembler function](/languages/func/asm-functions) uses the [TVM instruction `TLEN`](/tvm/instructions#6f88-tlen) to determine the number of elements in the tuple.
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [Assembler functions](/languages/func/asm-functions)
+- [`empty_tuple`](/languages/func/stdlib#empty-tuple)
+- [`at`](/languages/func/built-ins/#at)
+- [`tpush`](/languages/func/stdlib#tpush)
+- [TVM instructions](/tvm/instructions)
+
+### Determine if tuples are equal
+
+The approach involves iterating through both tuples and comparing each value recursively.
+Since tuples can contain different data types, check types and cast values dynamically.
+
+```func
+;; Determines the number of elements in a tuple.
+int tuple_length (tuple t) asm "TLEN";
+
+;; Removes the last element in the tuple and 
+;; returns the mutated tuple and the element.
+;; The type of the returned element is arbitrary.
+forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
+
+;; Cast functions. They do not carry an operation,
+;; since they use the "NOP" TVM instruction.
+;; Their sole purpose is to tell the type-checker
+;; that it should see the argument as having
+;; the desired type.
+forall X -> int cast_to_int (X x) asm "NOP";
+forall X -> cell cast_to_cell (X x) asm "NOP";
+forall X -> slice cast_to_slice (X x) asm "NOP";
+forall X -> tuple cast_to_tuple (X x) asm "NOP";
+
+;; Check if argument is null.
 forall X -> int is_null (X x) asm "ISNULL";
+
+;; Check if argument is an int.
 forall X -> int is_int (X x) asm "<{ TRY:<{ 0 PUSHINT ADD DROP -1 PUSHINT }>CATCH<{ 2DROP 0 PUSHINT }> }>CONT 1 1 CALLXARGS";
+
+;; Check if argument is a cell.
 forall X -> int is_cell (X x) asm "<{ TRY:<{ CTOS DROP -1 PUSHINT }>CATCH<{ 2DROP 0 PUSHINT }> }>CONT 1 1 CALLXARGS";
+
+;; Check if argument is a slice.
 forall X -> int is_slice (X x) asm "<{ TRY:<{ SBITS DROP -1 PUSHINT }>CATCH<{ 2DROP 0 PUSHINT }> }>CONT 1 1 CALLXARGS";
+
+;; Check if argument is a tuple.
 forall X -> int is_tuple (X x) asm "ISTUPLE";
+
+;; Determine if two slices are equal, 
+;; by using the TVM instruction SDEQ.
 int are_slices_equal? (slice a, slice b) asm "SDEQ";
 
+;; Determine if two cells are equal by using their hashes.
 int are_cells_equal? (cell a, cell b) {
     return a.cell_hash() == b.cell_hash();
 }
@@ -872,44 +1199,59 @@ int are_cells_equal? (cell a, cell b) {
     int equal? = -1; ;; initial value to true
 
     if (t1.tuple_length() != t2.tuple_length()) {
-        ;; if tuples are differ in length they cannot be equal
+        ;; if tuples differ in length, they cannot be equal
         return 0;
     }
 
+    ;; At this point, both tuples have the same length
+
     int i = t1.tuple_length();
 
+    ;; Iterate the tuples back to front,
+    ;; comparing corresponding elements at each iteration.
+    ;; Iterate while there are still elements to check
+    ;; in the tuples, and they remain equal.
+    ;; Recall that the AND boolean operator 
+    ;; is emulated using the bitwise AND operator.
     while (i > 0 & equal?) {
+
+        ;; Take the last element of both tuples
+        ;; and remove them from the tuples.
+        ;; This updates the tuples implicitly.
         var v1 = t1~tpop();
         var v2 = t2~tpop();
 
+        ;; Check the types of both elements.
+        ;; If they have different types, the 
+        ;; execution will enter the "else" branch,
+        ;; marking the "equal?" flag to false.
+        ;; However, if they have the same type,
+        ;; check that their values 
+        ;; are equal or not.
         if (is_null(v1) & is_null(v2)) {
             ;; nulls are always equal
-        }
-        elseif (is_int(v1) & is_int(v2)) {
+        } elseif (is_int(v1) & is_int(v2)) {
             if (cast_to_int(v1) != cast_to_int(v2)) {
                 equal? = 0;
             }
-        }
-        elseif (is_slice(v1) & is_slice(v2)) {
+        } elseif (is_slice(v1) & is_slice(v2)) {
             if (~ are_slices_equal?(cast_to_slice(v1), cast_to_slice(v2))) {
                 equal? = 0;
             }
-        }
-        elseif (is_cell(v1) & is_cell(v2)) {
+        } elseif (is_cell(v1) & is_cell(v2)) {
             if (~ are_cells_equal?(cast_to_cell(v1), cast_to_cell(v2))) {
                 equal? = 0;
             }
-        }
-        elseif (is_tuple(v1) & is_tuple(v2)) {
+        } elseif (is_tuple(v1) & is_tuple(v2)) {
             ;; recursively determine nested tuples
             if (~ are_tuples_equal?(cast_to_tuple(v1), cast_to_tuple(v2))) {
                 equal? = 0;
             }
-        }
-        else {
+        } else {
             equal? = 0;
         }
 
+        ;; Decrease the counter 
         i -= 1;
     }
 
@@ -917,365 +1259,150 @@ int are_cells_equal? (cell a, cell b) {
 }
 
 () main () {
+    ;; Create two equal tuples
     tuple t1 = cast_to_tuple([[2, 6], [1, [3, [3, 5]]], 3]);
     tuple t2 = cast_to_tuple([[2, 6], [1, [3, [3, 5]]], 3]);
 
-    ~dump(are_tuples_equal?(t1, t2)); ;; -1
+    ;; are_tuples_equal? returns -1, i.e., true
+    ~dump(are_tuples_equal?(t1, t2)); 
+}
+```
+
+For function `are_slices_equal?` refer to recipe ["Determine if the data bits of slices are equal"](#determine-if-the-data-bits-of-slices-are-equal).
+For function `are_cells_equal?` refer to recipe ["Determine if the cells are equal"](#determine-if-the-cells-are-equal).
+For explanation of the functions that check types, refer to the recipe ["Casting types in tuples"](#casting-types-in-tuples).
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [Assembler functions](/languages/func/asm-functions)
+- [Polymorphic functions](/languages/func/functions#forall-declarator)
+- [`tpush`](/languages/func/stdlib#tpush)
+- [TVM instructions](/tvm/instructions)
+
+### Basic operations in lisp-style lists
+
+[Lisp-style lists](/languages/func/stdlib#lisp-style-lists) are represented as nested tuples. For example, the list `1, 2, 3` is represented as the
+nested tuple `[1, [2, [3, null]]]`, where the value `null` acts as a marker for the end of the list.
+
+Use the [`cons`](/languages/func/stdlib#cons) function to add an element at the front of the provided list. For example,
+if `lst` is the list `2, 3`, then `cons(1, lst)` is the list `1, 2, 3`. Internally, `cons(1, lst)` builds the tuple `[1, lst]`, where
+`lst` is the tuple `[2, [3, null]]`.
+
+The [`null?`](/languages/func/built-ins#null%3F) function checks if the provided argument is the `null` value, or equivalently, the empty list.
+
+The following snippet illustrates these functions:
+
+```func
+;; An initially empty list. 
+;; "null" represents the empty list.
+;; The null value is obtained by calling the null() function.
+tuple numbers = null();
+
+;; Attach 100 as first element of the list
+numbers = cons(100, numbers);
+;; Attach 200 as first element of the list,
+;; now 100 is the second element of the list
+numbers = cons(200, numbers);
+;; "numbers" is the list: 200, 100.
+;; Or equivalently, the tuple: [200, [100, null]]
+
+;; Is the list null or equivalently, empty?
+if (numbers.null?()) { 
+    ;; list-style list is empty
+} else {
+    ;; list-style list is not empty
 }
 ```
 
 **References:**
 
-- [`cell_hash()` in docs](/languages/func/stdlib/#cell_hash)
-- [`TVM instructions` in docs](/tvm/instructions)
+- [Lisp-style lists](/languages/func/stdlib#lisp-style-lists)
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`cons`](/languages/func/stdlib#cons)
+- [`null`](/languages/func/stdlib#null)
+- [`null?`](/languages/func/built-ins#null%3F)
 
-### Generate an internal address
+### How to iterate through a lisp-style list
 
-When deploying a new contract, we need to generate its internal address because it is initially unknown. Suppose we already have `state_init`, which contains the code and data of the new contract.
+As described in the recipe ["Basic operations in lisp-style lists"](#basic-operations-in-lisp-style-lists),
+[Lisp-style lists](/languages/func/stdlib#lisp-style-lists) are represented as nested tuples.
 
-This function creates an internal address corresponding to the `MsgAddressInt` TLB.
+It is possible to iterate a lisp-style list by using the function [`list-next`](/languages/func/stdlib#list-next),
+which returns the head of the list and the rest of the list. The following snippet illustrates its usage.
 
 ```func
-(slice) generate_internal_address (int workchain_id, cell state_init) {
-    ;; addr_std$10 anycast:(Maybe Anycast) workchain_id:int8 address:bits256  = MsgAddressInt;
-
-    return begin_cell()
-        .store_uint(2, 2) ;; addr_std$10
-        .store_uint(0, 1) ;; anycast nothing
-        .store_int(workchain_id, 8) ;; workchain_id: -1
-        .store_uint(cell_hash(state_init), 256)
-    .end_cell().begin_parse();
-}
-
 () main () {
-    slice deploy_address = generate_internal_address(workchain(), state_init);
-    ;; then we can deploy new contract
-}
-```
+    ;; Create an example list.
+    ;; Initially it is empty, indicated
+    ;; by the null value.
+    tuple l = null();
+    l = cons(1, l);
+    l = cons(2, l);
+    l = cons(3, l);
+    ;; Here, l is the list 3, 2, 1,
+    ;; or [3, [2, [1, null]]]
 
-**Note:** In this example, we use `workchain()` to retrieve the WorkChain ID. You can learn more about the WorkChain ID in [docs](/foundations/addresses/overview#workchain-id).
+    ;; Iterate the list
+    ;; while the list is not empty
+    while (~ l.null?()) {
 
-**Reference:** [`cell_hash()` in docs](/languages/func/stdlib/#cell_hash)
+        ;; Store the list's head in x
+        ;; and update variable l so that it now 
+        ;; contains the rest of the list 
+        var x = l~list_next();
 
-### Generate an external address
-
-We use the TL-B scheme from [block.tlb](https://github.com/ton-blockchain/ton/blob/24dc184a2ea67f9c47042b4104bbb4d82289fac1/crypto/block/block.tlb#L101C1-L101C12) to determine the address format to generate an external address.
-
-```func
-(int) ubitsize (int a) asm "UBITSIZE";
-
-slice generate_external_address (int address) {
-    ;; addr_extern$01 len:(## 9) external_address:(bits len) = MsgAddressExt;
-
-    int address_length = ubitsize(address);
-
-    return begin_cell()
-        .store_uint(1, 2) ;; addr_extern$01
-        .store_uint(address_length, 9)
-        .store_uint(address, address_length)
-    .end_cell().begin_parse();
-}
-```
-
-Since we need to find the exact number of bits occupied by the address, we must [declare an asm function](#how-to-write-custom-functions-using-asm-keyword) with the `UBITSIZE` opcode. This function will return the minimum number of bits required to store a given number.
-
-**Reference:** [TVM instructions in docs](/tvm/instructions#B603)
-
-### How to store and load dictionary in a local storage
-
-The logic for loading a dictionary from local storage is as follows:
-
-```func
-slice local_storage = get_data().begin_parse();
-cell dictionary_cell = new_dict();
-if (~ slice_empty?(local_storage)) {
-    dictionary_cell = local_storage~load_dict();
-}
-```
-
-Storing the dictionary follows a similar approach, ensuring data persistence.
-
-```func
-set_data(begin_cell().store_dict(dictionary_cell).end_cell());
-```
-
-**References:**
-
-- [`get_data()` in docs](/languages/func/stdlib/#get_data)
-- [`new_dict()` in docs](/languages/func/stdlib/#new_dict)
-- [`slice_empty?()` in docs](/languages/func/stdlib/#slice_empty)
-- [`load_dict()` in docs](/languages/func/stdlib/#load_dict)
-- [`~` in docs](/languages/func/statements#unary-operators)
-
-### How to send a simple message
-
-To send a simple message with a comment, prepend the message body with `32 bits` set to `0`, indicating that it is a `comment`.
-
-```func
-cell msg = begin_cell()
-    .store_uint(0x18, 6) ;; flags
-    .store_slice("EQBIhPuWmjT7fP-VomuTWseE8JNWv2q7QYfsVQ1IZwnMk8wL"a) ;; destination address
-    .store_coins(100) ;; amount of nanoTons to send
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) ;; default message headers (see sending messages page)
-    .store_uint(0, 32) ;; zero opcode - means simple transfer message with comment
-    .store_slice("Hello from FunC!") ;; comment
-.end_cell();
-send_raw_message(msg, 3); ;; mode 3 - pay fees separately, ignore errors
-```
-
-**Reference:** [`Message layout` in docs](/foundations/messages/overview)
-
-### How to send a message with an incoming account
-
-A proxy contract can facilitate secure message exchange if interaction between a user and the main contract is needed.
-
-```func
-() recv_internal (slice in_msg_body) {
-    {-
-        This is a simple example of a proxy-contract.
-        It will expect in_msg_body to contain message mode, body and destination address to be sent to.
-    -}
-
-    int mode = in_msg_body~load_uint(8); ;; first byte will contain msg mode
-    slice addr = in_msg_body~load_msg_addr(); ;; then we parse the destination address
-    slice body = in_msg_body; ;; everything that is left in in_msg_body will be our new message's body
-
-    cell msg = begin_cell()
-        .store_uint(0x18, 6)
-        .store_slice(addr)
-        .store_coins(100) ;; just for example
-        .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) ;; default message headers (see sending messages page)
-        .store_slice(body)
-    .end_cell();
-    send_raw_message(msg, mode);
-}
-```
-
-**References:**
-
-- [`Message layout` in docs](/foundations/messages/overview)
-- [`load_msg_addr()` in docs](/languages/func/stdlib/#load_msg_addr)
-
-### How to send a message with the entire balance
-
-To transfer the entire balance of a smart contract, use send `mode 128`. This is particularly useful for proxy contracts that receive payments and forward them to the main contract.
-
-```func
-cell msg = begin_cell()
-    .store_uint(0x18, 6) ;; flags
-    .store_slice("EQBIhPuWmjT7fP-VomuTWseE8JNWv2q7QYfsVQ1IZwnMk8wL"a) ;; destination address
-    .store_coins(0) ;; we don't care about this value right now
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) ;; default message headers (see sending messages page)
-    .store_uint(0, 32) ;; zero opcode - means simple transfer message with comment
-    .store_slice("Hello from FunC!") ;; comment
-.end_cell();
-send_raw_message(msg, 128); ;; mode = 128 is used for messages that are to carry all the remaining balance of the current smart contract
-```
-
-**References:**
-
-- [`Message layout` in docs](/foundations/messages/overview)
-- [`Message modes` in docs](/languages/func/stdlib/#send_raw_message)
-
-### How to send a message with a long text comment
-
-A `cell` can store up to 127 characters (`<1023 bits`).
-A sequence of linked cells ("snake cells") must be used if more space is required.
-
-```func
-{-
-    If we want to send a message with really long comment, we should split the comment to several slices.
-    Each slice should have <1023 bits of data (127 chars).
-    Each slice should have a reference to the next one, forming a snake-like structure.
--}
-
-cell body = begin_cell()
-    .store_uint(0, 32) ;; zero opcode - simple message with comment
-    .store_slice("long, long, long message...")
-    .store_ref(begin_cell()
-        .store_slice(" you can store string of almost any length here.")
-        .store_ref(begin_cell()
-            .store_slice(" just don't forget about the 127 chars limit for each slice")
-        .end_cell())
-    .end_cell())
-.end_cell();
-
-cell msg = begin_cell()
-    .store_uint(0x18, 6) ;; flags
-    ;; We use literal `a` to get valid address inside slice from string containing address
-    .store_slice("EQBIhPuWmjT7fP-VomuTWseE8JNWv2q7QYfsVQ1IZwnMk8wL"a) ;; destination address
-    .store_coins(100) ;; amount of nanoTons to send
-    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1) ;; default message headers (see sending messages page)
-    .store_uint(1, 1) ;; we want to store body as a ref
-    .store_ref(body)
-.end_cell();
-send_raw_message(msg, 3); ;; mode 3 - pay fees separately, ignore errors
-```
-
-**Reference:** [`Internal messages` in docs](/foundations/messages/overview)
-
-### How to get only data bits from a slice (without refs)
-
-If `refs` within a `slice` are unnecessary, only the raw data bits can be extracted for further processing.
-
-```func
-slice s = begin_cell()
-    .store_slice("Some data bits...")
-    .store_ref(begin_cell().end_cell()) ;; some references
-    .store_ref(begin_cell().end_cell()) ;; some references
-.end_cell().begin_parse();
-
-slice s_only_data = s.preload_bits(s.slice_bits());
-```
-
-**References:**
-
-- [`Slice primitives` in docs](/languages/func/stdlib/#slice-primitives)
-- [`preload_bits()` in docs](/languages/func/stdlib/#preload_bits)
-- [`slice_bits()` in docs](/languages/func/stdlib/#slice_bits)
-
-### How to define a custom modifying method
-
-Modifying methods allow data to be updated within the same variable, similar to references in other programming languages.
-
-```func
-(slice, (int)) load_digit (slice s) {
-    int x = s~load_uint(8); ;; load 8 bits (one char) from slice
-    x -= 48; ;; char '0' has code of 48, so we subtract it to get the digit as a number
-    return (s, (x)); ;; return our modified slice and loaded digit
-}
-
-() main () {
-    slice s = "258";
-    int c1 = s~load_digit();
-    int c2 = s~load_digit();
-    int c3 = s~load_digit();
-    ;; here s is equal to "", and c1 = 2, c2 = 5, c3 = 8
-}
-```
-
-**Reference:** [`Modifying methods` in docs](/languages/func/statements#modifying-methods)
-
-### How to raise number to the power of n
-
-```func
-;; Unoptimized variant
-int pow (int a, int n) {
-    int i = 0;
-    int value = a;
-    while (i < n - 1) {
-        a *= value;
-        i += 1;
+        ;; Do something with x
     }
-    return a;
-}
-
-;; Optimized variant
-(int) binpow (int n, int e) {
-    if (e == 0) {
-        return 1;
-    }
-    if (e == 1) {
-        return n;
-    }
-    int p = binpow(n, e / 2);
-    p *= p;
-    if ((e % 2) == 1) {
-        p *= n;
-    }
-    return p;
-}
-
-() main () {
-    int num = binpow(2, 3);
-    ~dump(num); ;; 8
-}
-```
-
-### How to convert string to int
-
-```func
-slice string_number = "26052021";
-int number = 0;
-
-while (~ string_number.slice_empty?()) {
-    int char = string_number~load_uint(8);
-    number = (number * 10) + (char - 48); ;; we use ASCII table
-}
-
-~dump(number);
-```
-
-### How to convert int to string
-
-```func
-int n = 261119911;
-builder string = begin_cell();
-tuple chars = null();
-do {
-    int r = n~divmod(10);
-    chars = cons(r + 48, chars);
-} until (n == 0);
-do {
-    int char = chars~list_next();
-    string~store_uint(char, 8);
-} until (null?(chars));
-
-slice result = string.end_cell().begin_parse();
-~dump(result);
-```
-
-### How to iterate dictionaries
-
-Dictionaries are useful for managing large datasets. The built-in methods `dict_get_min?` and `dict_get_max` retrieve the minimum and maximum key values, while `dict_get_next?` allows dictionary iteration.
-
-```func
-cell d = new_dict();
-d~udict_set(256, 1, "value 1");
-d~udict_set(256, 5, "value 2");
-d~udict_set(256, 12, "value 3");
-
-;; iterate keys from small to big
-(int key, slice val, int flag) = d.udict_get_min?(256);
-while (flag) {
-    ;; do something with pair key->val
-
-    (key, val, flag) = d.udict_get_next?(256, key);
 }
 ```
 
 **References:**
 
-- [Dictionaries primitives in docs](/languages/func/stdlib/#dictionaries-primitives)
-- [`dict_get_max?()` in docs](/languages/func/stdlib/#dict_get_max)
-- [`dict_get_min?()` in docs](/languages/func/stdlib/#dict_get_min)
-- [`dict_get_next?()` in docs](/languages/func/stdlib/#dict_get_next)
-- [`dict_set()` in docs](/languages/func/stdlib/#dict_set)
+- [Lisp-style lists](/languages/func/stdlib#lisp-style-lists)
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [`cons`](/languages/func/stdlib#cons)
+- [`null`](/languages/func/stdlib#null)
+- [`null?`](/languages/func/built-ins#null%3F)
+- [`list_next`](/languages/func/stdlib#list-next)
 
-### How to delete value from dictionaries
+### How to iterate a cell tree
+
+Each cell can store up to `1023` bits of data and `4` cell references. Therefore, it is possible to represent
+complex tree structures by linking cells using cell references.
+
+Given a tree of cells, use any [tree traversal algorithm](https://en.wikipedia.org/wiki/Tree_traversal)
+to access each cell in the tree. For example, the snippet below uses the
+[iterative version of pre-order traversal](https://en.wikipedia.org/wiki/Tree_traversal#Pre-order_implementation),
+which makes use of a stack, instead of recursive calls.
+
+The stack is implemented using the same technique for [lisp-style lists](/languages/func/stdlib#lisp-style-lists).
+The only difference is that the list grows by appending elements to the end of the list, instead of at the front.
+The last element in the list is the top of the stack.
+More concretely, if `s` is the current stack, append an element `x` by constructing the tuple `[s, x]`.
+This tuple `[s, x]` is the new stack, with top element `x`.
+For example, the stack `1, 2, 3`, where `3` is the top element, is represented using nested tuples
+as `[[[null, 1], 2], 3]`, where `null` represents the empty stack.
 
 ```func
-cell names = new_dict();
-names~udict_set(256, 27, "Alice");
-names~udict_set(256, 25, "Bob");
-
-names~udict_delete?(256, 27);
-
-(slice val, int key) = names.udict_get?(256, 27);
-~dump(val); ;; null() -> means that key was not found in a dictionary
-```
-
-### How to iterate a cell tree recursively
-
-Each `cell` can store up to `1023 bits` of data and `4 refs`. A tree of cells can be used to handle more complex data structures, requiring recursive iteration.
-
-```func
-forall X -> int is_null (X x) asm "ISNULL";
+;; Sets "head" to be the new top element of stack "tail".
+;; For example, if t is "tail" and x is "head", 
+;; this function produces the tuple [t, x],
+;; which means that x is the new top element of the stack [t, x].
+;; The function returns the new stack and the unit value (),
+;; just to be able to use this function using modifying notation.
 forall X -> (tuple, ()) push_back (tuple tail, X head) asm "CONS";
-forall X -> (tuple, (X)) pop_back (tuple t) asm "UNCONS";
+
+;; Removes the last element from the stack, and 
+;; returns the modified stack and the removed element.
+;; For example, if the stack is [t, x], this
+;; function returns the stack t, and the element x.
+forall X -> (tuple, X) pop_back (tuple t) asm "UNCONS";
 
 () main () {
-    ;; just some cell for example
+    ;; An example tree of cells.
     cell c = begin_cell()
         .store_uint(1, 16)
         .store_ref(begin_cell()
@@ -1292,19 +1419,35 @@ forall X -> (tuple, (X)) pop_back (tuple t) asm "UNCONS";
         .end_cell())
     .end_cell();
 
-    ;; creating tuple with no data, which plays the role of stack
+    ;; Initialize the stack. null plays the roll
+    ;; of the empty stack.
     tuple stack = null();
-    ;; bring the main cell into the stack to process it in the loop
+    
+    ;; Push the root cell into the stack to 
+    ;; process it in the loop
     stack~push_back(c);
-    ;; do it until stack is not null
-    while (~ stack.is_null()) {
-        ;; get the cell from the stack and convert it to a slice to be able to process it
+    
+    ;; Iterate while there are cells in the stack
+    while (~ stack.null?()) {
+        
+        ;; Pop a cell from the stack and convert it 
+        ;; to a slice to be able to process it.
+        ;; The call stack~pop_back() implicitly
+        ;; modifies the stack.
         slice s = stack~pop_back().begin_parse();
 
-        ;; do something with s data
+        ;; Do something with the data in s
 
-        ;; if the current slice has any refs, add them to stack
+        ;; If the current slice has any refs, 
+        ;; add them to the stack.
+        ;; slice_refs returns the number of
+        ;; refs in slice s.
         repeat (s.slice_refs()) {
+            ;; Obtain the cell using s~load_ref().
+            ;; This implicitly modifies the slice s
+            ;; so that it is ready to read the next 
+            ;; cell reference.
+            ;; Then, push the cell to the stack.
             stack~push_back(s~load_ref());
         }
     }
@@ -1313,98 +1456,75 @@ forall X -> (tuple, (X)) pop_back (tuple t) asm "UNCONS";
 
 **References:**
 
-- [`Lisp-style lists` in docs](/languages/func/stdlib/#lisp-style-lists)
-- [`null()` in docs](/languages/func/stdlib/#null)
-- [`slice_refs()` in docs](/languages/func/stdlib/#slice_refs)
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [Builder primitives](/languages/func/stdlib#builder-primitives)
+- [Slice primitives](/languages/func/stdlib#slice-primitives)
+- [`Lisp-style lists`](/languages/func/stdlib#lisp-style-lists)
+- [Assembler functions](/languages/func/asm-functions)
+- [`null`](/languages/func/stdlib#null)
+- [`null?`](/languages/func/built-ins#null%3F)
+- [`slice_refs`](/languages/func/stdlib#slice-refs)
+- [TVM instructions](/tvm/instructions)
 
-### How to iterate through lisp-style list
+## Contracts
 
-A tuple can hold up to 255 values. If more space is needed, a lisp-style list can be used by nesting tuples within tuples, effectively bypassing the limit.
+### How to determine if the contract state is empty
+
+Consider a smart contract that keeps a `counter` stored in its state, that tracks the number of internal messages the contract has received.
+When the contract receives its first message, the contract state is empty, which means that the `counter` has not been initialized yet.
+It is important to handle all scenarios by checking if the state is empty and initializing the `counter` accordingly.
 
 ```func
-forall X -> int is_null (X x) asm "ISNULL";
-forall X -> (tuple, ()) push_back (tuple tail, X head) asm "CONS";
-forall X -> (tuple, (X)) pop_back (tuple t) asm "UNCONS";
+() recv_internal() {
+    ;; "get_data" returns the persistent contract state, as a cell
+    cell contract_data = get_data();
+    
+    ;; Obtain a slice from the contract data cell, for reading
+    slice cs = contract_data.begin_parse();
 
-() main () {
-    ;; some example list
-    tuple l = null();
-    l~push_back(1);
-    l~push_back(2);
-    l~push_back(3);
-
-    ;; iterating through elements
-    ;; note that this iteration is in reversed order
-    while (~ l.is_null()) {
-        var x = l~pop_back();
-
-        ;; do something with x
+    ;; Check that the contract state is empty
+    if (cs.slice_empty?()) {
+        ;; Contract data is empty, so create a fresh counter.
+        int counter = 1;
+        
+        ;; To save the counter into the contract state, 
+        ;; create a cell containing the counter.
+        ;; The counter is stored as an unsigned 32-bit integer.
+        cell new_data = begin_cell().store_uint(counter, 32).end_cell();
+        
+        ;; Save the data cell into the contract state by using "set_data".
+        set_data(new_data);
+    } else {
+        ;; Contract data is not empty.
+        ;; Get our counter from the contract state and increase it
+        ;; The counter is an unsigned 32-bit integer.
+        int counter = cs~load_uint(32) + 1;
+        
+        ;; To save the counter into the contract state, 
+        ;; create a cell containing the counter.
+        ;; The counter is stored as an unsigned 32-bit integer.
+        cell new_data = begin_cell().store_uint(counter, 32).end_cell();
+        
+        ;; Save the data cell into the contract state by using "set_data".
+        set_data(new_data);
     }
 }
 ```
 
 **References:**
 
-- [`Lisp-style lists` in docs](/languages/func/stdlib/#lisp-style-lists)
-- [`null()` in docs](/languages/func/stdlib/#null)
-
-### How to send a deploy message (with `StateInit` only, with `StateInit` and body)
-
-```func
-() deploy_with_stateinit(cell message_header, cell state_init) impure {
-  var msg = begin_cell()
-    .store_slice(begin_parse(message_header))
-    .store_uint(2 + 1, 2) ;; init:(Maybe (Either StateInit ^StateInit))
-    .store_uint(0, 1) ;; body:(Either X ^X)
-    .store_ref(state_init)
-    .end_cell();
-
-  ;; mode 64 - carry the remaining value in the new message
-  send_raw_message(msg, 64);
-}
-
-() deploy_with_stateinit_body(cell message_header, cell state_init, cell body) impure {
-  var msg = begin_cell()
-    .store_slice(begin_parse(message_header))
-    .store_uint(2 + 1, 2) ;; init:(Maybe (Either StateInit ^StateInit))
-    .store_uint(1, 1) ;; body:(Either X ^X)
-    .store_ref(state_init)
-    .store_ref(body)
-    .end_cell();
-
-  ;; mode 64 - carry the remaining value in the new message
-  send_raw_message(msg, 64);
-}
-```
-
-### How to build a `StateInit` cell
-
-```func
-() build_stateinit(cell init_code, cell init_data) {
-  var state_init = begin_cell()
-    .store_uint(0, 1) ;; split_depth:(Maybe (## 5))
-    .store_uint(0, 1) ;; special:(Maybe TickTock)
-    .store_uint(1, 1) ;; (Maybe ^Cell)
-    .store_uint(1, 1) ;; (Maybe ^Cell)
-    .store_uint(0, 1) ;; (HashmapE 256 SimpleLib)
-    .store_ref(init_code)
-    .store_ref(init_data)
-    .end_cell();
-}
-```
-
-### How to calculate a contract address (using `StateInit`)
-
-```func
-() calc_address(cell state_init) {
-  var future_address = begin_cell()
-    .store_uint(2, 2) ;; addr_std$10
-    .store_uint(0, 1) ;; anycast:(Maybe Anycast)
-    .store_uint(0, 8) ;; workchain_id:int8
-    .store_uint(cell_hash(state_init), 256) ;; address:bits256
-    .end_cell();
-}
-```
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [`recv_internal` method](/languages/func/special-functions#receive-internal)
+- [`get_data`](/languages/func/stdlib#get-data)
+- [`begin_parse`](/languages/func/stdlib#begin-parse)
+- [`slice_empty?`](/languages/func/stdlib#slice-empty%3F)
+- [`begin_cell`](/languages/func/stdlib#begin-cell)
+- [`end_cell`](/languages/func/stdlib#end-cell)
+- [`store_uint`](/languages/func/stdlib#store-uint)
+- [`load_uint`](/languages/func/stdlib#load-uint)
+- [`set_data`](/languages/func/stdlib#set-data)
 
 ### How to update the smart contract logic
 
@@ -1429,7 +1549,7 @@ Below is an example of a simple `CounterV1` smart contract that allows the count
 }
 ```
 
-After interacting with the contract, you may realize that the functionality for decrementing the counter is missing. To fix this, copy the code from `CounterV1` and add a new `decrease` function next to the existing `increase` function. Your updated code will look like this:
+After interacting with the contract, and realizing that the functionality for decrementing the counter is missing. Fix this by copying the code from `CounterV1` and adding a new `decrease` function next to the existing `increase` function. The updated code will look like this:
 
 ```func
 () recv_internal (slice in_msg_body) {
@@ -1457,7 +1577,7 @@ After interacting with the contract, you may realize that the functionality for 
 }
 ```
 
-Once the `CounterV2` smart contract is ready, you need to compile it off-chain into a `cell` and send an upgrade message to the `CounterV1` contract:
+Once the `CounterV2` smart contract is ready, compile it off-chain into a `cell` and send an upgrade message to the `CounterV1` contract:
 
 ```javascript
 await contractV1.sendUpgrade(provider.sender(), {
@@ -1468,6 +1588,1031 @@ await contractV1.sendUpgrade(provider.sender(), {
 
 **References:**
 
-{/* Needs a note: Is it possible to redeploy code to an existing address, or does it have to be deployed as a new contract? */}
+- [`set_code`](/languages/func/stdlib#set-code)
 
-- [`set_code()` in docs](/languages/func/stdlib#set_code)
+## Messages
+
+### How to build an internal message with default headers
+
+When a smart contract needs to send an internal message, it must first construct the message as a `cell`.
+This includes specifying technical flags, the recipient's address, and additional data.
+
+The most common case involves sending an internal message that is bounceable, with no StateInit,
+and with message body serialized in the same message cell. The following `build_message` function
+illustrates this common case. The function receives as parameters the destination
+address `dest_addr` encoded as a slice, the amount in nanotons to send `amount`,
+and the requested operation opcode `opcode`:
+
+```func
+cell build_message(slice dest_addr, int amount, int opcode) {
+    cell msg = begin_cell()
+
+      ;; Sets 5 headers to their default values. 
+      ;; In particular, the bounceable header is true.
+      .store_uint(0x18, 1 + 1 + 1 + 1 + 2)     
+      .store_slice(dest_addr)  ;; destination address
+      .store_coins(amount)     ;; amount to send in nanotons
+
+      ;; Sets 7 more headers to their default values.
+      ;; Sets default value 0 to all the 7 headers.
+      .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) 
+    
+      ;; Message body starts here. 
+      ;; Usually starts with an unsigned 32-bits integer,
+      ;; called "opcode", that identifies the requested operation.
+      .store_uint(op, 32)
+
+      ;; The next fields depend on the opcode.
+      ;; For example, an opcode representing a lookup operation
+      ;; would need to include the data to lookup
+      ;; ......
+    .end_cell();
+
+    return msg;
+}
+```
+
+The call `store_uint(0x18, 1 + 1 + 1 + 1 + 2)` sets 5 headers to their default values. The sum `1 + 1 + 1 + 1 + 2`
+represents the number of bits occupied by each header, i.e., the first header occupies 1 bit, the second header 1 bit, and so on
+until the 5th header which occupies 2 bits. The hexadecimal number `0x18` is a shorthand for the 6 bits `011000`, which represents
+the default values for each of the headers, i.e., the first header has value `0`, the second header `1`, and so on until the
+5th header, which has the two bits `00`.
+
+Among these 5 headers, the third one is probably the most interesting for a programmer, because it corresponds to the bounceable flag,
+which is set to `1` (true) by default. If the flag is required to be `0` (false), use hexadecimal `0x10` instead of `0x18`,
+because `0x10` corresponds to the 6 bits `010000`.
+
+The call `store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)` sets 7 further headers to the default value `0`. The sum `1 + 4 + 4 + 64 + 32 + 1 + 1`
+represents the number of bits occupied by each header. Among these 7 headers, the last two are probably the most interesting for a programmer,
+because they correspond to the StateInit header and the message body ref header, respectively.
+In particular, the default headers state that the message has no StateInit, and that the message body is not stored as a cell reference,
+but directly in the cell, together with the headers.
+Refer to recipes ["How to send a deploy message"](#how-to-send-a-deploy-message) and
+["How to set the message body as a ref in an internal message"](#how-to-set-the-message-body-as-a-ref-in-an-internal-message)
+for examples on how to manipulate StateInit and the message body ref headers, respectively.
+
+For further details on all the headers, see the sending messages page and
+the [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout).
+
+Here is an example on how to use function `build_message` to send a message:
+
+```func
+;; Create a slice from a string containing the destination address
+slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
+;; The amount to send in nanotons
+int amount = 1000000000;
+;; The opcode for the requested operation
+int op = 20;
+
+;; Create the message cell
+cell msg = build_message(addr, amount, op);
+
+;; Send the message, using default sending mode 0
+send_raw_message(msg, 0);
+```
+
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`begin_cell`](/languages/func/stdlib#begin-cell)
+- [`store_uint`](/languages/func/stdlib#store-uint)
+- [`store_slice`](/languages/func/stdlib#store-slice)
+- [`store_coins`](/languages/func/stdlib#store-coins)
+- [`end_cell`](/languages/func/stdlib#end-cell)
+- [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout)
+- Sending messages page
+- [`"<address string>"a` compile-time builtin](/languages/func/literals#string-with-suffix-a), where `<address string>` is a string encoding an address.
+- [`send_raw_message`](/languages/func/stdlib#send-raw-message)
+
+### How to set the message body as a ref in an internal message
+
+If there is sufficient space, the message body can be stored in the same `cell` together with the message headers,
+as shown in the recipe ["How to build an internal message with default headers"](#how-to-build-an-internal-message-with-default-headers).
+If there is not enough space in the message cell, the message body can be stored as a cell reference to the message, as shown in the following
+function. The function receives the destination address, the amount to send, and the message body as a separate cell.
+
+```func
+cell build_message(slice dest_addr, int amount, cell message_body) {
+    cell msg = begin_cell()
+
+      ;; Sets 5 headers to their default values. 
+      ;; In particular, the bounceable header is true.
+      .store_uint(0x18, 1 + 1 + 1 + 1 + 2)     
+      .store_slice(dest_addr)  ;; destination address
+      .store_coins(amount)     ;; amount to send in nanotons
+
+      ;; Sets 6 more headers to their default values.
+      ;; Sets default value 0 to all the 6 headers.
+      .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1) 
+
+      ;; Activate the message body ref header
+      ;; to indicate that the message body is included as a 
+      ;; cell reference
+      .store_uint(1, 1)
+
+      ;; Store the message body as a cell reference
+      .store_ref(message_body)
+    .end_cell();
+
+    return msg;
+}
+```
+
+The call `store_uint(0x18, 1 + 1 + 1 + 1 + 2)` sets 5 headers to their default values, as in the recipe
+["How to build an internal message with default headers"](#how-to-build-an-internal-message-with-default-headers).
+
+The call `store_uint(0, 1 + 4 + 4 + 64 + 32 + 1)` sets 6 further headers to the default value `0`, as in
+the first 6 headers in recipe ["How to build an internal message with default headers"](#how-to-build-an-internal-message-with-default-headers).
+The last header, corresponding to the message body ref header, is set with the call `store_uint(1, 1)`, which indicates that the
+message body will be included as a cell reference.
+
+For further details on all the headers, see the sending messages page and
+the [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout).
+
+Here is an example on how to use function `build_message` to send a message:
+
+```func
+;; Create a slice from a string containing the destination address
+slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
+;; The amount to send in nanotons
+int amount = 1000000000;
+;; Create a cell storing the message body
+cell message_body = begin_cell() 
+    .store_uint(20, 32) ;; include an opcode
+    .store_slice("❤")   ;; include further data required by the opcode
+    .end_cell();
+
+;; Create the message cell
+cell msg = build_message(addr, amount, message_body);
+
+;; Send the message, using default sending mode 0
+send_raw_message(msg, 0);
+```
+
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`begin_cell`](/languages/func/stdlib#begin-cell)
+- [`store_uint`](/languages/func/stdlib#store-uint)
+- [`store_slice`](/languages/func/stdlib#store-slice)
+- [`store_coins`](/languages/func/stdlib#store-coins)
+- [`end_cell`](/languages/func/stdlib#end-cell)
+- [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout)
+- Sending messages page
+- [`"<address string>"a` compile-time builtin](/languages/func/literals#string-with-suffix-a), where `<address string>` is a string encoding an address.
+- [`send_raw_message`](/languages/func/stdlib#send-raw-message)
+
+### How to set the message body as a slice in an internal message
+
+If the message body needs to be included directly in the message cell, but the message body is already in a separate slice,
+write the slice into the message cell, as
+in the following function. The function receives the destination address, the amount to send, and the message body as a slice.
+
+```func
+cell build_message(slice dest_addr, int amount, slice message_body) {
+    cell msg = begin_cell()
+
+      ;; Sets 5 headers to their default values. 
+      ;; In particular, the bounceable header is true.
+      .store_uint(0x18, 1 + 1 + 1 + 1 + 2)     
+      .store_slice(dest_addr)  ;; destination address
+      .store_coins(amount)     ;; amount to send in nanotons
+
+      ;; Sets 7 more headers to their default values.
+      ;; Sets default value 0 to all the 7 headers.
+      .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) 
+    
+      ;; Message body starts here. 
+      ;; Write the message body slice
+      .store_slice(message_body)
+    .end_cell();
+
+    return msg;
+}
+```
+
+The function writes the default values for all the message headers, as in the recipe
+["How to build an internal message with default headers"](#how-to-build-an-internal-message-with-default-headers).
+
+For further details on all the headers, see the sending messages page and
+the [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout).
+
+Here is an example on how to use function `build_message` to send a message:
+
+```func
+;; Create a slice from a string containing the destination address
+slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
+;; The amount to send in nanotons
+int amount = 1000000000;
+;; Create a slice storing the message body
+slice message_body = begin_cell() 
+    .store_uint(20, 32) ;; include an opcode
+    .store_slice("❤")   ;; include further data required by the opcode
+    .end_cell()
+    .begin_parse();     ;; Transform the cell to a slice
+
+;; Create the message cell
+cell msg = build_message(addr, amount, message_body);
+
+;; Send the message, using default sending mode 0
+send_raw_message(msg, 0);
+```
+
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`begin_cell`](/languages/func/stdlib#begin-cell)
+- [`store_uint`](/languages/func/stdlib#store-uint)
+- [`store_slice`](/languages/func/stdlib#store-slice)
+- [`store_coins`](/languages/func/stdlib#store-coins)
+- [`end_cell`](/languages/func/stdlib#end-cell)
+- [`begin_parse`](/languages/func/stdlib#begin-parse)
+- [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout)
+- Sending messages page
+- [`"<address string>"a` compile-time builtin](/languages/func/literals#string-with-suffix-a), where `<address string>` is a string encoding an address.
+- [`send_raw_message`](/languages/func/stdlib#send-raw-message)
+
+### How to send a message containing a comment
+
+A "comment" is an ASCII string encoded as a slice. To send a message with a comment,
+write a `0` opcode followed by the comment, as done in the following function.
+The function receives the destination address, the amount to send, and the comment encoded as a slice.
+
+```func
+cell build_message(slice dest_addr, int amount, slice comment) {
+    cell msg = begin_cell()
+
+      ;; Sets 5 headers to their default values. 
+      ;; In particular, the bounceable header is true.
+      .store_uint(0x18, 1 + 1 + 1 + 1 + 2)     
+      .store_slice(dest_addr)  ;; destination address
+      .store_coins(amount)     ;; amount to send in nanotons
+
+      ;; Sets 7 more headers to their default values.
+      ;; Sets default value 0 to all the 7 headers.
+      .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1) 
+    
+      ;; Message body starts here. 
+      ;; Write a 0 opcode, which means simple 
+      ;; message with a comment
+      .store_uint(0, 32)
+
+      ;; Write the slice containing the comment
+      .store_slice(comment)
+    .end_cell();
+
+    return msg;
+}
+```
+
+The function writes the default values for all the message headers, as in the recipe
+["How to build an internal message with default headers"](#how-to-build-an-internal-message-with-default-headers).
+
+For further details on all the headers, see the sending messages page and
+the [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout).
+
+Here is an example on how to use function `build_message` to send a message:
+
+```func
+;; Create a slice from a string containing the destination address
+slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
+;; The amount to send in nanotons
+int amount = 1000000000;
+;; Create a slice storing the comment
+slice comment = "Hello from FunC!";
+
+;; Create the message cell
+cell msg = build_message(addr, amount, comment);
+
+;; Send the message, using default sending mode 0
+send_raw_message(msg, 0);
+```
+
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`begin_cell`](/languages/func/stdlib#begin-cell)
+- [`store_uint`](/languages/func/stdlib#store-uint)
+- [`store_slice`](/languages/func/stdlib#store-slice)
+- [`store_coins`](/languages/func/stdlib#store-coins)
+- [`end_cell`](/languages/func/stdlib#end-cell)
+- [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout)
+- Sending messages page
+- [`"<address string>"a` compile-time builtin](/languages/func/literals#string-with-suffix-a), where `<address string>` is a string encoding an address.
+- [`"<ascii string>"` compile-time builtin](/languages/func/literals#string-without-suffix), where `<ascii string>` is an ASCII string.
+- [`send_raw_message`](/languages/func/stdlib#send-raw-message)
+
+### How to send a message with a long text comment
+
+A `cell` can store up to 1023 bits of data, which means up to 127 8-bit characters.
+If there is a need to send a message with a really long comment, split the comment into several slices.
+Each slice should have at most 127 chars. Each slice should have a reference to the next one,
+forming a snake-like structure.
+
+The following example illustrates the idea:
+
+```func
+;; Create a slice from a string containing the destination address
+slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
+;; The amount to send in nanotons
+int amount = 1000000000;
+
+;; Create a cell storing the message body
+;; It contains a long string, that must be split into several 
+;; slices, linked by references in a snake-like structure.
+;; Each slice has at most 127 chars
+cell message_body = begin_cell()
+    ;; zero opcode, i.e., message with comment
+    .store_uint(0, 32) 
+    ;; The long string starts here
+    .store_slice("long, long, long message...")
+    ;; Create a reference to the next part of the string
+    .store_ref(begin_cell()
+        .store_slice(" store a string of almost any length, ")
+        ;; And another reference to the last part of the string
+        .store_ref(begin_cell()
+            .store_slice(" as long as each slice has at most 127 chars.")
+        .end_cell())
+    .end_cell())
+.end_cell();
+
+;; Create the message cell
+cell msg = build_message(addr, amount, message_body);
+
+;; Send the message, using default sending mode 0
+send_raw_message(msg, 0);
+```
+
+The `build_message` function is exactly the function used in the
+recipe [How to set the message body as a ref in an internal message](#how-to-set-the-message-body-as-a-ref-in-an-internal-message).
+
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`begin_cell`](/languages/func/stdlib#begin-cell)
+- [`store_uint`](/languages/func/stdlib#store-uint)
+- [`store_slice`](/languages/func/stdlib#store-slice)
+- [`store_ref`](/languages/func/stdlib#store-ref)
+- [`end_cell`](/languages/func/stdlib#end-cell)
+- [`"<address string>"a` compile-time builtin](/languages/func/literals#string-with-suffix-a), where `<address string>` is a string encoding an address.
+- [`"<ascii string>"` compile-time builtin](/languages/func/literals#string-without-suffix), where `<ascii string>` is an ASCII string.
+- [`send_raw_message`](/languages/func/stdlib#send-raw-message)
+- Sending messages page
+
+### How to send a deploy message
+
+When sending a deploy message, prepare a StateInit cell, as done in the recipe [How to build a StateInit cell](#how-to-build-a-StateInit-cell).
+Once the StateInit cell is ready, prepare a message cell in which the message body is included with the headers, or the
+message body is included as a separate cell.
+
+The following function illustrates the case for the message body included in the same cell as the headers.
+The function receives the destination address, the amount to send, the StateInit cell, and
+the message body as a slice.
+
+```func
+() deploy(slice dest_addr, int amount, cell state_init, slice message_body) {
+    cell msg = begin_cell()
+
+      ;; Sets 5 headers to their default values. 
+      ;; In particular, the bounceable header is true.
+      .store_uint(0x18, 1 + 1 + 1 + 1 + 2)     
+      .store_slice(dest_addr)  ;; destination address
+      .store_coins(amount)     ;; amount to send in nanotons
+
+      ;; Sets 5 more headers to their default values.
+      ;; Sets default value 0 to all the 5 headers.
+      .store_uint(0, 1 + 4 + 4 + 64 + 32) 
+    
+      ;; Sets the StateInit header to the 2-bit integer 3,
+      ;; which signals that a StateInit cell is included 
+      ;; as a separate reference cell.
+      .store_uint(3, 2)
+
+      ;; Set the message body header to the 1-bit integer 0,
+      ;; which indicates that the message body is
+      ;; included in the same cell.
+      .store_uint(0, 1)
+
+      ;; Message body starts here. 
+      ;; Write the message body slice
+      .store_slice(message_body)
+
+      ;; Include the StateInit cell as a reference 
+      .store_ref(state_init)
+    .end_cell();
+
+    ;; Send the deploy message in standard mode
+    send_raw_message(msg, 0);
+}
+```
+
+The function writes the default values for all the message headers, following the same strategy as in the recipe
+["How to build an internal message with default headers"](#how-to-build-an-internal-message-with-default-headers),
+with the exception of the last two headers: the StateInit header and the message body header.
+
+According to the TLB for internal messages, the StateInit header satisfies:
+
+```text
+init:(Maybe (Either StateInit ^StateInit))
+```
+
+which means that the header needs at most two bits, one for deciding the `Maybe` and, in case the `Maybe` bit is active,
+another for deciding the `Either`. In the function above, the StateInit header was set to the 2-bit integer `3`, which corresponds to the binary
+`11`. The first bit corresponds to the `Maybe`, and since it is active, it signals that there is a StateInit
+in the message. The second bit corresponds to the `Either`, and since it is active, it signals that the right branch
+of the `Either` was chosen, i.e., the branch `^StateInit`, which means that the StateInit is included as a reference cell
+in the message.
+
+The message body header was set to the 1-bit value `0`, which means that the message body in included in the same cell
+together with the headers.
+
+As a second example, the following function also includes a StateInit, but the message body is included as a separate cell.
+The function receives the destination address, the amount to send, the StateInit cell, and
+the message body as a cell.
+
+```func
+() deploy_body_cell(slice dest_addr, int amount, cell state_init, cell message_body) {
+    cell msg = begin_cell()
+
+      ;; Sets 5 headers to their default values. 
+      ;; In particular, the bounceable header is true.
+      .store_uint(0x18, 1 + 1 + 1 + 1 + 2)     
+      .store_slice(dest_addr)  ;; destination address
+      .store_coins(amount)     ;; amount to send in nanotons
+
+      ;; Sets 5 more headers to their default values.
+      ;; Sets default value 0 to all the 5 headers.
+      .store_uint(0, 1 + 4 + 4 + 64 + 32) 
+    
+      ;; Sets the StateInit header to the 2-bit integer 3,
+      ;; which signals that a StateInit cell is included 
+      ;; as a separate reference cell.
+      .store_uint(3, 2)
+
+      ;; Set the message body header to the 1-bit integer 1,
+      ;; which indicates that the message body is
+      ;; included as a separate cell
+      .store_uint(1, 1)
+
+      ;; Include the StateInit cell as a reference 
+      .store_ref(state_init)
+
+      ;; Include the message body as a reference 
+      .store_ref(message_body)
+    .end_cell();
+
+    ;; Send the deploy message in standard mode
+    send_raw_message(msg, 0);
+}
+```
+
+For further details on all the headers, see the sending messages page and
+the [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout).
+
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
+
+**References:**
+
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`begin_cell`](/languages/func/stdlib#begin-cell)
+- [`store_uint`](/languages/func/stdlib#store-uint)
+- [`store_slice`](/languages/func/stdlib#store-slice)
+- [`store_coins`](/languages/func/stdlib#store-coins)
+- [`store_ref`](/languages/func/stdlib#store-ref)
+- [`end_cell`](/languages/func/stdlib#end-cell)
+- [`send_raw_message`](/languages/func/stdlib#send-raw-message)
+- [TLB for messages](/foundations/whitepapers/tblkch#3-1-7-message-layout)
+- Sending messages page
+
+### How to send a message with the entire balance
+
+To transfer the entire balance of a smart contract, use [send mode `128`](/foundations/messages/modes).
+This is particularly useful for proxy contracts that receive payments and forward them to the main contract.
+
+```func
+;; Create a slice from a string containing the destination address
+slice addr = "EQArzP5prfRJtDM5WrMNWyr9yUTAi0c9o6PfR4hkWy9UQXHx"a;
+;; The amount to send in nanotons.
+;; In this case, it is irrelevant the sent amount,
+;; because, later, the send mode 128 will include
+;; all the contract's balance in the message
+int amount = 0;
+;; The comment to send
+slice comment = "Hello from FunC!";
+
+;; Create the message cell
+cell msg = build_message(addr, amount, comment);
+
+;; Send the message, using mode 128
+;; The mode 128 sends the entire contract's balance in the message
+send_raw_message(msg, 128);
+```
+
+The `build_message` function is exactly the function used in the
+recipe [How to send a message containing a comment](#how-to-send-a-message-containing-a-comment).
+
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
+
+**References:**
+
+- [`"<address string>"a` compile-time builtin](/languages/func/literals#string-with-suffix-a), where `<address string>` is a string encoding an address.
+- [`"<ascii string>"` compile-time builtin](/languages/func/literals#string-without-suffix), where `<ascii string>` is an ASCII string.
+- Sending messages page
+- [`send_raw_message`](/languages/func/stdlib#send-raw-message)
+
+### How to send a message in a proxy contract
+
+A proxy contract facilitates message exchange between a user and a main contract.
+The proxy contract redirects messages based on the parameters it receives in the incoming message.
+
+For example, this is a simple example of a proxy contract.
+It expects that the incoming message body `in_msg_body` contains the message mode,
+destination address, and the slice to send as body.
+
+```func
+() recv_internal (slice in_msg_body) {
+    
+    ;; In the incoming message body, 
+    ;; the first byte contains the message mode
+    ;; for the redirected message
+    int mode = in_msg_body~load_uint(8); 
+
+    ;; Then, the destination address
+    slice addr = in_msg_body~load_msg_addr(); 
+
+    ;; And finally, everything that is left in "in_msg_body" 
+    ;; will be the redirected message's body
+    slice body = in_msg_body; 
+
+    ;; The amount to send in nanotons
+    int amount = 1000000000;
+
+    ;; Create the message cell
+    cell msg = build_message(addr, amount, body);
+
+    ;; Send the message, using the provided mode.
+    send_raw_message(msg, mode);
+}
+```
+
+The `build_message` function is exactly the function used in the
+recipe [How to set the message body as a slice in an internal message](#how-to-set-the-message-body-as-a-slice-in-an-internal-message).
+
+Refer to the sending messages page for further details on sending modes in the `send_raw_message` function.
+
+**References:**
+
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [load\_uint](/languages/func/stdlib#load-uint)
+- [`load_msg_addr`](/languages/func/stdlib#load-msg-addr)
+- Sending messages page
+- [`send_raw_message`](/languages/func/stdlib#send-raw-message)
+
+## Functions
+
+### How to write custom functions using asm keyword
+
+Many features in FunC come from predefined methods in the [Standard library](/languages/func/stdlib).
+However, there are many functionalities that the standard library does not cover, but are available as [TVM instructions](/tvm/instructions).
+In such cases, it is possible to define functions that make use of the TVM instructions.
+
+For example, while the function [`tpush`](/languages/func/stdlib#tpush), which adds an element to the end of a tuple, exists in the standard library,
+there is no `tpop` function, which removes the last element in a tuple and returns the modified tuple and the removed element.
+But there is a [TVM instruction `TPOP`](/tvm/instructions#6f8d-tpop) that does precisely this.
+So, define the function `tpop` as an [assembler function](/languages/func/asm-functions) that wraps the `TPOP` instruction:
+
+```func
+forall X -> (tuple, X) ~tpop (tuple t) asm "TPOP";
+```
+
+The return type `(tuple, X)` indicates that the function produces the modified tuple and the extracted element as a result.
+The function is [polymorphic](/languages/func/types#polymorphism-with-type-variables) in the sense that the type of the returned element `X`
+can be any type. The function name uses the symbol `~` to indicate that this function can be called
+using [modifying notation](/languages/func/expressions#modifying-notation).
+
+For example, if it is certain that tuple `t` has only integer elements, call the function using
+[modifying notation](/languages/func/expressions#modifying-notation), like this:
+
+```func
+int elem = t~tpop();
+```
+
+which will assign the removed element to `elem` and also modify tuple `t` implicitly.
+
+As another example, the following function determines the length of a tuple by wrapping the [`TLEN` TVM instruction](/tvm/instructions#6f88-tlen):
+
+```func
+int tuple_length (tuple t) asm "TLEN";
+```
+
+Further examples taken from the [Standard library](/languages/func/stdlib):
+
+```func
+slice begin_parse(cell c) asm "CTOS";
+builder begin_cell() asm "NEWC";
+cell end_cell(builder b) asm "ENDC";
+```
+
+**References:**
+
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [Standard library](/languages/func/stdlib)
+- [TVM instructions](/tvm/instructions)
+- [Assembler functions](/languages/func/asm-functions)
+
+### How to use modifying notation on functions
+
+To use [modifying notation](/languages/func/expressions#modifying-notation) on a function, define the function so
+that it has a type of the form `(A, ...) -> (A, B)`, for arbitrary type `B`. Functions of this type usually mutate their first
+argument and return the mutated argument as their first result.
+
+For example, a function `f` of type `(slice, int, slice) -> (slice, cell)`, can be called using modifying notation as
+`cell result = s~f(0, "hello")`, where `s` is some slice. The modifying notation is a shorthand for the standard function call
+`(s, cell result) = f(s, 0, "hello")`, where `s` is reassigned after the call to `f`.
+
+For a more concrete example, the following defines a function that reads a digit from a slice that stores ASCII digits.
+The function receives the slice as an argument and produces two results. The first result is the modified slice,
+so that it is ready to read the next digit.
+The second result is the loaded digit.
+
+```func
+(slice, int) load_digit (slice s) {
+    ;; Load 8 bits (one char) from slice.
+    ;; x stores the decimal ASCII code of the char.
+    ;; Since load_uint is called using modifying notation,
+    ;; slice s is implicitly modified,
+    ;; and it is now ready to read the next 8 bits.
+    int x = s~load_uint(8); 
+    ;; Char '0' has code 48. Substract it 
+    ;; to get the digit as a number.
+    x -= 48; 
+    ;; Return the modified slice and the digit.
+    return (s, x); 
+}
+```
+
+The function can be called using modifying notation as follows.
+
+```func
+() main () {
+    ;; Create a slice containing some ASCII digits
+    slice s = "258";
+    ;; Proceed to read the digits as integers
+    ;; using modifying notation on the function call.
+    ;; This ensures that the slice gets implicitly modified
+    ;; after reading each digit.
+    int c1 = s~load_digit();
+    int c2 = s~load_digit();
+    int c3 = s~load_digit();
+    ;; here s contains no more data, 
+    ;; and c1 = 2, c2 = 5, c3 = 8
+}
+```
+
+Refer to the [modifying notation page](/languages/func/expressions#modifying-notation) for further details.
+
+**References:**
+
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [`load_uint`](/languages/func/stdlib#load-uint)
+- [`"<ascii string>"` compile-time builtin](/languages/func/literals#string-without-suffix), where `<ascii string>` is an ASCII string.
+
+## Integer utilities
+
+### How to get the current time
+
+Use the function `now` to obtain the current UNIX timestamp.
+
+```func
+int current_time = now();
+
+;; Is the current time bigger than some timestamp?
+if (current_time > 1672080143) {
+    ;; do some stuff
+}
+```
+
+**References:**
+
+- [now](/languages/func/stdlib#now)
+
+### How to generate a random number
+
+<Aside
+  type="caution"
+>
+  This method is not cryptographically secure.
+  For more details, see the Random number generation section.
+</Aside>
+
+```func
+;; do this only once before the first invocation of 
+;; any of the functions "rand" or "random", to ensure that 
+;; they will have a different seed every time the contract 
+;; executes.
+randomize_lt();  
+
+;; Generate a random number in the range 0..9.
+int a = rand(10);
+;; Generate a random number in the range 0..999999.
+int b = rand(1000000);
+;; Generate an unsigned 256-bit integer.
+int c = random();
+```
+
+**References:**
+
+- [Random Number generator primitives](/languages/func/stdlib#random-number-generator-primitives)
+
+### Modulo operations
+
+As an example, let's say there is a need to perform the following calculation for all 256 numbers:
+
+`(xp + zp) * (xp - zp)`.
+
+Since these operations are commonly used in cryptography, modulo operator for montgomery curves should be used.
+
+**Note:**
+Variable names like `xp+zp` are valid as long as there are no spaces between the operators.
+
+```func
+(int) modulo_operations (int xp, int zp) {
+   ;; 2^255 - 19 is a prime number for montgomery curves, meaning all operations should be done against its prime
+   int prime = 57896044618658097711785492504343953926634992332820282019728792003956564819949;
+
+   ;; muldivmod handles the next two lines itself
+   ;; int xp+zp = (xp + zp) % prime;
+   ;; int xp-zp = (xp - zp + prime) % prime;
+   (_, int xp+zp*xp-zp) = muldivmod(xp + zp, xp - zp, prime);
+   return xp+zp*xp-zp;
+}
+```
+
+**Reference:** [`muldivmod`](/tvm/instructions#A98C)
+
+### How to raise a number to a power
+
+To compute `n^e`, the naive approach multiplies `e - 1` times the number `n` by itself. For example, `n^3`
+means to multiply by `n` `2` times: `(n * n) * n`.
+
+The following code implements such idea. It has a complexity linear on `e`.
+
+```func
+int pow (int n, int e) {
+    if (e == 0) {
+        return 1;
+    }
+    int i = 0;
+    int value = n;  ;; "value" always stores the initial "n"
+    while (i < e - 1) { ;; Repeat e-1 times
+        n *= value;  ;; Multiply by the initial "n"
+                     ;; and accumulate the result.
+        i += 1;
+    }
+
+    ;; n stores the accumulated result
+    return n;
+}
+```
+
+There is a more efficient way to compute `n^e` called [binary exponentiation](https://cp-algorithms.com/algebra/binary-exp.html).
+It has a complexity base-2 logarithmic on `e`, i.e., `O(log_2 e)`.
+This is the recursive implementation of the algorithm. Refer to the article for details.
+
+```func
+int binpow (int n, int e) {
+    if (e == 0) {
+        return 1;
+    }
+    if (e == 1) {
+        return n;
+    }
+    int p = binpow(n, e / 2);
+    p *= p;
+    if ((e % 2) == 1) {
+        p *= n;
+    }
+    return p;
+}
+```
+
+An usage example of `binpow`:
+
+```func
+() main () {
+    int num = binpow(2, 3);
+    ~dump(num);   ;; 8
+}
+```
+
+**References:**
+
+- [Operators](/languages/func/operators)
+- [Loops](/languages/func/statements#loops)
+
+### How to convert the ASCII digits in a slice into an int
+
+```func
+;; Example slice containing ASCII digits
+slice string_number = "26052021";
+;; This variable will hold the final number
+int number = 0;
+
+;; Repeat while there is still data in the slice
+while (~ string_number.slice_empty?()) {
+    ;; Load 8 bits (one char) from the slice.
+    ;; "x" stores the decimal ASCII code of the char.
+    int x = string_number~load_uint(8);
+    ;; Char '0' has code 48. Substract it 
+    ;; to get the digit as a number.
+    x -= 48;
+    ;; Accumulate the result.
+    number = (number * 10) + x;
+}
+```
+
+**References:**
+
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`load_uint`](/languages/func/stdlib#load-uint)
+- [`"<ascii string>"` compile-time builtin](/languages/func/literals#string-without-suffix), where `<ascii string>` is an ASCII string.
+
+### How to convert an int into ASCII digits stored in a slice
+
+```func
+;; Example number to transform
+int n = 261119911;
+
+;; This will store the partially constructed string
+builder string = begin_cell();
+
+;; "chars" will be a lisp-style list, where each element 
+;; is the decimal ASCII code of a digit.
+;; The list will store the ASCII codes of each digit 
+;; in the number.
+;; So, since the number is 261119911, the list will be:
+;; ASCII code of 2, ASCII code of 6, ASCII code of 1, .....
+;; Initially, the list has the "null" value, to signal
+;; that it is empty.
+tuple chars = null(); 
+
+do {
+    ;; Obtain the righmost digit in n 
+    ;; and remove it from n
+    int r = n~divmod(10);
+
+    ;; Transform the digit "r" into its decimal ASCII code
+    ;; and place it as first element in the list.
+    ;; Even tough the digits of n are processed 
+    ;; starting from the rigthmost, the list 
+    ;; is filled back to front, ensuring that 
+    ;; ASCII codes in the list match the order 
+    ;; of the digits in the original "n"
+    chars = cons(r + 48, chars);
+} until (n == 0); ;; Stop until all digits are processed.
+
+;; Now, iterate the list.
+do {
+    ;; Get the element at the head of the list 
+    ;; and remove it from the list
+    int char = chars~list_next();
+
+    ;; Store the decimal ASCII code as a binary 8-bit ASCII code 
+    string~store_uint(char, 8);
+} until (null?(chars));  ;; Stop until reaching the end of the list
+
+;; Transform the cell into a slice
+slice result = string.end_cell().begin_parse();  
+```
+
+**References:**
+
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`begin_cell`](/languages/func/stdlib#begin-cell)
+- [`end_cell`](/languages/func/stdlib#end-cell)
+- [`begin_parse`](/languages/func/stdlib#begin-parse)
+- [`null`](/languages/func/stdlib#null)
+- [`divmod`](/languages/func/stdlib#divmod)
+- [`store_uint`](/languages/func/stdlib#store_uint)
+- [List-style lists](/languages/func/stdlib#lisp-style-lists)
+
+## Errors
+
+### How to throw errors
+
+The following snippet summarizes the main ways of throwing exceptions in FunC,
+by using functions `throw_if`, `throw_unless` and `throw`.
+
+```func
+int number = 198;
+
+;; The error 35 is thrown only if the number is greater than 50.
+;; In general, throw_if(n, cond) will throw error "n" 
+;; only if "cond" is true.
+throw_if(35, number > 50); 
+
+;; the error 39 is thrown only if the number is NOT EQUAL to 198.
+;; In general, throw_unless(n, cond) will throw error "n" 
+;; only if "cond" is false.
+throw_unless(39, number == 198); 
+
+;; the error 36 is thrown unconditionally
+throw(36); 
+```
+
+**References:**
+
+- [TVM exception codes](/tvm/exit-codes)
+- [`throw_if`](/languages/func/stdlib#throw-if)
+- [`throw_unless`](/languages/func/stdlib#throw-unless)
+- [`throw`](/languages/func/stdlib#throw)
+
+## Addresses
+
+### Generate an internal address
+
+When deploying a new contract, there is the need to generate its internal address because it is initially unknown.
+The internal address can be generated from the contract's StateInit, which contains the code and data of the new contract.
+
+According to the `MsgAddressInt` TLB, an internal address is composed of the following headers:
+
+```text
+addr_std$10 anycast:(Maybe Anycast) workchain_id:int8 address:bits256;
+```
+
+Therefore, to create an internal address, the above headers must be written in a cell, where `address` header is computed
+using the hash of the contract's StateInit. The following function creates an internal address that follows these headers,
+and stores the address in a cell, which finally gets transformed into a slice, as slices tend to be the preferred
+format for storing internal addresses.
+
+```func
+slice generate_internal_address (int workchain_id, cell state_init) {
+    return begin_cell()
+        ;; Header addr_std$10, requires the bits 10, 
+        ;; i.e., 2 as an unsigned integer
+        .store_uint(2, 2) 
+        .store_uint(0, 1) ;; anycast header defaults to nothing
+        ;; workchain_id, 8-bits signed integer
+        .store_int(workchain_id, 8)
+        ;; The address as 256-bit unsigned integer.
+        ;; Use the function cell_hash to compute 
+        ;; a hash of the provided state_init.
+        ;; This hash acts as the address.
+        .store_uint(cell_hash(state_init), 256) 
+    .end_cell().begin_parse();
+}
+```
+
+Refer to recipe ["How to build a StateInit cell"](#how-to-build-a-stateinit-cell). Additionally,
+refer to recipe ["How to send a deploy message"](#how-to-send-a-deploy-message) for sending a deploy message.
+
+Further information on workchain IDs are found in the [docs](/foundations/addresses/overview#workchain-id).
+
+**References:**
+
+- [Modifying notation using \~](/languages/func/expressions#modifying-notation)
+- [Non-modifying notation using .](/languages/func/expressions#non-modifying-notation)
+- [`begin_cell`](/languages/func/stdlib#begin-cell)
+- [`end_cell`](/languages/func/stdlib#end-cell)
+- [`begin_parse`](/languages/func/stdlib#begin-parse)
+- [`cell_hash()`](/languages/func/stdlib#cell-hash)
+- [`store_uint`](/languages/func/stdlib#store-uint)
+- [`store_int`](/languages/func/stdlib#store-int)
+- [Workchain ID](/foundations/addresses/overview#workchain-id)
+- [Internal addresses](/foundations/addresses/overview#internal-addresses)
+
+### Generate an external address
+
+Use the TL-B scheme from [block](https://github.com/ton-blockchain/ton/blob/24dc184a2ea67f9c47042b4104bbb4d82289fac1/crypto/block/block.tlb#L101C1-L101C12) to determine the address format to generate an external address.
+
+```func
+(int) ubitsize (int a) asm "UBITSIZE";
+
+slice generate_external_address (int address) {
+    ;; addr_extern$01 len:(## 9) external_address:(bits len) = MsgAddressExt;
+
+    int address_length = ubitsize(address);
+
+    return begin_cell()
+        .store_uint(1, 2) ;; addr_extern$01
+        .store_uint(address_length, 9)
+        .store_uint(address, address_length)
+    .end_cell().begin_parse();
+}
+```
+
+Since there is a need to find the exact number of bits occupied by the address, [declare an asm function](#how-to-write-custom-functions-using-asm-keyword) with the `UBITSIZE` opcode. This function will return the minimum number of bits required to store a given number.
+
+**Reference:** [TVM instructions](/tvm/instructions#B603)
