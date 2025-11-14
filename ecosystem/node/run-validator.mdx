@@ -28,11 +28,37 @@ We draw special attention of validators to IOPS disk requirements, it is crucial
 - Python 3.10
 - Clang 16.0.0
 
+![run-validator-3.png](..%2F..%2Fresources%2Fimages%2Fnodes%2Frun-validator%2Frun-validator-3.png)
+
+<Accordion title="Update Clang...">
+```bash
+# Please check your clang version first
+clang --version
+# If it is of version 16 you don't need to do the below steps.
+
+# Required for Ubuntu 20.04 only.
+sudo apt update
+sudo apt install -y manpages-dev software-properties-common
+sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+sudo apt update && sudo apt install gcc-11 g++-11
+
+# Required for Ubuntu 20.04 and 22.04. Update current clang to clang-16
+sudo apt install lsb-release wget software-properties-common gnupg
+sudo wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
+wget https://apt.llvm.org/llvm.sh
+chmod +x llvm.sh
+sudo ./llvm.sh 16 clang
+
+# change default clang
+sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-16 100
+sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-16 100
+```
+</Accordion>
 
 ### Port forwarding for node
 
 <Aside type="caution">
-Mandatory!
+Mandatory
 </Aside>
 
 Configure your network on server according the following:
@@ -46,6 +72,14 @@ To determine which UDP ports are open, use the following command:
 ```bash
 netstat -tulpn
 ```
+
+### Validator updates announcements
+Subscribe and follow instructions provided for validators with telegram channels
+
+| Channel                                      | Network |
+|----------------------------------------------|---------|
+| [@tonstatus](https://t.me/tonstatus)         | Mainnet |
+| [@testnetstatus](https://t.me/testnetstatus) | Testnet |
 
 ### Prepare the validator account
 
@@ -63,61 +97,121 @@ exit
 ssh <USERNAME>@<SERVER_IP>
 ```
 
-## Node installation
+## Validator node installation
 
-### Download MyTonCtrl
-
-To install MyTonCtrl, run:
+1. Download MyTonCtrl:
 
 ```shell
 wget https://raw.githubusercontent.com/ton-blockchain/mytonctrl/master/scripts/install.sh
 ```
+![run-validator-4.png](..%2F..%2Fresources%2Fimages%2Fnodes%2Frun-validator%2Frun-validator-4.png)
 
-### Run validator installation
+2. Run validator installation, installation takes approximately 20 minutes:
 
 ```shell install for Mainnet
 sudo bash install.sh -m single-nominator -n mainnet
 ```
 
-<Accordion title="For Testnet">
+![run-validator-5.png](..%2F..%2Fresources%2Fimages%2Fnodes%2Frun-validator%2Frun-validator-5.png)
+
+<Accordion title="Install validator for Testnet">
 
 ```shell install for Testnet
 sudo bash install.sh -m single-nominator -n mainnet
 ```
 </Accordion>
 
-![run-validator-2.png](..%2F..%2Fresources%2Fimages%2Fnodes%2Frun-validator%2Frun-validator-2.png)
-
-
-After installation, launch MyTonCtrl with command `mytonctrl`.
-You need to wait until the node is fully synchronized. To check synchronization status using the command:
+3.After installation, launch MyTonCtrl with command `mytonctrl`. Wait until the node is fully synchronized approximately 2 hours(depends on network connection). To check synchronization status using the command:
 
 ```sh
 MyTonCtrl> status
 ```
-![run-validator-1.png](..%2F..%2Fresources%2Fimages%2Fnodes%2Frun-validator%2Frun-validator-1.png)
+![run-validator-2.png](..%2F..%2Fresources%2Fimages%2Fnodes%2Frun-validator%2Frun-validator-2.png)
 
-
-Check the field `Local validator initial sync status: x`, the value should become less than 20.
+4. Check the field `Local validator initial sync status: x`, the value should become less than 20.
 
 <Aside type="tip">
 You can also set up [alert bot](/v3/guidelines/nodes/maintenance-guidelines/mytonctrl-private-alerting) to receive a notification when the node is synchronized.
 </Aside>
 
+## Configure network
+
+Once you install node MyTonCtrl try to perform network actions with node. If you notice this notification, you need to configure your network additionally.
+
+1. Print your configuration file:
+```bash
+cat /var/ton-work/db/config.json
+```
+2. Find TCP `control.port` within output
+
+```bash
+...
+ "control" : [
+      {
+         "@type" : "engine.controlInterface",
+         "id" : "w6P9N..............................H/k=",
+         "port" : 60055, #this port should be open
+         "allowed" : [
+            {
+               "@type" : "engine.controlProcess",
+               "id" : "e3Kb...........................ew=",
+               "permissions" : 15
+            }
+         ]
+      }
+   ],
+...
+```
+
+3. Find UDP `engine.addr` port number
+
+```bash
+  "addrs" : [
+      {
+         "@type" : "engine.addr",
+         "ip" : 16.......82,
+         "port" : 20898,
+         "categories" : [
+            0,
+            1,
+            2,
+            3
+         ],
+         "priority_categories" : [
+         ]
+      }
+```
+4. Make sure that `engine.addr` ports opened with [www.ipvoid.com/udp-port-scan](https://www.ipvoid.com/udp-port-scan/) and [www.ipvoid.com/port-scan](https://www.ipvoid.com/port-scan/).
+
+5. If you find out port filtered, open this port:
+![run-validator-6.png](..%2F..%2Fresources%2Fimages%2Fnodes%2Frun-validator%2Frun-validator-6.png)
+
+```bash
+sudo ufw allow <PORT_NUMBER>/tcp
+```
+
+```bash example
+sudo ufw allow 20898/tcp
+```
+
+60055
+
+
+
 ## Configure validator
-
-### Activate validator wallet
-
 
 When installing, MyTonCtrl automatically creates a validator wallet for you. You need to top up and activate (deploy) this wallet so MyTonCtrl can operate Single nominator pool smart contract with it.
 
-Check list of wallets:
+
+1. Check a list of wallets:
 
 ```sh
 MyTonCtrl> wl
 ```
 You should see a wallet named `validator_wallet_001` and its address. Top up this address with enough coins to cover operational costs,
 ensure you have at least 200 TON/month in your validator wallet for operation fees.
+
+2. Credit validator wallet
 
 After you have topped it up, activate the wallet:
 
