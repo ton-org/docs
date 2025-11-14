@@ -1,0 +1,279 @@
+---
+title: "Known issues"
+sidebarTitle: "Known issues"
+noindex: "true"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+## Constant evaluation breaks function argument substitution
+
+### Removes division by zero exception
+
+For the following operators and arithmetic functions, the compiler carries out optimizations
+during constant evaluation that removes the expected division by zero exception.
+
+#### muldiv, muldivc and muldivr
+
+Issue page: [#1678](https://github.com/ton-blockchain/ton/issues/1678)
+
+For functions [`muldiv`](/languages/func/built-ins#muldiv), [`muldivc`](/languages/func/built-ins#muldivc) and [`muldivr`](/languages/func/built-ins#muldivr),
+if any of their first two arguments is zero at compilation time, the compiler replaces the function call with 0, irrespective of the function's
+third argument, i.e., the divisor. This means that the function calls get replaced by 0 even when the divisor is 0,
+effectively removing the expected division by zero exception.
+
+Examples:
+
+```func
+;; All these produce 0, irrespective of divisor z, 
+;; even when z is 0.
+muldiv(0, 1, z);
+muldivc(1, 0, z);
+muldivr(0, 1, z);
+```
+
+#### Operators /, % combined with comparison operators
+
+Issue pages: [#1659](https://github.com/ton-blockchain/ton/issues/1659),
+[#1660](https://github.com/ton-blockchain/ton/issues/1660),
+[#1661](https://github.com/ton-blockchain/ton/issues/1661),
+[#1662](https://github.com/ton-blockchain/ton/issues/1662).
+
+The compiler simplifies the [division `/`](/languages/func/operators#division%2C-%2F) and [modulo `%`](/languages/func/operators#modulo%2C-%25) operators when their left argument is `0`,
+but only when `/` and `%` are used in tandem with comparison operators like `>=`, `>`, `==`, etc.
+
+For example, the following expressions are **not** simplified to 0 at compile-time, which is the correct behavior:
+
+```func
+0 / z;   ;; NOT replaced by 0
+0 % z;   ;; NOT replaced by 0
+```
+
+However, when comparison operators are used, the following expressions get simplified, irrespective of the value of `z`:
+
+```func
+(0 % z) >= 0;  ;; Replaced by true
+(0 / z) >= 0;  ;; Replaced by true
+(0 % z) != 1;  ;; Replaced by true
+```
+
+This means that the FunC compiler removes the expected division by zero exception in the above examples when `z = 0`.
+
+The following are further examples where the left operand of `/` and `%` is simplified to `0` by FunC, resulting in a final
+expression that the compiler simplifies to `true`, irrespective of the value of `z`:
+
+```func
+(~(-1) / z) >= 0;
+((1 & (~ 1)) / z) >= 0;
+((z & 0) / z) >= 0;
+((z * 0) / z) >= 0;
+(~(-1) % z) >= 0;
+((1 & (~ 1)) % z) >= 0;
+((z & 0) % z) >= 0;
+((z * 0) % z) >= 0;
+((x & 0) % z) == 1;
+((x * 0) % z) == 1;
+((-1 % z) % 1) <= 0;
+```
+
+### Removes integer overflow exception
+
+Issue pages: [#1656](https://github.com/ton-blockchain/ton/issues/1656),
+[#1657](https://github.com/ton-blockchain/ton/issues/1657),
+[#1658](https://github.com/ton-blockchain/ton/issues/1658).
+
+The following expressions should produce overflows for particular values of `z`,
+but the FunC compiler simplifies them irrespective of `z`:
+
+```func
+(0 & (- z)) <= 0;     ;; Should overflow for z = -115792089237316195423570985008687907853269984665640564039457584007913129639936,
+                      ;; but simplified to true  
+(0 * (- z)) <= 0;     ;; Should overflow for z = -115792089237316195423570985008687907853269984665640564039457584007913129639936,
+                      ;; but simplified to true  
+((z / -1) % 2) > -2;  ;; Should overflow for z = -115792089237316195423570985008687907853269984665640564039457584007913129639936,
+                      ;; but simplified to true  
+```
+
+The following are further examples of expressions that should produce integer overflows at the indicated values,
+but the FunC compiler simplifies them to `true` irrespective of the value of `z`:
+
+```func
+(~(-1) & (-1 * z)) <= 0;         ;; for z = MIN_INT.
+((1 & (~ 1)) & (z / -1)) <= 0;   ;; for z = MIN_INT.
+((z & 0) & (z * 2)) <= 0;        ;; for z = MAX_INT 
+((z * 0) & (z + 1)) <= 0;        ;; for z = MAX_INT.
+(~(-1) * (-1 * z)) <= 0;         ;; for z = MIN_INT
+((1 & (~ 1)) * (z / -1)) <= 0;   ;; for z = MIN_INT
+((z & 0) * (z * 2)) <= 0;        ;; for z = MAX_INT
+((z * 0) * (z + 1)) <= 0;        ;; for z = MAX_INT
+((-1 * z) % 2) > -2;             ;; for z = MIN_INT
+((- z) % 2) > -2;                ;; for z = MIN_INT
+((z * 2) % 2) > -2;              ;; for z = MAX_INT 
+((z + 1) % 2) > -2;              ;; for z = MAX_INT
+```
+
+where `MIN_INT = -115792089237316195423570985008687907853269984665640564039457584007913129639936` and
+`MAX_INT = 115792089237316195423570985008687907853269984665640564039457584007913129639935`.
+
+### Incorrect results
+
+#### Involving operator `~%`
+
+Issue Page: [#1670](https://github.com/ton-blockchain/ton/issues/1670)
+
+In the following code:
+
+```func
+int calc(int x) {
+    return ((x ~% -3) <= 0);
+}
+
+int calc3(int x, int y, int z) {
+    return ((x ~% y) <= z);
+}
+```
+
+calling `calc(1)` produces `-1`. But calling `calc3(1,-3,0)` produces `0`. But the expected behavior is `calc(1) = calc3(1,-3,0)`, since `calc` is just a specialization of `calc3`.
+
+The same happens with comparison operators: `<=>`, `!=`, and `==`, i.e., the following expressions also produce differing results:
+
+- `((x ~% -3) <=> 1)` in `calc` function, and `((x ~% y) <=> z)` in `cal3` function. Produces `calc(1) = -1`, and `calc3(1,-3,1) = 0`.
+- `((x ~% -3) != 1)` in `calc` function, and `((x ~% y) != z)` in `cal3` function. Produces `calc(1) = -1`, and `calc3(1,-3,1) = 0`.
+- `((x ~% -3) == 1)` in `calc` function, and `((x ~% y) == z)` in `cal3` function. Produces `calc(1) = 0`, and `calc3(1,-3,1) = -1`.
+
+#### Involving operator `^%`
+
+Issue Page: [#1669](https://github.com/ton-blockchain/ton/issues/1669)
+
+In the following code:
+
+```func
+int calc(int x) {
+    return ((x ^% -2) <= 0);
+}
+
+int calc3(int x, int y, int z) {
+    return ((x ^% y) <= z);
+}
+```
+
+calling `calc(1)` produces `-1`. But calling `calc3(1,-2,0)` produces `0`. But the expected behavior is `calc(1) = calc3(1,-2,0)`, since `calc` is just a specialization of `calc3`.
+
+The same happens with comparison operators: `<=>`, `!=`, and `==`. The following expressions also produce differing results:
+
+- `((x ^% -2) <=> 1)` in `calc` function, and `((x ^% y) <=> z)` in `cal3` function. Produces `calc(1) = -1`, and `calc3(1,-2,1) = 0`.
+- `((x ^% -2) != 1)` in `calc` function, and `((x ^% y) != z)` in `cal3` function. Produces `calc(1) = -1`, and `calc3(1,-2,1) = 0`.
+- `((x ^% -2) == 1)` in `calc` function, and `((x ^% y) == z)` in `cal3` function. Produces `calc(1) = 0`, and `calc3(1,-2,1) = -1`.
+
+## Stack underflow in `run_methodX` functions
+
+Issue Page: [#1883](https://github.com/ton-blockchain/ton/issues/1883).
+
+The following code produces a stack underflow when `run_method3` executes:
+
+```
+() test(int a, int b, int c) impure method_id(16384) {
+   ~dump(a);
+   ~dump(b); 
+   ~dump(c);
+}
+
+() recv_internal() impure {
+      run_method3(16384, 100, 200, 300);
+}
+```
+
+The expected behavior is that `test` function prints `100`, `200`, and `300` in the debug logs when `run_method3` executes.
+
+The functions `run_method0`, `run_method1`, and `run_method2` have similar problems with stack underflow.
+
+## FunC does not throw on 1024 bits long slice constant creation with s literal
+
+Issue page: [#1153](https://github.com/ton-blockchain/ton/issues/1153).
+
+The following is successfully compiled:
+
+```func
+const slice s = "abcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd"s;
+
+() main () {
+    ~dump(s);
+}
+```
+
+But the compiler should have thrown a compilation error due to the string being too long.
+
+## FunC ignores argument order when calling built-ins or asm functions via variables
+
+Page issue: [#1681](https://github.com/ton-blockchain/ton/issues/1681).
+
+```func
+;; Correct: directly calls built-in, respects ret_order
+(int, int) correctBuiltin(int a, int b) {
+    return moddiv(a, b);
+}
+
+;; Incorrect: calling built-in via variable, ignores ret_order
+(int, int) incorrectBuiltin(int a, int b) {
+    var f = moddiv;
+    return f(a, b);
+}
+
+;; Define the asm function with explicit ret_order
+(int, int) myAsm(int a, int b) asm(-> 1 0) "SWAP";
+
+;; Correct: directly calls asm function with explicit ret_order
+(int, int) correctAsm(int a, int b) {
+    return myAsm(a, b);
+}
+
+;; Incorrect: calls asm function via variable, ignores ret_order
+(int, int) incorrectAsm(int a, int b) {
+    var f = myAsm;
+    return f(a, b);
+}
+
+() main () {
+    ~dump([correctBuiltin(5, 1)]);    ;; [0 5] Correct
+    ~dump([incorrectBuiltin(5, 1)]);  ;; [5 0] Incorrect
+    ~dump([correctAsm(5, 1)]);        ;; [5 1] Correct
+    ~dump([incorrectAsm(5, 1)]);      ;; [1 5] Incorrect
+}
+```
+
+## FunC crashes with fatal assertion when tensor exceeds 254 elements
+
+Issue Page: [1682](https://github.com/ton-blockchain/ton/issues/1682)
+
+The compiler crashes with a fatal internal assertion if a tensor exceeds 254 elements, instead of a proper user-facing error.
+
+Example:
+
+```func
+() main() {
+    var x = (
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    );
+}
+```
+
+which crashes with message:
+
+```text
+fatal: Assertion failed at analyzer.cpp:46: k <= 254 && n <= 0x7fff00
+```
