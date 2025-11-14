@@ -1,7 +1,37 @@
 ---
-title: "External Messages"
+title: "External Inbound Messages"
 ---
 
-import { Stub } from '/snippets/stub.jsx';
+External messages are messages that are sent from outside the blockchain. Because of this, it is impossible to determine the sender of the message. Because of this, it is impossible to determine the sender of the message. In cases where it is necessary to verify the sender, the public key is usually stored in the contract, and the message is signed before sending, so the contract can verify this signature with the public key. This is the approach used by the all [wallets in TON ecosystem](/standard/wallets/overview).
 
-<Stub issue="44" />
+## Contents of external messages
+
+```tl-b
+ext_in_msg_info$10 src:MsgAddressExt dest:MsgAddressInt
+  import_fee:Grams = CommonMsgInfo;
+
+message$_ {X:Type} info:CommonMsgInfo
+  init:(Maybe (Either StateInit ^StateInit))
+  body:(Either X ^X) = Message X;
+```
+
+The `CommonMsgInfo` of external-in messages contains the following fields:
+- `src` — the address of the sender of the message.
+- `dest` — the address of the contract that will receive the message.
+- `import_fee` — the amount of Toncoin that the contract will pay for this message.
+
+Due to the limitations described above, the value of these fields can be manipulated by [nodes](/ecosystem/node/overview) or [api providers](/ecosystem/api/overview) that deliver the message unless they are included in the signed payload. However, standard wallets do not include these fields into the signed payload. In that case, only `body` field content is signed.
+
+`import_fee` field can be overwritten by the validators, processing messages. Price of the delivery of the message with `x` cells and `y` bits is determined, so any other value of `import_fee` will be overwritten.
+
+## Deploying via external message
+
+A contract can be deployed via an external message only if the newly deployed contract will accept that message after its creation. Of course, [as usual](/foundations/messages/state-init) address of the contract must match the hash of the StateInit.
+
+## Acceptance of a message
+
+External-in messages are sent to the contract from outside the blockchain, so the sender can't pay for them, and these messages must be paid by the contract that receives them. However, if the contract paid for all external-in messages it receives, it would drain the balance of the contract. This is why [`gas_credi` parameter](/foundations/limits#gas-and-fee-parameters) exists. This is the amount of gas that can be consumed by the contract without paying for it. That gas is used to determine whether the contract wants to accept the message and pay for it. Contract can't modify its state without accepting the message. If a contract accepts a message, it will pay for all gas consumed, even if it fits in `gas_credit`. Acceptance can be done using [`ACCEPT`](/tvm/instructions#f800-accept) TVM instruction, or via [`SETGASLIMIT`](/tvm/instructions#f801-setgaslimit) instruction with an argument greater or equal to 2<sup>63<sup>-1. Acceptance of a message is a unique property of external-in messages.
+
+## Replaying of messages
+
+When an external-in message is sent to the blockchain, it's being replayed by the validators. This means that the message sent once can be delivered to the contract multiple times. Normally, each external-in message should be accepted only once. There are different techniques of achieving this goal. They are used in different [wallets](/standard/wallets/overview).

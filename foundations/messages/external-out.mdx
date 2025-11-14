@@ -1,0 +1,45 @@
+---
+title: "External Out Messages"
+---
+
+External-out messages are the messages that contact can send to the outer world. They are primarily used for logging purposes. They can't change any contract state, so they can't trigger the transaction. Of course this message is visible to anyone, but there is no guarantee, that this message will be processed by anyone from the outer world.
+
+The structure is as follows:
+```tl-b
+ext_out_msg_info$11 src:MsgAddressInt dest:MsgAddressExt
+  created_lt:uint64 created_at:uint32 = CommonMsgInfo;
+
+message$_ {X:Type} info:CommonMsgInfo
+  init:(Maybe (Either StateInit ^StateInit))
+  body:(Either X ^X) = Message X;
+```
+
+As opposite to external-in messages, a third party can't manipulate the contents of external-out messages. So there is no need to sign them.
+- The `src` field is always set to the address of the contract, that sends the message.
+- The `dest` field is not overwritten, it can be set to any valid `MsgAddressExt`.
+- The `created_at` field is equal to the `created_at` field in the transaction, in which the contract sent this message.
+- The `created_lt` field is equal to the `created_lt` field in the transaction plus one.
+
+When sending this kind of message, the contract may fill all of these fields with any values. `src`, `created_lt` and `created_at` will be overwritten by the validator, processing this message.
+
+## Example in TOLK
+
+In Tolk, external-out messages may be composed using `createExternalLogMessage` function.
+
+```tolk
+tolk 1.2
+
+struct(0x10) valueWasDeposited{
+    value: int64
+}
+
+fun main(in: InMessage) {
+    val msg = createExternalLogMessage({
+        dest: createAddressNone(),
+        body: valueWasDeposited {
+            value: 1000,
+        }
+    });
+    msg.send(SEND_MODE_PAY_FEES_SEPARATELY);
+}
+```
