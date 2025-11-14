@@ -11,122 +11,119 @@ This tutorial covers building, deploying, and interacting with a smart contract 
 
 - Basic programming: variables, functions, if/else statements
 - Basic familiarity with a command‑line interface and executing commands
-- Node.js—v22 or later— [download here](https://nodejs.org/)
+- Node.js—`v22` or later— [download here](https://nodejs.org/)
   - Check if installed: `node -v` in terminal
-- [TON wallet](/ecosystem/wallet-apps/overview)
-
+- Installed [TON wallet](/ecosystem/wallet-apps/overview) with [Toncoin on testnet](/contract-dev/testing/testnet-tokens)
 
 ## Development environment
 
-  <Steps>
-    <Step
-      title="Set up development environment"
+<Steps>
+  <Step
+    title="Set up development environment"
+  >
+    Use the [Blueprint](/contract-dev/blueprint/overview) development toolkit for smart contracts. Start a new project with:
+
+    ```bash
+    npm create ton@latest -- Example --contractName FirstContract --type tolk-empty
+    ```
+
+    This command creates a project named "Example", containing a contract named "FirstContract".
+
+    The generated project structure is:
+
+    <FenceTable
+
     >
+      Example/
+      ├──contracts/                        # smart contract source code
+      │   └── first\_contract.tolk          # main contract file
+      ├── scripts/                         # deployment and on-chain interaction scripts
+      │   └── deployFirstContract.ts       # script to deploy the contract
+      ├── tests/                           # testing specifications
+      │   └── FirstContract.spec.ts        # contract test file
+      ├── wrappers/                        # TypeScript wrappers for contract interaction
+      │   ├── FirstContract.ts             # wrapper class for the smart contract
+      │   └── FirstContract.compile.ts     # configuration for compiling contract
+    </FenceTable>
 
-      Use the [Blueprint](/contract-dev/blueprint/overview) development toolkit for smart contracts. Start a new project with:
+    <Aside>
+      The TON ecosystem provides editor plugins with syntax support for IDEs and code editors. View them [here](/contract-dev/ide/overview).
+    </Aside>
+  </Step>
 
-      ```bash
-      npm create ton@latest -- Example --contractName FirstContract --type tolk-empty
-      ```
+  <Step
+    title="Move into the project directory"
+  >
+    ```bash
+    cd Example
+    ```
+  </Step>
+</Steps>
 
-      This command creates a project named "Example", containing a contract named "FirstContract".
+## What is a smart contract
 
-      The generated project structure is:
-
-      <FenceTable>
-        Example/
-        ├──contracts/                        # smart contract source code
-        │   └── first_contract.tolk          # main contract file
-        ├── scripts/                         # deployment and on-chain interaction scripts
-        │   └── deployFirstContract.ts       # script to deploy the contract
-        ├── tests/                           # testing specifications
-        │   └── FirstContract.spec.ts        # contract test file
-        ├── wrappers/                        # TypeScript wrappers for contract interaction
-        │   ├── FirstContract.ts             # wrapper class for the smart contract
-        │   └── FirstContract.compile.ts     # configuration for compiling contract
-
-      </FenceTable>
-
-      <Aside>
-        The TON ecosystem provides editor plugins with syntax support for IDEs and code editors. View them [here](/contract-dev/ide/overview).
-      </Aside>
-
-    </Step>
-
-    <Step
-      title="Move into the project directory"
-    >
-
-      ```bash
-      cd Example
-      ```
-
-    </Step>
-  </Steps>
-
-
-## Smart contract layout
-
-A smart contract is a program stored on [TON Blockchain](/foundations/overview) and executed by the [TVM](/tvm/overview).
+A smart contract is a program stored on <Tooltip tip="A distributed database that many computers maintain together." cta="Learn more" href="/foundations/overview">TON blockchain</Tooltip> and executed by the <Tooltip tip="The “computer” which executes smart contracts on TON blockchain." cta="Learn more" href="/tvm/overview">TVM</Tooltip>.
 On-chain, every contract consists of two components:
 
-- Code — compiled [TVM instructions](), defines the contract's logic
-- Data — persistent state, stores information between interactions
+- Code — compiled [TVM instructions](/tvm/instructions), defines the contract's logic.
+- Data — persistent state, stores information between interactions.
 
-Both are stored at a specific [address]() on the TON Blockchain, which uniquely identifies each smart contract.
+Both are stored at a specific [address](/foundations/addresses/overview) on TON blockchain, which is a unique identifier for each smart contract. Smart contracts interact with each other only through [messages](/foundations/messages/overview).
 
-A contract's data is organized into three functional sections: storage, messages, and getters:
+### Smart contract layout
 
-- Storage holds the contract’s persistent state. Example: the counter variable keeps its value across calls from different users.
-- Messages define how the contract reacts to incoming messages. On TON, the main way to interact with contracts is by sending [messages](). Each processed message produces a [transaction](), a recorded change on the blockchain. For example, a transfer of TON between accounts.
-- Getters are read-only functions that return contract data without modifying state. Example: a getter that returns the current counter value.
+A contract's code consists of three functional sections: storage, messages, and get methods:
+
+- Storage holds the contract’s persistent state. Example: the `counter` variable keeps its value across calls from different users.
+- Messages are receivers defined in the contract’s code that specify how the contract should react to each incoming message. Each message triggers a specific action or changes the state according to the contract's logic.
+- [Get methods](/tvm/get-method) are read-only functions that return contract data without modifying state. Example: a get method that returns the current `counter` value.
 
 <Aside
   type="caution"
 >
-  Due to the [TON architecture](/from-ethereum#on-chain-get-methods), getters cannot be called from other contracts. Inter-contract communication uses **messages** only.
+  Due to the [TON architecture](/from-ethereum#on-chain-get-methods), get methods cannot be called from other contracts. Inter-contract communication uses **messages** only.
 </Aside>
 
-## Write the smart contract
+## Write a smart contract
 
 To build a simple counter contract:
-- Start with an initial counter value.
-- Send `increase` messages to add to the counter or `reset` messages to set it to 0.
-- Call a `getter` to return the current counter value.
 
-The contract uses [**Tolk**](/languages/tolk). Tolk syntax is similar to TypeScript and Rust, designed for smart contract development.
+- Start with an initial `counter` value.
+- Send `increase` messages to add to the counter or `reset` messages to set it to 0.
+- Call a get method to return the current `counter` value.
+
+The contract uses [**Tolk**](/languages/tolk) language.
 
 <Steps>
   <Step
     title="Define contract storage"
   >
+    Open the `./contracts/first_contract.tolk` file.
 
-    To define contract storage, store the counter value. Tolk makes it simple with <Tooltip tip="A structure is a composite data type that groups named fields, each having its own type, into one unit." cta="Learn more" href="/languages/tolk">structures</Tooltip>:
+    To define contract storage, store the `counter` value. Tolk makes it simple with <Tooltip tip="A structure is a composite data type that groups named fields, each having its own type, into one unit." cta="Learn more" href="/languages/tolk">structures</Tooltip>:
 
     ```tolk title="./contracts/first_contract.tolk"
     struct Storage {
-    counter: uint64; // the current counter value
-  }
+        counter: uint64; // the current counter value
+    }
 
     // load contract data from persistent storage
     fun Storage.load() {
-    return Storage.fromCell(contract.getData())
-  }
+        return Storage.fromCell(contract.getData())
+    }
 
     // save contract data to persistent storage
     fun Storage.save(self) {
-    contract.setData(self.toCell())
-  }
+        contract.setData(self.toCell())
+    }
     ```
 
     Structures serialize and deserialize automatically into [cells](/foundations/serialization/cells), the storage unit in TON. The `fromCell` and `toCell` functions handle conversion between structures and cells.
-
   </Step>
 
   <Step
     title="Implement message handlers"
   >
-
     To process messages, implement the `onInternalMessage` function. It receives one argument — the incoming message. Focus on the `body` field, which contains the payload sent by a user or another contract.
 
     Define two message structures:
@@ -136,16 +133,15 @@ The contract uses [**Tolk**](/languages/tolk). Tolk syntax is similar to TypeScr
 
     Each structure has a unique prefix —`0x7e8764ef` and `0x3a752f06`— called opcodes, that  which allows the contract to distinguish between messages.
 
-
     ```tolk title="./contracts/first_contract.tolk"
     struct(0x7e8764ef) IncreaseCounter {
-    increaseBy: uint32
-  }
+        increaseBy: uint32
+    }
 
     struct(0x3a752f06) ResetCounter {}
     ```
 
-    Group the messages into a union. A union bundles multiple types into a single type and supports automatic serialization and deserialization:
+    To avoid manual deserialization of each message, group the messages into a union. A union bundles multiple types into a single type and supports automatic serialization and deserialization.
 
     ```tolk title="./contracts/first_contract.tolk"
     type AllowedMessage = IncreaseCounter | ResetCounter;
@@ -155,33 +151,32 @@ The contract uses [**Tolk**](/languages/tolk). Tolk syntax is similar to TypeScr
 
     ```tolk title="./contracts/first_contract.tolk"
     fun onInternalMessage(in: InMessage) {
-    // use `lazy` to defer parsing until fields are accessed
-    val msg = lazy AllowedMessage.fromSlice(in.body);
+        // use `lazy` to defer parsing until fields are accessed
+        val msg = lazy AllowedMessage.fromSlice(in.body);
 
-    // matching the union to determine body structure
-    match (msg) {
-    IncreaseCounter => {
-    // load contract storage lazily (efficient for large or partial reads/updates)
-    var storage = lazy Storage.load();
-    storage.counter += msg.increaseBy;
-    storage.save();
-  }
+        // matching the union to determine body structure
+        match (msg) {
+            IncreaseCounter => {
+                // load contract storage lazily (efficient for large or partial reads/updates)
+                var storage = lazy Storage.load();
+                storage.counter += msg.increaseBy;
+                storage.save();
+        }
 
-    ResetCounter => {
-    var storage = lazy Storage.load();
-    storage.counter = 0;
-    storage.save();
-  }
+            ResetCounter => {
+                var storage = lazy Storage.load();
+                storage.counter = 0;
+                storage.save();
+            }
 
-    // this match branch would be executed if the message body does not match IncreaseCounter or ResetCounter structures
-    else => {
-    // reject user message (throw) if body is not empty
-    assert(in.body.isEmpty()) throw 0xFFFF
-  }
-  }
-  }
+            // this match branch would be executed if the message body does not match IncreaseCounter or ResetCounter structures
+            else => {
+                // reject user message (throw) if body is not empty
+                assert(in.body.isEmpty()) throw 0xFFFF
+            }
+        }
+    }
     ```
-
   </Step>
 
   <Step
@@ -191,80 +186,75 @@ The contract uses [**Tolk**](/languages/tolk). Tolk syntax is similar to TypeScr
 
     ```tolk title="./contracts/first_contract.tolk"
     get fun currentCounter(): int {
-    val storage = lazy Storage.load();
-    return storage.counter;
-  }
+        val storage = lazy Storage.load();
+        return storage.counter;
+    }
     ```
-
   </Step>
 
   <Step
     title="Complete contract code"
   >
-
     The contract now includes:
+
     - Storage — persistent `counter` value
     - Messages — `IncreaseCounter` and `ResetCounter` handlers
-    - Getter — `currentCounter` function
+    - Get methods — `currentCounter`
 
     <Accordion
-    title="Full source code">
-
+      title="Full source code"
+    >
       ```tolk title="./contracts/first_contract.tolk"
       struct Storage {
-      counter: uint64;
-    }
+          counter: uint64;
+      }
 
       fun Storage.load() {
-      return Storage.fromCell(contract.getData());
-    }
+          return Storage.fromCell(contract.getData());
+      }
 
       fun Storage.save(self) {
-      contract.setData(self.toCell());
-    }
+          contract.setData(self.toCell());
+      }
 
       struct(0x7e8764ef) IncreaseCounter {
-      increaseBy: uint32
-    }
+          increaseBy: uint32
+      }
 
       struct(0x3a752f06) ResetCounter {}
 
       type AllowedMessage = IncreaseCounter | ResetCounter;
 
       fun onInternalMessage(in: InMessage) {
-      val msg = lazy AllowedMessage.fromSlice(in.body);
+          val msg = lazy AllowedMessage.fromSlice(in.body);
 
-      match (msg) {
-      IncreaseCounter => {
-      var storage = lazy Storage.load();
-      storage.counter += msg.increaseBy;
-      storage.save();
-    }
+          match (msg) {
+              IncreaseCounter => {
+                  var storage = lazy Storage.load();
+                  storage.counter += msg.increaseBy;
+                  storage.save();
+              }
 
-      ResetCounter => {
-      var storage = lazy Storage.load();
-      storage.counter = 0;
-      storage.save();
-    }
+              ResetCounter => {
+                  var storage = lazy Storage.load();
+                  storage.counter = 0;
+                  storage.save();
+              }
 
-      else => {
-      assert(in.body.isEmpty()) throw 0xFFFF;
-    }
-    }
-    }
+              else => {
+                  assert(in.body.isEmpty()) throw 0xFFFF;
+              }
+          }
+      }
 
       get fun currentCounter(): int {
-      val storage = lazy Storage.load();
-      return storage.counter;
-    }
+          val storage = lazy Storage.load();
+          return storage.counter;
+      }
       ```
-
     </Accordion>
-
   </Step>
-
 </Steps>
-
 
 ## Compile the contract
 
@@ -301,62 +291,60 @@ Next, deploy the contract to the TON blockchain and interact with it using scrip
   <Step
     title="Create a wrapper file"
   >
+    To deploy, create a wrapper class. Wrappers make it easy to interact with contracts from TypeScript.
 
-    Create a wrapper class to deploy and interact with the contract. Wrappers implement the `Contract` interface and TypeScript integration.
-
-    Create `./wrappers/FirstContract.ts` with the following code:
+    Open the `./wrappers/FirstContract.ts` file and replace its content with the following code:
 
     ```typescript title="./wrappers/FirstContract.ts"
     import { Address, beginCell, Cell, Contract, contractAddress, ContractProvider, Sender, SendMode } from '@ton/core';
 
     export class FirstContract implements Contract {
-    constructor(
-    readonly address: Address,
-    readonly init?: { code: Cell; data: Cell },
-    ) {}
+        constructor(
+            readonly address: Address,
+            readonly init?: { code: Cell; data: Cell },
+        ) {}
 
-    static createFromConfig(config: { counter: number }, code: Cell, workchain = 0) {
-    const data = beginCell().storeUint(config.counter, 64).endCell();
-    const init = { code, data };
-    return new FirstContract(contractAddress(workchain, init), init);
-  }
+        static createFromConfig(config: { counter: number }, code: Cell, workchain = 0) {
+            const data = beginCell().storeUint(config.counter, 64).endCell();
+            const init = { code, data };
+            return new FirstContract(contractAddress(workchain, init), init);
+        }
 
-    async sendDeploy(provider: ContractProvider, via: Sender, value: bigint) {
-    await provider.internal(via, {
-    value,
-    sendMode: SendMode.PAY_GAS_SEPARATELY,
-  });
-  }
-  }
+        async sendDeploy(provider: ContractProvider, via: Sender, value: bigint) {
+            await provider.internal(via, {
+                value,
+                sendMode: SendMode.PAY_GAS_SEPARATELY,
+            });
+        }
+    }
     ```
 
     Wrapper class details:
 
     - [`@ton/core`](https://www.npmjs.com/package/@ton/core) — a library with base TON types.
     - The function `createFromConfig` builds a wrapper using:
-        - code — compiled bytecode
-        - data — the initial storage layout
-    - The contract [address](/foundations/addresses/overview) is derived deterministically from `code + data` using `contractAddress`.
-    - The method `sendDeploy` sends the first message with `stateInit`, triggering deployment. In practice, this can be an empty message with Toncoin attached.
-
+      - code — compiled bytecode
+      - data — the initial storage layout
+    - The contract [address](/foundations/addresses/overview) is derived deterministically from `code` and `data` using `contractAddress`.
+    - The method `sendDeploy` sends the first message with `stateInit`, the structure holding the contract's initial code and data, which triggers deployment. In practice, this can be an empty message with Toncoin attached.
   </Step>
 
   <Step
-    title="Choose the network">
-
+    title="Choose the network"
+  >
     TON provides two networks for deployment:
 
     - **testnet** — developer sandbox.
     - **mainnet** — production blockchain.
 
     This tutorial uses testnet. Mainnet deployment is possible once the contract is verified and ready for production.
-
   </Step>
 
   <Step
-    title="Create the deployment script">
-
-    Write a script `./scripts/deployFirstContract.ts` to deploy the contract:
+    title="Create the deployment script"
+  >
+    Open the `./scripts/deployFirstContract.ts` file and replace its content with the following code.
+    It deploys the contract.
 
     ```typescript title="./scripts/deployFirstContract.ts"
     import { toNano } from '@ton/core';
@@ -364,25 +352,25 @@ Next, deploy the contract to the TON blockchain and interact with it using scrip
     import { compile, NetworkProvider } from '@ton/blueprint';
 
     export async function run(provider: NetworkProvider) {
-    const firstContract = provider.open(
-    FirstContract.createFromConfig(
-  { counter: Math.floor(Math.random() * 10000000) },
-    await compile('FirstContract')
-    )
-    );
+        const firstContract = provider.open(
+            FirstContract.createFromConfig(
+                { counter: Math.floor(Math.random() * 10000000) },
+                await compile('FirstContract')
+            )
+        );
 
-    await firstContract.sendDeploy(provider.sender(), toNano('0.05'));
+        await firstContract.sendDeploy(provider.sender(), toNano('0.05'));
 
-    await provider.waitForDeploy(firstContract.address);
-  }
+        await provider.waitForDeploy(firstContract.address);
+    }
     ```
 
     The `sendDeploy` method accepts three arguments. Only two arguments are passed because `provider.open` automatically provides the `ContractProvider` as the first argument.
-
   </Step>
 
-  <Step title="Run the script">
-
+  <Step
+    title="Run the script"
+  >
     Run the script with:
 
     ```bash
@@ -390,15 +378,19 @@ Next, deploy the contract to the TON blockchain and interact with it using scrip
     ```
 
     Learn more about [Blueprint deployment](/contract-dev/blueprint/deploy).
-
   </Step>
-  <Step title="Confirm transaction">
 
-    <Aside title="Wallet required" type="note">
-      If a wallet is not installed, check the [wallets overview](/ecosystem/wallet-apps/overview) to select and install a wallet before deploying the contract.
+  <Step
+    title="Confirm transaction"
+  >
+    <Aside
+      title="Wallet required"
+      type="note"
+    >
+      If a wallet is not installed, check the [wallets overview](/ecosystem/wallet-apps/overview) to select and install a wallet before deploying the contract. Make sure the wallet is funded with [Toncoin on the testnet](/contract-dev/testing/testnet-tokens).
     </Aside>
 
-    Choose the wallet, scan the QR code displayed in the console, and confirm the transaction in your wallet app.
+    Scan the QR code displayed in the console, and confirm the transaction in the wallet app.
 
     Expected output:
 
@@ -415,244 +407,242 @@ Next, deploy the contract to the TON blockchain and interact with it using scrip
     You can view it at https://testnet.tonviewer.com/kQBz-OQQ0Olnd4IPdLGZCqHkpuAO3zdPqAy92y6G-UUpiC_o
     ```
 
-    The link opens the contract on [Tonviewer](/ecosystem/explorers/tonviewer), a [blockchain explorer](/ecosystem/explorers/overview) showing transactions, messages, and account data.
+    The link opens the contract on [Tonviewer](/ecosystem/explorers/tonviewer), a [blockchain explorer](/ecosystem/explorers/overview) showing transactions, messages and [account states](/foundations/status).
 
     Next, interact with the contract by sending messages and calling getter functions.
   </Step>
-
 </Steps>
-
 
 ## Contract interaction
 
 Deployment also counts as a message sent to the contract. The next step is to send a message with a body to trigger contract logic.
 
-  <Steps>
+<Steps>
+  <Step
+    title="Update wrapper class"
+  >
+    Update the wrapper class with three methods: `sendIncrease`, `sendReset`, and `getCounter`:
 
-    <Step title="Update wrapper class">
-      Update our wrapper class with three methods: `sendIncrease`, `sendReset`, and `getCounter`:
+    ```typescript title="./wrappers/FirstContract.ts" expandable
+    import { Address, beginCell, Cell, Contract, contractAddress, ContractProvider, Sender, SendMode } from '@ton/core';
 
-      ```typescript title="./wrappers/FirstContract.ts" expandable
-      import { Address, beginCell, Cell, Contract, contractAddress, ContractProvider, Sender, SendMode } from '@ton/core';
+    export class FirstContract implements Contract {
+        constructor(
+            readonly address: Address,
+            readonly init?: { code: Cell; data: Cell },
+        ) {}
 
-      export class FirstContract implements Contract {
-      constructor(
-      readonly address: Address,
-      readonly init?: { code: Cell; data: Cell },
-      ) {}
-
-      static createFromConfig(config: { counter: number }, code: Cell, workchain = 0) {
-      const data = beginCell().storeUint(config.counter, 64).endCell();
-      const init = { code, data };
-      return new FirstContract(contractAddress(workchain, init), init);
-    }
-
-      async sendDeploy(provider: ContractProvider, via: Sender, value: bigint) {
-      await provider.internal(via, {
-      value,
-      sendMode: SendMode.PAY_GAS_SEPARATELY,
-      body: beginCell().endCell(),
-    });
-    }
-
-      async sendIncrease(
-      provider: ContractProvider,
-      via: Sender,
-      opts: {
-      increaseBy: number;
-      value: bigint;
-    },
-      ) {
-      await provider.internal(via, {
-      value: opts.value,
-      sendMode: SendMode.PAY_GAS_SEPARATELY,
-      body: beginCell().storeUint(0x7e8764ef, 32).storeUint(opts.increaseBy, 32).endCell(),
-    });
-    }
-
-      async sendReset(
-      provider: ContractProvider,
-      via: Sender,
-      opts: {
-      value: bigint;
-    },
-      ) {
-      await provider.internal(via, {
-      value: opts.value,
-      sendMode: SendMode.PAY_GAS_SEPARATELY,
-      body: beginCell().storeUint(0x3a752f06, 32).endCell(),
-    });
-    }
-
-      async getCounter(provider: ContractProvider) {
-      const result = await provider.get('currentCounter', []);
-      return result.stack.readNumber();
-    }
-    }
-      ```
-
-      The main difference from the deploy message is that these methods include a message body. The body is a cell that contains the instructions.
-
-      **Building message bodies**
-
-      Cells are constructed using the `beginCell` method:
-
-      - `beginCell()` creates a new cell builder.
-      - `storeUint(value, bits)` appends an unsigned integer with a fixed bit length.
-      - `endCell()` finalizes the cell.
-
-      **Example**
-
-      `beginCell().storeUint(0x7e8764ef, 32).storeUint(42, 32).endCell()`
-
-      - First 32 bits: `0x7e8764ef` — opcode for "increase"
-      - Next 32 bits: `42` — increase by this amount
-    </Step>
-
-    <Step title="Send messages to your contract">
-
-      With the contract deployed and wrapper methods in place, the next step is to send messages to it.
-
-      Create a script `./scripts/sendIncrease.ts` that increases the counter:
-
-      ```typescript title="./scripts/sendIncrease.ts"
-      import { Address, toNano } from '@ton/core';
-      import { FirstContract } from '../wrappers/FirstContract';
-      import { NetworkProvider } from '@ton/blueprint';
-
-      // `Address.parse()` converts string to address object
-      const contractAddress = Address.parse('<CONTRACT_ADDRESS>');
-
-      export async function run(provider: NetworkProvider) {
-        // `provider.open()` creates a connection to the deployed contract
-        const firstContract = provider.open(new FirstContract(contractAddress));
-        // `toNano('0.05')` converts 0.05 TON to nanotons
-        // `increaseBy: 42` tells the contract to increase the counter by 42
-        await firstContract.sendIncrease(provider.sender(), { value: toNano('0.05'), increaseBy: 42 });
-        // `waitForLastTransaction()` waits for the transaction to be processed on-chain
-        await provider.waitForLastTransaction();
-      }
-      ```
-
-      Replace `<CONTRACT_ADDRESS>` with the address obtained in the deployment step.
-
-      To run this script:
-
-      ```bash
-      npx blueprint run sendIncrease --testnet --tonconnect --tonviewer
-      ```
-
-      Expected result:
-
-      ```text
-      Using file: sendIncrease
-      Connected to wallet at address: ...
-      Sending transaction. Approve in your wallet...
-      Sent transaction
-      Transaction 0fc1421b06b01c65963fa76f5d24473effd6d63fc4ea3b6ea7739cc533ba62ee successfully applied!
-      You can view it at https://testnet.tonviewer.com/transaction/fe6380dc2e4fab5c2caf41164d204e2f41bebe7a3ad2cb258803759be41b5734
-      ```
-
-      What happens during execution:
-
-      1. Blueprint connects to the wallet using the [TON Connect](/ecosystem/ton-connect/overview) protocol.
-      1. The script builds a transaction with a message body containing opcode `0x7e8764ef` and value `42`.
-      1. The wallet displays transaction details for confirmation.
-      1. After approval, the transaction is sent to the network.
-      1. Validators include the transaction in a newly produced block.
-      1. The contract receives the message, processes it in `onInternalMessage`, and updates the counter.
-      1. The script returns the resulting transaction hash, and you can inspect it in the explorer.
-
-
-        <Aside title={"Composability"} type={"tip"}>
-          Other contracts can also send messages to this contract. This enables composition: different contracts can combine their logic with this one, reuse it as a component, and build new behaviors that were not originally anticipated.
-      </Aside>
-    </Step>
-
-    <Step title="Reset the counter">
-      To reset the counter, create a script `./scripts/sendReset.ts`:
-
-      ```typescript title="./scripts/sendReset.ts"
-      import { Address, toNano } from '@ton/core';
-      import { FirstContract } from '../wrappers/FirstContract';
-      import { NetworkProvider } from '@ton/blueprint';
-
-      const contractAddress = Address.parse('<CONTRACT_ADDRESS>');
-
-      export async function run(provider: NetworkProvider) {
-        const firstContract = provider.open(new FirstContract(contractAddress));
-        await firstContract.sendReset(provider.sender(), { value: toNano('0.05') });
-        await provider.waitForLastTransaction();
-      }
-      ```
-
-      To run this script:
-
-      ```bash
-      npx blueprint run sendReset --testnet --tonconnect --tonviewer
-      ```
-
-      Expected result:
-
-      ```text
-      Using file: sendReset
-      Connected to wallet at address: ...
-      Sending transaction. Approve in your wallet...
-      Sent transaction
-      Transaction 0fc1421b06b01c65963fa76f5d24473effd6d63fc4ea3b6ea7739cc533ba62ee successfully applied!
-      You can view it at https://testnet.tonviewer.com/transaction/fe6380dc2e4fab5c2caf41164d204e2f41bebe7a3ad2cb258803759be41b5734
-      ```
-
-    </Step>
-
-    <Step title="Read contract data with get methods">
-
-
-      Get methods are special functions in TON smart contracts that run locally on a node. Unlike message-based interactions, get methods are:
-      - Free — no gas fees, as the call does not modify the blockchain state.
-      - Instant — no need to wait for blockchain confirmation.
-      - Read-only — can only read data; cannot modify storage or send messages.
-
-      To call a get method, use `provider.get(<GET_METHOD_NAME>)`:
-
-      ```typescript title="./scripts/getCounter.ts"
-      import { Address } from '@ton/core';
-      import { FirstContract } from '../wrappers/FirstContract';
-      import { NetworkProvider } from '@ton/blueprint';
-
-      const contractAddress = Address.parse('<CONTRACT_ADDRESS>');
-
-        export async function run(provider: NetworkProvider) {
-          const firstContract = provider.open(new FirstContract(contractAddress));
-          //  `getCounter()` сalls the contract's `currentCounter` getter
-          const counter = await firstContract.getCounter(); // returns instantly
-          console.log('Counter: ', counter); // wrapper parses stack into JS number
+        static createFromConfig(config: { counter: number }, code: Cell, workchain = 0) {
+            const data = beginCell().storeUint(config.counter, 64).endCell();
+            const init = { code, data };
+            return new FirstContract(contractAddress(workchain, init), init);
         }
-        ```
 
-        <Aside>
-          Get methods are available **off-chain only** — JavaScript clients, web apps, etc. — through RPC providers. Contracts cannot call getters on other contracts — inter-contract interaction uses only messages.
-        </Aside>
+        async sendDeploy(provider: ContractProvider, via: Sender, value: bigint) {
+            await provider.internal(via, {
+                value,
+                sendMode: SendMode.PAY_GAS_SEPARATELY,
+                body: beginCell().endCell(),
+            });
+        }
 
-        To run this script:
+        async sendIncrease(
+            provider: ContractProvider,
+            via: Sender,
+            opts: {
+                increaseBy: number;
+                value: bigint;
+                },
+            ) {
+            await provider.internal(via, {
+                value: opts.value,
+                sendMode: SendMode.PAY_GAS_SEPARATELY,
+                body: beginCell().storeUint(0x7e8764ef, 32).storeUint(opts.increaseBy, 32).endCell(),
+            });
+        }
 
-        ```bash
-        npx blueprint run getCounter --testnet --tonconnect
-        ```
+        async sendReset(
+            provider: ContractProvider,
+            via: Sender,
+            opts: {
+                value: bigint;
+                },
+            ) {
+            await provider.internal(via, {
+                value: opts.value,
+                sendMode: SendMode.PAY_GAS_SEPARATELY,
+                body: beginCell().storeUint(0x3a752f06, 32).endCell(),
+            });
+        }
 
-        Expected output:
+        async getCounter(provider: ContractProvider) {
+            const result = await provider.get('currentCounter', []);
+            return result.stack.readNumber();
+        }
+    }
+    ```
 
-        ```bash
-        Using file: getCounter
-        Counter:  42
-        ```
+    The main difference from the deploy message is that these methods include a message body. The body is a cell that contains the instructions.
 
-    </Step>
+    **Building message bodies**
 
-  </Steps>
+    Cells are constructed using the `beginCell` method:
+
+    - `beginCell()` creates a new cell builder.
+    - `storeUint(value, bits)` appends an unsigned integer with a fixed bit length.
+    - `endCell()` finalizes the cell.
+
+    **Example**
+
+    `beginCell().storeUint(0x7e8764ef, 32).storeUint(42, 32).endCell()`
+
+    - First 32 bits: `0x7e8764ef` — opcode for "increase"
+    - Next 32 bits: `42` — increase by this amount
+  </Step>
+
+  <Step
+    title="Send messages to your contract"
+  >
+    With the contract deployed and wrapper methods in place, the next step is to send messages to it.
+
+    Create a script `./scripts/sendIncrease.ts` that increases the counter:
+
+    ```typescript title="./scripts/sendIncrease.ts"
+    import { Address, toNano } from '@ton/core';
+    import { FirstContract } from '../wrappers/FirstContract';
+    import { NetworkProvider } from '@ton/blueprint';
+
+    // `Address.parse()` converts string to address object
+    const contractAddress = Address.parse('<CONTRACT_ADDRESS>');
+
+    export async function run(provider: NetworkProvider) {
+      // `provider.open()` creates a connection to the deployed contract
+      const firstContract = provider.open(new FirstContract(contractAddress));
+      // `toNano('0.05')` converts 0.05 TON to nanotons
+      // `increaseBy: 42` tells the contract to increase the counter by 42
+      await firstContract.sendIncrease(provider.sender(), { value: toNano('0.05'), increaseBy: 42 });
+      // `waitForLastTransaction()` waits for the transaction to be processed on-chain
+      await provider.waitForLastTransaction();
+    }
+    ```
+
+    Replace `<CONTRACT_ADDRESS>` with the address obtained in the deployment step.
+
+    To run this script:
+
+    ```bash
+    npx blueprint run sendIncrease --testnet --tonconnect --tonviewer
+    ```
+
+    Expected result:
+
+    ```text
+    Using file: sendIncrease
+    Connected to wallet at address: ...
+    Sending transaction. Approve in your wallet...
+    Sent transaction
+    Transaction 0fc1421b06b01c65963fa76f5d24473effd6d63fc4ea3b6ea7739cc533ba62ee successfully applied!
+    You can view it at https://testnet.tonviewer.com/transaction/fe6380dc2e4fab5c2caf41164d204e2f41bebe7a3ad2cb258803759be41b5734
+    ```
+
+    What happens during execution:
+
+    1. Blueprint connects to the wallet using the [TON Connect](/ecosystem/ton-connect/overview) protocol.
+    1. The script builds a transaction with a message body containing opcode `0x7e8764ef` and value `42`.
+    1. The wallet displays transaction details for confirmation.
+    1. After approval, the transaction is sent to the network.
+    1. Validators include the transaction in a newly produced block.
+    1. The contract receives the message, processes it in `onInternalMessage`, and updates the counter.
+    1. The script returns the resulting transaction hash, and you can inspect it in the explorer.
+
+    <Aside
+      title={"Composability"}
+      type={"tip"}
+    >
+      Other contracts can also send messages to this contract. This enables composition: different contracts can combine their logic with this one, reuse it as a component, and build new behaviors that were not originally anticipated.
+    </Aside>
+  </Step>
+
+  <Step
+    title="Reset the counter"
+  >
+    To reset the counter, create a script `./scripts/sendReset.ts`:
+
+    ```typescript title="./scripts/sendReset.ts"
+    import { Address, toNano } from '@ton/core';
+    import { FirstContract } from '../wrappers/FirstContract';
+    import { NetworkProvider } from '@ton/blueprint';
+
+    const contractAddress = Address.parse('<CONTRACT_ADDRESS>');
+
+    export async function run(provider: NetworkProvider) {
+      const firstContract = provider.open(new FirstContract(contractAddress));
+      await firstContract.sendReset(provider.sender(), { value: toNano('0.05') });
+      await provider.waitForLastTransaction();
+    }
+    ```
+
+    To run this script:
+
+    ```bash
+    npx blueprint run sendReset --testnet --tonconnect --tonviewer
+    ```
+
+    Expected result:
+
+    ```text
+    Using file: sendReset
+    Connected to wallet at address: ...
+    Sending transaction. Approve in your wallet...
+    Sent transaction
+    Transaction 0fc1421b06b01c65963fa76f5d24473effd6d63fc4ea3b6ea7739cc533ba62ee successfully applied!
+    You can view it at https://testnet.tonviewer.com/transaction/fe6380dc2e4fab5c2caf41164d204e2f41bebe7a3ad2cb258803759be41b5734
+    ```
+  </Step>
+
+  <Step
+    title="Read contract data with get methods"
+  >
+    Get methods are special functions in TON smart contracts that run locally on a node. Unlike message-based interactions, get methods are:
+
+    - Free — no gas fees, as the call does not modify the blockchain state.
+    - Instant — no need to wait for blockchain confirmation.
+    - Read-only — can only read data; cannot modify storage or send messages.
+
+    To call a get method, use `provider.get(<GET_METHOD_NAME>)`:
+
+    ```typescript title="./scripts/getCounter.ts"
+    import { Address } from '@ton/core';
+    import { FirstContract } from '../wrappers/FirstContract';
+    import { NetworkProvider } from '@ton/blueprint';
+
+    const contractAddress = Address.parse('<CONTRACT_ADDRESS>');
+
+      export async function run(provider: NetworkProvider) {
+        const firstContract = provider.open(new FirstContract(contractAddress));
+        //  `getCounter()` сalls the contract's `currentCounter` getter
+        const counter = await firstContract.getCounter(); // returns instantly
+        console.log('Counter: ', counter); // wrapper parses stack into JS number
+      }
+    ```
+
+    <Aside>
+      Get methods are available **off-chain only** — JavaScript clients, web apps, etc. — through RPC providers. Contracts cannot call getters on other contracts — inter-contract interaction uses only messages.
+    </Aside>
+
+    To run this script:
+
+    ```bash
+    npx blueprint run getCounter --testnet --tonconnect
+    ```
+
+    Expected output:
+
+    ```bash
+    Using file: getCounter
+    Counter:  42
+    ```
+  </Step>
+</Steps>
 
 The full code for this tutorial is available in the [GitHub repository](https://github.com/ton-org/docs-examples/tree/main/guidebook/first-smart-contract/Example). It includes all contract files, scripts, and wrappers ready to use.
-
-
-
-
