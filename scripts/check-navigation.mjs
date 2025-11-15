@@ -22,12 +22,14 @@ import {
   composeSuccess,
   composeWarningList,
   composeErrorList,
+  prefixWithSlash,
   getNavLinks,
   getNavLinksSet,
   getConfig,
   findFiles,
   initMdxParser,
   hasStub,
+  composeWarning,
 } from './common.mjs';
 
 /**
@@ -101,7 +103,7 @@ const checkCover = (config) => {
   const allMdxPages = findFiles('mdx');
   const forgottenPages = allMdxPages.filter((it) => {
     // Present in the navigation
-    if (uniqPages.has(it.replace(/\.mdx$/, ''))) {
+    if (uniqPages.has(prefixWithSlash(it.replace(/\.mdx$/, '')))) {
       return false;
     }
     // Lost from the navigation and not a stub
@@ -114,7 +116,12 @@ const checkCover = (config) => {
     return false;
   });
   if (stubPages.length !== 0) {
-    console.log(composeWarningList('Found stub pages not mentioned in docs.json navigation!', stubPages));
+    const msg = 'Found stub pages not mentioned in docs.json navigation!';
+    if (process.env.HUSKY === '0') {
+      console.log(composeWarning(msg));
+    } else {
+      console.log(composeWarningList(msg, stubPages));
+    }
   }
   if (forgottenPages.length !== 0) {
     return {
