@@ -203,9 +203,14 @@ export function findFiles(ext = 'mdx', dir = '.') {
   const extIgnoreMap = Object.freeze({
     mdx: {
       files: ['index.mdx'].map((it) => join(dir, it)),
-      dirs: ['snippets', 'scripts', 'resources', 'ecosystem/api/toncenter/v2', 'ecosystem/api/toncenter/v3'].map((it) =>
-        join(dir, it),
-      ),
+      dirs: [
+        'snippets',
+        'scripts',
+        'resources',
+        'ecosystem/api/toncenter/v2',
+        'ecosystem/api/toncenter/v3',
+        'ecosystem/api/toncenter/smc-index',
+      ].map((it) => join(dir, it)),
     },
   });
 
