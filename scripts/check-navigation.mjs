@@ -100,8 +100,8 @@ const checkCover = (config) => {
   const stubPages = [];
 
   /** Non-API, non-snippet .mdx pages, excluding the root index.mdx */
-  const allMdxPages = findFiles('mdx');
-  const forgottenPages = allMdxPages.filter((it) => {
+  const allRelevantMdxPages = findFiles('mdx');
+  const forgottenPages = allRelevantMdxPages.filter((it) => {
     // Present in the navigation
     if (uniqPages.has(prefixWithSlash(it.replace(/\.mdx$/, '')))) {
       return false;
@@ -116,7 +116,7 @@ const checkCover = (config) => {
     return false;
   });
   if (stubPages.length !== 0) {
-    const msg = 'Found stub pages not mentioned in docs.json navigation!';
+    const msg = 'Found stub pages not present in docs.json navigation!';
     if (process.env.HUSKY === '0') {
       console.log(composeWarning(msg));
     } else {

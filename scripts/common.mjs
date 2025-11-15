@@ -202,7 +202,7 @@ export function findFiles(ext = 'mdx', dir = '.') {
    */
   const extIgnoreMap = Object.freeze({
     mdx: {
-      files: ['index.mdx'].map((it) => join(dir, it)),
+      files: ['index.mdx', 'contribute/style-guide-extended.mdx'].map((it) => join(dir, it)),
       dirs: [
         'snippets',
         'scripts',
