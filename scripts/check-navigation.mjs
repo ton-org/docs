@@ -114,10 +114,7 @@ const checkCover = (config) => {
     return false;
   });
   if (stubPages.length !== 0) {
-    console.log(composeWarningList(
-      'Found stub pages not mentioned in docs.json navigation!',
-      stubPages,
-    ));
+    console.log(composeWarningList('Found stub pages not mentioned in docs.json navigation!', stubPages));
   }
   if (forgottenPages.length !== 0) {
     return {
@@ -127,7 +124,7 @@ const checkCover = (config) => {
         forgottenPages,
         'Some non-API and non-stub .mdx pages are not present in docs.json!',
       ),
-    }
+    };
   }
   // Otherwise
   return { ok: true };

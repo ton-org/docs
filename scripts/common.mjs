@@ -106,7 +106,7 @@ export function composeError(msg) {
  * @param list {string[]} List of inline warning messages
  */
 export function composeWarningList(msg, list) {
-  return [`${ansiYellow('Warning:')} ${msg}`, '- ' + list.join('\n- '), ].join('\n');
+  return [`${ansiYellow('Warning:')} ${msg}`, '- ' + list.join('\n- ')].join('\n');
 }
 
 /** @param msg {string} */
@@ -136,13 +136,13 @@ export function initMdxParser() {
         rule: '-',
         incrementListMarker: false,
         tightDefinitions: true,
-      }
+      },
     })
     .use(remarkFrontmatter)
     .use(remarkMath)
-    .use(remarkGfm({
+    .use(remarkGfm, {
       singleTilde: false,
-    }))
+    })
     .use(remarkMdx, {
       printWidth: 20,
     })
@@ -191,16 +191,9 @@ export function findFiles(ext = 'mdx', dir = '.') {
    */
   const commonIgnoreMap = Object.freeze({
     files: ['LICENSE-code', 'LICENSE-docs'].map((it) => join(dir, it)),
-    dirs: [
-      '.git',
-      '.github',
-      '.idea',
-      '.vscode',
-      '__MACOSX',
-      'node_modules',
-      '__pycache__',
-      'stats',
-    ].map((it) => join(dir, it)),
+    dirs: ['.git', '.github', '.idea', '.vscode', '__MACOSX', 'node_modules', '__pycache__', 'stats'].map((it) =>
+      join(dir, it),
+    ),
   });
 
   /**
@@ -210,7 +203,9 @@ export function findFiles(ext = 'mdx', dir = '.') {
   const extIgnoreMap = Object.freeze({
     mdx: {
       files: ['index.mdx'].map((it) => join(dir, it)),
-      dirs: ['snippets', 'scripts', 'resources', 'ecosystem/api/toncenter/v2', 'ecosystem/api/toncenter/v3'].map((it) => join(dir, it)),
+      dirs: ['snippets', 'scripts', 'resources', 'ecosystem/api/toncenter/v2', 'ecosystem/api/toncenter/v3'].map((it) =>
+        join(dir, it),
+      ),
     },
   });
 
@@ -220,17 +215,19 @@ export function findFiles(ext = 'mdx', dir = '.') {
   /** @param subDir {string} */
   const recurse = (subDir) => {
     // Collects files and dirs one level deep, excluding common ignore targets
-    const intermediates = readdirSync(subDir, { withFileTypes: true, encoding: 'utf8', recursive: false }).filter((it) => {
-      const relPath = join(it.parentPath, it.name);
-      if (it.isFile()) {
-        return commonIgnoreMap.files.includes(relPath) === false;
-      }
-      if (it.isDirectory()) {
-        return commonIgnoreMap.dirs.includes(relPath) === false;
-      }
-      // Otherwise
-      return false;
-    });
+    const intermediates = readdirSync(subDir, { withFileTypes: true, encoding: 'utf8', recursive: false }).filter(
+      (it) => {
+        const relPath = join(it.parentPath, it.name);
+        if (it.isFile()) {
+          return commonIgnoreMap.files.includes(relPath) === false;
+        }
+        if (it.isDirectory()) {
+          return commonIgnoreMap.dirs.includes(relPath) === false;
+        }
+        // Otherwise
+        return false;
+      },
+    );
     // Processes collected items and filters out extension-specific ignore targets,
     // recursively descending in directories and pushing files into `results` array
     // if they match the target `ext` and are not ignored.
