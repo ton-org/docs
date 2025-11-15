@@ -117,11 +117,7 @@ const checkCover = (config) => {
   });
   if (stubPages.length !== 0) {
     const msg = 'Found stub pages not present in docs.json navigation!';
-    if (process.env.HUSKY === '0') {
-      console.log(composeWarning(msg));
-    } else {
-      console.log(composeWarningList(msg, stubPages));
-    }
+    console.log(composeWarningList(msg, stubPages));
   }
   if (forgottenPages.length !== 0) {
     return {
@@ -178,7 +174,7 @@ const main = async () => {
 
   if (shouldRunAll || argCover) {
     console.log('🏁 Checking the coverage of .mdx pages by docs.json...');
-    handleCheckResult(checkCover(config), 'All non-API .mdx pages are present in docs.json.');
+    handleCheckResult(checkCover(config), 'All non-API, regular .mdx pages without stubs are present in docs.json.');
   }
 
   // In case of errors, exit with code 1
