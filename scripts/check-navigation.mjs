@@ -26,10 +26,9 @@ import {
   getNavLinks,
   getNavLinksSet,
   getConfig,
-  findFiles,
+  findUnignoredFiles,
   initMdxParser,
   hasStub,
-  composeWarning,
 } from './common.mjs';
 
 /**
@@ -100,7 +99,7 @@ const checkCover = (config) => {
   const stubPages = [];
 
   /** Non-API, non-snippet .mdx pages, excluding the root index.mdx */
-  const allRelevantMdxPages = findFiles('mdx');
+  const allRelevantMdxPages = findUnignoredFiles('mdx');
   const forgottenPages = allRelevantMdxPages.filter((it) => {
     // Present in the navigation
     if (uniqPages.has(prefixWithSlash(it.replace(/\.mdx$/, '')))) {

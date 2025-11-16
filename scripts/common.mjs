@@ -175,12 +175,13 @@ export function hasStub(parser, filepath) {
 
 /**
  * Recursively finds files with a target extension `ext` starting from a given directory `dir`.
+ * Ignores common and extension-specific irrelevant files — see the code for details.
  *
  * @param [ext='mdx'] {string} extension of the file without a leading dot; defaults to mdx
  * @param [dir='.'] {string} directory to start with, defaults to `.` (present directory, assuming the root of the repo)
  * @returns {string[]} file paths relative to `dir` or an empty array if there is none, `dir` does not exist or `ext` is empty
  */
-export function findFiles(ext = 'mdx', dir = '.') {
+export function findUnignoredFiles(ext = 'mdx', dir = '.') {
   if (ext === '' || !existsSync(dir) || !statSync(dir).isDirectory()) {
     return [];
   }
@@ -190,7 +191,7 @@ export function findFiles(ext = 'mdx', dir = '.') {
    * @type {{ files: string[]; dirs: string[] }}
    */
   const commonIgnoreMap = Object.freeze({
-    files: ['LICENSE-code', 'LICENSE-docs'].map((it) => join(dir, it)),
+    files: ['LICENSE-code', 'LICENSE-docs', 'package-lock.json'].map((it) => join(dir, it)),
     dirs: ['.git', '.github', '.idea', '.vscode', '__MACOSX', 'node_modules', '__pycache__', 'stats'].map((it) =>
       join(dir, it),
     ),
@@ -204,9 +205,11 @@ export function findFiles(ext = 'mdx', dir = '.') {
     mdx: {
       files: ['index.mdx', 'contribute/style-guide-extended.mdx'].map((it) => join(dir, it)),
       dirs: [
+        // Snippets and page parts
         'snippets',
         'scripts',
         'resources',
+        // Pages covered in OpenAPI specs rather than in docs.json
         'ecosystem/api/toncenter/v2',
         'ecosystem/api/toncenter/v3',
         'ecosystem/api/toncenter/smc-index',
