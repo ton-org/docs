@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-linter
   cancel-in-progress: true
 
 permissions:
@@ -52,6 +52,7 @@ jobs:
         env:
           ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
         run: |
+          set -euo pipefail
           if [ -z $(echo -e "${ALL_CHANGED_FILES[@]}" | tr -d '[:space:]') ]; then
             echo -e '\nNo such files affected!'
             exit 0
@@ -61,26 +62,34 @@ jobs:
             echo "- $file"
           done
           echo
-          npx remark --no-stdout --quiet --frail --silently-ignore $(echo -e "${ALL_CHANGED_FILES[@]}" | tr '\n' ' ')
-
-      - name: ${{ steps.check-fmt.conclusion == 'failure' && '👀 How to fix the formatting? See these suggestions!' || '...' }}
-        env:
-          ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
-        if: failure()
-        run: |
-          # Preparations
-          FILES="$(echo -e "${ALL_CHANGED_FILES[@]}" | tr '\n' ' ' | sed 's/.*/\"&\"/')"
-          BODY="{\"body\":\"To fix the **formatting** issues:\n\n1. Install necessary dependencies: \`npm ci\`\n2. Then, run this command:\n\`\`\`shell\nnpx remark -o --silent --silently-ignore ${FILES}\n\`\`\`\"}"
-          # Comment on the PR
-          curl -s -o /dev/null -L -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            -d "$BODY" \
-            https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.number }}/comments
-          # Comment right in the actions output
-          echo -e "\nInstall necessary dependencies: \033[31mnpm ci\033[0m"
-          echo -e "Then, run this to fix formatting: \033[31mnpx remark -o --silent --silently-ignore ${FILES}\033[0m"
+          FILES="$(echo -e "${ALL_CHANGED_FILES[@]}" | sed 's/.*/\"&\"/' | tr '\n' ' ')"
+          ( # try
+            npx remark --no-stdout --quiet --frail --silently-ignore $FILES
+          ) || ( # catch
+            ERR="$(echo $?)"
+            # Comment right in the actions output
+            echo -e "\nInstall necessary dependencies: \033[31mnpm ci\033[0m"
+            echo -e "Then, run this to fix formatting: \033[31mnpx remark -o --silent --silently-ignore ${FILES}\033[0m"
+            # Comment on the PR (if there is one)
+            if [ ${{ (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && 'true' || 'false' }} = "false" ]; then
+              exit $ERR # exit code of the failed formatting check
+            fi
+            API="https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.number }}/comments"
+            COMMENT="To fix the **formatting** issues:\n\n1. Install necessary dependencies: \`npm ci\`\n2. Then, run this command:\n\`\`\`shell\nnpx remark -o --silent --silently-ignore ${FILES}\n\`\`\`"
+            BY_MAINTAINER=${{ contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.author_association) && 'true' || 'false' }}
+            if [ "$BY_MAINTAINER" = "true" ]; then
+              COMMENT="${COMMENT}\n\n**Alternatively**, request automatic changes by commenting /fmt in this PR."
+            else
+              COMMENT="${COMMENT}\n\n**Alternatively**, a maintainer can request automatic changes by commenting /fmt in this PR."
+            fi
+            curl -sS -o /dev/null -L -X POST "$API" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${{ github.token }}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -H "Content-Type: application/json" \
+              -d "{\"body\":\"${COMMENT}\"}"
+            exit $ERR # exit code of the failed formatting check
+          )
 
   spell-check:
     name: "Spelling"
