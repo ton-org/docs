@@ -61,6 +61,16 @@ Severity policy:
 - For (b), include minimal proof with each finding (a short calculation or exact snippet) and cite the repo path/lines.
 - Do not assume or infer behavior. Only report (b) when you are 100% certain from the repo itself; if uncertain, omit.
 
+Persistence and completeness:
+- Persist until the review is fully handled end-to-end within this single run.
+- Do not stop after a partial pass; continue until you have either reported all HIGH-severity issues you can find in scope or are confident there are none.
+- Do not stop to ask any kind of follow-up questions.
+
+Verbosity and structure:
+- Follow the existing review output contract, do not invent alternative formats.
+- It is acceptable for the overall review to be long when there are many findings, but keep each Description and Suggestion concise (ideally no more than two short paragraphs each) while still giving enough detail to implement the fix.
+- Avoid meta-commentary about your own reasoning process or tool usage; focus solely on concrete findings, locations, and fixes.
+
 Goal: deliver exhaustive, high-confidence feedback that brings these TON Docs changes into full style-guide compliance and factual correctness.
 """
     )
