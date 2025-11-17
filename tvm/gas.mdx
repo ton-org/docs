@@ -145,10 +145,18 @@ Instructions [`BLS_G2_ZERO`](/tvm/instructions#f93025-bls_g2_zero) and [`BLS_G2_
 ## `GasLimits` structure
 
 TVM has inner structure `GasLimits` for gas manipulations. Its fields are:
-- `gas_max`: the equivalent of the contract balance in gas.
+- `gas_max`: the equivalent of the contract balance in gas units.
 - `gas_limit`: the amount of gas that can be consumed during the virtual machine execution. At the start of the execution, it equals:
   - minimum of `gas_max` and the amount of gas that can be bought with the incoming message value (i.e., the amount of TON coins attached to the message) in the case of an internal message;
   - `0` in the case of an external message.
 - `gas_credit`: the amount of free gas that can be spent during the execution before accepting an external message. At the start of the execution, it equals:
   - minimum of `gas_max` and corresponding value in configuration parameter `20` for masterchain and `21` for basechain in the case of an external message;
   - `0` in the case of an internal message.
+- `gas_remaining`: the amount of available but not spent gas. At the start of the execution, it equals `gas_limit + gas_credit`. It decreases after each instruction execution by the amount of gas consumed by the instruction. 
+- `gas_base`: an auxiliary parameter that is necessary for rebasing and shows the initial value of `gas_remaining`. At the start of the execution, it equals `gas_remaining`.
+
+Instructions `SETGASLIMIT` and `ACCEPT` change all above values except `gas_max`:
+- `SETGASLIMIT` sets `gas_limit` to the minimum of the indicated value and `gas_max`, `gas_credit` to zero, `gas_base` to the new `gas_limit`, and `gas_remaining` to `gas_remaining + (new gas_base - old gas_base)`.
+- `ACCEPT` is equivalent to `SETGASLIMIT` with the new gas limit equal to `2**63 - 1` (the maximum value of a signed 64-bits integer).
+
+The final value (in gas units) that will be deducted from contract's balance after the execution is `gas_base - gas_remaining`. Note that this value will be deducted if and only if after the execution `gas_credit` is zero, i.e. `SETGASLIMIT` or `ACCEPT` was called at least once during the execution. Without condition `gas_credit == 0`, there will be no commit of the new code and data.
