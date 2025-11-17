@@ -22,6 +22,32 @@ permissions:
   issues: write
 
 jobs:
+  ping:
+    runs-on: ubuntu-latest
+    if: |
+      (
+        (github.event_name == 'issue_comment' && github.event.issue.pull_request != null) ||
+        (github.event_name == 'pull_request_review_comment')
+      ) &&
+      (github.event.comment.body == 'ping' || startsWith(github.event.comment.body, 'ping ')) &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.author_association)
+    steps:
+      - run: |
+          API="https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.number }}/comments"
+          COMMENT="pong"
+          BY_MAINTAINER=${{ contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.author_association) && 'true' || 'false' }}
+          if [ "$BY_MAINTAINER" = "true" ]; then
+            COMMENT="${COMMENT}\n\nYou are either owner, member, or collaborator"
+          else
+            COMMENT="${COMMENT}\n\nYou are not an owner, member, or collaborator."
+          fi
+          curl -sS -o /dev/null -L -X POST "$API" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -H "Content-Type: application/json" \
+            -d "{\"body\":\"${COMMENT}\"}"
+
   fmt:
     name: "Formatting changes"
     runs-on: ubuntu-latest
