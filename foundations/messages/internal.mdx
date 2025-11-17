@@ -1,112 +1,160 @@
 ---
-title: "Internal Messages"
+title: "Internal messages"
 ---
 
-Internal messages are the messages sent from one contract to another. They are the most common type of message.
+Internal messages are the messages sent from a contract to an arbitrary account. They are the most common type of a message.
 
-The contents of an internal message are as follows:
+## After processing
 
-```tl-b
-int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
-  src:MsgAddressInt dest:MsgAddressInt
-  value:CurrencyCollection extra_flags:(VarUInteger 16) fwd_fee:Grams
-  created_lt:uint64 created_at:uint32 = CommonMsgInfo;
+The contents of an internal message after it was processed are as follows:
 
-message$_ {X:Type} info:CommonMsgInfo
-  init:(Maybe (Either StateInit ^StateInit))
-  body:(Either X ^X) = Message X;
+```tlb
+int_msg_info$0
+    ihr_disabled:Bool
+    bounce:Bool
+    bounced:Bool
+    src:MsgAddressInt
+    dest:MsgAddressInt
+    value:CurrencyCollection
+    extra_flags:(VarUInteger 16)
+    fwd_fee:Grams
+    created_lt:uint64
+    created_at:uint32
+= CommonMsgInfo;
+
+message$_
+    {X:Type}
+    info:CommonMsgInfo
+    init:(Maybe (Either StateInit ^StateInit))
+    body:(Either X ^X)
+= Message X;
 ```
 
-- `ihr_disabled` - This flag is unused and always set to `true`.
-- `bounce` - Indicates whether the message is bounceable.
-- `bounced` - Indicates whether the message has been bounced.
-- `src` - the address of the contract that sent the message.
-- `dest` - the address of the contract that received the message.
-- `value` - the amount of Toncoin and extra-currency sent with the message.
-- `extra_flags` - used with the new bounce format.
-- `fwd_fee` - the fee charged for forwarding the message.
-- `created_lt` - the logical time when the message was created.
-- `created_at` - the unix time when the message was created.
+- `ihr_disabled` — unused, always set to `true`.
+- `bounce` — whether the message is [bounceable](#bounces).
+- `bounced` — whether the message has been [bounced](#bounces).
+- `src` — address of the contract that sent the message.
+- `dest` — address of the account that received the message.
+- `value` — amount of Toncoin and extra-currency attached to the message.
+- `extra_flags` — used with the [new bounce format](#new-bounce-format).
+- `fwd_fee` — fee charged for forwarding the message.
+- `created_lt` — logical time when the message was created.
+- `created_at` — unix time when the message was created.
 
-This is the structure of the message a contract may receive. However, the requirements for this structure differ when the contract sends a message. These requirements are described by the relaxed version of the structure.
+## Before processing
 
-```tl-b
-int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
-  src:MsgAddress dest:MsgAddressInt
-  value:CurrencyCollection extra_flags:(VarUInteger 16) fwd_fee:Grams
-  created_lt:uint64 created_at:uint32 = CommonMsgInfoRelaxed;
+When a contract sends a message, the requirements for the structure above are relaxed.
 
-message$_ {X:Type} info:CommonMsgInfoRelaxed
-  init:(Maybe (Either StateInit ^StateInit))
-  body:(Either X ^X) = MessageRelaxed X;
+```tlb
+int_msg_info$0
+    ihr_disabled:Bool
+    bounce:Bool
+    bounced:Bool
+    // NB! different type
+    src:MsgAddress
+    dest:MsgAddressInt
+    value:CurrencyCollection
+    extra_flags:(VarUInteger 16)
+    fwd_fee:Grams
+    created_lt:uint64
+    created_at:uint32
+= CommonMsgInfoRelaxed;
+
+message$_
+    {X:Type}
+    info:CommonMsgInfoRelaxed
+    // NB! actually StateInitWithLibs
+    init:(Maybe (Either StateInit ^StateInit))
+    body:(Either X ^X)
+= MessageRelaxed X;
+_
+    fixed_prefix_length:(Maybe (## 5))
+    special:(Maybe TickTock)
+    code:(Maybe ^Cell)
+    data:(Maybe ^Cell)
+    library:(HashmapE 256 SimpleLib)
+= StateInitWithLibs;
 ```
 
-```tl-b
-_ fixed_prefix_length:(Maybe (## 5)) special:(Maybe TickTock)
-  code:(Maybe ^Cell) data:(Maybe ^Cell)
-  library:(HashmapE 256 SimpleLib) = StateInitWithLibs;
-```
+The process of transforming the relaxed version of the structure into the strict version occurs in the action phase and is performed by the handler of [send message actions](/foundations/actions/send). This action rewrites [some fields](/foundations/actions/send#message-normalization) of the structure with correct values and validates the `StateInit` field against the `StateInitWithLibs` type.
 
-The process of transforming the relaxed version of the structure into the strict version occurs in the action phase and is performed by the [SENDMSG action](/foundations/actions/send). This action rewrites some fields of the structure with correct values and validates the `StateInit` field against the `StateInitWithLibs` type.
+## Deploy
 
-## Deployment of contracts
-
-Thanks to this structure, it is possible to send both the payload in the `body` field and the StateInit in the `init` field. As a result, the contract can be [initialized by StateInit](/foundations/messages/state-init) and process the payload in one transaction.
+It is possible to simultaneously send both the payload in the `body` field and the `StateInit` in the `init` field to [initialized the contract](/foundations/messages/state-init) and process the payload in the same transaction.
 
 ## Message value
 
-The message may carry a value of Toncoin and extra-currency. The value is transferred from the sender to the recipient of the message. The value of this field is affected by the [send modes](/foundations/messages/modes) the contract uses.
+The message may set `value` field that tells to transfer Toncoin and extra-currency to the recipient of the message. The actually transferred amount depends on the value of this field and a [send mode](/foundations/messages/modes).
 
 ## Bounces
 
-An interesting feature of internal messages is bouncing. A bounce message is generated automatically by the network when the original message results in an error in the [compute phase](/foundations/phases#compute-phase) during processing. It may also occur when the message results in an error in the [action phase](/foundations/phases#action-phase) and mode `SendBounceIfActionFail` (+16) is used.
+A bounce message is used to inform the sender that handling of their message failed. It is sent automatically to a sender when
+
+- there is enough Toncoin to send it left from handling the failed message,
+- and the message is bounceable,
+- and when either
+  - a message throws an error from the [compute phase](/foundations/phases#compute-phase) during message processing and state was not committed by [`COMMIT`](/tvm/instructions#f80f-commit) TVM instruction,
+  - or a message throws an error in the [action phase](/foundations/phases#action-phase) and mode [`SendBounceIfActionFail`](/foundations/messages/modes) is used.
 
 ### Default bounce
 
-If the `bounce` flag is set to `true`, the message is bounceable. If the bounce conditions are met, the following transformation occurs:
+If the `bounce` flag is set to `true`, the message is bounceable. If the bounce conditions are met, the bounce message is produced from the failed message with the following transformation:
 
 - `src` and `dest` fields are swapped.
-- The `bounced` flag is set to `true`.
-- The `bounce` flag is set to `false`.
-- `body` is replaced with the concatenation of 32 bits equal to one (0xffffffff) and the first 256 bits of the old `body`. The new `body` is stored in the message in-place, so `Either = 0`.
+- The `bounced` flag is set to `true` to tell it's the bounce message.
+- The `bounce` flag is set to `false` to prevent infinite loop of bouncing messages until no Toncoin is left to spend.
+- `body` is replaced with the concatenation of 32 bits equal to one (`0xffffffff`) and the first 256 bits of the old `body`. The new `body` is stored in the message in-place, with [`left`](https://github.com/ton-blockchain/ton/blob/master/crypto/block/block.tlb#L10) of the `Either`.
 
-The new message is sent to the `src` address of the original message.
+This message is then sent to the `src` address of the original message.
 
 ### New bounce format
 
-Using the `extra_flags` field it is possible to change how the new `body` will be constructed. All other transformations remain the same.
+The default bounce format has a flaw, that its `body` is too small to store even an internal address, and thus has limited usability for real-world applications. A new bounce format was introduced to address this issue.
 
-`(extra_flags & 1) = 1` enables the new bounce format for the message. The bounced message contains information about the transaction.
-If `(extra_flags & 3) = 3`, the bounced message contains the entire body of the original message. Otherwise, only the bits from the root of the original body are returned.
+Using the `extra_flags` field, it is possible to change how the new `body` will be constructed. All other transformations remain the same.
 
-All other bits in `extra_flags` are reserved for future use and are currently disallowed (internal messages with flags other than `0..3` are invalid).
+- If `(extra_flags & 1) = 1` the new bounce format is enabled. The bounced message now contains the root cell of the `body` of the failed message, with all the refs removed from it.
+  - If `(extra_flags & 2) = 2` is _also_ set, the bounced message contains the entire `body` of the original message, without removing any refs.
 
-When a message with the new bounce flag is bounced, the bounced message body has the following format (`new_bounce_body`):
+All other bits in `extra_flags` are reserved for future use.
 
-```
-_ value:CurrencyCollection created_lt:uint64 created_at:uint32 = NewBounceOriginalInfo;
-_ gas_used:uint32 vm_steps:uint32 = NewBounceComputePhaseInfo;
+When a message in new bounce format is bounced, the bounce message body has the following format (`new_bounce_body`):
 
+```tlb
+_
+    value:CurrencyCollection
+    created_lt:uint64
+    created_at:uint32
+= NewBounceOriginalInfo;
+
+_
+    gas_used:uint32
+    vm_steps:uint32
+= NewBounceComputePhaseInfo;
+
+// NB! 0xfffffffe is different from the old 0xffffffff
 new_bounce_body#fffffffe
     original_body:^Cell
     original_info:^NewBounceOriginalInfo
-    bounced_by_phase:uint8 exit_code:int32
+    bounced_by_phase:uint8
+    exit_code:int32
     compute_phase:(Maybe NewBounceComputePhaseInfo)
-    = NewBounceBody;
+= NewBounceBody;
 ```
 
-- `original_body` - the cell that contains the body of the original message. If `extra_flags & 2` then the whole body is returned; otherwise only the root without refs is included.
-- `original_info` - the value, lt, and Unix time of the original message.
+- `original_body` — the cell that contains the body of the original message. If `extra_flags & 2` then the whole body is returned; otherwise only the root without refs is included.
+- `original_info` — the value, lt, and Unix time of the original message.
 - `bounced_by_phase`:
   - `0` - compute phase was skipped. `exit_code` denotes the skip reason:
-    - `exit_code = -1` - no state (an account is uninit or frozen, and no state init is present in the message).
-    - `exit_code = -2` - bad state (an account is uninit or frozen, and state init in the message has the wrong hash).
-    - `exit_code = -3` - no gas.
-    - `exit_code = -4` - account is suspended.
-  - `1` - compute phase failed. `exit_code` is the value from the compute phase.
-  - `2` - action phase failed. `exit_code` is the value from the action phase.
-- `exit_code` - 32-bit exit code, see above.
-- `compute_phase` - exists if it was not skipped, i.e., when `bounced_by_phase` is not 0.
-- `gas_used` and `vm_steps` are the same as in `TrComputePhase` of the transaction.
+    - `exit_code = -1` — no state (an account is uninit or frozen, and no state init is present in the message).
+    - `exit_code = -2` — bad state (an account is uninit or frozen, and state init in the message has the wrong hash).
+    - `exit_code = -3` — no gas.
+    - `exit_code = -4` — account is suspended.
+  - `1` — compute phase failed. `exit_code` is the value from the compute phase.
+  - `2` — action phase failed. `exit_code` is the value from the action phase.
+- `exit_code` — 32-bit exit code, see above.
+- `compute_phase` — exists if it was not skipped, i.e., when `bounced_by_phase` is not 0.
+- `gas_used` — same as `gas_used` of `TrComputePhase` of the transaction.
+- `vm_steps` — same as `vm_steps` of `TrComputePhase` of the transaction.
 
-The bounced message has the same 0th and 1st bits in `extra_flags` as the original message.
+The bounced message has the same 0th and 1st bits in `extra_flags` as the original message. The rest of the bits are set to zero.

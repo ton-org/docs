@@ -6,56 +6,33 @@ title: "Overview"
 
 Messages are objects of the following structure:
 
-```tl-b
-message$_ {X:Type} info:CommonMsgInfo
-  init:(Maybe (Either StateInit ^StateInit))
-  body:(Either X ^X) = Message X;
+```tlb
+message$_
+    {X:Type}
+    info:CommonMsgInfo
+    init:(Maybe (Either StateInit ^StateInit))
+    body:(Either X ^X)
+= Message X;
 ```
 
-Messages are divided into three categories based on the type of `CommonMsgInfo`. The exact contents of each type of message will be described in the following sections.
-
-```tl-b
-int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
-  src:MsgAddressInt dest:MsgAddressInt
-  value:CurrencyCollection extra_flags:(VarUInteger 16) fwd_fee:Grams
-  created_lt:uint64 created_at:uint32 = CommonMsgInfo;
-ext_in_msg_info$10 src:MsgAddressExt dest:MsgAddressInt
-  import_fee:Grams = CommonMsgInfo;
-ext_out_msg_info$11 src:MsgAddressInt dest:MsgAddressExt
-  created_lt:uint64 created_at:uint32 = CommonMsgInfo;
-```
-
-The core idea is:
-
-- [Internal messages](/foundations/messages/internal) are messages from one contract to another.
-- [External inbound](/foundations/messages/external) messages are messages from the outside world to the contract.
-- [External outbound](/foundations/messages/external-out) messages are messages from the contract to the outside world. They can be interpreted as logs.
-
-So, messages have two fields in common: `init` and `body`.
-
-- `init` is a [`StateInit`](/foundations/messages/state-init) structure used to initialize the contract state. If a message is an external-out message, then `init` can store arbitrary data, as external-out messages can't initialize any contract.
+- `init` is an optional field of [`StateInit`](/foundations/messages/state-init) type used to initialize the contract state, stored either in-place or in a ref of the cell with a message.
 - `body` is the actual message content that can be stored either in-place or in a reference. Typically it is the payload of the message that will be read by the receiver.
+- `info` describes the type of the message, and fields specific to messages of this type:
+  - [Internal messages](/foundations/messages/internal) are messages from one contract to another.
+  - [Incoming external](/foundations/messages/external-in) messages are messages from the outside world to the contract.
+  - [Outbound external](/foundations/messages/external-out) messages are messages from the contract to the outside world. They can be interpreted as logs.
 
 ## Transactions
 
-Transactions are objects of the following structure:
-
-```tl-b
-transaction$0111 account_addr:bits256 lt:uint64
-  prev_trans_hash:bits256 prev_trans_lt:uint64 now:uint32
-  outmsg_cnt:uint15
-  orig_status:AccountStatus end_status:AccountStatus
-  ^[ in_msg:(Maybe ^(Message Any)) out_msgs:(HashmapE 15 ^(Message Any)) ]
-  total_fees:CurrencyCollection state_update:^(HASH_UPDATE Account)
-  description:^TransactionDescr = Transaction;
-```
-
-Transactions record the state changes of contracts. A contract's state cannot be changed without a transaction.
-
-When a contract processes a message, a transaction may occur as the result of processing.
+A transaction is a record that stores the state changes of a contract. A contract's state cannot be changed without a transaction. When a contract processes a message, a transaction may occur as the result of its processing.
 
 - When an internal message is processed, a transaction is always created.
-- When an external inbound message is processed, a transaction will be created only if the contract [`ACCEPTS` the message](/foundations/messages/external#accept-message).
-- When an external outbound message is processed, a transaction is never created, because external-out messages can't change contract state.
+- When an incoming external message is processed, a transaction will be created only if the contract [accepts](/foundations/messages/external#accept-message) the message.
+- When an outbound external message is processed, a transaction is never created, because outbound external messages can't change contract state.
 
-However, a transaction may be created independently of message processing: [tick-tock transactions](/foundations/messages/tick-tock), [split-prepare transactions](/foundations/messages/split-prepare), [split-install transactions](/foundations/messages/split-install), and [storage-tx transactions](/foundations/messages/storage-tx).
+However, a transaction may be created independently of message processing by
+
+- [tick-tock transactions](/foundations/messages/tick-tock)
+- [split-prepare transactions](/foundations/messages/split-prepare)
+- [split-install transactions](/foundations/messages/split-install)
+- [storage-tx transactions](/foundations/messages/storage-tx)

@@ -1,50 +1,59 @@
 ---
-title: "External Out Messages"
+title: "Outbound external messages"
 ---
 
-External-out messages are the messages that a contract can send to the outer world. They are primarily used for logging purposes. They can't change any contract state, so they can't trigger a transaction. Of course, these messages are visible to anyone, but there is no guarantee that anyone outside the blockchain will process them.
+Outbound external messages are the messages that a contract can send to the outer world. They are primarily used for logging purposes. They can't change any contract state or trigger a transaction. These messages are visible to anyone, and there is no guarantee that anyone outside the blockchain will process them.
 
 The structure is as follows:
 
-```tl-b
-ext_out_msg_info$11 src:MsgAddressInt dest:MsgAddressExt
-  created_lt:uint64 created_at:uint32 = CommonMsgInfo;
+```tlb
+ext_out_msg_info$11
+    src:MsgAddressInt
+    dest:MsgAddressExt
+    created_lt:uint64
+    created_at:uint32
+= CommonMsgInfo;
 
-message$_ {X:Type} info:CommonMsgInfo
-  init:(Maybe (Either StateInit ^StateInit))
-  body:(Either X ^X) = Message X;
+message$_
+    {X:Type}
+    info:CommonMsgInfo
+    init:(Maybe (Either StateInit ^StateInit))
+    body:(Either X ^X)
+= Message X;
 ```
 
-Unlike external-in messages, a third party can't manipulate the contents of external-out messages, so there is no need to sign them.
+Unlike [incoming](/foundations/messages/external-in) external messages, a third party can't manipulate the contents of outgoing external messages, so there is no need to sign them.
 
-- The `src` field is always set to the address of the contract that sends the message.
-- The `dest` field is not overwritten, so it can be set to any valid `MsgAddressExt`.
-- The `created_at` field is equal to the `created_at` field in the transaction in which the contract sent this message.
-- The `created_lt` field is equal to the `created_lt` field in the transaction plus one.
+- `src` — an [internal address](/foundations/addresses/overview#internal-addresses) of the contract that sends the message. It has to be a valid address, but is not important, as it will be overwritten by the address of sender after the message is sent.
+- `dest` — any valid [external address](/foundations/addresses/overview#external-addresses).
+- `created_at` — arbitrary value, overwritten with the `created_at` field of the transaction in which the contract sent this message.
+- `created_lt` — arbitrary value, overwritten with the `created_lt` field of the transaction, incremented by one.
 
 When sending this kind of message, the contract may fill all of these fields with any values. `src`, `created_lt`, and `created_at` will be overwritten by the validator processing this message.
 
-## Message Modes
+For an outbound external message, `init` field also can store arbitrary data, as outbound external messages can't initialize any contract.
 
-As external-out messages do not carry any value, the price for them is paid similarly to `SendPayFwdFeesSeparately` (1) mode. However, using any mode other than `SendIgnoreErrors`, `SendBounceIfActionFail`, or `SendPayFwdFeesSeparately` for outbound external messages results in exit code `34`. In this case, regardless of whether the `SendIgnoreErrors` (+2) mode was used, the action phase will fail. Mode `SendPayFwdFeesSeparately` (+1) does not change the message behavior.
+## Message modes
+
+As outbound external messages do not carry any Toncoin value, the price of their handling is paid similarly to [`SendPayFwdFeesSeparately`](/foundations/messages/modes) mode. However, using any mode other than [`SendIgnoreErrors`](/foundations/messages/modes), [`SendBounceIfActionFail`](/foundations/messages/modes), or [`SendPayFwdFeesSeparately`](/foundations/messages/modes) for outbound external messages results in [exit code `34`](/tvm/exit-codes#34:-invalid-or-unsupported-action). In this case, regardless of whether the [`SendIgnoreErrors`](/foundations/messages/modes) mode was used, the action phase will fail. Mode [`SendPayFwdFeesSeparately`](/foundations/messages/modes) does not change the message behavior.
 
 ## Example in Tolk
 
-In Tolk, external-out messages may be composed using the `createExternalLogMessage` function.
+In Tolk, outbound external messages may be composed using the `createExternalLogMessage` function.
 
 ```tolk
 tolk 1.2
 
-struct(0x10) valueWasDeposited{
+struct(0x10) ValueWasDeposited {
     value: int64
 }
 
 fun main(in: InMessage) {
     val msg = createExternalLogMessage({
         dest: createAddressNone(),
-        body: valueWasDeposited {
+        body: ValueWasDeposited {
             value: 1000,
-        }
+        },
     });
     msg.send(SEND_MODE_PAY_FEES_SEPARATELY);
 }
