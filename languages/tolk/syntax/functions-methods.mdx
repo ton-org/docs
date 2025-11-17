@@ -2,3 +2,447 @@
 title: "Functions and methods"
 ---
 
+import { Aside } from '/snippets/aside.jsx';
+
+Tolk allows declaring functions and methods:
+
+- `fun f(<params>)` — a function
+- `fun <receiver>.f(<params>)` — a method:
+  - `fun <receiver>.f(self, ...)` — an instance method
+  - `fun <receiver>.f(...)` — a static method (no `self`)
+
+All features are identical except for the receiver.
+Most examples below use functions, but all concepts equally apply to methods.
+
+## Types for parameters are required
+
+```tolk
+// invalid:
+fun sum(a, b) {}
+
+// valid:
+fun sum(a: int, b: bool) {}
+```
+
+## The return type is auto-inferred if omitted
+
+Either specify return type manually:
+
+```tolk
+fun demo(): int {
+    // ...
+}
+```
+
+or it is inferred from the `return` statements, similar to TypeScript:
+
+```tolk
+fun demo() {   // auto-infer `int`
+    // ...
+    return 10;
+}
+```
+
+If various returns have different types, the compiler will fire an error instead of inferring a union type, because this typically indicates a bug.
+
+## Default values for parameters
+
+Default values are placed after the type, allowing constant expressions:
+
+```tolk
+fun plus(value: int, delta: int = 1) {
+    return value + delta
+}
+
+fun demo() {
+    plus(10);     // 11
+    plus(10, 5);  // 15
+}
+```
+
+## Methods: for any type, including structures
+
+A method is declared as an extension function, similar to Kotlin.
+If the first parameter is `self`, it's an instance method. Otherwise, it's a static method.
+
+```tolk
+struct Point {
+    x: int
+    y: int
+}
+
+// no `self` — static method
+fun Point.createZero(): Point {
+    return { x: 0, y: 0 }
+}
+
+// has `self` — instance method
+fun Point.sumCoords(self) {
+    return self.x + self.y
+}
+```
+
+Instance methods are invoked via `obj.method()`, whereas static methods — on a type:
+
+```tolk
+fun demo() {
+    val p = Point.createZero();
+    return p.sumCoords();    // 0
+}
+```
+
+Methods are not limited to structures. They may exist for any receiver, including unions, aliases, and primitives:
+
+```tolk
+fun int.one() {
+    return 1
+}
+
+fun int.negate(self) {
+    return -self
+}
+
+fun demo() {
+    return int.one().negate()   // -1
+}
+```
+
+All standard methods are declared this way: `fun cell.hash(self)`, etc.
+
+The type of `self` is determined by the receiver.
+All parameters after should have their types set.
+The return type is inferred if omitted.
+
+```tolk
+fun Point.equalTo(self, r: Point) {   // auto-infer `bool`
+    return self.x == r.x && self.y == r.y
+}
+```
+
+## `self` is immutable by default
+
+To allow modifications, declare `mutate self` explicitly.
+For details, see [mutability](/languages/tolk/syntax/mutability).
+
+```tolk
+// mind `mutate` — to allow modifications
+fun Point.reset(mutate self) {
+    self.x = 0;
+    self.y = 0;
+}
+```
+
+## `return self` makes a chainable method
+
+To make a method chainable, declare it as `fun (...): self`.
+For instance, all methods for `builder` return `self`,
+which allows `b.storeXXX().storeXXX()`:
+
+```tolk
+fun builder.myStoreInt32(mutate self, v: int): self {
+    self.storeInt(v, 32);
+    return self;
+}
+
+fun demo() {
+    return beginCell()
+        .storeAddress(SOME_ADDR)
+        .myStoreInt32(123)
+        .endCell();
+}
+```
+
+## Small functions are automatically inlined
+
+Create one-liner methods without any worries.
+The compiler automatically inlines them in-place, targeting zero overhead. For example, this program
+
+```tolk
+fun int.zero() {
+    return 0
+}
+
+fun int.inc(mutate self, byValue: int = 1): self {
+    self += byValue;
+    return self;
+}
+
+fun main() {
+    return int.zero().inc().inc()
+}
+```
+
+is reduced to "return 2" in assembler:
+
+```fift
+main() PROC:<{
+    2 PUSHINT
+}>
+```
+
+For details, see [compiler optimizations](/languages/tolk/features/compiler-optimizations).
+
+## @attributes
+
+A function or method may be preceded by one or several attributes:
+
+```tolk
+@noinline
+@custom("any contents here")
+fun slowSum(a: int, b: int) {
+    return a + b
+}
+```
+
+The following attributes are allowed:
+
+- `@inline` — Forces a function to be inlined in-place. Typically unnecessary, as the compiler performs inlining automatically.
+- `@inline_ref` — Turns on a special version of inlining: its body will be embedded as a child cell reference in the resulting bytecode.
+- `@noinline` — Disables inlining for a function. For example, if it's a "slow path".
+- `@method_id(<number>)` — Low-level annotation to manually override TVM method\_id.
+- `@pure` — Indicates that a function does not modify global state (including TVM one). If its result is unused, a call could be deleted. Typically used in assembler functions.
+- `@deprecated` — A function is not recommended for use and exists only for backwards compatibility.
+- `@custom(<anything>)` — A custom expression, not analyzed by the compiler.
+
+## Assembler functions
+
+Tolk supports declaring low-level assembler functions with embedded Fift code:
+
+```tolk
+@pure
+fun minMax(x: int, y: int): (int, int)
+    asm "MINMAX"
+```
+
+It's a low-level feature and requires deep knowledge of [Fift](/languages/fift/overview) and [TVM](/tvm/overview).
+See [assembler functions](/languages/tolk/features/asm-functions).
+
+## Anonymous functions (lambdas)
+
+Tolk supports first-class functions: they can be passed as callbacks.
+Both named functions and function expressions may be referenced:
+
+```tolk
+fun customRead(reader: (slice) -> int) {
+    // ...
+}
+
+fun demo() {
+    customRead(fun(s) {
+        return s.loadUint(32)
+    })
+}
+```
+
+See [callables](/languages/tolk/types/callables).
+
+## Generic functions
+
+A function declared as `fun f<T>(...)` is a generic one. `T` is called a "type parameter".
+
+```tolk
+fun duplicate<T>(value: T): (T, T) {
+    var copy: T = value;
+    return (value, copy);
+}
+```
+
+When calling a generic function, the compiler automatically infers type arguments:
+
+```tolk
+fun demo() {
+    duplicate(1);         // duplicate<int>
+    duplicate(somePoint); // duplicate<Point>
+    duplicate((1, 2));    // duplicate<(int, int)>
+}
+```
+
+Type arguments may also be specified explicitly using `f<...>(args)`:
+
+```tolk
+fun demo() {
+    duplicate<int32>(1);
+    duplicate<Point?>(null);    // two nullable points
+}
+```
+
+Functions may declare multiple type parameters:
+
+```tolk
+// returns `(tensor.0 || defA, tensor.1 || defB)`
+fun replaceNulls<T1, T2>(tensor: (T1?, T2?), defA: T1, defB: T2): (T1, T2) {
+    var (a, b) = tensor;
+    return (a == null ? defA : a, b == null ? defB : b);
+}
+```
+
+Since Tolk supports first-class functions, various custom invokers for general-purpose frameworks can be expressed:
+
+```tolk
+fun customInvoke<TArg, R>(f: TArg -> R, arg: TArg) {
+    return f(arg);
+}
+```
+
+Default type parameters are supported, like `fun f<T1, T2 = int>`, but they cannot reference one another currently.
+
+Although type parameters are usually inferred from the arguments, there are edge cases where `T` cannot be inferred because it does not depend on them.
+For example, tuples. A tuple may have anything inside it, that's why invoking `tuple.get` lacks without `T`:
+
+```tolk
+// a method `tuple.get` is declared this way in stdlib:
+fun tuple.get<T>(self, index: int): T;
+
+fun demo(t: tuple) {
+    var mid = t.get(1);    // error, can not deduce T
+
+    // correct is:
+    var mid = t.get<int>(1);
+    // or
+    var mid: int = t.get(1);
+}
+```
+
+A generic function may be assigned to a variable, but `T` must be specified explicitly because this is not a call:
+
+```tolk
+fun genericFn<T>(v: T) {
+    // ...
+}
+
+fun demo() {
+    var callable = genericFn<builder>;
+    callable(beginCell());
+}
+```
+
+## Generic methods
+
+Declaring a method for a generic type does not differ from declaring any other method.
+The compiler treats unknown symbols as type parameters while parsing the receiver:
+
+```tolk
+struct Pair<T1, T2> {
+    first: T1
+    second: T2
+}
+
+// both <T1,T2>, <A,B>, etc. work: any unknown symbols
+fun Pair<A, B>.create(f: A, s: B): Pair<A, B> {
+    return {
+        first: f,
+        second: s,
+    }
+}
+
+// instance method with `self`
+fun Pair<A, B>.compareFirst(self, rhs: A) {
+    return self.first <=> rhs
+}
+```
+
+Generic methods can be also used as first-class functions:
+
+```tolk
+var callable = Pair<int, slice>.compareFirst;
+callable(somePair, 123);    // pass somePair as self
+```
+
+Methods for generic structures can themselves be generic:
+
+```tolk
+fun Pair<A, B>.createFrom<U, V>(f: U, s: V): Pair<A, B> {
+    return {
+        first: f as A,
+        second: s as B,
+    }
+}
+
+fun demo() {
+    return Pair<int?, int?>.createFrom(1, 2);
+}
+```
+
+## Methods for "any receiver"
+
+Any unknown symbol (typically `T`) may be used to define a method applicable to any type:
+
+```tolk
+// any receiver
+fun T.copy(self): T {
+    return self
+}
+
+// any nullable receiver
+fun T?.isNull(self): bool {
+    return self == null
+}
+```
+
+Note that "any receivers" do not conflict with specific ones.
+
+```tolk
+fun T.someMethod(self) { ... }
+fun int.someMethod(self) { ... }
+
+fun demo() {
+    42.someMethod();              // (2)
+    address("...").someMethod();  // (1) with T=address
+}
+```
+
+This is known as "overloading" or "partial specialization".
+
+## Partial specialization of generic methods
+
+Specializing generic methods allows some logic to work differently for predefined types or patterns.
+Consider the following example.
+Suppose, there is an iterator over a tuple of slices, each slice contains encoded `T`.
+
+```tolk
+struct TupleIterator<T> {
+    data: tuple      // [slice, slice, ...]
+    nextIndex: int
+}
+
+fun TupleIterator<T>.next(self): T {
+    val v = self.data.get<slice>(self.nextIndex);
+    self.nextIndex += 1;
+    return T.fromSlice(v);
+}
+```
+
+Thus, given `TupleIterator<int32>` or `TupleIterator<Point>`, `next()` will decode the next slice and return it.
+But additional requirements are:
+
+- `TupleIterator<slice>` should just return `data[i]` without calling `fromSlice()`
+- `TupleIterator<Cell<T>>` should return not `Cell<T>` but unpack a cell and return `T`
+
+Tolk allows **overloading methods for more specific type patterns**:
+
+```tolk
+fun TupleIterator<T>.next(self): T { ... }
+fun TupleIterator<Cell<T>>.next(self): T { ... }
+fun TupleIterator<slice>.next(self): slice { ... }
+```
+
+Another example. Declare an extension method for `map<K, V>`, but
+
+- if `V = K`, provide a different implementation
+- if `V` is another map, modify the behavior
+
+```tolk
+fun map<K, V>.method(self) { ... }
+fun map<K, K>.method(self) { ... }
+fun map<K, map<K2, V2>>.method(self) { ... }
+
+// (1) called for map<int8, int32> / map<bits4, Cell<bits4>>
+// (2) called for map<bool, bool> / map<int8, AliasForInt8>
+// (3) called for map<address, map<int32, ()>>
+```
+
+<Aside type="note">
+  What happens if a user declares `struct T`?
+  The answer: `fun T.copy()` and similar will be treated as a specialization, not as generic.
+  Just don't do this; use clear long names.
+</Aside>

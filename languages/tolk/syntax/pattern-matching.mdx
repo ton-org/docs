@@ -2,15 +2,103 @@
 title: "Pattern matching"
 ---
 
+import { Aside } from '/snippets/aside.jsx';
 
+Tolk supports a `match` expression for pattern matching.
+It is a powerful construct that applies both to types and expressions.
 
-## Variable declaration inside `match`
+## `match` for union types
+
+Pattern matching for unions is a key to [message handling](/languages/tolk/features/message-handling).
+
+```tolk
+type IncomingMessage =
+    | CounterIncBy
+    | CounterReset
+    // ...
+
+// ... after parsing a message
+match (msg) {
+    CounterIncBy => {
+        newCounter = curCounter + msg.byValue
+    }
+    CounterReset => {
+        newCounter = 0
+    }
+    // ...
+}
+```
+
+Although it's a general mechanism compatible with any union type:
+
+```tolk
+fun processValue(value: int | slice) {
+    match (value) {
+        int => {
+            value * 2
+        }
+        slice => {
+            value.loadUint(8)
+        }
+    }
+}
+```
+
+## `match` for a union must be exhaustive
+
+In other words, all alternatives must be covered.
+
+```tolk
+fun errDemo(v: int | slice | Point) {
+    match (v) {
+        slice => { v.loadAddress() }
+        int => { v * 2 }
+        // error: missing `Point`
+    }
+}
+```
+
+Note that `else` is not allowed for unions but is permitted for a [lazy match](/languages/tolk/features/lazy-loading#lazy-matching).
+
+## Syntax details
+
+- After `=>` there is
+  - either a block: `A => { ... }`
+  - or an expression: `A => 123`
+  - or `A => return SOME_EXPR`
+  - or `A => throw ERR_CODE`
+- A comma
+  - optional after a block: `A => {} B => {}`
+  - required otherwise: `A => 1, B => 2`
+- May be used as a match expression: `return match (v) { ... }`
+- Variable declarations are allowed inside: `match (val v = ...)`
+
+## Using `match` as an expression
+
+Using `match` in expression position allows:
+
+- `var smth = match (v) { ... }`
+- `return match (v) { ... }`
+- and similar
 
 ```tolk
 type Pair2 = (int, int)
 type Pair3 = (int, int, int)
 
-fun getPair2Or3(): Pair2 | Pair3 { /* ... */ }
+fun getLast(tensor: Pair2 | Pair3) {
+    return match (tensor) {
+        Pair2 => tensor.1,
+        Pair3 => tensor.2,
+    }
+}
+```
+
+## Declaring variables inside `match`
+
+```tolk
+fun getPair2Or3(): Pair2 | Pair3 {
+    // ...
+}
 
 fun demo() {
     match (val v = getPair2Or3()) {
@@ -20,7 +108,66 @@ fun demo() {
 }
 ```
 
+## `match` for expressions (not for types)
 
-Familiar with Rust's `enum` and `match`?
-You may notice that match is very similar, but `enum` in Tolk hold only integers. Union types are more general and powerful.
+`match` can be used with constant expressions, similar to `switch`:
 
+```tolk
+val nextValue = match (curValue) {
+    1 => 0,
+    0 => 1,
+    else => -1
+};
+```
+
+Rules:
+
+- only constant expressions may appear before `=>`
+- `else` is required for match expressions and optional for statements
+
+```tolk
+// statement form
+match (curValue) {
+    1 => { nextValue = 0 }
+    0 => { nextValue = 1 }
+    -1 => throw NEGATIVE_NOT_ALLOWED
+}
+
+// expression form, `else` required
+val nextValue = match (curValue) {
+    // ...
+    else => 1 + 2
+}
+```
+
+<Aside type="tip">
+  All comparable types supported — for instance, addresses and enums.
+</Aside>
+
+## `match` for enums
+
+Pattern matching on [enums](/languages/tolk/types/enums) requires coverage of all cases (_exhaustive_):
+
+```tolk
+match (someColor) {
+    Color.Red => {}
+    Color.Green => {}
+    // error: Color.Blue is missing
+}
+```
+
+Alternatively, use `else` to handle remaining values:
+
+```tolk
+match (someColor) {
+    Color.Red => {}
+    else => {}
+}
+```
+
+<Aside
+  type="note"
+  title={"Familiar with Rust's enum and match?"}
+>
+  Note that `match` is similar in spirit, but `enum` values in Tolk are backed by integers; union types are more general and expressive.
+</Aside>
