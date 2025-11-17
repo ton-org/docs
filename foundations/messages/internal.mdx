@@ -2,9 +2,9 @@
 title: "Internal Messages"
 ---
 
-Internal messages are the messages sent from one contract to another. It is the most common type of message.
+Internal messages are the messages sent from one contract to another. They are the most common type of message.
 
-Internal message contents are as follows:
+The contents of an internal message are as follows:
 
 ```tl-b
 int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
@@ -23,12 +23,12 @@ message$_ {X:Type} info:CommonMsgInfo
 - `src` - the address of the contract that sent the message.
 - `dest` - the address of the contract that received the message.
 - `value` - the amount of Toncoin and extra-currency sent with the message.
-- `extra_flags` - used with new bounce format.
+- `extra_flags` - used with the new bounce format.
 - `fwd_fee` - the fee charged for forwarding the message.
 - `created_lt` - the logical time when the message was created.
 - `created_at` - the unix time when the message was created.
 
-This is a structure of the message a contract may receive. However, the requirements for the contents of this structure are different when sending a message. These requirements are described by the relaxed version of the structure.
+This is the structure of the message a contract may receive. However, the requirements for this structure differ when the contract sends a message. These requirements are described by the relaxed version of the structure.
 
 ```tl-b
 int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
@@ -47,41 +47,41 @@ _ fixed_prefix_length:(Maybe (## 5)) special:(Maybe TickTock)
   library:(HashmapE 256 SimpleLib) = StateInitWithLibs;
 ```
 
-The process of transforming the relaxed version of the structure into the strict version occurs in the action phase and is performed by [SENDMSG action](/foundations/actions/send). Also, this action rewrites some fields of the structure to correct values. That action also performs validation of the `StateInit` field against `StateInitWithLibs` type.
+The process of transforming the relaxed version of the structure into the strict version occurs in the action phase and is performed by the [SENDMSG action](/foundations/actions/send). This action rewrites some fields of the structure with correct values and validates the `StateInit` field against the `StateInitWithLibs` type.
 
 ## Deployment of contracts
 
-Thanks to the structure of the message, it is possible to send both the payload in `body` field and the StateInit in `init` field. So the contract can both be [initialized by StateInit](/foundations/messages/state-init) and process the payload in one transaction.
+Thanks to this structure, it is possible to send both the payload in the `body` field and the StateInit in the `init` field. As a result, the contract can be [initialized by StateInit](/foundations/messages/state-init) and process the payload in one transaction.
 
 ## Message value
 
-The message may carry a value of Toncoin and extra-currency. The value is transferred from the sender to the recipient of the message. The value of this field is affected by [send modes](/foundations/messages/modes) contract uses.
+The message may carry a value of Toncoin and extra-currency. The value is transferred from the sender to the recipient of the message. The value of this field is affected by the [send modes](/foundations/messages/modes) the contract uses.
 
 ## Bounces
 
-Interesting feature of the internal messages are bounces. Bounce message is the message generated automatically by the network, when the original message resulted in an error in [compute phase](/foundations/phases#compute-phase), during its processing. It may also occur when the message resulted an error in [action phase](/foundations/phases#action-phase) and mode `SendBounceIfActionFail` (+16) is used.
+An interesting feature of internal messages is bouncing. A bounce message is generated automatically by the network when the original message results in an error in the [compute phase](/foundations/phases#compute-phase) during processing. It may also occur when the message results in an error in the [action phase](/foundations/phases#action-phase) and mode `SendBounceIfActionFail` (+16) is used.
 
 ### Default bounce
 
 If the `bounce` flag is set to `true`, the message is bounceable. If the bounce conditions are met, the following transformation occurs:
 
 - `src` and `dest` fields are swapped.
-- `bounced` flag set is set to `true`.
-- `bounce` flag set to `false`.
-- `body` is replaced with concatenation of 32 bits equal to one (0xffffffff) and first 256 bits of the old `body`. The new `body` is stored in a message in-place, so Either = 0.
+- The `bounced` flag is set to `true`.
+- The `bounce` flag is set to `false`.
+- `body` is replaced with the concatenation of 32 bits equal to one (0xffffffff) and the first 256 bits of the old `body`. The new `body` is stored in the message in-place, so `Either = 0`.
 
 The new message is sent to the `src` address of the original message.
 
 ### New bounce format
 
-Using the `extra_flags` field it is possible to change, how new `body` will be constructed. All other transformations remain the same.
+Using the `extra_flags` field it is possible to change how the new `body` will be constructed. All other transformations remain the same.
 
 `(extra_flags & 1) = 1` enables the new bounce format for the message. The bounced message contains information about the transaction.
-If `(extra_flags & 3) = 3`, the bounced message contains the whole body of the original message. Otherwise, only the bits from the root of the original body are returned.
+If `(extra_flags & 3) = 3`, the bounced message contains the entire body of the original message. Otherwise, only the bits from the root of the original body are returned.
 
-All other bits in `extra_flags` are reserved for future use and are not allowed now (internal messages with flags other than `0..3` are invalid).
+All other bits in `extra_flags` are reserved for future use and are currently disallowed (internal messages with flags other than `0..3` are invalid).
 
-When the message with a new bounce flag is bounced, the bounced message body has the following format (`new_bounce_body`):
+When a message with the new bounce flag is bounced, the bounced message body has the following format (`new_bounce_body`):
 
 ```
 _ value:CurrencyCollection created_lt:uint64 created_at:uint32 = NewBounceOriginalInfo;
@@ -95,8 +95,8 @@ new_bounce_body#fffffffe
     = NewBounceBody;
 ```
 
-- `original_body` - cell that contains the body of the original message. If `extra_flags & 2` then the whole body is returned, otherwise it is only the root without refs.
-- `original_info` - value, lt and unixtime of the original message.
+- `original_body` - the cell that contains the body of the original message. If `extra_flags & 2` then the whole body is returned; otherwise only the root without refs is included.
+- `original_info` - the value, lt, and Unix time of the original message.
 - `bounced_by_phase`:
   - `0` - compute phase was skipped. `exit_code` denotes the skip reason:
     - `exit_code = -1` - no state (an account is uninit or frozen, and no state init is present in the message).
@@ -106,7 +106,7 @@ new_bounce_body#fffffffe
   - `1` - compute phase failed. `exit_code` is the value from the compute phase.
   - `2` - action phase failed. `exit_code` is the value from the action phase.
 - `exit_code` - 32-bit exit code, see above.
-- `compute_phase` - exists if it was not skipped, i.e., when `bounced_by_phase` is not 0:
+- `compute_phase` - exists if it was not skipped, i.e., when `bounced_by_phase` is not 0.
 - `gas_used` and `vm_steps` are the same as in `TrComputePhase` of the transaction.
 
 The bounced message has the same 0th and 1st bits in `extra_flags` as the original message.
