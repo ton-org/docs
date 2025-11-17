@@ -8,7 +8,7 @@ env:
 
 on:
   issue_comment:
-    types: [created] # deleted, edited
+    types: [created]
   pull_request_review_comment:
     types: [created]
 
@@ -28,13 +28,11 @@ jobs:
     # /fmt comment from a trusted commenter in a PR
     if: |
       (
-        (
-          (github.event_name == 'issue_comment' && github.event.issue.pull_request != null) ||
-          (github.event_name == 'pull_request_review_comment')
-        ) &&
-        (github.event.comment.body == '/fmt' || startsWith(github.event.comment.body, '/fmt ')) &&
-        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
-      )
+        (github.event_name == 'issue_comment' && github.event.issue.pull_request != null) ||
+        (github.event_name == 'pull_request_review_comment')
+      ) &&
+      (github.event.comment.body == '/fmt' || startsWith(github.event.comment.body, '/fmt ')) &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -86,13 +84,10 @@ jobs:
           echo '{"body": "Please apply the formatting suggestions.", "event": "COMMENT", "comments": []}' > payload.json
           for file in ${ALL_CHANGED_FILES}; do
             npx remark --quiet --frail --silently-ignore -o "$file"
-            # npx remark --quiet --frail --silently-ignore "$file" -o "${file}-output"
             ( # try
               git diff --quiet "$file"
-              # diff -q "$file" "${file}-output"
-            ) || ( # catch — formatter there are differences and formatting did something
+            ) || ( # catch — there are differences and formatting did something
               jq_inplace payload.json ".comments += [{path: \"${file}\", subject_type: \"file\", side: \"RIGHT\", start_side: \"RIGHT\", commit_id: \"${COMMIT_ID}\", body: \"\`\`\`\`\`suggestion\\n$(cat "$file")\\n\`\`\`\`\`\"}]"
-              # jq_inplace payload.json ".comments += [{path: \"${file}\", subject_type: \"file\", side: \"RIGHT\", start_side: \"RIGHT\", commit_id: \"${COMMIT_ID}\", body: \"$(cat "${file}-output" | sed ':a;N;$!ba;s/\n/\\n/g')\"}]"
             )
           done
           COMMENTS_COUNT=$(jq -r '.comments | length' payload.json)
