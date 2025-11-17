@@ -2,3 +2,208 @@
 title: "Variables"
 ---
 
+import { Aside } from '/snippets/aside.jsx';
+
+Variables are declared with `val` (immutable) or `var` (mutable).
+
+Outside functions, use `const` or (rarely) `global`.
+
+## Keywords `val` and `var`
+
+`val` declares a variable that is **assigned exactly once** (immutable):
+
+```tolk
+fun demo() {
+    val coeff = 5;
+    // cannot change its value, `coeff += 1` is an error
+}
+```
+
+`var` declares a variable that **may be reassigned**:
+
+```tolk
+fun demo() {
+    var x = 5;
+    x += 1;      // now 6
+}
+```
+
+**Explicit types** can be specified. If not specified, the variable type is inferred from the initial assignment:
+
+```tolk
+fun demo() {
+    var x = 5;         // inferred `int`
+    x = null;          // error, cannot assign
+
+    var y: int? = 5;   // specified nullable
+    y = null;          // ok
+}
+```
+
+For instance, explicit types are useful for structures:
+
+```tolk
+fun demo() {
+    var p1: Point = { x: 10, y: 20 };
+
+    // without an explicit type, use `Point { ... }`
+    var p2 = Point { x: 10, y: 20 };
+}
+```
+
+A variable **may be left unassigned** at declaration. Then it must be definitely assigned before its first use:
+
+```tolk
+fun demo(mode: int) {
+    var result: int;  // not assigned at declaration
+
+    if (mode == MODE_SLOW) {
+        result = doSlowCalc();
+    } else if (mode == MODE_FAST) {
+        result = doFastCalc();
+    } else {
+        throw ERR_INVALID_MODE;
+    }
+    return result;   // ok, it's definitely assigned
+}
+```
+
+Creating **multiple variables at once** is actually destructuring of a tensor:
+
+```tolk
+fun demo() {
+    var (a, b) = (1, "");
+
+    // with explicit types
+    var (c: int, d: slice) = (1, "");
+}
+```
+
+The block `{ ... }` opens **a nested scope**:
+
+```tolk
+fun demo() {
+    val x = 10;
+    if (smth) {
+        val x = 50;  // this is a different `x`
+    }
+    // x is 10
+}
+```
+
+## Parameters of a function
+
+Function parameters work exactly like local variables. They can be reassigned, but changes do not affect the caller's state:
+
+```tolk
+fun analyze(userId: int?) {
+    if (userId == null) {
+        userId = DEFAULT_ID;
+    }
+    // ...
+}
+
+fun demo() {
+    var id = null as int?;
+    analyze(id);
+    // id remains `null`
+}
+```
+
+To make modifications to `userId` visible inside `demo`, the parameter must be declared as `mutate userId`.
+See [mutability](/languages/tolk/syntax/mutability).
+
+## Constants
+
+Global-scope constants are declared with `const` **outside functions**:
+
+```tolk
+const SLEEP_TIME_SEC = 5
+```
+
+The right side of an assignment must be a constant expression: numbers, const literals, compile-time functions, etc.
+
+```tolk
+// ok
+const FLAG_JANUARY = 1 << 10
+const OP_TRANSFER = stringCrc32("transfer")
+
+// error: not a constant expression
+const CUR_TIME = blockchain.now()
+```
+
+The type is inferred from assignment unless specified manually:
+
+```tolk
+const MODE_NORMAL: uint32 = 0
+```
+
+Constants are **not restricted to integers**:
+
+```tolk
+// type `address`
+const ADMIN_ADDR = address("UQ...")
+
+// type `coins`
+const MINIMAL_COST = ton("0.05")
+
+// even objects with constant fields
+const ZERO_POINT: Point = { x: 0, y: 0 }
+```
+
+**To calculate crc32 / etc. at compile-time**, use `stringCrc32("...")` and similar.
+See [strings](/languages/tolk/types/strings#calculate-hex-%2F-crc32-%2F-etc-at-compile-time).
+
+To group integer constants, also use [enums](/languages/tolk/types/enums).
+
+<Aside
+  type="tip"
+  title="Semicolons are optional"
+>
+  In global-scope declarations a semicolon is optional.
+  Moreover, preferred style is to avoid semicolons for less visual noise.
+  But inside functions, semicolons are mandatory to separate statements.
+</Aside>
+
+## Global variables
+
+Tolk has the `global` keyword to declare variables **outside functions**:
+
+```tolk
+global runtimeCalls: tuple
+```
+
+It must be followed by a type but cannot be initialized at the point of declaration: initialization is done manually at some point of a program.
+A contract has several entrypoints (`get fun`, `onInternalMessage`, and more low-level).
+So, a particular global must be initialized at some place where its forward usage is expected.
+
+```tolk
+global runtimeCalls: tuple
+
+fun execute() {
+    runtimeCalls.push("start execute");
+    // ...
+}
+
+get fun devTrace() {
+    runtimeCalls = createEmptyTuple();   // initialize
+    val result = execute();
+    return (result, runtimeCalls);
+}
+```
+
+<Aside
+  type="caution"
+>
+  Globals were common in contracts written with FunC.
+  Not for performance reasons — but because FunC lacks structures.
+  In Tolk, **do not use globals** "from force of habit".
+  Use auto-serialization and lazy loading.
+</Aside>
+
+<Aside
+  type="danger"
+>
+  Be extremely careful with global variables.
+  Being uninitialized, they hold TVM `NULL`, so invalid usage triggers a runtime failure.
+</Aside>
