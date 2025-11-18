@@ -56,7 +56,7 @@ jobs:
             echo -e '\nNo such files affected!'
             exit 0
           fi
-          echo -e '\nChecking formatting on the following MDX and Markdown files affected by this PR:\n'
+          echo -e '\nChecking formatting of the following MDX and Markdown files affected by this PR:\n'
           for file in ${ALL_CHANGED_FILES}; do
             echo "- $file"
           done
@@ -69,7 +69,7 @@ jobs:
         if: failure()
         run: |
           # Preparations
-          FILES="$(echo -e "${ALL_CHANGED_FILES[@]}" | tr '\n' ' ')"
+          FILES="$(echo -e "${ALL_CHANGED_FILES[@]}" | tr '\n' ' ' | sed 's/.*/\"&\"/')"
           BODY="{\"body\":\"To fix the **formatting** issues:\n\n1. Install necessary dependencies: \`npm ci\`\n2. Then, run this command:\n\`\`\`shell\nnpx remark -o --silent --silently-ignore ${FILES}\n\`\`\`\"}"
           # Comment on the PR
           curl -s -o /dev/null -L -X POST \
@@ -147,3 +147,35 @@ jobs:
       # - name: Check redirects against the upstream docs.json structure
       #   if: ${{ !cancelled() }}
       #   run: node scripts/check-redirects.mjs upstream
+
+  navigation-check:
+    name: "Navigation"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          corepack enable
+          npm ci
+
+      - name: Check uniqueness of navigation paths in docs.json
+        if: ${{ !cancelled() }}
+        run: node scripts/check-navigation.mjs unique
+
+      - name: Check existence of navigation .mdx pages in docs.json
+        if: ${{ !cancelled() }}
+        run: node scripts/check-navigation.mjs exist
+
+      - name: Check coverage of .mdx pages by docs.json
+        if: ${{ !cancelled() }}
+        run: node scripts/check-navigation.mjs cover
