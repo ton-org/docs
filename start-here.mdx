@@ -16,9 +16,15 @@ _Mainnet_ is the "real" network. It's where actual payments in Toncoin are made.
 
 The other network is _testnet_, and it's used by TON developers to check their applications work correctly before deploying them to mainnet. It uses "test coins" for payments that barely have any value.
 
-(workchains, shards)
+To have several blockchains that are not binary-compatible, or backward-compatible in case of migrations, every network is split into _workchains_. Workchains can freely interact with each other, but their implementations might significantly differ.
 
-(physical vs virtual level + image, nodes)
+At the moment, there are two workchains: _basechain_ (`0`) for regular use, and a very similar _masterchain_ (`-1`) for TON's internal bookkeeping. Masterchain has mostly the same rules, except using it is made more expensive to limit amount of traffic that interferes with TON's internals.
+
+To be freely scalable, each workchain is split into _shards_. Number of shards is determined dynamically, based on current network load. Internally every shard is implemented as a separate blockchain. Except for increased latency when messages are sent between distant shards, the effect on the user-facing code is minimal.
+
+Physically blockchain is run on a network of servers, _nodes_. They interact via the _ADNL_ protocol. Physical layer mostly doesn't affect user-facing applications, as they usually use servers that proxy JSON HTTP requests into ADNL network. The official version of such a proxy server is run by _LiteServer_ software. There are public instances of LiteServer, so developers are not required to host one on their server.
+
+ADNL uses TCP sockets to connect, so it's impossible to connect to ADNL from a web page. Browsers intentionally do not have an API to send arbitrary TCP traffic. Servers do not have this problem, as they don't use a browser, and can interact with the blockchain either through ADNL or HTTP.
 
 ![Statuses overview](/resources/images/states.png)
 
@@ -55,13 +61,15 @@ Incoming external messages come from an external address, and outgoing external 
 _State_ of the account only changes when it handles messages. Also messages change the balance
 on the account. To have a state and a balance, and to handle messages, account must be active.
 
-Formally message is only an intent: it has a destination, probably some Toncoin and data. After the message was handled, and all the necessary changes were made to blockchain, message is packed along with description of those changes into a single packet of data, _transaction_.
+Formally, a message is only an intent: it has a destination, probably some Toncoin and data. After the message was handled, and all the necessary changes were made to blockchain, message is packed along with description of those changes into a single packet of data, _transaction_.
 
 A message might also be a _deploy message_ if it has contract code and its initial state (`StateInit`) attached. When such message is sent, a hash of code and initial state should match a destination address. If they do, code and state are stored into an account at that address, and the account becomes active. Both code and state stored in the account might change in the future, but its address will stay the same as computed when it was deployed.
 
-Internal and incoming external messages execute code of the account. Code is interpreted by _TON Virtual Machine_ (TVM). It's written in _bitcode_, a binary format specific to TVM.
+Internal and incoming external messages execute code of the account. Code is interpreted by _TON Virtual Machine_ (TVM). It's written in _bitcode_, a binary format specific to TVM. In future, TVM might support multiple binary languages, _codepages_, but at the moment there is only codepage 0 (`CP0`).
 
-(Tolk is main language + compiler is included into blueprint + link to IDE and blueprint overview)
+Most of development is done in _Tolk_ high-level programming language. Its compiler is included in _Blueprint_ development environment, and will be available to all the projects created from the template.
+
+Originally, _Fift_, a Forth-like assembly language, and _FunC_, C-like intermediate-level language were used for contract development.
 
 When execution starts, the message and current account state are provided to the code. By the end of execution, destination account might change its state or code, or send some internal or outgoing external messages.
 
@@ -83,7 +91,7 @@ A transfer message consists of a destination address and, optionally, an interna
 
 Private and public keys are generated in a program or service outside of blockchain, and determine the address of the wallet account. Their text representation is called a _mnemonic_.
 
-Before the code of the wallet can be deployed on an account with an incoming external message, some other account has to transfer toncoins to the wallet account. External messages cannot have any Toncoin attached to them, and otherwise there won't be enough funds to pay fees to handle the message that deploys a wallet. This transfer to a new wallet account usually comes from an exchange or another user. In testnet, there is a bot that sends test coins to an account for free.
+Before the code of the wallet can be deployed on an account with an incoming external message, some other account has to transfer Toncoin to the wallet account. External messages cannot have any Toncoin attached to them, and otherwise there won't be enough funds to pay fees to handle the message that deploys a wallet. This transfer to a new wallet account usually comes from an exchange or another user. In testnet, there is a bot that sends test coins to an account for free.
 
 Usually transfer message is sent without an internal message, and only tells to transfer some Toncoin to a destination address. This is the reason this type of smart contract is called a wallet.
 
@@ -91,86 +99,40 @@ Internal message might be a request to some other contract, or even be a deploy 
 
 End users usually use _wallet apps_ to create and use wallets. An exchange would usually create a wallet for a user too.
 
-(Jetton, NFT, SBT)
+The other important types of contracts are
 
-(ecosystem images:
-    physical:
-        frontend -> http sdk
-        (frontend -> ton connect) -> (wallet kit -> wallet app) -> http sdk
-        frontend -> backend // explorer
-        backend -> http sdk // processing
-        backend -> adnl sdk -> node
-        http sdk -> http api -> node
+- _Jetton_ tokens, that roughly correspond to coins, and allow users to mint their own currency;
+- _NFTs_, that are similar to tickets: unique items that can be sold;
+- _SBTs_, that are like medals: unique items that can be given to someone, but can never be sold or transferred.
 
-        tma are frontends
-        http api might be self-hosted
-        node (liteserver) can be self-hosted
+To interact with wallets, Jettons and other contracts, data has to be sent through ADNL or HTTP API into the network. There are several ways to connect:
 
-    logical:
-        wallet app -> wallet
-        explorer -> wallet, nft
-        getgems -> nft
-)
+- directly call the API, or
+- use an SDK that simplifies working with an API by wrapping its methods into a more user-friendly interface; the most popular TypeScript SDK for this is `@ton/ton`.
 
-_Explorer_ is a kind of web app that displays information about current state of accounts (including wallets) and history of transactions.
+When the application has to use a wallet to prove user's identity, it has to somehow get access to the private key of the wallet. Giving arbitrary applications access to the private key is insecure, as it can do arbitrary actions with the wallet then. To handle this, there is a _TON Connect_ set of SDKs that provide interfaces
 
-(On-chain, off-chain)
-(ADNL, HTTP API)
-(Cell, @ton/core)
-(Bindings/wrappers in general)
-(Low-level bindings)
-(Wallet/token wrappers, @ton/ton, assets-sdk)
-(TON Connect)
+- for an application to do an action through the wallet app;
+- for a wallet app to handle these requests.
 
-{/*
-- what is on-chain/off-chain
-- contracts
-    - which states there are
-        + https://docs.ton.org/v3/guidelines/quick-start/getting-started#address-states
-+ deploy
-    + hashing a StateInit
-    + https://helloworld.tonstudio.io/02-contract/ Step 7
-    + https://docs.ton.org/v3/guidelines/quick-start/developing-smart-contracts/func-tolk-folder/deploying-to-network#address-and-initial-state
-+ messages and transactions
-    - https://docs.ton.org/v3/guidelines/quick-start/blockchain-interaction/reading-from-network#what-is-a-message
-    - https://docs.ton.org/v3/guidelines/quick-start/blockchain-interaction/reading-from-network#what-is-a-transaction
-    - internal/external
-        - https://docs.ton.org/v3/guidelines/quick-start/developing-smart-contracts/func-tolk-folder/processing-messages#internal-messages
-        - https://docs.ton.org/v3/guidelines/smart-contracts/get-methods#invoking-get-methods-from-other-contracts
-+ wallet
-    - how to create
-        - https://helloworld.tonstudio.io/01-wallet/ Step 1-3
-        - https://docs.ton.org/v3/guidelines/quick-start/getting-started#step-1-create-a-new-wallet-using-an-app
-        - https://docs.ton.org/v3/guidelines/quick-start/getting-started#step-3-creating-a-testnet-wallet
-    - what happens when it's created
-        - https://docs.ton.org/v3/guidelines/quick-start/blockchain-interaction/writing-to-network#sending-ton
-    - mnemonic
-    - how to get TONs on testnet
-        - https://helloworld.tonstudio.io/01-wallet/ Step 4
-        - https://docs.ton.org/v3/guidelines/quick-start/getting-started#getting-funds
-    - wallets contract
-        - https://helloworld.tonstudio.io/01-wallet/ Step 5
-        - v5 и subwallet id
-            - https://docs.ton.org/v3/guidelines/quick-start/developing-smart-contracts/func-tolk-folder/deploying-to-network#magic-storage-member
-    - wallet app
-- nodes and api
-    - https://docs.ton.org/v3/guidelines/dapps/apis-sdks/api-keys
-    - https://docs.ton.org/v3/guidelines/dapps/apis-sdks/getblock-ton-api
-- explorer
-    - https://docs.ton.org/v3/guidelines/quick-start/getting-started#step-4-exploring-ton-blockchain
-    - https://ton.app/explorers
-    - https://docs.ton.org/v3/guidelines/smart-contracts/get-methods#how-to-work-with-get-methods
-- what are jetton, nft, ...
-    - reference is linked here
-- prepare for development
-    - https://helloworld.tonstudio.io/01-wallet/ Step 6
-    - https://helloworld.tonstudio.io/02-contract/ Step 2
-    - how to install node, typescript
-        - https://docs.ton.org/v3/guidelines/quick-start/developing-smart-contracts/setup-environment#step-1-install-nodejs
-    - how to set up vscode
-        - https://docs.ton.org/v3/documentation/smart-contracts/tolk/overview#tooling-around-tolk
-    - what's blueprint
-        - https://docs.ton.org/v3/guidelines/quick-start/developing-smart-contracts/setup-environment#step-3-set-up-blueprint
-        - https://docs.ton.org/v3/guidelines/quick-start/developing-smart-contracts/func-tolk-folder/blueprint-sdk-overview
-        - tolk is included in blueprint
-*/}
+For example, Telegram apps use TON Connect to get access to a wallet that is integrated into Telegram.
+
+All data on TON: data stored by contracts, their code, and messages are stored as trees of _cells_. Each cells stores up to 1023 bits of data, and can have up to 4 _refs_ to other cells. Each cell has a hash computed from its bits and refs. Because hash of a cell that directly or indirectly has itself as a ref would require knowing the same hash, it's impossible to create cyclic data structures.
+
+Standard serialization of such data structure into a single binary string is bag of cells (_BoC_). Compilers of smart-contract programming languages produce a BoC with code. When there is a need to store cells into a file, or send them over the network, it's usually serialized into a BoC.
+
+To tell other developers how a certain type of data is stored in cells, a _TL-B_ schema language is used. It's similar in its purpose to [protocol buffers](https://en.wikipedia.org/wiki/Protocol_Buffers) or [binary templates](https://en.wikipedia.org/wiki/010_Editor#Binary_Templates), but has more features for structuring data at the bit level.
+
+There are libraries for assembling data structures out of cells. For TypeScript, the most popular is `@ton/core`.
+
+TL-B schema for binary representations for messages, transactions, initial contract state, and most other data structures used by blockchain can be found in `block.tlb` file in the TON monorepo. TypeScript functions for serializing and deserializing them are provided by `@ton/core` and `@ton/ton` libraries.
+
+In general, the kind of library that converts data structures between cells and the format that is native to a programming language is called a _wrapper_ or _binding_. For example, functions that deserialize Jetton-related cell data to TypeScript objects can be found in [`assets-sdk`](https://github.com/ton-community/assets-sdk/blob/5285cd75a97acbb15999e7dfb3b8e4ec9e98b4ed/src/jetton/types/JettonBurnMessage.ts) library. Some high-level programming languages [can generate](/languages/tact) bindings out of source code of the contract. The "rule of thumb" is that production-grade code should not include low-level manipulation of binary data, and instead rely on a library with bindings instead. This reduces the chance of mistakes, and makes sure there are more users of this code. For a highly reused code, there are more opportunities to detect a mistake, and they're more likely to be fixed faster.
+
+So, usually, to interact with blockchain, a couple of libraries should be used: one that handles the connection to the blockchain, and another to work with the specific type of data that is sent over the connection.
+
+Not all of the computation has to be done _on-chain_, i.e. executed inside of TVM and paid with Toncoin. Computing and storing data on the blockchain is significantly more expensive than doing it on a regular CPU. Instead, a lot of it can be done in an _off-chain_ code, in a regular programming language, before or after it sends the request to the actual blockchain. The recommended development practice is to write a TypeScript library that calls contracts implemented in Tolk.
+
+_Explorer_ is a kind of web app that displays information about the current state of accounts (including wallets, Jettons, and NFTs) and history of transactions.
+
+A lot of popular contract types were standardized in TON Enhancement Proposals (_TEP_), mostly describing expected contracts' interfaces with TL-B schemas. This allows to reuse the tooling between similar contracts. For example, explorers detect TEP-standardized contracts, and display their binary messages in a user-friendly format.
