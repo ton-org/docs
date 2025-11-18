@@ -2,6 +2,79 @@
 title: "Precompiled contracts"
 ---
 
-import { Stub } from '/snippets/stub.jsx';
+import { Aside } from '/snippets/aside.jsx';
 
-<Stub issue="231" />
+A precompiled smart contract is a contract with a native C++ implementation in the validator node. When a validator processes a transaction for such a contract, it can execute this native implementation instead of TVM. This improves performance and reduces computation fees.
+
+## Config
+
+The list of precompiled contracts is stored in the blockchain configuration:
+
+```tlb
+precompiled_smc#b0 gas_usage:uint64 = PrecompiledSmc;
+precompiled_contracts_config#c0 list:(HashmapE 256 PrecompiledSmc) = PrecompiledContractsConfig;
+_ PrecompiledContractsConfig = ConfigParam 45;
+```
+
+The `list:(HashmapE 256 PrecompiledSmc)` represents a mapping of contract code hash to constant gas amount. A contract is considered precompiled if its code hash exists in this map.
+
+<Aside>
+  View current values on mainnet at [ConfigParam 45 on Tonviewer](https://tonviewer.com/config#45).
+</Aside>
+
+## Accessing precompiled gas value
+
+Contracts can check their precompiled gas value using the [`GETPRECOMPILEDGAS`](/tvm/instructions#f839-getprecompiledgas) opcode:
+
+- Returns the configured `gas_usage` value if the contract code hash is in `ConfigParam 45`
+- Returns `null` if the contract code hash is not in `ConfigParam 45`
+
+The value is also available in the [`c7`](/tvm/registers#c7--environment-information-and-global-variables) register environment tuple.
+
+## Execution modes
+
+When a validator processes a transaction, the execution mode depends on whether the contract code hash is listed in `ConfigParam 45`.
+
+### 1. Contract is not precompiled
+
+The contract code hash is not in `ConfigParam 45`. TVM executes normally with standard gas accounting.
+
+[`GETPRECOMPILEDGAS`](#accessing-precompiled-gas-value) returns `null`. Transaction result: `gas_used` reflects actual TVM consumption.
+
+### 2. Contract is precompiled
+
+The contract code hash exists in `ConfigParam 45`. The validator checks the contract balance against the configured `gas_usage`. If insufficient, the compute phase fails with `cskip_no_gas`.
+
+Otherwise, execution proceeds via one of two paths.
+
+#### Contract has native C++ implementation
+
+The native C++ implementation is available and enabled in the validator node. The validator executes the C++ code directly without invoking TVM.
+
+Transaction [result](/foundations/phases#compute-phase):
+
+- `gas_used` set to the value from `ConfigParam 45`
+- `vm_steps`, `vm_init_state_hash`, `vm_final_state_hash` set to zero
+
+#### Contract has no native C++ implementation
+
+The native C++ implementation is disabled or unavailable in the validator node. TVM executes the contract code normally.
+
+[`GETPRECOMPILEDGAS`](#accessing-precompiled-gas-value) returns the configured gas value during execution.
+
+After execution completes, the validator overrides the compute phase values.
+
+Transaction result:
+
+- `gas_used` set to the value from `ConfigParam 45`
+- `vm_steps`, `vm_init_state_hash`, `vm_final_state_hash` set to zero
+
+<Aside type="note">
+  The override ensures that both execution paths produce identical transaction results. This allows validators with and without native C++ implementations to coexist in the network and enables gradual adoption when adding new entries to `ConfigParam 45`.
+</Aside>
+
+## Example: Stablecoin jetton wallet
+
+The jetton wallet from the [stablecoin-contract](https://github.com/ton-blockchain/stablecoin-contract) project is the first contract code hash added to `ConfigParam 45` on mainnet. This jetton wallet is optimized as a precompiled contract to reduce computation fees for stablecoin transfers.
+
+The contract implements standard jetton wallet functionality with additional governance features. The precompiled gas logic is implemented in [`gas.fc`](https://github.com/ton-blockchain/stablecoin-contract/blob/5e1d79f4009430f2f7f255c5093a59d9a1628d75/contracts/gas.fc).
