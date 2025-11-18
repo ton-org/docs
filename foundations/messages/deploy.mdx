@@ -1,0 +1,76 @@
+---
+title: "Deploy message"
+---
+
+`StateInit` is a data structure sent as part of a message, either internal or incoming external, used to
+
+- deploy a smart contract, for which it stores the initial code and data of a contract;
+- [unfreeze](/foundations/status#status-transitions) a contract, where its last committed code and data are used.
+
+This structure can be appended in-place or as a referenced cell to every message:
+
+```tlb
+message$_
+    {X:Type}
+    info:CommonMsgInfo
+    init:(Maybe (Either StateInit ^StateInit))
+    body:(Either X ^X)
+= Message X;
+```
+
+The `StateInit` structure is defined as follows:
+
+```tlb
+_
+    fixed_prefix_length:(Maybe (## 5))
+    special:(Maybe TickTock)
+    code:(Maybe ^Cell)
+    data:(Maybe ^Cell)
+    library:(Maybe ^Cell)
+= StateInit;
+```
+
+where the fields are:
+
+- `special`: was mean to register a smart contract for [tick-tock events](/foundations/messages/exotic-tx); now is deprecated.
+- `code`: the initial code of the contract.
+- `data`: the initial data of the contract.
+- `library`: the initial library of the contract.
+- `fixed_prefix_length`: number of most significant address bits that may differ between the deploy message destination and the address derived from `StateInit`; the remaining bits must match.
+
+## Deploying to specific shard
+
+Due to [the way](/foundations/shards) messages are sent between blockchain shards, the number of hops and, hence, latency depends on the distance between the shards of a source and a destination. The optimal performance is achieved when both addresses are in the same shard.
+
+Usually, a new contract has to be deployed by a message to the exactly same address as computed out of `StateInit`'s hash, i.e. the content of `StateInit` uniquely determines the address. Any discrepancy between the address [computed](/foundations/addresses/derive) from `StateInit` and destination address of a deploy message [will result](/foundations/phases#when-the-compute-phase-is-skipped) in a failed transaction.
+
+To deploy a contract to the desired shard, there is a `fixed_prefix_length` field in `StateInit`. It allows to specify the destination address that would slightly differ from the computed address. Only all the bits except for the first `fixed_prefix_length` have to match.
+
+To put it more formally,
+
+```
+drop(fixed_prefix_length, addressFrom(stateInit)) = drop(fixed_prefix_length, destination)
+```
+
+where
+
+- `drop(n, x)` drops the `n` most significant bits from a 256-bit number `x`,
+- `addressFrom(s)` computes contract's address from a hash of `StateInit s`.
+
+When `fixed_prefix_length` is zero or not set, the condition simplifies to
+
+```
+addressFrom(stateInit) = destination
+```
+
+### Example
+
+Assume an address `D` starts with `0x5ABC...`. If there are 256 active shardchains, the first 8 bits of the address (i.e., `5A`) correspond to shard IDs.
+
+Now, if some other contract `S` is deployed that intends to exchange messages with `D`, and computing an address from its `StateInit` results in `0x2623...`, it will be deployed by default into a shard `26`. Messages from `26` to `5A` will take 2 hops and 2 blocks to arrive at the destination.
+
+To put `S` into the same shard as `D`, set `fixed_prefix_length` to 8 and send the deploy message to the address `0x5A23...`. Then TVM will ignore the discrepancy in the first 8 bits between the computed address (`0x2623...`) and the passed destination (`0x5A23...`), because their remaining 248 bits coincide, and `S` will be deployed into shard `5A`.
+
+### Limits
+
+The largest value for `fixed_prefix_length` is set in the blockchain config ([param 43](/foundations/config#param-43%3A-account-and-message-limits)), and at the moment is `8`, i.e. discrepancy in only eight bits of address can be ignored.
