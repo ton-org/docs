@@ -3,18 +3,20 @@
 │  Run this script from the root of the docs, not from the scripts directory!  │
 ╞══════════════════════════════════════════════════════════════════════════════╡
 │  The script can check:                                                       │
-│  1. Redirects against the previous TON Documentation URLs                    │
-│  2. Redirects against the upstream docs.json structure                       │
+│  1. Uniqueness of redirect sources                                           │
+│  2. Existence of redirect destination files                                  │
+│  3. Redirects against the previous TON Documentation URLs                    │
+│  4. Redirects against the upstream docs.json structure                       │
 │                                                                              │
-│  By default, it checks both, but to only check either specify                │
-│  `previous` or `upstream` as a command-line argument, respectively.          │
+│  By default, it checks all, but to only check either specify `unique`,       │
+│  `exist`, `previous` or `upstream` as a command-line argument, respectively. │
 │                                                                              │
 │  For example, this command will run the 1st check only:                      │
 │  $ node scripts/check-redirects.mjs previous                                 │
 ╚─────────────────────────────────────────────────────────────────────────────*/
 
 // Node.js
-import { existsSync, statSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { existsSync, statSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -27,6 +29,7 @@ import {
   composeError,
   composeErrorList,
   prefixWithSlash,
+  getConfig,
   getNavLinksSet,
   getRedirects,
 } from './common.mjs';
@@ -36,7 +39,7 @@ import {
  * @typedef {import('./common.mjs').DocsConfig} DocsConfig
  * @typedef {import('./common.mjs').Sidebars} Sidebars
  * @typedef {import('./common.mjs').SidebarItem} SidebarItem
- * @typedef {{ok: true} | {ok: false; error: string}} CheckResult
+ * @typedef {import('./common.mjs').CheckResult} CheckResult
  */
 
 /**
@@ -281,8 +284,7 @@ const checkUpstream = async (localConfig) => {
 };
 
 const main = async () => {
-  /** @type {Readonly<DocsConfig>} */
-  const config = Object.freeze(JSON.parse(readFileSync('./docs.json', 'utf8')));
+  const config = getConfig();
   console.log(); // intentional break
 
   // Creating the temporary directory

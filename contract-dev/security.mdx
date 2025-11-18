@@ -108,6 +108,40 @@ Replay protection is a security mechanism that prevents an attacker from [reusin
 }
 ```
 
+## Unconditional accepting of external messages
+
+Incoming [external messages](/foundations/messages/external-in) do not transfer funds. Receiving smart contract must pay for their processing from its balance. Upon receiving an external message, a smart contract can spend some free gas ([`gas_credit`](/foundations/config#param-20-and-21%3A-gas-prices)) in order to decide whether it is ready to accept it, and then pay for its further processing.
+
+External messages are usually accepted through the [`ACCEPT`](/tvm/instructions#f800-accept) TVM instruction, which sets `gas_limit` to its maximum possible value specified in the network configuration, and sets `gas_credit` to zero. From this point on, the contract will have to pay for the entire processing of the incoming message.
+
+Therefore, if `ACCEPT` is not guarded by a condition, an attacker might repeatedly send messages, and spend the entire balance of the contract.
+
+The [`SETGASLIMIT`](/tvm/instructions#f801-setgaslimit) instruction can lead to the same issue.
+
+### Vulnerable code
+
+```func
+() recv_external(slice in_msg) {
+    accept_message();
+    ;; ...
+}
+```
+
+### Secure implementation
+
+Checks before accepting an external message vary by use case. The following example is a part of [wallet v3 code](https://github.com/ton-blockchain/ton/blob/53ec9684bd213983e1fe0f7610d3e3453a4ec628/crypto/smartcont/wallet3-code.fc), that doesn't accept a message if it isn't signed by the wallet's owner.
+
+```func
+() recv_external(slice in_msg) impure {
+    ;; parse message and contract storage (omitted)
+    throw_unless(33, msg_seqno == stored_seqno);
+    throw_unless(34, subwallet_id == stored_subwallet);
+    throw_unless(35, check_signature(slice_hash(in_msg), signature, public_key));
+    accept_message();
+    ;; handle the message (omitted)
+}
+```
+
 ## Invalid throw values
 
 Exit codes `0` and `1` indicate normal execution of the compute phase of the transaction. Execution can be unexpectedly aborted by calling a `throw` directly with exit codes `0` and `1`. This can make debugging very difficult since such aborted execution would be indistinguishable from a normal one.
