@@ -1,0 +1,134 @@
+# Listens for issue comments and emoji reactions in PRs
+# and creates appropriate review comments
+name: 💬 Commentator
+
+env:
+  HUSKY: 0
+  NODE_VERSION: 20
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-commentator
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    if: |
+      ((github.event_name == 'issue_comment' && github.event.issue.pull_request != null) || (github.event_name == 'pull_request_review_comment')) &&
+      (github.event.comment.body == 'ping' || startsWith(github.event.comment.body, 'ping ')) &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.author_association)
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          API="https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.number }}/comments"
+          COMMENT="pong"
+          BY_MAINTAINER=${{ contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.author_association) && 'true' || 'false' }}
+          if [ "$BY_MAINTAINER" = "true" ]; then
+            COMMENT="${COMMENT}\n\nYou are either owner, member, or collaborator"
+          else
+            COMMENT="${COMMENT}\n\nYou are not an owner, member, or collaborator."
+          fi
+          curl -sS -o /dev/null -L -X POST "$API" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -H "Content-Type: application/json" \
+            -d "{\"body\":\"${COMMENT}\"}"
+
+  fmt:
+    name: "Formatting changes"
+    runs-on: ubuntu-latest
+    # /fmt comment from a trusted commenter in a PR
+    if: |
+      (
+        (github.event_name == 'issue_comment' && github.event.issue.pull_request != null) ||
+        (github.event_name == 'pull_request_review_comment')
+      ) &&
+      (github.event.comment.body == '/fmt' || startsWith(github.event.comment.body, '/fmt ')) &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          corepack enable
+          npm ci
+
+      - name: Get changed MDX and Markdown files
+        id: changed-files
+        uses: tj-actions/changed-files@24d32ffd492484c1d75e0c0b894501ddb9d30d62 # v47
+        with:
+          files: |
+            **.md
+            **.mdx
+
+      - name: Create review comments for each formatted file
+        env:
+          ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
+        run: |
+          set -euo pipefail
+          if [ -z $(echo -e "${ALL_CHANGED_FILES[@]}" | tr -d '[:space:]') ]; then
+            echo -e 'No relevant files affected!'
+            exit 0
+          fi
+          echo -e 'Creating review comments for each formatted (modified) MDX and Markdown file affected by this PR:'
+          # Preparations
+          jq_inplace() { jq "${@:2}" "$1" > "${1}.tmp" && mv "${1}.tmp" "$1"; }
+          # Sidecar must exist (selection may be empty when approving clean PRs)
+          SIDECAR="$RUN_DIR/review/index.json"
+          if [ ! -f "$SIDECAR" ]; then
+            echo "Sidecar not found: $SIDECAR" >/dev/null 2>&1
+            exit 1
+          fi
+          COMMIT_ID="$(jq -r '.commit_id // empty' "$SIDECAR")"
+          if [ -z "$COMMIT_ID" ]; then
+            echo "commit_id missing in sidecar; aborting." >/dev/null 2>&1
+            exit 1
+          fi
+          echo '{"body": "Please apply the formatting suggestions.", "event": "COMMENT", "comments": []}' > payload.json
+          for file in ${ALL_CHANGED_FILES}; do
+            npx remark --quiet --frail --silently-ignore -o "$file"
+            ( # try
+              git diff --quiet "$file"
+            ) || ( # catch — there are differences and formatting did something
+              jq_inplace payload.json ".comments += [{path: \"${file}\", subject_type: \"file\", side: \"RIGHT\", start_side: \"RIGHT\", commit_id: \"${COMMIT_ID}\", body: \"\`\`\`\`\`suggestion\\n$(cat "$file")\\n\`\`\`\`\`\"}]"
+            )
+          done
+          COMMENTS_COUNT=$(jq -r '.comments | length' payload.json)
+          if [ "$COMMENTS_COUNT" -eq 0 ]; then
+            echo -e '\nNo comments'
+            exit 0
+          fi
+          echo -e '\nSubmitting comments'
+          API="https://api.github.com/repos/${{ github.repository }}/pulls/${{ github.event.number }}/reviews"
+          HTTP_CODE=$(curl -sS -o /dev/null -w "%{http_code}" -L -X POST "$API" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -H "Content-Type: application/json" \
+            -d @payload.json || true)
+          echo -e "GitHub API HTTP: ${HTTP_CODE:-<none>}"
+          if ! [[ "$HTTP_CODE" =~ ^[0-9]{3}$ ]] || [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo -e "Failed to submit a PR review"
+            exit 1
+          fi
