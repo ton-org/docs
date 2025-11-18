@@ -1,9 +1,75 @@
 ---
-title: "How to transfer NFT item"
-sidebarTitle: "How to transfer NFT item"
+title: "How to transfer an NFT"
+sidebarTitle: "How to transfer"
 ---
 
 import { Aside } from '/snippets/aside.jsx';
-import { Stub } from '/snippets/stub.jsx';
 
-<Stub issue="668" />
+NFT transfer is an operation specified in [TEP 0062](/standard/tokens/nft/how-it-works#transfer-nft-item). Its implementation must comply with this standard, and NFT item contracts must support the logic described there. The NFT transfer message is also specified and must comply with the corresponding [TL-B scheme](/standard/tokens/nft/how-it-works#transfer-nft-item). This scheme involves, among other things,
+
+- `forward_amount`: the amount of nanotons to be sent to the destination address;
+- `forward_payload`: optional custom data that should be sent to the destination address.
+
+For the `forward_payload` field there are specific requirements:
+
+- In the case of a simple comment, `forward_payload` must starts with `0x00000000` and the comment must be contained in the remainder of the `forward_payload`. In turn, if the comment
+  - begins with the byte `0xff`, the remainder is a "binary comment", which should not be displayed to the end user as text (only as hex dump if necessary). The intended use of "binary comments" is, e.g., to contain a purchase identifier for payments in a store, to be automatically generated and processed by the store's software.
+  - does not begin with the byte `0xff`, the comment is a text one; it can be displayed "as is" to the end user of a wallet.
+- If `forward_payload` contains a binary message for interacting with the destination smart contract, then there are no prefixes.
+
+Use a wallet app that supports NFTs (for example, [Tonkeeper](https://tonkeeper.helpscoutdocs.com/article/47-how-to-send-nft-to-another-wallet)) and follow its guide. Alternatively, perform the transfer manually. The example below illustrates a programmatic transfer:
+
+<Aside
+  type="danger"
+  title="Funds at risk"
+>
+  Beware that API keys and mnemonic must not be committed or shared publicly.
+
+  A better approach is to use a `.env` file that is excluded from repository with `.gitignore`. For GitHub CI purposes, consult [their documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
+</Aside>
+
+```typescript
+import { WalletContractV5R1, TonClient, Address, toNano } from "@ton/ton";
+
+import { mnemonicToPrivateKey } from "@ton/crypto";
+
+import { AssetsSDK, createApi } from "@ton-community/assets-sdk";
+
+async function main() {
+    const client = new TonClient({
+        endpoint: "https://toncenter.com/api/v2/jsonRPC",
+    });
+
+    const MNEMONIC = process.env.MNEMONIC as string; // set via environment
+    const keyPair = await mnemonicToPrivateKey(MNEMONIC.split(" "));
+
+    const wallet = WalletContractV5R1.create({
+        workchain: 0,
+        publicKey: keyPair.publicKey,
+    });
+
+    const provider = client.provider(wallet.address);
+    const sender = wallet.sender(provider, keyPair.secretKey);
+
+    const NETWORK = "testnet";
+    const api = await createApi(NETWORK);
+
+    const sdk = AssetsSDK.create({
+        api,
+        sender,
+    });
+
+    const NFT_ADDRESS = Address.parse("<NFT_ITEM_ADDR>");
+    const nftItem = await sdk.openNftItem(NFT_ADDRESS);
+
+    const RECEIVER_ADDRESS = Address.parse("<RECEIVER_ADDR>");
+    await nftItem.send(sender, RECEIVER_ADDRESS, { value: toNano(10) });
+}
+
+void main();
+```
+
+where:
+
+- `<NFT_ITEM_ADDR>` — the address of the NFT item to be transferred.
+- `<RECEIVER_ADDR>` — the address of the recipient.
