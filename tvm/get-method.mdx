@@ -4,14 +4,14 @@ title: "Get methods"
 
 import { Aside } from '/snippets/aside.jsx';
 
-Get methods are smart contract methods that are supposed to be executed off-chain. They are useful for structured retrieval of data from smart contract ([example](/standard/tokens/nft/reference#return-collection-data)), and for any logic that is a part of a smart contract logic but is needed off-chain ([example](/standard/tokens/nft/reference#return-item-address-by-index)). Under the hood of APIs this happens by fetching the actual state of the smart contract from blockchain and executing TVM to get the result. This process is purely read-only and does not modify blockchain state in any way.
+Get methods are smart contract methods that are supposed to be executed off-chain. They are useful for structured retrieval of data from a smart contract ([example](/standard/tokens/nft/reference#return-collection-data)), and for any logic that is a part of a smart contract but is needed off-chain ([example](/standard/tokens/nft/reference#return-item-address-by-index)). Under the hood of APIs, this happens by fetching the actual state of the smart contract from the blockchain and executing TVM to get the result. This process is purely read-only and does not modify the blockchain state in any way.
 
 ## Defining
 
-Get methods are processed by the [function selector](/tvm/registers#c3-%E2%80%94-function-selector). By convention, ID of a get method is calculated as `crc16("name") | 0x10000` where `name` is set by developer. This simplifies practical usage because a human-readable name has to be used instead of some arbitrary number.
+Get methods are processed by the [function selector](/tvm/registers#c3-%E2%80%94-function-selector). By convention, the ID of a get method is calculated as `crc16("name") | 0x10000` where `name` is set by the developer. This simplifies practical usage because a human-readable name has to be used instead of some arbitrary number.
 
 <Aside type="note">
-  Algorithm used for hashing is CRC‑16/XMODEM (poly=0x1021, init=0x0000, refin=false, refout=false, xorout=0x0000).
+  The algorithm used for hashing is CRC‑16/XMODEM (poly=0x1021, init=0x0000, refin=false, refout=false, xorout=0x0000).
 </Aside>
 
 A very minimal example of a smart contract that has a get method that follows the ID convention:
@@ -20,11 +20,11 @@ A very minimal example of a smart contract that has a get method that follows th
 "Asm.fif" include
 
 <{
-  // ID from top of the stack is compared with 97865
+  // The ID from the top of the stack is compared with 97865
   97865 EQINT
-  // if ID != 97865, a 11 error is thrown by convention
+  // If ID != 97865, an 11 error is thrown by convention
   11 THROWIFNOT
-  // otherwise, 123 is pushed as result
+  // Otherwise, 123 is pushed as the result
   123 PUSHINT
 }>s
 ```
@@ -58,11 +58,11 @@ get fun get_x(): int {
 
 ## Executing
 
-In order to execute a get method, actual state of the smart contract has to be fetched, and TVM has to be executed with [c7](/tvm/registers#c7-%E2%80%94-environment-information-and-global-variables) initialized and desired parameters pushed on stack.
+In order to execute a get method, the actual state of the smart contract has to be fetched, and TVM has to be executed with [c7](/tvm/registers#c7-%E2%80%94-environment-information-and-global-variables) initialized and the desired parameters pushed on the stack.
 
 ### Local way
 
-With all the required values known, it is possible to execute a get method completely locally. Minimal example that uses placeholder c7 for simplicity, as it is only necessary when get method uses data from it during execution:
+With all the required values known, it is possible to execute a get method completely locally. A minimal example that uses a placeholder c7 for simplicity, as it is only necessary when the get method uses data from it during execution:
 
 ```fift
 "Asm.fif" include
@@ -91,22 +91,22 @@ PROGRAM{
 97865 code data c7 runvmctx .s
 // result: 123 0 C{96A296D224F285C67BEE93C30F8A309157F0DAA35DC5B87E410B78630A09CFC7}
 // where:
-// 123 is the value returned by get method
-// 0 is exit code
-// C{...} is new data cell
+// 123 is the value returned by the get method
+// 0 is the exit code
+// C{...} is a new data cell
 ```
 
-Note that in case if get method uses some values from c7, for example with instructions such as `NOW` or `MYCODE`, the c7 tuple should be populated accordingly to its [structure](/tvm/registers#c7-%E2%80%94-environment-information-and-global-variables).
+Note that if the get method uses some values from c7, for example with instructions such as `NOW` or `MYCODE`, the c7 tuple should be populated according to its [structure](/tvm/registers#c7-%E2%80%94-environment-information-and-global-variables).
 
 ### Decentralized way
 
-The process of fetching actual contract state and initializing c7 can be handled by [liteserver](/ecosystem/node/overview) for easier execution. In order to execute a get method via liteserver, a `liteServer.runSmcMethod` request should be sent, according to [schema](https://github.com/ton-blockchain/ton/blob/f58297f1b668c7b49e8b30b65062951ca7c18acc/tl/generate/scheme/lite_api.tl#L90).
+The process of fetching the actual contract state and initializing c7 can be handled by [liteserver](/ecosystem/node/overview) for easier execution. In order to execute a get method via liteserver, a `liteServer.runSmcMethod` request should be sent, according to the [schema](https://github.com/ton-blockchain/ton/blob/f58297f1b668c7b49e8b30b65062951ca7c18acc/tl/generate/scheme/lite_api.tl#L90).
 
 In that request, `params:bytes` is a [BoC](/foundations/serialization/boc) of a serialized [`VmStack`](https://github.com/ton-blockchain/ton/blob/f58297f1b668c7b49e8b30b65062951ca7c18acc/crypto/block/block.tlb#L891) object containing the stack with arguments.
 
-The response follows `liteServer.runMethodResult` [schema](https://github.com/ton-blockchain/ton/blob/f58297f1b668c7b49e8b30b65062951ca7c18acc/tl/generate/scheme/lite_api.tl#L39). Apart from values used for initialization, and proofs, the result is included as `result:mode.2?bytes` which is a BoC of a serialized `VmStack` object, similarly to the request.
+The response follows the `liteServer.runMethodResult` [schema](https://github.com/ton-blockchain/ton/blob/f58297f1b668c7b49e8b30b65062951ca7c18acc/tl/generate/scheme/lite_api.tl#L39). Apart from the values used for initialization and proofs, the result is included as `result:mode.2?bytes`, which is a BoC of a serialized `VmStack` object, similarly to the request.
 
-Example execution via liteclient that handles serialization:
+An example execution via liteclient that handles serialization:
 
 ```text
 runmethod UQBKgXCNLPexWhs2L79kiARR1phGH1LwXxRbNsCFF9doczSI get_public_key
@@ -121,7 +121,7 @@ result:  [ 370018697274653637909640796505742190243510726229256787010608218283510
 
 ### High-level API
 
-The easiest path is using a high-level API, such as [Toncenter](/ecosystem/api/toncenter/v3/legacy-v2-compatible/run-smart-contract-get-method). It has a `/api/v3/runGetMethod` endpoint that takes smart contract address, get method name and arguments and returns the resulting stack. Example usage:
+The easiest path is using a high-level API, such as [Toncenter](/ecosystem/api/toncenter/v3/legacy-v2-compatible/run-smart-contract-get-method). It has a `/api/v3/runGetMethod` endpoint that takes a smart contract address, a get method name, and arguments and returns the resulting stack. Example usage:
 
 ```bash
 curl -X 'POST' \
@@ -140,7 +140,7 @@ curl -X 'POST' \
 }'
 ```
 
-Result for this call is presented below. Stack in this case contains a single cell element in BoC format.
+The result for this call is presented below. The stack in this case contains a single cell element in BoC format.
 
 ```text
 {
