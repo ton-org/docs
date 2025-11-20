@@ -10,13 +10,15 @@ import { Aside } from '/snippets/aside.jsx';
   TON Blockchain uses Tolk as the official language. Other languages are still available, and legacy codebases exist, but Tolk is the only actively supported language. The FunC compiler, for instance, is no longer maintained.
 </Aside>
 
-**FunC** is a domain-specific, statically typed language with C-like syntax designed to write smart contracts on TON. It can be characterized as an intermediate-level language sitting on top of the [Fift](/languages/fift) assembly language.
-Example of a FunC method for sending funds:
+FunC is a domain-specific, statically typed language with C-like syntax designed to write smart contracts on TON. It can be characterized as an intermediate-level language sitting on top of the [Fift](/languages/fift) assembly language.
+
+Example of a FunC function for sending funds:
 
 ```func
 () send_money(slice address, int amount) impure inline {
     var msg = begin_cell()
-        .store_uint(0x10, 6) ;; It sets the message to be non-bounceable.
+        ;; Set the message to be non-bounceable
+        .store_uint(0x10, 6)
         .store_slice(address)
         .store_coins(amount)
         .end_cell();
@@ -25,44 +27,41 @@ Example of a FunC method for sending funds:
 }
 ```
 
-The method receives two parameters: the [`address`](/foundations/addresses/overview) to send the money to,
-and the `amount` to send. It does not return a value, indicated by the [`()`](/languages/func/types#tensor-types) to the left of the method name `send_money`.
+where
 
-The method uses the `impure` and `inline` [specifiers](/languages/func/functions#specifiers), which are flags that tell the compiler to process
-the method in a specific way.
-
-`send_money` first creates the [message](/foundations/messages/ordinary-tx) `msg` to send, employing a [cell builder](/tvm/builders-and-slices), since all messages are encoded as [cells](/foundations/serialization/cells). It proceeds as the following:
-
-1. [`begin_cell`](/languages/func/stdlib#begin-cell) creates a new cell builder
-1. [`store_uint`](/languages/func/stdlib#store-uint) sets the [message flags](/foundations/messages/internal)
-1. [`store_slice`](/languages/func/stdlib#store-slice) stores the receiving address
-1. [`store_coins`](/languages/func/stdlib#store-coins) records the amount to send
-1. [`end_cell`](/languages/func/stdlib#end-cell) finalizes the builder and turns it into a cell
-
-Finally, the [`send_raw_message`](/languages/func/stdlib#send-raw-message) function sends the message, where the parameter `64` describes a [sending mode](/foundations/messages/internal).
+- [`()`](/languages/func/types#tensor-types) is the return type, that stands for "do not return value", similar to `void` in C;
+- `send_money` is the name of the function;
+- `slice address` is the first parameter, address to send money to; it's type is [`slice`](/languages/func/types#atomic-types);
+- `int amount` is the second parameter, amount to be sent; it's type is [`int`](/languages/func/types#atomic-types);
+- `impure inline` are [specifiers](/languages/func/functions#specifiers), which are flags that tell the compiler to process the method in a specific way;
+- `var msg = ...` defines a variable without specifying its type; it will hold a [cell](/foundations/serialization/cells) with a [message](/foundations/messages/overview);
+- [`begin_cell()`](/languages/func/stdlib#begin-cell) creates a [cell builder](/tvm/builders-and-slices);
+- [`store_uint`](/languages/func/stdlib#store-uint), [`store_slice`](/languages/func/stdlib#store-slice), [`store_coins`](/languages/func/stdlib#store-coins) methods store data into the builder:
+  - [flags](/foundations/messages/internal);
+  - receiving address;
+  - amount on Toncoin to attach to the message.
+- [`.end_cell()`](/languages/func/stdlib#end-cell) method finalizes the builder and turns it into a cell;
+- [`send_raw_message`](/languages/func/stdlib#send-raw-message) function sends the message, where the parameter `64` describes a [sending mode](/foundations/messages/internal).
 
 ## Compiler
 
-The compiler converts FunC programs into [Fift](/languages/fift) assembly code. The Fift assembly code is then compiled down to the
-[TON Virtual Machine](/tvm/overview) bitcode by the [Fift](/languages/fift) compiler.
+The compiler converts FunC programs into [Fift](/languages/fift) assembly code. The Fift assembly code is then compiled down to the [TON Virtual Machine](/tvm/overview) bitcode by the [Fift](/languages/fift) compiler.
 
 Developers can use the compiled bitcode, structured as a [bag of cells](/foundations/serialization/boc) like all data in the TON blockchain, to test smart contracts, send messages, or execute it in a local TVM instance.
 
 ### End-to-end tooling
 
-To compile FunC files to bitcode, the `func-js` NPM package is the way to go.
-It requires [Node.js](https://nodejs.org/en/download) v22 or later.
+The easiest way to install the FunC compiler is the [`@ton-community/func-js`](https://www.npmjs.com/package/@ton-community/func-js) NPM package. It requires [Node.js](https://nodejs.org/en/download) v22 or later.
 
-The `func-js` package integrates the FunC and [Fift](/languages/fift) compilers
-to produce bitcode directly from the FunC source code, without manually invoking Fift.
+The package has both the FunC and [Fift](/languages/fift) compilers, and produces bitcode directly from the FunC source code, without manually invoking Fift.
 
-To install `func-js`, run the following command in the project root folder:
+To install it, run the following command in the project root folder:
 
 ```bash
 npm i @ton-community/func-js
 ```
 
-Next, run the following command to compile a specific FunC file:
+Then, to compile a specific FunC file, run the following command:
 
 ```bash
 npx func-js ./contract.fc --boc ./output.boc
@@ -70,32 +69,29 @@ npx func-js ./contract.fc --boc ./output.boc
 
 where `contract.fc` is the FunC source file in the project root, and `output.boc` is the compiled bitcode output.
 
-<Aside>
-  The recommended place for the FunC standard library file is the project root folder as well. Download `smartcont_lib.zip` from the [GitHub repository](https://github.com/ton-blockchain/ton/releases/tag/v2025.07), extract it, and copy `stdlib.fc` to the project root.
-</Aside>
+FunC standard library is supplied separately from the language. Download `smartcont_lib.zip` from the [latest release](https://github.com/ton-blockchain/ton/releases), extract it, and copy `stdlib.fc` to the project root.
 
-Alternatively, use the Blueprint to start a project pre-configured for development in FunC.
-See the [Blueprint](/contract-dev/blueprint/overview) section for setup instructions.
+Alternatively, use the [Blueprint](/contract-dev/blueprint/overview) to start a project pre-configured for development in FunC.
 
 ### Compile manually using the binaries
 
-Prebuilt FunC compiler binaries for Windows, macOS (Intel or Arm64), and Ubuntu are available on the [GitHub](https://github.com/ton-blockchain/ton/releases/tag/v2025.07).
+Prebuilt FunC compiler binaries for Windows, macOS (Intel or ARM64), and Ubuntu are available on the [GitHub](https://github.com/ton-blockchain/ton/releases).
 
-**1. Download the corresponding binary for your operating system:**
+1. Download the corresponding binary for operating system:
 
-- Linux: `func-linux-x86_64` (Intel/AMD) and `func-linux-arm64` (Arm64)
-- Mac: `func-mac-x86-64` (Intel/AMD) and `func-mac-arm64` (Arm64)
-- Windows: `func.exe`
+   - Linux: `func-linux-x86_64` (Intel/AMD) and `func-linux-arm64` (ARM64)
+   - Mac: `func-mac-x86-64` (Intel/AMD) and `func-mac-arm64` (ARM64)
+   - Windows: `func.exe`
 
-Rename the executable, for example, to `func`, for easier use on the command line, and add it to your system’s `PATH`.
+   Rename the executable, for example, to `func`, for easier use on the command line, and add it to system's `PATH`.
 
-**2. Download the FunC standard library.**
+1. Download the FunC standard library.
 
-Get the `smartcont_lib.zip` from the same [GitHub](https://github.com/ton-blockchain/ton/releases/tag/v2025.07), extract it, and copy `stdlib.fc` to your project root.
+   Get the `smartcont_lib.zip` from the same [GitHub](https://github.com/ton-blockchain/ton/releases/tag/v2025.07), extract it, and copy `stdlib.fc` to project root.
 
-**3. Compile a FunC file to Fift assembly code.**
+1. Compile a FunC file to Fift assembly code.
 
-Run the following command in the project root:
+   Run the following command in the project root:
 
 ```bash
 func contract.fc -o output.fif
@@ -103,8 +99,7 @@ func contract.fc -o output.fif
 
 where `contract.fc` is the FunC file to compile, and `output.fif` is the generated Fift output.
 
-To compile the generated Fift file  `output.fif` further down to TVM bitcode, use the Fift compiler.
-See the [Fift](/languages/fift) for download and usage instructions.
+To compile the generated Fift file `output.fif` further down to TVM bitcode, use the Fift compiler. See the [Fift](/languages/fift) for download and usage instructions.
 
 <Aside>
   The last FunC compiler version is v2025.07. The FunC compiler is no longer developed. New releases are focused on the [Tolk](https://github.com/ton-blockchain/ton/releases/latest) compiler.
@@ -117,28 +112,17 @@ See the [Fift](/languages/fift) for download and usage instructions.
 </Aside>
 
 - [Challenge 1: Simple NFT deploy](https://github.com/romanovichim/TONQuest1/)
-
 - [Challenge 2: Chatbot contract](https://github.com/romanovichim/TONQuest2/)
-
 - [Challenge 3: Jetton vending machine](https://github.com/romanovichim/TONQuest3/)
-
 - [Challenge 4: Lottery/raffle](https://github.com/romanovichim/TONQuest4/)
-
 - [Challenge 5: Create UI to interact with the contract in 5 minutes](https://github.com/romanovichim/TONQuest5/)
-
 - [Challenge 6: Analyzing NFT sales on the Getgems marketplace](https://github.com/romanovichim/TONQuest6/)
-
 - [TON hello world Part 2: guide for writing your first smart contract](https://ton-community.github.io/tutorials/02-contract/)
-
 - [TON hello world Part 4: guide for testing your first smart contract](https://ton-community.github.io/tutorials/04-testing/)
-
 - [10 lessons for developing contracts in FunC](https://github.com/romanovichim/TonFunClessons_Eng/) — [Russian version](https://github.com/romanovichim/TonFunClessons_ru/)
-
 - [FunC quiz](https://t.me/toncontests/60/) — a short Telegram quiz focused on FunC, with a few general TON questions.
 
 ## Contests
-
-You can review past competitions to learn more:
 
 | Contest           | Tasks                                                     | Solutions                                                                                                                                                           |
 | :---------------- | :-------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
