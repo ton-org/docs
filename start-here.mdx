@@ -5,7 +5,7 @@ icon: rocket
 
 import { Aside } from "/snippets/aside.jsx";
 
-This documentation is divided into several sections, with lower-level details appearing later in the list. For example, an existing standard contract may already solve the problem, so there may be no need to implement a new one.
+This documentation is divided into several sections, with lower-level details appearing later in the list. For example, an existing standard contract may already solve the problem, so there may be no need to implement a new one, but lower level sections will describe details about the standard contract implementation.
 
 |                        |                                                                                                                                                                  |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -24,7 +24,7 @@ This documentation is divided into several sections, with lower-level details ap
   This is a condensed description of TON. The rest of the documentation may assume that all of this is already known to the reader.
 </Aside>
 
-_TON_ is a [blockchain](https://en.wikipedia.org/wiki/Blockchain). It provides a distributed platform for storing data and code, as well as running computations, all the ingredients to host applications. Roughly speaking, it works as if it were a single server executing all the code. Such applications are called _smart-contracts_.
+_TON_ is a [blockchain](https://en.wikipedia.org/wiki/Blockchain). It provides a distributed platform for storing data and code, as well as running computations, all the ingredients to host applications. Roughly speaking, it works as if it were a single server executing all the code. The hosted applications are called _smart-contracts_.
 
 The platform runs on a set of servers, called [nodes](/ecosystem/node/overview). Most important type of nodes, _validators_, are owned by individuals or organizations with a large stake in TON and [great interest](/ecosystem/staking/overview) in keeping the platform safe, fair, and operational. Validators have to reach [consensus](https://en.wikipedia.org/wiki/Consensus_\(computer_science\)) on the state of the blockchain. Typically, the process takes 5 seconds to reach [transaction finality](/payments/overview#transaction-finality), a time to mint a new block.
 
@@ -46,7 +46,7 @@ To be freely scalable, each workchain is split into _shards_. The number of shar
 
 The nodes that run the blockchain interact via the [ADNL](/foundations/whitepapers/ton#3-1-abstract-datagram-network-layer) protocol. User-facing applications usually use [servers](/ecosystem/api/overview) that proxy JSON HTTP requests into the ADNL network. The official version of such a proxy server is provided by the [liteserver](/ecosystem/node/overview#full-node-modes) software. There are public instances of liteserver, so developers are not required to host one on their own servers.
 
-ADNL works over [TCP](https://en.wikipedia.org/wiki/Transmission_Control_Protocol), so it's impossible to connect to ADNL from a web page. Browsers [intentionally](https://www.w3.org/TR/tcp-udp-sockets/) do not provide an API to send arbitrary TCP traffic. Servers do not have this limitation, as they can interact with the blockchain over either ADNL or HTTP.
+ADNL works over [TCP](https://en.wikipedia.org/wiki/Transmission_Control_Protocol), so it's impossible to connect to ADNL from a web page. Browsers [intentionally](https://www.w3.org/TR/tcp-udp-sockets/) do not provide an API to send arbitrary TCP traffic. Servers do not have this limitation, as they can interact with the blockchain over ADNL, either by raw TCP or by wrapping ADNL through HTTP.
 
 It's easiest to visualize the blockchain as a set of [accounts](/foundations/addresses/overview). Each account has an address and a status.
 
@@ -61,7 +61,7 @@ Over its lifetime, an account changes its [status](/foundations/status) among fo
 - `nonexist`: There wasn't a single operation with the account, or it was removed. It has neither a balance, nor code.
 - `uninit`: If some Toncoin is transferred to an account, it now exists, but there is still no smart contract code on it. It now has a balance.
 - `active`: After a deploy message (see below) with code and initial data is sent to an account, it becomes active and can process other messages. It now has a balance, code, and internal state.
-- `frozen`: If an account is overdue on its [storage fees](/foundations/fees#storage-fee), it will be frozen until the fees are paid. If the balance becomes too small, the account goes completely bankrupt, is removed, and ceases to exist.
+- `frozen`: If an account is overdue on its [storage fees](/foundations/fees#storage-fee), it will be frozen until the fees are paid. If the overdue amount reaches a maximum limit specified by the blockchain, the account goes completely bankrupt, is removed, and ceases to exist.
 
 The _code_ on an active account is a smart contract. The term _contract_ is often used for an account that holds the code.
 
@@ -85,9 +85,9 @@ Incoming external messages come from an external address, and outgoing external 
 
 The _state_ of the account changes only when it handles messages. Messages also change the account's balance. Usually, to have a state and a balance, and to handle messages, the account must be `active`.
 
-Formally, a message is only an intent: it has a destination, possibly some Toncoin, and data. After the message is handled and all the necessary changes are applied to the blockchain, the message is packed, along with a description of those changes, into a single packet of data, [transaction](/foundations/messages/ordinary-tx). A transaction records the state changes on an account. [Some transactions](/foundations/messages/overview#transactions) might happen without any message.
+Formally, a message is only an intent: it has a destination, possibly some Toncoin, and data. After the message is handled and all the necessary changes are applied to the blockchain, the message is packed, along with a description of those changes, into a single packet of data, called a [transaction](/foundations/messages/ordinary-tx). A transaction records the state changes on an account. [Some transactions](/foundations/messages/overview#transactions) might happen without any message.
 
-A message might also be a [deploy message](/foundations/messages/deploy) if it has `StateInit` structure attached with its initial code and data. When such a message is sent, the hash of `StateInit` must match the destination address. If it does, the code and data are stored in the account at that address, and the account becomes active. Both the code and data stored in the account may change in the future, but its address will remain the same as when it was originally deployed.
+A message might also be a [deploy message](/foundations/messages/deploy) if it has a `StateInit` structure attached with its initial code and data. When such a message is sent, the hash of `StateInit` must match the destination address. If it does, the code and data are stored in the account at that address, and the account becomes active. Both the code and data stored in the account may change in the future, but its address will remain the same as when it was originally deployed.
 
 Internal and incoming external messages execute the account's code. The code is interpreted by [TON Virtual Machine](/tvm/overview) (TVM). It is written in _bitcode_, a binary format specific to TVM. In the future, TVM might support multiple binary languages, _codepages_, but at the moment there is only codepage 0 (`CP0`).
 
@@ -95,9 +95,9 @@ Most development is done in the [Tolk](/languages/tolk/overview), a high-level p
 
 Originally, [Fift](/languages/fift/overview), a Forth-like assembly language, and [FunC](/languages/func/overview), a C-like intermediate-level language, were used for contract development.
 
-When execution [starts](/tvm/initialization), the message and current account state are provided to the code. By the end of execution, the destination account might change its state or code, or send internal or outgoing external messages.
+When execution [starts](/tvm/initialization), the message and current account state are provided to the code. By the end of execution, the account might change its state or code, or send internal or outgoing external messages.
 
-The execution follows a procedure whose steps are called [phases](/foundations/phases). [Fees](/foundations/fees) are deducted during this process. Fees might be deducted from the account's balance or from the Toncoin the message carries, depending on the [mode](/foundations/messages/modes) of the message, or by [explicit choice](/foundations/messages/external-in#accepting-message) made in the contract's code.
+The execution follows a process whose steps are called [phases](/foundations/phases). [Fees](/foundations/fees) are deducted during this process. Fees might be deducted from the account's balance or from the Toncoin the message carries, depending on the [mode](/foundations/messages/modes) of the message, or by [explicit choice](/foundations/messages/external-in#accepting-message) made in the contract's code.
 
 Execution cost is first measured in _gas_ units, then converted to Toncoin. This unit is separate so that if code execution becomes computationally cheaper (or more expensive), validators can vote to change the [price of gas](/foundations/config#param-20-and-21:-gas-prices) in Toncoin.
 
@@ -111,7 +111,7 @@ If something goes wrong, a non-zero [exit code](/tvm/exit-codes) might be return
 
 The most common reason a code is executed is when some account has received a message. Internal messages can only be sent by another contract executing some code, and that contract must have received a message from somewhere too. In the end, every message can be considered part of some _trace_: a tree of messages between accounts that starts with an incoming external message, continues with internal messages, and possibly ends with some outgoing external messages.
 
-When some interaction with the blockchain involves multiple contracts, their code is not executed in the same block. Contracts have to exchange messages with each other, and two such concurrent traces may interleave their messages. This fact is usually referred to as "_asynchronous_ message handling." This feature of TON allows a limit to be placed on the maximum complexity of atomic computation and aids its scalability, but it is important to keep in mind because it might create [race conditions](/contract-dev/security#race-condition-of-messages).
+When some interaction with the blockchain involves multiple contracts, their code is not executed in the same block. Contracts have to exchange messages with each other, and two such concurrent traces may interleave their messages. This fact is usually referred to as "_asynchronous_ message handling." This feature of TON allows a limit to be placed on the maximum complexity of atomic computation and aids its scalability, but it is important to keep it in mind because it might create [race conditions](/contract-dev/security#race-condition-of-messages).
 
 If an external service needs to extract data from the blockchain, it can call a [get method](/tvm/get-method): an arbitrary function implemented in the code deployed to an account. Every call of a get method spawns a separate instance of TVM. Any changes to the blockchain made during the execution of a get method are not committed to the blockchain.
 
@@ -120,15 +120,15 @@ Unlike in [other blockchains](/from-ethereum), get methods cannot be called by o
 - by the time another contract receives the result of such a call, other messages may have been processed and may have changed the result;
 - get methods are executed completely separately, and changes from the blockchain are not guaranteed to be propagated to the server running the code of a get method.
 
-The main user of incoming external messages is a [wallet](/standard/wallets/how-it-works). A wallet is an account with a specific kind of smart contract deployed on it, which can handle incoming external messages, specifically _transfer_ messages. Transfer message is a request to send an internal message to another account. Thus, a wallet transforms incoming external messages to internal messages.
+The main user of incoming external messages is a [wallet](/standard/wallets/how-it-works). A wallet is an account with a specific kind of smart contract deployed on it, which can handle incoming external messages, specifically _transfer_ messages. A transfer message is a request to send an internal message to another account. Thus, a wallet transforms incoming external messages to internal messages.
 
 There are several [implementations](/standard/wallets/comparison) of wallets, with varying extra functionality and protection. [`V5R1`](/standard/wallets/v5) is the latest official general-purpose wallet. The text below describes only the functionality common to most wallets.
 
-A transfer message consists of a destination address and, optionally, an internal message, both serialized and signed with a [private key](https://en.wikipedia.org/wiki/Public-key_cryptography). The wallet stores a public key and uses it to check that a transfer message was signed with the corresponding private key. If the check succeeds, it sends that internal message to the destination address. This ensures only the user (or a service) who knows the private key can use the wallet.
+A transfer message consists of a destination address and, optionally, an internal message, both serialized and signed with a [private key](https://en.wikipedia.org/wiki/Public-key_cryptography). The wallet stores a public key and uses it to check that a transfer message was signed with the corresponding private key. If the check succeeds, it sends that internal message to the destination address. This ensures only the user (or a service) who owns the private key can use the wallet.
 
 Private and public keys are generated in a program or service outside the blockchain. Public key is used in a `StateInit` during the deploy, and determines the address of the wallet account. Keypair is usually derived from a set of 24 random words called a [mnemonic](/standard/wallets/mnemonics).
 
-Before the code of the wallet can be deployed on an account with an incoming external message, some other account has to transfer Toncoin to the wallet account. As external messages cannot have any Toncoin attached to them, if no funds are on the account when it handles an external messages, it cannot pay for the message that deploys a wallet. This transfer to a new wallet account usually comes from an exchange or another user. In testnet, there is [a bot](/contract-dev/testing/testnet-tokens) that sends test coins to an account for free.
+Before the code of the wallet can be deployed on an account with an incoming external message, some other account has to transfer Toncoin to the wallet account. As external messages cannot have any Toncoin attached to them, if no funds are in the account when it handles an external message, it cannot pay for the message that deploys a wallet. The transfer of Toncoin to a wallet account usually comes from an exchange or another user. In testnet, there is [a bot](/contract-dev/testing/testnet-tokens) that sends test coins to an account for free.
 
 Usually, a transfer message is sent without an internal message in its payload and only instructs the wallet to transfer some Toncoin to a destination address. This is the reason this type of smart contract is called a wallet.
 
@@ -168,7 +168,7 @@ In general, a library that converts data structures between cells and the format
 
 So, to interact with the blockchain, a couple of libraries are usually used: one that handles the connection to the blockchain and another that works with the specific type of data sent over that connection.
 
-Not all computation has to be done _on-chain_, i.e., executed inside TVM and paid for with Toncoin. Computing and storing data on the blockchain is significantly more expensive than doing so on a regular CPU. Instead, much of the work can be done in _off-chain_ code, in a regular programming language, before or after sending a request to the blockchain. The recommended development practice is to write a TypeScript library that calls contracts implemented in Tolk.
+Not all computation has to be done _on-chain_, i.e., executed inside TVM and paid for with Toncoin. Computing and storing data on the blockchain is significantly more expensive than doing so on a regular CPU. Instead, much of the work can be done in _off-chain_ code, in a regular programming language, before or after sending a request to the blockchain. The recommended development practice is to write a TypeScript library that calls contracts implemented in Tolk, or use emulator libraries to test the contract, like [TON Sandbox](/contract-dev/testing/overview).
 
 An [explorer](/ecosystem/explorers/overview) is a type of web app that displays information about the current state of accounts (including wallets, Jettons, and NFTs) and the history of transactions.
 
