@@ -2,6 +2,151 @@
 title: "Overview"
 ---
 
-import { Stub } from '/snippets/stub.jsx';
+import { Aside } from '/snippets/aside.jsx';
 
-<Stub issue="108" />
+TON Virtual Machine (TVM) is a [stack-based](https://en.wikipedia.org/wiki/Stack_machine) virtual machine which executes smart contracts on TON blockchain.
+
+TVM is invoked when a message is sent to an account that has deployed contract code, when a get method is called on an account, and in some [more rare cases](/tvm/initialization#stack).
+
+Executing code on same inputs and prior state deterministically produces same outputs, so that validators can agree on whether code was executed correctly.
+
+Every instruction consumes [gas](/tvm/gas). Gas exhaustion stops execution. This limit is imposed so that expensive computations (i.e. infinite loops) cannot be used to exhaust validators' computation resources, causing [denial of service](https://en.wikipedia.org/wiki/Denial-of-service_attack).
+
+## Data model
+
+- TVM has no [random-access memory](https://en.wikipedia.org/wiki/Random-access_memory). Instead it uses a stack of values as a scratchpad.
+- There are no memory addresses. Most instructions either store their parameters directly in the code, or take them from the top of the stack.
+- All values are [immutable](https://en.wikipedia.org/wiki/Immutable_object).
+  Most of the data is stored as immutable tree of [cells](/foundations/serialization/cells).
+- Reading and writing of cells is done with [slices and builders](/tvm/builders-and-slices).
+- There are no function addresses or function pointers. Code is executed from bitcode inside [continuations](/tvm/continuations).
+
+## TVM state
+
+On incoming messages or get method call, a new instance of TVM is started, with a new state. Derivation of the initial state from the message is described in [its own article](/tvm/initialization).
+
+The total state of TVM consists of the following components:
+
+- **Stack**. A regular [stack data structure](https://en.wikipedia.org/wiki/Stack_\(abstract_data_type\)). The vast majority of instructions `pop()` operands from the top and `push()` results back.
+- [**Control registers**](/tvm/registers). A small fixed set of special registers, denoted as `c0`, `c1`, ..., `c5`, and `c7` (`c6` does not exist).
+- [**Gas counter**](/tvm/gas). Tracks remaining computation budget. Each instruction decrements gas. When counter hits zero/negative value, an exception is raised, and the run aborts.
+- **Current continuation (`cc`)**. A special register that stores a list of the next instructions to execute. Similar to the instruction pointer in traditional architectures.
+- **Current codepage (`cp`)**. Determines how to decode the next instruction in `cc`. Different codepages may implement different instruction sets, allowing for adding new features to TVM without affecting old smart contracts. Currently, only codepage `0` (`cp0`) is implemented. Smart contract runs [`SETCP0`](/tvm/instructions#ff-setcp) instruction to explicitly use codepage `0`.
+
+## TVM data types
+
+Values on the stack and inside of registers are of one of the following seven types:
+
+| Type         | Description                                                                                                                 |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| Integer      | 257-bit signed integer. Has the special `NaN` value representing arithmetic faults.                                         |
+| Cell         | Node of a tree with bit string on it (\<= 1023 bits), and up to 4 arrows (refs).                                            |
+| Slice        | Read cursor over a Cell.                                                                                                    |
+| Builder      | Write cursor to construct a new Cell.                                                                                       |
+| Tuple        | List of 0..255 elements of any of seven types. Types of elements can be distinct.                                           |
+| Continuation | Executable Slice with TVM bitcode. [Continuations](https://en.wikipedia.org/wiki/Continuation) are callable like functions. |
+| Null         | Empty value.                                                                                                                |
+
+## Example of a smart contract: counter
+
+Here is a sample contract, written in [Fift](/languages/fift/overview). It implements the following logic:
+
+- If an event is not an internal message, stop execution.
+- Read 32-bit number (`msg_counter`) from internal message's body.
+- Check that it is equal to the 32-bit number stored in `c4` (persistent account storage).
+- Increment it.
+- Save it back to `c4`.
+
+When an account with this code gets an internal message, TVM stack [is initialized](/tvm/initialization#stack) with these values:
+
+1. `s0` (top of the stack), function selector, is `0`. For other events, e.g., external messages or get method calls, selector will be non-zero.
+1. `s1`, message body. The example contract expects exactly 32 bits here.
+1. Three more values `s2`, `s3`, `s4` [are pushed](/tvm/initialization#external%2Finternal-message) by TVM onto a stack. They won't be used in the example. After execution finishes, they'll still be on the stack, and will be silently ignored.
+
+In `Current stack` comments, we represent stack at that moment of execution, keeping its top to the right (e.g., `s2 s1 s0`, where `s0` is the top of the stack).
+
+```fift Fift
+<{
+// Current stack: msg_body selector
+
+// Use codepage 0. Picks the only available instruction set.
+SETCP0
+// This instruction does not affect the stack.
+// Current stack: msg_body selector
+
+// Consume `selector` from the top of the stack.
+// Stop execution if `selector != 0`,
+// i.e. "is not an internal message".
+IFRET
+// Continue execution if we received an internal message.
+// Current stack: msg_body
+
+// Load (LD) unsigned (U) 32-bit integer from a slice.
+// This instruction pops (consumes) a slice from the stack,
+// pushes an integer, and then pushes a new slice with
+// 32 bits cut from it
+32 LDU
+// Current stack: msg_counter msg_body'
+// msg_body' is a slice whose read cursor was moved by 32 bits
+// when we loaded a 32-bit integer.
+// For example, if we had slice x{00000001} on the stack and
+// then invoked 32 LDU, there will be integer `1` and `x{}`
+// (empty slice) on the stack
+
+// Assert the END of a slice (S).
+// These instructions consume a slice and check that it is
+// empty (no more data to read), otherwise it throws an
+// exception, because there was more data than we expected.
+ENDS
+// Current stack: msg_counter
+
+// Push c4 (persistent storage) on the stack.
+// `storage` is a cell
+c4 PUSH
+// Current stack: msg_counter storage
+
+// Convert Cell to a Slice, i.e. make it readable
+CTOS
+// Current stack: msg_counter storage_slice
+
+// Read 32-bit unsigned integer from `storage_slice`
+32 LDU
+// Current stack: msg_counter storage_counter storage_slice'
+
+// Assert there is no more data in the storage
+ENDS
+// Current stack: msg_counter storage_counter
+
+// Duplicate s0 (top of stack) under two top values
+TUCK
+// Current stack: storage_counter msg_counter storage_counter
+
+// Check counters are equal
+EQUAL
+// Current stack: storage_counter msg_counter==storage_counter?
+
+// Throw an exception with code 33 if it is not equal
+33 THROWIFNOT
+// Current stack: storage_counter
+
+// Increase counter
+INC
+// Current stack: storage_counter+1
+
+// Create an empty Builder
+NEWC
+// Current stack: storage_counter+1 builder
+
+// Store (ST) unsigned (U) 32-bit integer `storage_counter+1` to a builder
+32 STU
+// Current stack: builder'
+
+// Finalize Builder to a Cell
+ENDC
+// Current stack: new_storage
+
+// Save `new_storage` to c4 (persistent storage)
+c4 POP
+// Current stack: (no values)
+}>
+```

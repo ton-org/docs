@@ -1,0 +1,58 @@
+---
+title: "Send message"
+---
+
+Sending a message is the most frequent action that a smart contract performs during the [action phase](/foundations/phases#action-phase). It can get into the [out action list](https://github.com/ton-blockchain/ton/blob/5c0349110bb03dd3a241689f2ab334ae1a554ffb/crypto/block/block.tlb#L411) by:
+
+- The [`SENDRAWMSG`](/tvm/instructions#fb00-sendrawms) instruction.
+- The [`SENDMSG`](/tvm/instructions#fb08-sendmsg) instruction.
+- The [`POPCTR`](/tvm/instructions#ed5-popctr) instruction.
+
+The sending message action consists of:
+
+- an 8-bit bitmask [`mode`](/foundations/messages/modes) specifying the way of sending;
+- a cell containing the message to send, which is serialized as `MessageRelaxed` type.
+
+## Message normalization
+
+During the process of sending, the original message is normalized. In the final message that is sent to the destination address, the following changes are applied to the fields of the [`CommonMsgInfoRelaxed`](https://github.com/ton-blockchain/ton/blob/5c0349110bb03dd3a241689f2ab334ae1a554ffb/crypto/block/block.tlb#L135-L140) type:
+
+- `ihr_disabled` is set to `true`;
+- `bounced` is set to `false`;
+- `fwd_fee` is set to actual forward fee dedicated to the validators of the destination address shard;
+- `src` address is set to address of the sender smart contract;
+- `created_at` is set to the current Unix timestamp;
+- `created_lt` is set to the logical time of that action.
+
+As a result, when composing a message cell, it is acceptable to:
+
+- fill the `ihr_disabled`, `bounced`, `fwd_fee`, `created_at`, and `created_lt` fields with any values;
+- fill the `src` field with [`addr_none`](/foundations/addresses/overview#external-addresses).
+
+If the message cell does not fit into the maximum allowed size (1023 bits) after the normalization, the process is repeated with different ways to pack it:
+
+- with `init` packed in a separate cell, referred from the root cell;
+- with `init` and `body` packed in separate cells.
+
+If after the second attempt the message is still too large, the exception is thrown in the action phase. This can lead to rejecting the whole action phase, sending a bounce message, or skipping this action. The exact behavior depends on the `mode` bitmask of the action.
+
+## Serialization
+
+```tlb
+action_send_msg#0ec3c86d mode:(## 8) 
+    out_msg:^(MessageRelaxed Any) = OutAction;
+
+out_list_node$_ prev:^Cell action:OutAction = OutListNode;
+
+message$_ {X:Type} info:CommonMsgInfoRelaxed
+    init:(Maybe (Either StateInit ^StateInit))
+    body:(Either X ^X) = MessageRelaxed X;
+
+int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
+    src:MsgAddress dest:MsgAddressInt 
+    value:CurrencyCollection extra_flags:(VarUInteger 16) fwd_fee:Grams
+    created_lt:uint64 created_at:uint32 = CommonMsgInfoRelaxed;
+
+ext_out_msg_info$11 src:MsgAddress dest:MsgAddressExt
+    created_lt:uint64 created_at:uint32 = CommonMsgInfoRelaxed;    
+```

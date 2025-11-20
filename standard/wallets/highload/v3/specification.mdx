@@ -4,6 +4,7 @@ sidebarTitle: "Specification"
 ---
 
 import { Aside } from '/snippets/aside.jsx';
+import { Image } from '/snippets/image.jsx';
 
 This page provides a complete technical specification for Highload Wallet v3, covering storage structure, message formats, replay protection, limitations, and security mechanisms.
 
@@ -29,7 +30,7 @@ v3 solves architectural issues that could lock funds in v2 and consumes less gas
 
 ## TL-B schema
 
-[TL-B (Type Language - Binary)](/languages/TL-B/overview) is a domain-specific language designed to describe data structures in TON. The schemas below define the binary layout of the contract's storage, external messages, and internal messages.
+[TL-B (Type Language - Binary)](/languages/tl-b/overview) is a domain-specific language designed to describe data structures in TON. The schemas below define the binary layout of the contract's storage, external messages, and internal messages.
 
 ### Storage structure
 
@@ -48,7 +49,7 @@ _ shift:uint13 bit_number:(## 10) { bit_number >= 0 } { bit_number < 1023 } = Qu
 ### External message structure
 
 ```tlb
-_ {n:#} subwallet_id:uint32 message_to_send:^Cell send_mode:uint8 query_id:QueryId 
+_ {n:#} subwallet_id:uint32 message_to_send:^Cell send_mode:uint8 query_id:QueryId
   created_at:uint64 timeout:uint22 = MsgInner;
 
 msg_body$_ {n:#} signature:bits512 ^(MsgInner) = ExternalInMsgBody;
@@ -61,7 +62,7 @@ internal_transfer#ae42e5a4 {n:#} query_id:uint64 actions:^(OutList n) = Internal
 ```
 
 <Aside type="note">
-  `internal_transfer` is used when the wallet sends a message to itself with an action list for batch transfers. The op code `0xae42e5a4` is derived from `crc32('internal_transfer n:# query_id:uint64 actions:^OutList n = InternalMsgBody n')`.
+  `internal_transfer` is used when the wallet sends a message to itself with an action list for batch transfers. The opcode `0xae42e5a4` is derived from `crc32('internal_transfer n:# query_id:uint64 actions:^OutList n = InternalMsgBody n')`.
 
   The canonical TL-B schemas are maintained in the [highload-wallet-contract-v3 repository](https://github.com/ton-blockchain/highload-wallet-contract-v3).
 </Aside>
@@ -85,7 +86,7 @@ When the wallet receives an external message, it verifies that the 512-bit signa
 <Aside
   type="caution"
 >
-  The public key is **not** the wallet address. The address is derived from the contract's `StateInit` (code + initial data). See [Addresses in TON](/foundations/addresses/overview) for details.
+  The public key is not the wallet address. The address is [derived](/foundations/addresses/derive) from the contract's [`StateInit`](/foundations/messages/deploy).
 </Aside>
 
 ---
@@ -412,7 +413,7 @@ Exit code `38`.
 ### `send_mode` (8 bits)
 
 **Purpose:**\
-Specifies the send mode for the internal message.
+Specifies the [send mode](/foundations/messages/modes) for the internal message.
 
 **Link:** [send\_raw\_message modes](/languages/func/stdlib#send-raw-message)
 
@@ -455,43 +456,11 @@ Highload v3 can send **only ONE internal message** per external message. For bat
 
 Highload v3 uses a two-transaction pattern to safely send messages:
 
-```text
-+------------------------------------------+
-|   Transaction 1: External Message        |
-|                                          |
-|  1. Verify signature (exit 33)           |
-|  2. Check subwallet_id (exit 34)         |
-|  3. Check timeout matches (exit 38)      |
-|  4. Check created_at validity (exit 35)  |
-|     - Not too old (> now - timeout)      |
-|     - Not from future (<= now)           |
-|  5. Check query_id in old_queries (36)   |
-|  6. Check query_id in queries (36)       |
-|  7. Mark query_id as processed           |
-|  8. Commit storage changes               |
-|  9. Validate message_to_send (exit 37)   |
-| 10. Send INTERNAL message to self        |
-|                                          |
-|  ✓ Replay protection applied             |
-|  ✓ Storage changes committed             |
-+------------------------------------------+
-                   |
-                   v
-+------------------------------------------+
-|   Transaction 2: Internal Message        |
-|   (wallet sends to itself)               |
-|                                          |
-|  1. Validate sender = self               |
-|  2. Check op = 0xae42e5a4                |
-|  3. Extract action list from message     |
-|  4. Apply actions (send messages)        |
-|  5. Prevent code changes (set_code)      |
-|                                          |
-|  Note: If this transaction fails,        |
-|  replay protection from Transaction 1    |
-|  remains intact (no rollback)            |
-+------------------------------------------+
-```
+<Image
+  src="/resources/images/wallets/msg_flow_light.svg"
+  darkSrc="/resources/images/wallets/msg_flow_dark.svg"
+  alt="Message sending flow"
+/>
 
 <Aside type="note">
   **Why two transactions?**
@@ -533,7 +502,7 @@ Manually validating message structure is expensive in gas costs. The contract va
 State-init validation is complex and gas-intensive, while deploying contracts from a highload wallet is rarely needed. The feature was intentionally excluded to reduce gas costs.
 
 **Workaround for batch transfers:**\
-Send an internal message to the wallet itself with op code `0xae42e5a4` (`internal_transfer`) and an action list containing up to **254 outgoing messages** (not 255, because one action slot is reserved for [`set_code` protection](#protection-against-set-code)).
+Send an internal message to the wallet itself with opcode `0xae42e5a4` (`internal_transfer`) and an action list containing up to **254 outgoing messages** (not 255, because one action slot is reserved for [`set_code` protection](#protection-against-set-code)).
 
 **How to implement:** [Send batch transfers](/standard/wallets/highload/v3/send-batch-transfers)
 
@@ -649,17 +618,15 @@ Because the contract calls `set_code(old_code)` as a protection mechanism, one a
 
 ## Implementation
 
-**Source code:**\
-[ton-blockchain/highload-wallet-contract-v3](https://github.com/ton-blockchain/highload-wallet-contract-v3)
+**Source code:** [`ton-blockchain/highload-wallet-contract-v3`](https://github.com/ton-blockchain/highload-wallet-contract-v3)
 
 **SDK wrappers:**
 
-- **Go:** [tonutils-go](https://github.com/xssnick/tonutils-go) — includes Highload v3 wrapper
-- **Python:** [pytoniq](https://github.com/yungwine/pytoniq) — includes Highload v3 wrapper
+- **Go:** [`tonutils-go`](https://github.com/xssnick/tonutils-go) — includes Highload v3 wrapper
+- **Python:** [`pytoniq`](https://github.com/yungwine/pytoniq) — includes Highload v3 wrapper
 - **TypeScript/JavaScript:** Copy wrappers from the [official repository](https://github.com/ton-blockchain/highload-wallet-contract-v3/tree/main/wrappers)
 
-**Tests and examples:**\
-See the [tests/](https://github.com/ton-blockchain/highload-wallet-contract-v3/tree/main/tests) directory in the repository for reference implementation and usage patterns.
+**Tests and examples:** See the [tests/](https://github.com/ton-blockchain/highload-wallet-contract-v3/tree/main/tests) directory in the repository for reference implementation and usage patterns.
 
 **Link:** [How-to guides](/standard/wallets/highload/v3/create)
 

@@ -1,0 +1,180 @@
+---
+title: "How to handle connections with WalletKit on the Web platform"
+sidebarTitle: "Handle connections"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+<Aside>
+  [Initialize the WalletKit](/ecosystem/ton-connect/walletkit/web/init) and [set up at least one TON wallet](/ecosystem/ton-connect/walletkit/web/wallets) before using examples on this page.
+</Aside>
+
+To use a wallet service for initiating blockchain transactions and signing data, dApps need to set up a connection over the bridge first. Connection is established via `connect` requests and terminated via `disconnect` requests.
+
+## Connection flow
+
+Standard flow looks as follows:
+
+1. User clicks a "Connect wallet" button in the dApp, selecting the desired wallet service
+1. WalletKit processes the connection URL and triggers the `onConnectRequest()` method
+1. There, WalletKit instructs the wallet service to show a connection request preview, waiting for the user's approval
+1. User approves or rejects a connection
+
+<Aside>
+  The flow can started by scanning a QR code from a dApp in the wallet service, or by pressing a deep link in the wallet service. In both cases, WalletKit will process the URL via the `handleTonConnectUrl()` method, then fire a `connect` event for the `onConnectRequest()` method to handle.
+</Aside>
+
+If the connection was approved, the dApp could proceed to send various transaction or data sign requests. If it was rejected, the dApp can repeat the flow.
+
+If a user decides to disconnect a wallet at any point, the `disconnect` request will be issued and the `onDisconnect()` method of the WalletKit will handle it.
+
+## Handlers
+
+To work with connection-specific requests, the WalletKit offers three methods which expect processing functions as callbacks:
+
+- The `onConnectRequest()` method processes connection requests
+- The `onDisconnect()` method processes disconnection requests
+- The `onRequestError()` method allows to [handle errors](/ecosystem/ton-connect/walletkit/web/events#handle-request-errors) arising in any of the requests
+
+### Handle `onConnectRequest`
+
+When a user wants to connect a TON wallet from the dApp, the dApp fires the `connect` request over the bridge. The wallet service then handles it with the `onConnectRequest` method of the WalletKit.
+
+On the dApp side, this flow is often initiated by pressing the "Connect a wallet" button, followed by selecting the user's wallet service. Additionally, a dApp can produce a [QR code or a deep link](#qr-codes-and-deep-links), which initiate the connection flow from within the wallet service.
+
+```ts title="TypeScript"
+kit.onConnectRequest(async (event) => {
+  try {
+    const wallets = kit.getWallets();
+    if (wallets.length === 0) {
+      // Make sure to present a message to the user.
+      console.log('No wallets available');
+      await kit.rejectConnectRequest(event, 'No wallets available');
+      return;
+    }
+    const dappName = event.preview.manifest?.name || 'Unknown dApp';
+    const dappUrl = event.preview.manifest?.url || 'Unknown URL';
+    // Show the connection confirmation UI to the user of the wallet service
+    if (confirm(`Connect to ${dappName} from ${dappUrl}?`)) {
+      // Set wallet address on the request before approving
+      event.walletAddress = wallets[0].getAddress();
+      await kit.approveConnectRequest(event);
+      console.log('Connected to:', dappName);
+    } else {
+      await kit.rejectConnectRequest(event, 'User rejected');
+      console.log('Connection rejected by a user');
+    }
+  } catch (error) {
+    console.error('Connection handler error:', error);
+    await kit.rejectConnectRequest(event, 'Fatal error in the connection handler');
+  }
+});
+```
+
+#### Wallet selection
+
+When there are several TON wallets added, ask the user to select one before approving the connection request.
+
+```ts title="TypeScript"
+kit.onConnectRequest(async (event) => {
+  try {
+    const wallets = kit.getWallets();
+    if (wallets.length === 0) {
+      // Make sure to present a message to the user.
+      console.log('No wallets available');
+      await kit.rejectConnectRequest(event, 'No wallets available');
+      return;
+    }
+    // Selecting the 1st TON wallet by default
+    let selectedWallet = { ok: true, wallet: wallets[0] };
+    // Yet, asking the user to pick one if there are many
+    if (wallets.length > 1) {
+      // Here, uiSelectWallet() is assumed to be implemented elsewhere:
+      // it takes the list of wallets and provides the user with a choice
+      // to pick one from the list, then returns with the picked option
+      // or a rejection if there was none.
+      selectedWallet = await uiSelectWallet(wallets);
+    }
+    if (!selectedWallet.ok) {
+      // Make sure to present a message to the user.
+      console.log('No wallet selected');
+      await kit.rejectConnectRequest(event, 'No wallet selected');
+      return;
+    }
+    const dappName = event.preview.manifest?.name || 'Unknown dApp';
+    const dappUrl = event.preview.manifest?.url || 'Unknown URL';
+    // Show the connection confirmation UI to the user of the wallet service
+    if (confirm(`Connect to ${dappName} from ${dappUrl}?`)) {
+      // Set wallet address on the request before approving
+      event.walletAddress = selectedWallet.wallet.getAddress();
+      await kit.approveConnectRequest(event);
+      console.log('Connected to:', dappName);
+    } else {
+      await kit.rejectConnectRequest(event, 'User rejected');
+      console.log('Connection rejected by a user');
+    }
+  } catch (error) {
+    console.error('Connection handler error:', error);
+    await kit.rejectConnectRequest(event, 'Fatal error in the connection handler');
+  }
+});
+```
+
+#### QR codes and deep links
+
+The `handleTonConnectUrl()` method of the WalletKit parses a TON Connect link and creates a new [connection request event](#handle-onconnectrequest).
+
+Usually, this link comes from a QR code generated on the dApp side, but it can also be provided within the mobile dApp as a deep link.
+
+```ts title="TypeScript"
+async function handleQrCode(content: string) {
+  try {
+    // On success, this will fire the onConnectRequest handler:
+    await kit.handleTonConnectUrl(content);
+  } catch (error) {
+    console.error('Invalid QR code:', error);
+    // Make sure to present an error to the user.
+    throw new Error('Failed to process TON Connect QR code');
+  }
+}
+
+async function handleDeepLink(url: string) {
+  if (url.startsWith('tc://') || url.includes('ton-connect')) {
+    try {
+      // On success, this will fire the onConnectRequest handler:
+      await kit.handleTonConnectUrl(url);
+    } catch (error) {
+      console.error('Invalid link:', error);
+      // Make sure to present an error to the user.
+      throw new Error('Failed to process TON Connect deep link');
+    }
+  }
+}
+```
+
+### Handle `onDisconnect`
+
+When a user disconnects a wallet service and its TON wallet from the dApp, the dApp fires the `disconnect` request over the bridge. The wallet service then handles it with the `onDisconnect` method of the WalletKit.
+
+```ts title="TypeScript"
+kit.onDisconnect(async (event) => {
+  // Clean up any UI state related to this connection.
+  console.log(`Disconnected from a dApp that used this TON wallet: ${event.walletAddress}`);
+});
+```
+
+## Next steps
+
+<Columns cols={2}>
+  <Card
+    title="Handle other events"
+    icon="signature"
+    horizontal="true"
+    href="/ecosystem/ton-connect/walletkit/web/events"
+  />
+</Columns>
+
+## See also
+
+- [WalletKit overview](/ecosystem/ton-connect/walletkit)
+- [TON Connect overview](/ecosystem/ton-connect)

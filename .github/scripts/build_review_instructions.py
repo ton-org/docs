@@ -49,6 +49,7 @@ Context for `docs.json`:
   • Findings may target `docs.json` when the issue is there (e.g., broken/duplicate slug, incorrect path, wrong ordering/grouping).
   • You may also use `docs.json` to verify that changed frontmatter `slug`/title or links in `.md`/`.mdx` remain valid.
   • Cite `docs.json` lines when it is the source of the problem; otherwise cite the offending `.md`/`.mdx` lines.
+  • If an issue relates to both `docs.json` and `.md`/`.mdx`, report it only on `docs.json`.
 - Do not speculate about Mintlify runtime behavior or external systems; rely solely on repository content.
 
 Severity policy:

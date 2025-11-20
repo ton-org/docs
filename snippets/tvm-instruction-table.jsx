@@ -12,7 +12,7 @@ export const TvmInstructionTable = () => {
 
   const PERSIST_KEY = "tvm-instruction-table::filters";
 
-  const SPEC_REPO = "https://github.com/hacker-volodya/tvm-spec-docs-builder";
+  const SPEC_REPO = "https://github.com/ton-org/tvm-spec-docs-builder";
   const SPEC_COMMIT = "refs/heads/master";
   const SPEC_URL = `${SPEC_REPO.replace(
     "github.com",
@@ -1429,6 +1429,36 @@ export const TvmInstructionTable = () => {
   box-shadow: 0 24px 60px -40px rgb(var(--gray-900) / 0.9);
 }
 
+:where(.dark) .tvm-instruction-app {
+  --tvm-border: rgb(var(--gray-800) / 0.65);
+  --tvm-border-strong: rgb(var(--gray-600) / 0.85);
+  --tvm-surface: rgb(var(--gray-950));
+  --tvm-surface-secondary: rgb(var(--gray-900) / 0.85);
+  --tvm-text-primary: rgb(var(--gray-100));
+  --tvm-text-secondary: rgb(var(--gray-300));
+  --tvm-text-muted: rgb(var(--gray-400) / 0.9);
+  --tvm-accent: rgb(var(--primary-light));
+  --tvm-accent-soft: rgb(var(--primary) / 0.22);
+  --tvm-accent-strong: rgb(var(--primary));
+  --tvm-accent-subtle: rgb(var(--primary-light));
+  --tvm-callout-bg: rgb(var(--primary) / 0.24);
+  --tvm-callout-border: rgb(var(--primary-light) / 0.35);
+  --tvm-callout-text: rgb(var(--primary-light));
+  --tvm-stack-simple-bg: rgb(var(--primary) / 0.25);
+  --tvm-stack-simple-text: rgb(var(--primary-light));
+  --tvm-stack-const-bg: rgb(var(--primary-dark) / 0.4);
+  --tvm-stack-const-text: rgb(var(--primary-light));
+  --tvm-stack-array-bg: rgb(var(--primary) / 0.25);
+  --tvm-stack-array-text: rgb(var(--gray-50));
+  --tvm-stack-conditional-bg: rgb(var(--primary-dark) / 0.38);
+  --tvm-stack-conditional-text: rgb(var(--primary-light));
+  --tvm-stack-conditional-border: rgb(var(--primary) / 0.5);
+  --tvm-stack-label: rgb(var(--gray-400) / 0.85);
+  --tvm-pill-muted-bg: rgb(var(--gray-800) / 0.85);
+  box-shadow: 0 24px 80px -60px rgb(0 0 0 / 0.65);
+  color-scheme: dark;
+}
+
 .tvm-instruction-toolbar {
   display: flex;
   flex-direction: column;
@@ -1614,6 +1644,11 @@ export const TvmInstructionTable = () => {
   background: rgb(var(--gray-200) / 0.12);
 }
 
+:where(.dark) .tvm-instruction-app .tvm-button:not(:disabled):hover {
+  background: rgb(var(--gray-800) / 0.55);
+  border-color: var(--tvm-border-strong);
+}
+
 .tvm-button--ghost {
   background: transparent;
   color: var(--tvm-text-secondary);
@@ -1622,6 +1657,11 @@ export const TvmInstructionTable = () => {
 .tvm-button--ghost:not(:disabled):hover {
   color: var(--tvm-text-primary);
   background: rgb(var(--gray-200) / 0.1);
+}
+
+:where(.dark) .tvm-instruction-app .tvm-button--ghost:not(:disabled):hover {
+  background: rgb(var(--gray-800) / 0.4);
+  color: var(--tvm-text-primary);
 }
 
 .tvm-instruction-meta {
@@ -1745,6 +1785,11 @@ export const TvmInstructionTable = () => {
   color: var(--tvm-text-secondary);
 }
 
+:where(.dark) .tvm-instruction-app .tvm-spec-header {
+  background: rgb(var(--gray-800) / 0.65);
+  color: var(--tvm-text-muted);
+}
+
 .tvm-spec-header > div {
   padding: calc(var(--tvm-row-padding-y) - 0.1rem) var(--tvm-row-padding-x);
   font-weight: 600;
@@ -1763,6 +1808,14 @@ export const TvmInstructionTable = () => {
 
 .tvm-spec-row.is-expanded {
   background: rgb(var(--primary) / 0.12);
+}
+
+:where(.dark) .tvm-instruction-app .tvm-spec-row:hover {
+  background: rgb(var(--primary) / 0.18);
+}
+
+:where(.dark) .tvm-instruction-app .tvm-spec-row.is-expanded {
+  background: rgb(var(--primary) / 0.26);
 }
 
 .tvm-spec-row.is-anchor-target {
@@ -2054,6 +2107,11 @@ export const TvmInstructionTable = () => {
   color: var(--tvm-text-secondary);
 }
 
+:where(.dark) .tvm-instruction-app .tvm-stack-pill--more {
+  background: rgb(var(--gray-700) / 0.5);
+  color: var(--tvm-text-secondary);
+}
+
 .tvm-stack-footnote {
   display: inline-block;
   font-family: 'JetBrains Mono', 'Menlo', 'Monaco', monospace;
@@ -2065,6 +2123,12 @@ export const TvmInstructionTable = () => {
   color: var(--tvm-text-secondary);
   max-width: 100%;
   overflow-wrap: anywhere;
+}
+
+:where(.dark) .tvm-instruction-app .tvm-stack-footnote {
+  background: rgb(var(--gray-900) / 0.6);
+  border-color: var(--tvm-border);
+  color: var(--tvm-text-secondary);
 }
 
 .tvm-stack-conditional {
@@ -2485,6 +2549,10 @@ export const TvmInstructionTable = () => {
   white-space: pre;
   color: var(--tvm-text-primary);
   tab-size: 2;
+}
+
+:where(.dark) .tvm-instruction-app .tvm-modal-code {
+  background: rgb(var(--gray-900) / 0.7);
 }
 
 @media (max-width: 1040px) {
