@@ -2,3 +2,197 @@
 title: "Contract storage"
 ---
 
+import { Aside } from '/snippets/aside.jsx';
+
+Contract storage is not "something special".
+It is a regular `struct`, serialized into persistent blockchain data.
+Tolk does not impose strict rules, although several common guidelines are helpful in practice.
+
+<Aside type="tip">
+  For convenience, keep the struct and its methods in a separate file, e.g., `storage.tolk`.
+  When developing multiple projects, consistent file structure improves navigation.
+</Aside>
+
+## Common pattern: Storage, load(), and save()
+
+A storage a regular structure. It is convenient to add `load` and `store` methods:
+
+```tolk
+struct Storage {
+    counterValue: int64
+}
+
+fun Storage.load() {
+    return Storage.fromCell(contract.getData())
+}
+
+fun Storage.save(self) {
+    contract.setData(self.toCell())
+}
+```
+
+Then, at any point in a program, it can be easily accessed or modified:
+
+```tolk
+get fun currentCounter() {
+    var storage = lazy Storage.load();
+    return storage.counterValue;
+}
+
+fun demoModify() {
+    var storage = lazy Storage.load();
+    storage.counterValue += 100;
+    storage.save();
+}
+```
+
+Concepts used:
+
+- `struct` behaves similarly to a TypeScript class. See [structures](/languages/tolk/types/structures).
+- `fun Storage.f(self)` defines an instance method. See [functions](/languages/tolk/syntax/functions-methods).
+- `T.fromCell()` deserializes a cell into `T`, and `obj.toCell()` packs it back into a cell. See [automatic serialization](/languages/tolk/features/auto-serialization).
+- `lazy` operator does this parsing on demand. See [lazy loading](/languages/tolk/features/lazy-loading).
+- `contract.getData()` fetches persistent data. See [standard library](/languages/tolk/features/standard-library).
+
+## Set default values to fields
+
+In TON, the contract's address depends on its initial storage, when a contract is created on-chain.
+A good practice is to assign default values to fields that must have defined values at deployment:
+
+```tolk
+struct WalletStorage {
+    // these fields must have these values when deploying
+    // to make the contact's address predictable
+    jettonBalance: coins = 0
+    isFrozen: bool = false
+
+    // these fields must be manually assigned for deployment
+    ownerAddress: address
+    minterAddress: address
+}
+```
+
+Therefore, to calculate an initial address, only two fields are required to be provided.
+
+## Multiple contracts in a project
+
+When developing multiple contracts simultaneously (for example, a jetton minter and a jetton wallet),
+every contract has its own storage shape described by a `struct`.
+
+Give these structs reasonable names — for example, `MinterStorage` and `WalletStorage`.
+It's better to place them in a single file (`storage.tolk`) together with their methods.
+
+Contracts often deploy each other, and initial storage must be provided during deployment.
+For example, a minter deploys a wallet, so `WalletStorage` becomes accessible via a simple import:
+
+```tolk
+// all symbols from imported files become visible
+import "storage"
+
+fun deploy(ownerAddress: address, minterAddress: address) {
+    val emptyWalletStorage: WalletStorage = {
+        ownerAddress,
+        minterAddress,
+        // the other two use their defaults
+    };
+    // ...
+}
+```
+
+See [sending messages](/languages/tolk/features/message-sending) for examples of deployment.
+
+## Storage that changes its shape
+
+Another pattern for address calculation and for security is:
+
+- when a contract is deployed, it has fields `a,b,c` (uninitialized storage)
+- followed by a message supplying `d,e` — it becomes `a,b,c,d,e`
+
+<Aside
+  type="caution"
+>
+  It's not about nullable types — nullables like `int8?` or `cell?`, being serialized as `null`,
+  are encoded as '0' bit.
+  It's about the absence of fields at all — no extra bits in serialization.
+</Aside>
+
+Such patterns are common in NFTs.
+Initially, an NFT has only `itemIndex` and `collectionAddress`, nothing more (an _uninitialized NFT_).
+Upon initialization, fields `ownerAddress` and `content` are appended to a storage.
+How can such logic be implemented?
+
+Since arbitrary imperative code is allowed, the suggested approach is:
+
+- describe two structures: "initialized" and "uninitialized" storage
+- start loading `contract.getData()`
+- detect whether storage is initialized based on its bits/refs counts
+- parse into one or another struct
+
+A long demo with detailed comments:
+
+```tolk
+// two structures representing different storage states
+
+struct NftItemStorage {
+    itemIndex: uint64
+    collectionAddress: address
+    ownerAddress: address
+    content: cell
+}
+
+struct NftItemStorageNotInitialized {
+    itemIndex: uint64
+    collectionAddress: address
+}
+
+// instead of the usual `load()` method — `startLoading()`
+
+fun NftItemStorage.startLoading() {
+    return NftItemStorageLoader.fromCell(contract.getData())
+}
+
+fun NftItemStorage.save(self) {
+    contract.setData(self.toCell())
+}
+
+// this helper detects shape of a storage
+struct NftItemStorageLoader {
+    itemIndex: uint64
+    collectionAddress: address
+    private rest: RemainingBitsAndRefs
+}
+
+// when `rest` is empty, `collectionAddress` is the last field
+fun NftItemStorageLoader.isNotInitialized(self) {
+    return self.rest.isEmpty()
+}
+
+// `endLoading` continues loading when `rest` is not empty
+fun NftItemStorageLoader.endLoading(mutate self): NftItemStorage {
+    return {
+        itemIndex: self.itemIndex,
+        collectionAddress: self.collectionAddress,
+        ownerAddress: self.rest.loadAny(),
+        content: self.rest.loadAny(),
+    }
+}
+```
+
+Usage in `onInternalMessage`:
+
+```tolk
+var loadingStorage = NftItemStorage.startLoading();
+if (loadingStorage.isNotInitialized()) {
+    // ... probably, initialize and save
+    return;
+}
+
+var storage = loadingStorage.endLoading();
+// and the remaining logic: lazy match, etc.
+```
+
+<Aside tip="note">
+  Different shapes with missing fields may also be expressed using generics and
+  the [void type](/languages/tolk/types/void-never).
+  A powerful, but harder to understand solution.
+</Aside>
