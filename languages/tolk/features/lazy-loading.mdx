@@ -2,6 +2,19 @@
 title: "Lazy loading"
 ---
 
+import { Aside } from '/snippets/aside.jsx';
+
+Tolk language has a magic feature — the `lazy` keyword.
+The compiler tracks exactly which fields are accessed, and automatically loads only those, skipping the rest.
+
+In practice, prefer `lazy T.fromCell()` to a regular `T.fromCell()`.
+
+<Aside type="tip">
+  It is recommended to review [automatic serialization](/languages/tolk/features/auto-serialization) first.
+</Aside>
+
+## A short demo of `lazy`
+
 Suppose there is a `Storage` struct in a wallet:
 
 ```tolk
@@ -10,7 +23,7 @@ struct Storage {
     seqno: uint32
     subwalletId: uint32
     publicKey: uint256
-    extensions: dict
+    extensions: cell?
 }
 
 fun Storage.load() {
@@ -20,28 +33,28 @@ fun Storage.load() {
 
 What does `Storage.load()` do? It unpacks a cell, populates all struct fields, checks consistency, and so on.
 
-**The magic of `lazy Storage.load()` is that it does not load the entire cell upfront**. Instead, the compiler tracks exactly which fields are accessed, and automatically loads only those, skipping the rest.
+The magic of `lazy Storage.load()` is that it **does not load the entire cell**. Instead, unused fields are just skipped:
 
 ```tolk
-get fun getPublicKey() {
+get fun publicKey() {
     val st = lazy Storage.load();
     // <-- here "skip 65 bits, preload uint256" is inserted
     return st.publicKey
 }
 ```
 
-That's it! With a single `lazy` keyword, loading is deferred until the data is accessed. The compiler tracks all control flow paths, inserts loading points as needed, groups unused fields to be skipped, etc. Best of all, this works with any type and any combination of fields.
+The compiler tracks all control flow paths, inserts loading points as needed, groups unused fields to be skipped, etc. Best of all, this works with any type and any combination of fields.
 
-## Even deeper than you might think
+## Even deeper than it seems
 
-Take a look at NFT collection:
+Take a look at the NFT collection:
 
 ```tolk
 struct NftCollectionStorage {
     adminAddress: address
     nextItemIndex: uint64
     content: Cell<CollectionContent>
-    ...
+    // ...
 }
 
 struct CollectionContent {
@@ -51,7 +64,7 @@ struct CollectionContent {
 }
 ```
 
-Imagine: a developer needs just the `content` field from the storage — and then extract `commonKey` from it:
+Suppose a developer needs to read `content` and get `commonKey` from it:
 
 ```tolk
 val storage = lazy NftCollectionStorage.load();
@@ -59,9 +72,9 @@ val storage = lazy NftCollectionStorage.load();
 val contentCell = storage.content;
 ```
 
-**First trick:** no need to **skip address and uint64**. To access a ref, it's not required to skipping preceding data.
+**First trick:** no need to **skip address and uint64**. To access a ref, it is not necessary to skip preceding data.
 
-**Second trick:** having `contentCell`, how to get `commonKey` from it? The answer: since `content` is a cell, load it… _lazily_:
+**Second trick:** having `content`, how to get `commonKey` from it? The answer: since `content` is a cell, load it… _lazily_:
 
 ```tolk
 val storage = lazy NftCollectionStorage.load();
@@ -74,23 +87,29 @@ val content = lazy storage.content.load();
 return content.commonKey;
 ```
 
-A quick reminder: `Cell<T>` is commonly used to represent nested references. Having `p: Cell<Point>`, it's not allowed to access `p.x` — the cell (reference) needs to be loaded first, either with `Point.fromCell(p)` or, preferably, `p.load()`. Both can be used with `lazy`.
+A quick reminder: having `p: Cell<Point>`, it is not allowed to access `p.x` — the cell (reference) needs to be loaded first, either with `Point.fromCell(p)` or `p.load()`. Both can be used with `lazy`.
 
 ## Lazy matching
 
-Similarly, when reading a union type such as an incoming message, use `lazy`:
+Similarly, a union type (an incoming message) can be read with `lazy`:
 
 ```tolk
-struct (0x12345678) CounterReset { ... }
-...
-type MyMessage = CounterReset | CounterIncrement | ...
+struct (0x12345678) CounterIncrement { /* ... */ }
+struct (0x23456789) CounterReset     { /* ... */ }
 
-val msg = lazy MyMessage.fromSlice(msgBody);
-match (msg) {
-    CounterReset => {
-        assert(senderAddress == storage.owner) throw 403;
-        // <-- here "load msg.initial" is inserted
-        storage.counter = msg.initial;
+type MyMessage = CounterIncrement | CounterReset
+
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy MyMessage.fromSlice(in.body);
+    match (msg) {
+        CounterReset => {
+            assert (something) throw 403;
+            // <-- here "load msg.initial" is inserted
+            storage.counter = msg.initial;
+        }
+        // ...
+    }
+}
 ```
 
 With `lazy` applied to unions:
@@ -99,51 +118,37 @@ With `lazy` applied to unions:
 1. `match` operates naturally by inspecting the slice prefix (opcode).
 1. Within each branch, the compiler inserts loading points and skips unused fields — just like it does for structs.
 
-This makes **lazy matching highly efficient**, outperforming patterns like `if (op == OP_RESET)` commonly used in FunC. From a type system perspective, it aligns perfectly with the TVM execution model, eliminating unnecessary stack operations.
+**Lazy matching is highly efficient**, outperforming `if (op == OP_RESET)`.
+It aligns perfectly with the TVM execution model, eliminating unnecessary stack operations.
 
-## Lazy matching and else
+## Lazy matching and `else`
 
 Since lazy `match` for a union is done by inspecting the prefix (opcode), unmatched cases fall through to the `else` branch.
 
-In FunC contracts, a common pattern was to **ignore empty messages**:
-
 ```tolk
-// old style, before Tolk with `lazy` and `match`
-if (msgBody.isEmpty()) {
-    return;    // ignore empty messages
-}
-val op = msgBody.loadUint(32);  // because this would throw excno 9
-
-if (op == OP_RESET) {
-    ...
-    return;
-}
-
-throw 0xFFFF;  // "invalid opcode"
-```
-
-The only reason to handle empty messages upfront was to avoid throwing a _cell underflow_ error when calling `loadUint`.
-
-With lazy `match`, these upfront checks no longer needed. Handle all cases in `else`:
-
-```tolk
-val msg = lazy MyMessage.fromSlice(msgBody);
+val msg = lazy MyMessage.fromSlice(in.body);
 match (msg) {
-    CounterReset => { ... }
-    ...  // handle all types of a union
+    CounterReset => { /* ... */ }
+    // ... handle all variants of the union
 
     // else - when nothing matched;
-    // even corrupted input (less than 32 bits), no "underflow" fired
+    // even input less than 32 bits, no "underflow" thrown
     else => {
-        // ignore empty messages, "wrong opcode" for others
-        assert (msgBody.isEmpty()) throw 0xFFFF
+        // for example
+        throw 0xFFFF
     }
 }
 ```
 
-Without an explicit `else`, unpacking throws `error 63` by default, which is controlled by the `throwIfOpcodeDoesNotMatch` option in fromCell/fromSlice. The `else` branch allows to override this behavior.
+Without an explicit `else`, unpacking throws `error 63` by default, which is controlled by the `throwIfOpcodeDoesNotMatch` option in `fromSlice`.
+The `else` branch allows inserting any custom logic.
 
-Note that `else` in `match` by type is only allowed with `lazy` because it matches on prefixes. Without `lazy`, it's just a regular union, matched by a union tag (`typeid`) on a stack.
+<Aside
+  type="caution"
+>
+  `else` in `match` by type is only allowed with `lazy` because it matches on prefixes.
+  Without `lazy`, it's just a regular union, `else` is not allowed.
+</Aside>
 
 ## Partial updating
 
@@ -152,24 +157,27 @@ The magic doesn't stop at reading. The `lazy` keyword also works seamlessly when
 Example: load a storage, use its fields for assertions, modify one field, and save it back:
 
 ```tolk
-val storage = lazy Storage.load();
+var storage = lazy Storage.load();
 
 assert (storage.validUntil > blockchain.now()) throw 123;
 assert (storage.seqno == msg.seqno) throw 456;
-...
+// ...
 
 storage.seqno += 1;
 contract.setData(storage.toCell());   // <-- magic
 ```
 
-The compiler is smart: when calling `toCell()`, it **does not save all fields of the storage** since only `seqno` was modified. Instead, during loading, after loading `seqno`, it saved an _immutable tail_ and reuses it when writing back:
+The compiler is smart: `toCell()` **does not save all fields of the storage** since only `seqno` was modified.
+Instead, after loading `seqno`, an _immutable tail_ was saved — and is reused when writing back:
 
 ```tolk
-val storage = lazy Storage.load();
+var storage = lazy Storage.load();
 // actually, what was done:
 // - load isSignatureAllowed, seqno
 // - save immutable tail
 // - load validUntil, etc.
+
+// ... use all fields for reading
 
 storage.seqno += 1;
 storage.toCell();
@@ -178,17 +186,55 @@ storage.toCell();
 // - store immutable tail
 ```
 
-No more manual optimizations using intermediate slices — the compiler handles everything automatically. It can even group unmodified fields in the middle, load them as a slice, and preserve that slice on write-back.
+The compiler can even group unmodified fields in the middle, load them as a slice, and preserve that slice on write-back.
 
-## Q: What are the disadvantages of lazy?
+## Q: How does `lazy` skip unused fields?
 
-In terms of gas usage, `lazy fromSlice` is always equal to or cheaper than regular `fromSlice` because, in the worst case — when all fields are accessed — it loads everything one by one, just like non-lazy.
+When several consecutive fields are unused, the compiler tries to group them.
+It works perfectly for fixed-size types such as `intN` or `bitsN`:
 
-However, there is another difference unrelated to gas consumption:
+```tolk
+struct Demo {
+    isAllowed: bool     // always 1 bit
+    queryId: uint64     // always 64 bits
+    crc: bits32         // always 32 bits
+    next: RemainingBitsAndRefs
+}
 
-- `T.fromSlice(s)` unpacks all fields of `T` and then inserts `s.assertEnd()`, which can be turned off using an option. So, if the slice is corrupted or contains extra data, `fromSlice` will throw an error.
+fun demo() {
+    val obj = lazy Demo.fromSlice(someSlice);
+    // <-- skip 1+64+32 = 97 bits
+    obj.next;
+}
+```
 
-- The `lazy` keyword, of course, selectively _picks_ only the requested fields and handles partially invalid input gracefully. For example, given:
+In Fift assembler, "skip 97 bits" is generated to
+
+```fift
+97 LDU
+NIP
+```
+
+But **variable-width fields**, like `coins`, cannot be grouped.
+And cannot be skipped in a single instruction: TVM has no "skip coins" feature.
+The only possible way is to load, but ignore the result.
+Similarly, for `address`: despite it's always 267 bits, it should be validated even if unused —
+otherwise, binary data could be decoded wrong.
+
+For such types, `lazy` cannot do anything better than "**load and ignore**".
+In practice, `intN` types are very common, so grouping has an evident effect.
+A trick "access a ref without skipping any data" also works fine.
+
+## Q: What are the disadvantages of `lazy`?
+
+In terms of gas consumption, `lazy fromSlice` is equal to or cheaper than regular `fromSlice`.
+In the worst case — when all fields are accessed — it loads everything one by one, just like the non-lazy version.
+
+However, there is a difference **unrelated to gas consumption**:
+
+- If a slice is too small or contains extra data, `fromSlice` will throw.
+
+- The `lazy` keyword selectively _picks_ only the requested fields and **handles partially invalid input gracefully**. For example, given:
 
 ```tolk
 struct Point {
@@ -202,8 +248,15 @@ fun demo(s: slice) {
 }
 ```
 
-Since only `p.x` is accessed, an input of `FF` (8 bits) is acceptable even though `y` is missing. Similarly, `FFFF0000`, which includes 16 bits of extra data, is also fine, as `lazy` ignores any data that is not requested.
+Since only `p.x` is accessed, an input of `FF` (8 bits) is acceptable even though `y` is missing.
+Similarly, `FFFF0000` (16 bits of extra data) is also fine, as `lazy` ignores any data that is not requested.
 
-In most cases, this isn't an issue. For incoming messages, typically all fields are used (otherwise, why include them in the struct?). If there is extra data in the input — who cares? The message can still be deserialized correctly without any problem.
+In most cases, this isn't an issue.
+For incoming messages, typically all fields are used (otherwise, why include them in the struct?).
+Extra data in the input is typically harmless. The message can still be deserialized correctly.
 
-Perhaps someday, `lazy` will become the default. For now, it remains a distinct keyword highlighting the lazy-loading capability — a killer feature of Tolk.
+<Aside type="note">
+  Perhaps someday, `lazy` will become the default.
+
+  For now, it remains a distinct keyword highlighting the lazy-loading capability — a key feature of Tolk.
+</Aside>
