@@ -1,0 +1,189 @@
+---
+title: "Mapping: stdlib.fc -> Tolk"
+sidebarTitle: "stdlib.fc mapping"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+FunC contracts depend on the `stdlib.fc` file, which contains `asm` functions closely tied to [TVM instructions](/tvm/instructions).
+
+Tolk provides a standard library that gradually evolved from FunC's stdlib.
+Therefore, **many functions from `stdlib.fc` can be mapped to Tolk**.
+
+But since Tolk is much more flexible as a language, most of the functions turned into methods.
+
+## Functions vs methods
+
+Tolk supports declaring methods (see [syntax](/languages/tolk/syntax/functions-methods)) — even for primitives.
+
+That's why lots of FunC's global-scope functions are now methods: `cell.hash()`, `tuple.size()`, etc.
+
+```tolk
+@pure
+fun cell.hash(self): uint256
+    asm "HASHCU"
+```
+
+<Aside
+  type="caution"
+>
+  In FunC, `x.f()` works equally to `f(x)`.
+  For instance, `someTuple.tuple_size()` and `tuple_size(someTuple)`.
+
+  In Tolk, `someTuple.size()` is the only correct notation.
+</Aside>
+
+## List of renamed and removed functions
+
+For `load_xxx`, `store_xxx`, and `skip_xxx` — use [automatic serialization](/languages/tolk/features/auto-serialization).
+Methods `slice.loadXXX`, `builder.storeXXX`, and `slice.skipXXX` still exist for manual cell parsing, but their use is not recommended.
+
+For `idict_xxx`, `udict_xxx`, and `dict_xxx` — use [native maps](/languages/tolk/types/maps).
+Old-fashioned dictionaries still exist in a file `@stdlib/tvm-dicts`, but their use is not recommended.
+
+Other functions are listed below.
+
+- some were renamed to clean, descriptive names
+- some became methods and are called via dot
+- some were removed, because they are rarely used in practice
+- some were removed, because they can be expressed syntactically
+  - `pair(a, b)` => `[a, b]`
+  - `fourth(t)` => dot-access `t.3`
+  - etc.
+
+| FunC name                     | Tolk name                            |
+| ----------------------------- | ------------------------------------ |
+| `empty_tuple`                 | `createEmptyTuple`                   |
+| `t~tpush(v)`                  | `t.push(v)`                          |
+| `first(t)` or `t.first()`     | `t.first()`                          |
+| `at(t,i)` or `t.at(i)`        | `t.get(i)` or dot-access `t.{i}`     |
+| `touch(v)`                    | `v.stackMoveToTop()`                 |
+| `impure_touch`                | _(deleted)_                          |
+| `single`                      | _(deleted)_                          |
+| `unsingle`                    | _(deleted)_                          |
+| `pair`                        | _(deleted)_                          |
+| `unpair`                      | _(deleted)_                          |
+| `triple`                      | _(deleted)_                          |
+| `untriple`                    | _(deleted)_                          |
+| `tuple4`                      | _(deleted)_                          |
+| `untuple4`                    | _(deleted)_                          |
+| `second`                      | _(deleted)_                          |
+| `third`                       | _(deleted)_                          |
+| `fourth`                      | _(deleted)_                          |
+| `pair_first`                  | _(deleted)_                          |
+| `pair_second`                 | _(deleted)_                          |
+| `triple_first`                | _(deleted)_                          |
+| `triple_second`               | _(deleted)_                          |
+| `triple_third`                | _(deleted)_                          |
+| `minmax`                      | `minMax`                             |
+| `now`                         | `blockchain.now`                     |
+| `my_address`                  | `contract.getAddress`                |
+| `get_balance + pair_first`    | `contract.getOriginalBalance`        |
+| `cur_lt`                      | `blockchain.logicalTime`             |
+| `block_lt`                    | `blockchain.currentBlockLogicalTime` |
+| `cell_hash(c)`                | `c.hash()`                           |
+| `slice_hash(s)`               | `s.hash()`                           |
+| `string_hash(s)`              | `s.bitsHash()`                       |
+| `check_signature`             | `isSignatureValid`                   |
+| `check_data_signature`        | `isSliceSignatureValid`              |
+| `compute_data_size(c)`        | `c.calculateSizeStrict()`            |
+| `slice_compute_data_size(s)`  | `s.calculateSizeStrict()`            |
+| `compute_data_size?(c)`       | `c.calculateSize()`                  |
+| `slice_compute_data_size?(s)` | `s.calculateSize()`                  |
+| `~dump`                       | `debug.print`                        |
+| `~strdump`                    | `debug.printString`                  |
+| `dump_stack`                  | `debug.dumpStack`                    |
+| `get_data`                    | `contract.getData`                   |
+| `set_data`                    | `contract.setData`                   |
+| `get_c3`                      | `getTvmRegisterC3`                   |
+| `set_c3`                      | `setTvmRegisterC3`                   |
+| `bless`                       | `transformSliceToContinuation`       |
+| `accept_message`              | `acceptExternalMessage`              |
+| `set_gas_limit`               | `setGasLimit`                        |
+| `buy_gas`                     | _(deleted)_                          |
+| `commit`                      | `commitContractDataAndActions`       |
+| `divmod`                      | `divMod`                             |
+| `moddiv`                      | `modDiv`                             |
+| `muldiv`                      | `mulDivFloor`                        |
+| `muldivr`                     | `mulDivRound`                        |
+| `muldivc`                     | `mulDivCeil`                         |
+| `muldivmod`                   | `mulDivMod`                          |
+| `begin_parse`                 | `beginParse`                         |
+| `end_parse(s)`                | `s.assertEnd()`                      |
+| `first_bits(s)`               | `s.getFirstBits()`                   |
+| `skip_last_bits(s)`           | `s.removeLastBits()`                 |
+| `slice_last(s)`               | `s.getLastBits()`                    |
+| `cell_depth(c)`               | `c.depth()`                          |
+| `slice_refs(s)`               | `s.remainingRefsCount()`             |
+| `slice_bits(s)`               | `s.remainingBitsCount()`             |
+| `slice_bits_refs(s)`          | `s.remainingBitsAndRefsCount()`      |
+| `slice_empty?(s)`             | `s.isEmpty()`                        |
+| `slice_data_empty?(s)`        | `s.isEndOfBits()`                    |
+| `slice_refs_empty?(s)`        | `s.isEndOfRefs()`                    |
+| `slice_depth(s)`              | `s.depth()`                          |
+| `equal_slice_bits(a,b)`       | `a.bitsEqual(b)`                     |
+| `builder_refs(b)`             | `b.refsCount()`                      |
+| `builder_bits(b)`             | `b.bitsCount()`                      |
+| `builder_depth(b)`            | `b.depth()`                          |
+| `begin_cell`                  | `beginCell`                          |
+| `end_cell`                    | `endCell`                            |
+| `parse_addr`                  | _(deleted)_                          |
+| `parse_std_addr`              | use `address` type                   |
+| `parse_var_addr`              | _(deleted)_                          |
+| `config_param`                | `blockchain.configParam`             |
+| `raw_reserve`                 | `reserveToncoinsOnBalance`           |
+| `raw_reserve_extra`           | `reserveExtraCurrenciesOnBalance`    |
+| `send_raw_message`            | use `createMessage`                  |
+| `set_code`                    | `contract.setCodePostponed`          |
+| `random`                      | `random.uint256`                     |
+| `rand`                        | `random.range`                       |
+| `get_seed`                    | `random.getSeed`                     |
+| `set_seed`                    | `random.setSeed`                     |
+| `randomize`                   | `random.initializeBy`                |
+| `randomize_lt`                | `random.initialize`                  |
+| `dump`                        | `debug.print`                        |
+| `strdump`                     | `debug.printString`                  |
+| `dump_stk`                    | `debug.dumpStack`                    |
+| `empty_list`                  | `createEmptyList`                    |
+| `cons`                        | `listPrepend`                        |
+| `uncons`                      | `listSplit`                          |
+| `list_next`                   | `listNext`                           |
+| `car`                         | `listGetHead`                        |
+| `cdr`                         | `listGetTail`                        |
+| `new_dict`                    | `createEmptyMap`                     |
+| `dict_empty?(d)`              | `m.isEmpty`                          |
+| `pfxdict_get?`                | `prefixDictGet`                      |
+| `pfxdict_set?`                | `prefixDictSet`                      |
+| `pfxdict_delete?`             | `prefixDictDelete`                   |
+
+Lisp-style lists require an explicit import (an IDE inserts it automatically):
+
+```tolk
+import "@stdlib/lisp-lists"
+```
+
+## Mutating functions
+
+In FunC, `x~method` mutates, whereas `x.method` returns a copy.
+In Tolk, methods are called via dot. A method may (or may not) mutate the object.
+
+| FunC                               | Tolk                                      |
+| ---------------------------------- | ----------------------------------------- |
+| `int n = cs~load_uint(32);`        | `var n = cs.loadUint(32);`                |
+| `var (cs2, n) = cs.load_uint(32);` | `var cs2 = cs; var n = cs2.loadUint(32);` |
+
+- If `cs~load_uint(…)` was used, `cs.loadUint(…)` behaves identically.
+- If `cs.load_uint(…)` was used to obtain a **copy**, a different approach is required. [Read about mutability](/languages/tolk/syntax/mutability).
+
+## Added functions
+
+Tolk provides much more capabilities out of the box. See [Tolk stdlib](/languages/tolk/features/standard-library).
+
+The standard library is split into multiple files.
+Functions from `common.tolk` are always available (most of FunC's analogues are, actually), but those from other files require an explicit import.
+
+```tolk
+import "@stdlib/gas-payments"
+
+// now `calculateGasFee()` and other symbols are visible
+```
