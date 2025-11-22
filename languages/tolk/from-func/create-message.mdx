@@ -6,7 +6,7 @@ In FunC, message cells were composed manually:
 
 ```func
 cell m = begin_cell()
-    .store_uint(0x18, 6)
+    .store_uint(0x10, 6)
     .store_slice(sender_address)
     .store_coins(50000000)
     .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
@@ -21,7 +21,7 @@ In Tolk, there is a high-level function:
 
 ```tolk
 val reply = createMessage({
-    bounce: true,
+    bounce: BounceMode.NoBounce,
     value: ton("0.05"),
     dest: senderAddress,
     body: RequestedInfo { ... }
@@ -32,7 +32,7 @@ reply.send(SEND_MODE_REGULAR);
 ## Key features of `createMessage`
 
 1. Supports extra currencies
-1. Supports `stateInit` (code and data) with automatic address computation
+1. Supports [`StateInit`](/foundations/messages/deploy) with automatic address computation
 1. Supports workchains
 1. Supports sharding (formerly `splitDepth`)
 1. Integrated with auto-serialization of `body`
@@ -94,7 +94,7 @@ dest: someAddress,
 dest: (workchain, hash)
 ```
 
-It's either an address, OR a OR (workchain + hash), OR ...:
+It's either an address, OR (workchain + hash), OR ...:
 
 ```tolk
 struct CreateMessageOptions<TBody> {
@@ -108,7 +108,7 @@ struct CreateMessageOptions<TBody> {
 
 **That's indeed the TypeScript way** — but it works at compile-time!
 
-## StateInit and workchains
+## `StateInit` and workchains
 
 Let's start from an example. From a jetton minter, you are deploying a jetton wallet. You know wallet's code and initial data:
 
@@ -119,7 +119,7 @@ val walletInitialState: ContractState = {
 };
 ```
 
-Now, from a minter, you want to send a message to a wallet. But since you are not sure whether the wallet already exists onchain, you attach its code+data: if a wallet doesn't exist, it's immediately initialized with that code. So, where should you send a message to? What is **destination**? The answer is: **destination is the wallet's StateInit**. You need to send a message to a `walletInitialState` because, in TON, the address of a contract is — by definition — a hash of its initial state:
+Now, from a minter, you want to send a message to a wallet. But since you are not sure whether the wallet already exists onchain, you attach its code+data: if a wallet doesn't exist, it's immediately initialized with that code. So, where should you send a message to? What is **destination**? The answer is: **destination is the wallet's `StateInit`**. You need to send a message to a `walletInitialState` because, in TON, the address of a contract is — by definition — a hash of its initial state:
 
 ```tolk
 // address auto-calculated, code+data auto-attached
@@ -134,7 +134,7 @@ In more complex tasks, you can configure additional fields:
 dest: {
     workchain: ...,     // by default, 0 (basechain)
     stateInit: ...,     // either code+data OR a ready cell
-    toShard:   ...,     // by default, null (no sharding) 
+    toShard:   ...,     // by default, null (no sharding)
 }
 ```
 
@@ -238,9 +238,9 @@ Hence, when you pass `body: RequestedInfo {...}`, then `TBody = RequestedInfo`, 
 ```tolk
 // potentialy 620 bits (if all coins are billions of billions)
 // by default, compiler will make a ref
-struct ProbablyLarge { 
-    a: (coins, coins, coins, coins, coins) 
-}  
+struct ProbablyLarge {
+    a: (coins, coins, coins, coins, coins)
+}
 
 val contents: ProbablyLarge = { ... };  // but you are sure: coins are small
 createMessage({                         // so, you take the risks
@@ -257,7 +257,7 @@ If `body` is already a cell, it will be left as a ref, without any surprise:
 createMessage({
     body: someCell,       // ok, just a cell, keep it as a ref
 
-// here TBody = cell 
+// here TBody = cell
 ```
 
 That's why, don't pass `body: someObj.toCell()`, pass just `body: someObj`, let the compiler take care of everything.
@@ -302,29 +302,30 @@ If you don't need any `body` at all, just leave it out:
 
 ```tolk
 createMessage({
-    bounce: true,
+    bounce: BounceMode.NoBounce,
     dest: somewhere,
     value: remainingBalance
 });
 ```
 
-A curious reader might ask, "what's the type of `body` here? How is it expressed in the type system?" The answer is: `never`.
+A curious reader might ask, "what's the type of `body` here? How is it expressed in the type system?" The answer is: `void`.
 
 Actually, `CreateMessageOptions` is declared like this:
 
 ```tolk
 // declared in stdlib
-struct CreateMessageOptions<TBody = never> {
+struct CreateMessageOptions<TBody = void> {
     ...
     body: TBody;
 }
 ```
 
-Hence, when we miss `body` in `createMessage`, it leads to the default `TBody = never`. And by convention, fields having `never` type are not required in a literal. It's not that obvious, but it is definitely beautiful.
+Hence, omitting `body` in `createMessage` defaults `TBody` to `void`.
+And by convention, fields having `void` type are not required in a literal.
 
-## Don't confuse StateInit and code+data, they are different
+## Don't confuse `StateInit` and code+data, they are different
 
-It's incorrect to say that **StateInit is code+data**, because in TON, a full **StateInit** cell contents is richer (consider `block.tlb`):
+It's incorrect to say that **`StateInit` is code+data**, because in TON, a full `StateInit` cell contents is richer (consider `block.tlb`):
 
 - it also contains fixed\_prefix\_length (formerly split\_depth),
 - it also contains ticktock info
@@ -406,12 +407,12 @@ emitMsg.send(SEND_MODE_REGULAR);
 **Available options for external-out messages** are only `dest` and `body`, actually:
 
 ```tolk
-struct CreateExternalLogMessageOptions<TBody = never> {
+struct CreateExternalLogMessageOptions<TBody = void> {
     /// destination is either an external address or a pattern to calculate it
-    dest: address |         // either some valid external/none address (not internal!)
+    dest: any_address |     // either some valid external/none address (not internal!)
           builder |         // ... or a manually constructed builder with a valid external address
           ExtOutLogBucket;  // ... or encode topic/eventID in destination
-    
+
     /// body is any serializable object (or just miss this field for empty body)
     body: TBody;
 }
@@ -445,7 +446,7 @@ struct (0x12345678) DepositEvent {
 createExternalLogMessage({
     dest: createAddressNone(),
     body: DepositEvent { ... }   // 0x12345678 for indexers
-});    
+});
 ```
 
 `ExtOutLogBucket` is a variant of a custom external address for emitting logs **to the outer world.** It includes some **topic** (arbitrary number), that determines the format of the message body. In the example above, you emit **deposit event** (reserving topic `deposit` = 123) — and external indexers will index your emitted logs by destination address without parsing body.
