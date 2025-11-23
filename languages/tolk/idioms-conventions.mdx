@@ -1,31 +1,591 @@
 ---
 title: "Idioms and conventions"
-sidebarTitle: "Idioms and conventions"
 ---
 
-todo: note that it's not for beginners
+import { Aside } from '/snippets/aside.jsx';
 
+This section summarizes common patterns and conventions used in idiomatic Tolk code.
 
-storage
+While [Basic syntax](/languages/tolk/basic-syntax) introduces the language itself,
+this page outlines the preferred **ways of expressing ideas** and **best practices** in Tolk.
+It may serve as a style reference throughout development.
 
-typed cells
+## Auto-serialization instead of slices/builders
 
-handle message
+Tolk [type system](/languages/tolk/types/list-of-types) is designed to entirely avoid manual cell parsing.
+The presence of `beginCell()` indicates a possibly wrong approach.
+All practical use cases in contract interaction are expressed with structures, unions, and references.
 
-send message
+```tolk
+struct Holder {
+    owner: address
+    lastUpdated: uint32
+    extra: Cell<ExtraInfo>
+}
 
-deploy is send message
+fun demo(data: Holder) {
+    // make a cell with 299 bits and 1 ref
+    val c = data.toCell();
 
-use lazy
+    // unpack it back
+    val holder = Holder.fromCell(c);
+}
+```
 
-no manual builders, use types
+<Aside
+  type="tip"
+  title={"Familiar with TL-B?"}
+>
+  The type system is considered as a **replacement** for TL-B.<br />
+  Read [Tolk vs TL-B](/languages/tolk/from-func/tolk-vs-tlb).
+</Aside>
 
-custom serializers
+See: [automatic serialization](/languages/tolk/features/auto-serialization).
 
-stringHexToSlice()
+## Cell\<T> — a "cell with known shape"
 
-address()
+All data in TON is stored in cells that reference each other.
+To express clear data relation, use **typed cells** — `Cell<T>`.
 
-opcodes
+Literally, it means: a cell whose contents is `T`:
 
-copy by value, e.g. slices
+```tolk
+struct Holder {
+    // ...
+    extra: Cell<ExtraInfo>
+}
+
+struct ExtraInfo {
+    someField: int8
+    // ...
+}
+
+fun getDeepData(value: Holder) {
+    // `value.extra` is a reference
+    // use `load()` to access its contents
+    val data = value.extra.load();
+    return data.someField;
+}
+```
+
+See: [cell references in serialization](/languages/tolk/features/auto-serialization#controlling-cell-references-typed-cells).
+
+## Not "fromCell", but "lazy fromCell"
+
+In practice, when reading data from cells, prefer `lazy`:
+
+- `lazy SomeStruct.fromCell(c)` over `SomeStruct.fromCell(c)`
+- `lazy typedCell.load()` over `typedCell.load()`
+
+The compiler loads only requested fields, skipping the rest.
+It reduces gas consumption and bytecode size.
+
+```tolk
+get fun publicKey() {
+    val st = lazy Storage.load();
+    // <-- here "skip 65 bits, preload uint256" is inserted
+    return st.publicKey
+}
+```
+
+See: [lazy loading](/languages/tolk/features/lazy-loading).
+
+## Custom serializers — if can't express with types
+
+Even though the type system is very rich, there still may occur situations where
+binary serialization is non-standard.
+Tolk allows to declare custom types with arbitrary serialization rules.
+
+```tolk
+type MyString = slice
+
+fun MyString.packToBuilder(self, mutate b: builder) {
+    // custom logic
+}
+
+fun MyString.unpackFromSlice(mutate s: slice) {
+    // custom logic
+}
+```
+
+And just use `MyString` as a regular type — everywhere:
+
+```tolk
+struct Everywhere {
+    tokenName: MyString
+    fullDomain: Cell<MyString>
+}
+```
+
+An interesting example. Imagine a structure which tail is signed:
+
+```tolk
+struct SignedRequest {
+    signature: uint256
+    // hash of all data below is signed
+    field1: int32
+    field2: address?
+    // ...
+}
+```
+
+The task is to parse it and check signature.
+A manual solution is obvious: read uint256, calculate the hash of the remainder, read other fields.
+
+What about the type system?
+Even this complex scenario can be expressed by introducing a synthetic field that is populated on loading:
+
+```tolk
+type HashOfRemainder = uint256
+
+struct SignedRequest {
+    signature: uint256
+    restHash: HashOfRemainder   // populated on load
+    field1: int32
+    field2: address?
+    // ...
+}
+
+fun HashOfRemainder.unpackFromSlice(mutate s: slice) {
+    // `s` is after reading `signature` in our case;
+    // we don't need to load anything —
+    // just calculate the hash on the fly
+    return s.hash()
+}
+
+fun demo(input: slice) {
+    val req = SignedRequest.fromSlice(input);
+    assert (req.signature == req.restHash) throw XXX;
+}
+```
+
+See: [serialization of type aliases](/languages/tolk/types/overall-serialization#type-aliases).
+
+## Contract storage = struct + load + save
+
+Contract storage is a regular `struct`, serialized into persistent on-chain data.
+It is convenient to add `load` and `store` methods:
+
+```tolk
+struct Storage {
+    counterValue: int64
+}
+
+fun Storage.load() {
+    return Storage.fromCell(contract.getData())
+}
+
+fun Storage.save(self) {
+    contract.setData(self.toCell())
+}
+```
+
+See: [contract storage](/languages/tolk/features/contract-storage).
+
+## Message = struct with a 32-bit prefix
+
+By convention, every message in TON has an **opcode** — a unique 32-bit number.
+In Tolk, every struct can have a "serialization prefix" of arbitrary length.
+32-bit prefixes are called opcodes.
+
+So, every incoming and outgoing message is a struct with a prefix:
+
+```tolk
+struct (0x12345678) CounterIncrement {
+    // ...
+}
+```
+
+<Aside
+  type="tip"
+  title={"Guidelines for choosing opcodes"}
+>
+  - When implementing jettons, NFTs, and other standards, use predefined prefixes according to the specification of each TEP.
+  - When developing custom protocols, use any random numbers.
+</Aside>
+
+See: [structures](/languages/tolk/syntax/structures-fields).
+
+## Handle a message = structs + union + match
+
+The suggested pattern to handle messages:
+
+- each incoming message is a struct with an opcode
+- combine these structs into a union
+- parse it via `lazy fromSlice` and `match` over variants
+
+```tolk
+struct (0x12345678) CounterIncrement {
+    incBy: uint32
+}
+
+struct (0x23456789) CounterReset {
+    initialValue: int64
+}
+
+type AllowedMessage = CounterIncrement | CounterReset
+
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy AllowedMessage.fromSlice(in.body);
+    match (msg) {
+        CounterIncrement => {
+            // use `msg.incBy`
+        }
+        CounterReset => {
+            // use `msg.initialValue`
+        }
+        else => {
+            // invalid input; a typical reaction is:
+            // ignore empty messages, "wrong opcode" if not
+            assert (in.body.isEmpty()) throw 0xFFFF
+        }
+    }
+}
+```
+
+Notice `lazy`: it also works with unions and does "lazy match" by a slice prefix.
+It's much more efficient than manual parsing an opcode and branching via `if (op == TRANSFER_OP)`.
+
+See: [handling messages](/languages/tolk/features/message-handling) and [pattern matching](/languages/tolk/syntax/pattern-matching).
+
+## Send a message = struct + createMessage
+
+To send a message from contract A to contract B,
+
+- declare a struct, specify an opcode and fields expected by a receiver
+- use `createMessage` + `send`
+
+```tolk
+struct (0x98765432) RequestedInfo {
+    // ...
+}
+
+fun respond(/* ... */) {
+    val reply = createMessage({
+        bounce: BounceMode.NoBounce,
+        value: ton("0.05"),
+        dest: addressOfB,
+        body: RequestedInfo {
+            // ... initialize fields
+        }
+    });
+    reply.send(SEND_MODE_REGULAR);
+}
+```
+
+<Aside type="tip">
+  When both contracts are developed in the same project (sharing common codebase),
+  such a struct is both an outgoing message for A and an incoming message for B.
+</Aside>
+
+## Deploy another contract = createMessage
+
+A common case: a minter deploys a jetton wallet, knowing wallet's code and initial state.
+This "deployment" is actually sending a message, auto-attaching code+data, and auto-calculating its address:
+
+```tolk
+val deployMsg = createMessage({
+    // address auto-calculated, code+data auto-attached
+    dest: {
+        stateInit: {
+            code: jettonWalletCode,
+            data: emptyWalletStorage.toCell(),
+        }
+    }
+});
+```
+
+A preferred way is to extract generating `stateInit` to a separate function, because
+it's used not only to send a message, but also to calculate/validate an address without sending.
+
+```tolk
+fun calcDeployedJettonWallet(/* ... */): AutoDeployAddress {
+    val emptyWalletStorage: WalletStorage = {
+        // ... initialize fields from parameters
+    };
+
+    return {
+        stateInit: {
+            code: jettonWalletCode,
+            data: emptyWalletStorage.toCell()
+        }
+    }
+}
+
+fun demoDeploy() {
+    val deployMsg = createMessage({
+        // address auto-calculated, code+data auto-attached
+        dest: calcDeployedJettonWallet(...),
+        // ...
+    });
+    deployMsg.send(mode);
+}
+```
+
+See: [tolk-bench repo](https://github.com/ton-blockchain/tolk-bench) for reference jettons.
+
+## Shard optimization = createMessage
+
+"Deploy a contract to a specific shard" is also done with the same technique.
+For example, in sharded jettons, a jetton wallet must be deployed to the same shard as the owner's wallet.
+
+```tolk
+val deployMsg = createMessage({
+    dest: {
+        stateInit: { code, data },
+        toShard: {
+            closeTo: ownerAddress,
+            fixedPrefixLength: 8
+        }
+    }
+});
+```
+
+Following the guideline above, the task is resolved by adding just a couple lines of code.
+Sharding will automatically be supported in `createMessage` and other address calculations.
+
+```tolk
+fun calcDeployedJettonWallet(/* ... */): AutoDeployAddress {
+    // ...
+    return {
+        stateInit: ...,
+        toShard: {
+            closeTo: ownerAddress,
+            fixedPrefixLength: SHARD_DEPTH
+        }
+    }
+}
+```
+
+See: [sharding in createMessage](/languages/tolk/features/message-sending#sharding:-deploying-%E2%80%9Cclose-to%E2%80%9D-another-contract).
+
+## Emitting events/logs to off-chain
+
+Emitting events and logs "to the outer world" is done via **external messages**.
+They are useful for monitoring: being indexed by TON indexers,
+they show "a picture of on-chain activity".
+These are also messages and also cost gas, but are constructed in a slightly different way.
+
+1. Create a `struct` to represent the message body
+1. Use `createExternalLogMessage` + `send`
+
+```tolk
+struct DepositEvent {
+    // ...
+}
+
+fun demo() {
+    val emitMsg = createExternalLogMessage({
+        dest: createAddressNone(),
+        body: DepositEvent {
+            // ...
+        }
+    });
+    emitMsg.send(SEND_MODE_REGULAR);
+}
+```
+
+See: [sending external messages](/languages/tolk/features/message-sending#universal-createexternallogmessage).
+
+## Return a struct from a get method
+
+When a contract getter (`get fun`) needs to return several values — introduce a structure and return it.
+Do not return unnamed tensors like `(int, int, int)`.
+Field names provide clear metadata for client wrappers and human readers.
+
+```tolk
+struct JettonWalletDataReply {
+    jettonBalance: coins
+    ownerAddress: address
+    minterAddress: address
+    jettonWalletCode: cell
+}
+
+get fun get_wallet_data(): JettonWalletDataReply {
+    return {
+        jettonBalance: ...,
+        ownerAddress: ...,
+        minterAddress: ...,
+        jettonWalletCode: ..,
+    }
+}
+```
+
+See: [contract getters](/languages/tolk/features/contract-getters).
+
+## Use assertions to validate user input
+
+After parsing an incoming message, validate required fields with `assert`:
+
+```tolk
+assert (msg.seqno == storage.seqno) throw E_INVALID_SEQNO;
+assert (msg.validUntil > blockchain.now()) throw E_EXPIRED;
+```
+
+Execution will terminate with some `errCode`, and a contract will be ready to serve the next request.
+This is the standard mechanism for reacting on invalid input.
+
+See: [exceptions](/languages/tolk/syntax/exceptions).
+
+## Organize a project into several files
+
+No matter whether a project contains one contract or multiple — split it into files.
+Having identical file structure across all projects simplifies navigation:
+
+- `errors.tolk` with constants or enums
+- `storage.tolk` with a storage and helper methods
+- `messages.tolk` with incoming/outgoing messages
+- `some-contract.tolk` as an entrypoint
+- probably, some other
+
+When several contracts are developed simultaneously, their share the same codebase.
+For instance, struct `SomeMessage`, outgoing for contract A, is incoming for contract B.
+Or for deployment, contract A should know B's storage to assign `stateInit`.
+
+<Aside
+  type="tip"
+  title={"Use only minimal declarations inside each contract.tolk"}
+>
+  Typically, each `some-contract.tolk` file contains:
+
+  - a union with available incoming messages
+  - entrypoints: `onInternalMessage`, `get fun`
+  - structures for complex replies from getters
+
+  The remaining codebase is shared.
+</Aside>
+
+See: [imports](/languages/tolk/syntax/imports).
+
+## Prefer methods to functions
+
+All symbols across different files share the same namespace and must have unique names project-wise.
+There are no "modules" or "exports".
+
+Using methods avoids name collisions:
+
+```tolk
+fun Struct1.validate(self) { /* ... */ }
+fun Struct2.validate(self) { /* ... */ }
+```
+
+Methods are also more convenient: `obj.someMethod()` looks nicer than `someFunction(obj)`:
+
+```tolk
+struct AuctionConfig {
+    // ...
+}
+
+// NOT
+// fun isAuctionConfigInvalid(config: AuctionConfig)
+// BUT
+fun AuctionConfig.isInvalid(self) {
+    // ...
+}
+```
+
+Same for static methods: `Auction.createFrom(...)` seems better than `createAuctionFrom(...)`.
+A method without `self` is a static one:
+
+```tolk
+fun Auction.createFrom(config: cell, minBid: coins) {
+    // ...
+}
+```
+
+Static methods may also be used to group various utility functions.
+For example, standard functions `blockchain.now()` and others are essentially static methods of an empty struct.
+
+```tolk
+struct blockchain
+
+fun blockchain.now(): int /* ... */;
+fun blockchain.logicalTime(): int /* ... */;
+```
+
+In large projects, this technique may be used to emulate namespaces.
+
+See: [functions and methods](/languages/tolk/syntax/functions-methods).
+
+## How to describe "forward payload" in jettons
+
+By a standard, a jetton transfer may have `forwardPayload` attached, which TL-B format is `(Either Cell ^Cell)`.
+How to describe this in Tolk?
+
+```tolk
+struct Transfer {
+    // ...
+    forwardPayload: RemainingBitsAndRefs | cell
+}
+```
+
+The union above is exactly what TL-B's `Either` means. It will work, but has some disadvantages in gas consumption and validation (for a `cell` we also need to check that no extra data exists besides the ref).
+
+Actually, no universal solution exists — it depends on particular requirements:
+
+- is the validation needed?
+- are custom error codes needed on error?
+- should it be convenient to be assigned from code?
+
+All these cases are described on a separate page.
+
+See: [forward payload in jettons](/languages/tolk/features/jetton-payload).
+
+## How to describe "address or none" in a field
+
+A nullable address — `address?` — is a pattern to say "optional address", sometimes called "maybe address".
+
+- `null` is "none", serialized as '00' (two zero bits)
+- `address` is "internal", serialized as 267 bits: '100' + workchain + hash
+
+See: [addresses](/languages/tolk/types/address).
+
+## How to calculate crc32/sha256 at compile-time
+
+Several built-in functions operate on strings and work at compile-time:
+
+```tolk
+// calculates crc32 of a string
+const crc32 = stringCrc32("some_str")
+
+// calculates sha256 of a string and returns 256-bit integer
+const hash = stringSha256("some_crypto_key")
+
+// and more
+```
+
+See: [standard library](/languages/tolk/features/standard-library).
+
+## How to return a string from a contract
+
+TVM has no strings, it has only slices.
+A binary slice must be encoded in a specific way to be parsed and interpreted correctly as a string.
+
+1. Fixed-size strings via `bitsN` — possible if the size is predefined.
+1. Snake strings: portion of data → the rest in a ref cell, recursively.
+1. Variable-length encoding via custom serializers.
+
+See: [strings](/languages/tolk/types/strings).
+
+## Final suggestion: do not micro-optimize
+
+Tolk compiler is smart.
+It targets "zero overhead": clean, consistent logic must be as efficient as low-level code.
+It automatically inlines functions, reduces stack permutations, and does a lot of underlying work
+to let a developer focus on business logic.
+And it works.
+Any attempts to overtrick the compiler result either in negligible or even in negative effect.
+
+That's why, follow the "**readability-first principle**":
+
+- use one-line methods without any worries — they are auto-inlined
+- use small structures — they are as efficient as raw stack values
+- extract constants and variables for clarity
+- do not use assembler functions unless being absolutely sure
+
+<Aside type="tip">
+  Use Tolk as intended — gas will take care of itself.<br />
+  But if the logic is hard to follow — it's where the inefficiency hides.
+</Aside>
+
+See: [compiler optimizations](/languages/tolk/features/compiler-optimizations).
