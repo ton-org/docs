@@ -81,6 +81,7 @@ export const CatchainVisualizer = () => {
       approved: new Set(),
       voted: new Set(),
       precommitted: new Set(),
+      receivedEvents: {},
       committedTo: null,
       voteTarget: null,
       crashed: false,
@@ -134,10 +135,19 @@ export const CatchainVisualizer = () => {
   }
 
   function chooseVoteTarget(model, node) {
-    const eligible = Object.values(model.candidates).filter(
-      (c) => c.approvals.size >= model.config.quorum
-    );
+    const eligible = Object.values(model.candidates).filter((c) => {
+      const state = c.approvals.size >= model.config.quorum;
+      // this node has seen this
+      const hasCurrentSeen = !node.receivedEvents[c.id]
+        ? false
+        : node.receivedEvents[c.id].approved >= model.config.quorum;
+
+      console.log(node.id, c.id, node.receivedEvents[c.id]);
+      return state && hasCurrentSeen;
+    });
+
     if (eligible.length === 0) return null;
+
     if (model.isSlow) {
       if (!node.voteTarget) return null;
       const target = model.candidates[node.voteTarget];
@@ -145,6 +155,7 @@ export const CatchainVisualizer = () => {
         ? target
         : null;
     }
+
     // fast attempt
     if (node.lockedCandidate) {
       const locked = model.candidates[node.lockedCandidate];
@@ -154,6 +165,7 @@ export const CatchainVisualizer = () => {
       const prev = model.candidates[node.lastVotedFor];
       if (prev && prev.approvals.size >= model.config.quorum) return prev;
     }
+
     return eligible.reduce((best, cand) => {
       if (!best) return cand;
       return cand.priority < best.priority ? cand : best;
@@ -167,7 +179,10 @@ export const CatchainVisualizer = () => {
     if (!sender || sender.status === "crashed") return;
     model.nodes.forEach((node) => {
       if (!includeSelf && node.id === from) return;
-      if (sender.status === "lagging" && Math.random() < LAGGING_DROP_PROBABILITY) {
+      if (
+        sender.status === "lagging" &&
+        Math.random() < LAGGING_DROP_PROBABILITY
+      ) {
         return;
       }
       const latency = randomBetween(
@@ -191,32 +206,55 @@ export const CatchainVisualizer = () => {
     });
   }
 
-  function enqueueAction(model, node, action, delay = 0) {
-    node.pendingActions.push(action);
-    if (!node.flushScheduled) {
-      node.flushScheduled = true;
-      scheduleTask(
-        model,
-        delay,
-        () => {
-          node.flushScheduled = false;
-          const actions = node.pendingActions.splice(
-            0,
-            node.pendingActions.length
-          );
-          actions.forEach((act) => {
-            if (act.type === "Submit") {
-              const cand = model.candidates[act.candidateId];
-              if (cand && !cand.createdAt) {
-                cand.createdAt = model.time;
-              }
-            }
-          });
-          broadcastBlock(model, { from: node.id, actions, includeSelf: false });
-        },
-        "flush-block"
-      );
+  function addEvent(node, candidateId, eventType) {
+    if (!node.receivedEvents[candidateId]) {
+      node.receivedEvents[candidateId] = {
+        approved: 0,
+        voted: 0,
+        precommitted: 0,
+        commited: 0,
+      };
     }
+
+    switch (eventType) {
+      case "approve": {
+        node.receivedEvents[candidateId].approved += 1;
+        break;
+      }
+      case "vote": {
+        node.receivedEvents[candidateId].voted += 1;
+        break;
+      }
+      case "precommit": {
+        node.receivedEvents[candidateId].precommitted += 1;
+        break;
+      }
+      case "commit": {
+        node.receivedEvents[candidateId].commited += 1;
+        break;
+      }
+    }
+  }
+
+  function enqueueAction(model, node, action, delay = 0, includeSelf = false) {
+    scheduleTask(
+      model,
+      delay,
+      () => {
+        if (action.type === "Submit") {
+          const cand = model.candidates[action.candidateId];
+          if (cand && !cand.createdAt) {
+            cand.createdAt = model.time;
+          }
+        }
+        broadcastBlock(model, {
+          from: node.id,
+          actions: [action],
+          includeSelf,
+        });
+      },
+      "flush-block"
+    );
   }
 
   function issueApproval(model, node, candidateId, opts = {}) {
@@ -228,6 +266,8 @@ export const CatchainVisualizer = () => {
     )
       return;
     node.approved.add(candidateId);
+    // event for this view
+    addEvent(node, candidateId, "approve");
     candidate.approvals.add(node.id);
     if (!candidate.createdAt && candidate.approvals.size === 1) {
       candidate.createdAt = model.time;
@@ -253,13 +293,14 @@ export const CatchainVisualizer = () => {
     node.votedThisAttempt = true;
     node.lastVotedFor = candidateId;
     node.voted.add(candidateId);
+    addEvent(node, candidateId, "vote");
     candidate.votes.add(node.id);
     logEvent(
       model,
       `${node.label} voted ${candidate.short} (votes ${candidate.votes.size}/${model.config.quorum})`
     );
     enqueueAction(model, node, { type: "Vote", candidateId });
-    tryPrecommit(model, candidateId);
+    tryPrecommit(model, node, candidateId);
   }
 
   function issuePrecommit(model, node, candidateId) {
@@ -273,13 +314,14 @@ export const CatchainVisualizer = () => {
     node.lockedCandidate = candidateId;
     node.lockedAtAttempt = model.attempt;
     node.precommitted.add(candidateId);
+    addEvent(node, candidateId, "precommit");
     candidate.precommits.add(node.id);
     logEvent(
       model,
       `${node.label} precommitted ${candidate.short} (precommits ${candidate.precommits.size}/${model.config.quorum})`
     );
     enqueueAction(model, node, { type: "Precommit", candidateId });
-    tryCommit(model, candidateId);
+    tryCommit(model, node, candidateId);
   }
 
   function issueCommit(model, node, candidateId) {
@@ -294,6 +336,7 @@ export const CatchainVisualizer = () => {
       return;
     node.committedTo = candidateId;
     candidate.commits.add(node.id);
+    addEvent(node, candidateId, "commit");
     logEvent(
       model,
       `${node.label} committed ${candidate.short} (commits ${candidate.commits.size}/${model.config.quorum})`
@@ -326,41 +369,79 @@ export const CatchainVisualizer = () => {
     });
   }
 
-  function tryPrecommit(model, candidateId) {
+  function tryPrecommit(model, node, candidateId) {
     const candidate = model.candidates[candidateId];
     if (!candidate || candidate.votes.size < model.config.quorum) return;
-    candidate.votes.forEach((nodeId) => {
-      const node = getNode(model, nodeId);
-      if (!node || node.precommitted.has(candidateId)) return;
-      scheduleTask(
-        model,
-        model.config.simDelay,
-        () => issuePrecommit(model, node, candidateId),
-        "precommit"
-      );
-    });
+
+    // check that this node have seen quorum for votes
+    if (
+      !node.receivedEvents[candidateId] ||
+      node.receivedEvents[candidateId].voted < model.config.quorum
+    ) {
+      return;
+    }
+
+    scheduleTask(
+      model,
+      model.config.simDelay,
+      () => issuePrecommit(model, node, candidateId),
+      "precommit"
+    );
+
+    // candidate.votes.forEach((nodeId) => {
+    //   const node = getNode(model, nodeId);
+    //   if (!node || node.precommitted.has(candidateId)) return;
+    //   scheduleTask(
+    //     model,
+    //     model.config.simDelay,
+    //     () => issuePrecommit(model, node, candidateId),
+    //     "precommit"
+    //   );
+    // });
   }
 
-  function tryCommit(model, candidateId) {
+  function tryCommit(model, node, candidateId) {
     const candidate = model.candidates[candidateId];
     if (!candidate || candidate.precommits.size < model.config.quorum) return;
-    candidate.precommits.forEach((nodeId) => {
-      const node = getNode(model, nodeId);
-      if (!node || node.committedTo === candidateId) return;
-      scheduleTask(
-        model,
-        model.config.simDelay,
-        () => issueCommit(model, node, candidateId),
-        "commit"
-      );
-    });
+
+    // check that this node have seen quorum for precommits so we can vote
+    if (
+      !node.receivedEvents[candidateId] ||
+      node.receivedEvents[candidateId].precommitted < model.config.quorum
+    ) {
+      return;
+    }
+
+    scheduleTask(
+      model,
+      model.config.simDelay,
+      () => issueCommit(model, node, candidateId),
+      "commit"
+    );
+
+    // candidate.precommits.forEach((nodeId) => {
+    //   const node = getNode(model, nodeId);
+    //   if (!node || node.committedTo === candidateId) return;
+    //   scheduleTask(
+    //     model,
+    //     model.config.simDelay,
+    //     () => issueCommit(model, node, candidateId),
+    //     "commit"
+    //   );
+    // });
   }
 
   function calcApprovalDelay(model, node, candidate, isSlow) {
     const base = isSlow ? model.config.DeltaInfinity : model.config.Delta;
-    const priorityLag = (candidate.proposerIndex + node.label.length) * PRIORITY_LAG_FACTOR;
+    const priorityLag =
+      (candidate.proposerIndex + node.label.length) * PRIORITY_LAG_FACTOR;
     const jitter = randomBetween(APPROVAL_JITTER_MIN, APPROVAL_JITTER_MAX);
     return base + priorityLag + jitter;
+  }
+
+  function getSimDelay() {
+    // TODO: check proposer delay, ensure it with async scheduling
+    return randomBetween(APPROVAL_JITTER_MIN, APPROVAL_JITTER_MAX);
   }
 
   function pickCoordinator(model, attempt) {
@@ -408,9 +489,16 @@ export const CatchainVisualizer = () => {
   function sendVoteFor(model) {
     if (!model.isSlow) return;
     const coord = pickCoordinator(model, model.attempt);
-    const candidates = Object.values(model.candidates).filter((c) => !!c.createdAt);
+    const candidates = Object.values(model.candidates).filter(
+      (c) => !!c.createdAt
+    );
     if (candidates.length === 0) {
-      scheduleTask(model, VOTEFOR_RETRY_MS, () => sendVoteFor(model), "voteFor-retry");
+      scheduleTask(
+        model,
+        VOTEFOR_RETRY_MS,
+        () => sendVoteFor(model),
+        "voteFor-retry"
+      );
       return;
     }
     const eligible = candidates.filter(
@@ -423,7 +511,7 @@ export const CatchainVisualizer = () => {
       model,
       `${coord.label} suggests ${choice.short} for slow attempt via VoteFor`
     );
-      enqueueAction(model, coord, { type: "VoteFor", candidateId: choice.id });
+    enqueueAction(model, coord, { type: "VoteFor", candidateId: choice.id });
   }
 
   function handleAction(model, node, action, fromId) {
@@ -449,18 +537,19 @@ export const CatchainVisualizer = () => {
           }
         }
         if (!candidate.createdAt) candidate.createdAt = model.time;
-        const delay = calcApprovalDelay(model, node, candidate, model.isSlow);
+        // const delay = calcApprovalDelay(model, node, candidate, model.isSlow);
         if (node.id === candidate.proposerId) {
           scheduleTask(
             model,
-            120,
+            // TODO: fix this const
+            500,
             () => issueApproval(model, node, candidate.id),
             "proposer-self-approve"
           );
         } else if (!model.isSlow) {
           scheduleTask(
             model,
-            delay,
+            getSimDelay(),
             () => issueApproval(model, node, candidate.id),
             "auto-approve"
           );
@@ -484,8 +573,10 @@ export const CatchainVisualizer = () => {
       case "Approve": {
         if (candidate && !candidate.approvals.has(fromId)) {
           candidate.approvals.add(fromId);
-          tryVote(model);
         }
+
+        addEvent(node, candidate.id, "approve");
+        tryVote(model);
         break;
       }
       case "Vote": {
@@ -498,23 +589,31 @@ export const CatchainVisualizer = () => {
                 n.lockedCandidate !== candidate.id &&
                 model.attempt > n.lockedAtAttempt
               ) {
+                // TODO: add quorum check, any vote arrival in a later attempt clears your lock,
                 n.lockedCandidate = null;
                 n.lockedAtAttempt = 0;
               }
             });
           }
-          tryPrecommit(model, candidate.id);
         }
+
+        addEvent(node, candidate.id, "vote");
+        tryPrecommit(model, node, candidate.id);
         break;
       }
       case "Precommit": {
         if (candidate && !candidate.precommits.has(fromId)) {
           candidate.precommits.add(fromId);
-          tryCommit(model, candidate.id);
         }
+
+        addEvent(node, candidate.id, "precommit");
+        tryCommit(model, node, candidate.id);
         break;
       }
       case "Commit": {
+        // TODO: fix next round individual start
+        addEvent(node, candidate.id, "commit");
+
         if (candidate && node.committedTo !== candidate.id) {
           node.committedTo = candidate.id;
           candidate.commits.add(node.id);
@@ -522,6 +621,13 @@ export const CatchainVisualizer = () => {
             !model.committedCandidate &&
             candidate.commits.size >= model.config.quorum
           ) {
+            if (
+              !node.receivedEvents[candidate.id] ||
+              node.receivedEvents[candidate.id] < model.config.quorum
+            ) {
+              break;
+            }
+
             model.committedCandidate = candidate.id;
             model.nextRoundAt = model.time + model.config.roundGap;
             logEvent(
@@ -540,7 +646,8 @@ export const CatchainVisualizer = () => {
   function handleMessage(model, message) {
     const node = getNode(model, message.to);
     if (!node || node.status === "crashed") return;
-    if (node.status === "lagging" && Math.random() < LAGGING_DROP_PROBABILITY) return;
+    if (node.status === "lagging" && Math.random() < LAGGING_DROP_PROBABILITY)
+      return;
     if (message.type !== "Block") return;
     message.actions.forEach((action) =>
       handleAction(model, node, action, message.from)
@@ -605,9 +712,18 @@ export const CatchainVisualizer = () => {
 
     const proposerSet = [];
     for (let i = 0; i < model.nodes.length; i += 1) {
-      const prio = getNodePriority(model.round, i, model.nodes.length, model.config.C);
+      const prio = getNodePriority(
+        model.round,
+        i,
+        model.nodes.length,
+        model.config.C
+      );
       if (prio >= 0) {
-        proposerSet.push({ node: model.nodes[i], priority: prio, proposerIndex: i });
+        proposerSet.push({
+          node: model.nodes[i],
+          priority: prio,
+          proposerIndex: i,
+        });
       }
     }
     proposerSet.sort((a, b) => a.priority - b.priority);
@@ -617,7 +733,12 @@ export const CatchainVisualizer = () => {
         (c) => c.proposerId === proposer.id && c.round === model.round
       );
       if (!cand) {
-        cand = makeCandidate(model.round, model.attempt, proposerIndex, proposer.id);
+        cand = makeCandidate(
+          model.round,
+          model.attempt,
+          proposerIndex,
+          proposer.id
+        );
         cand.priority = priority;
         model.candidates[cand.id] = cand;
       } else {
@@ -660,7 +781,12 @@ export const CatchainVisualizer = () => {
       }), proposer window size ${model.config.C}`
     );
     if (model.isSlow) {
-      scheduleTask(model, VOTEFOR_INITIAL_DELAY_MS, () => sendVoteFor(model), "voteFor");
+      scheduleTask(
+        model,
+        VOTEFOR_INITIAL_DELAY_MS,
+        () => sendVoteFor(model),
+        "voteFor"
+      );
     }
     ensureNullCandidate(model);
     scheduleTask(model, model.config.K, () => {
@@ -741,7 +867,7 @@ export const CatchainVisualizer = () => {
       numNodes: 5,
       latency: [420, 900],
       K: 8000, // 8 seconds per attempt
-      roundGap: 1800,
+      roundGap: 1000,
       Delta: 2000, // Δ_i = 2(i-1) seconds -> base 2s
       DeltaInfinity: 4000, // 2*C seconds with C=2
       Y: 3, // fast attempts
@@ -756,7 +882,7 @@ export const CatchainVisualizer = () => {
   const modelRef = useRef(null);
   const [tick, setTick] = useState(0);
   const [running, setRunning] = useState(true);
-  const [speed, setSpeed] = useState(0.3);
+  const [speed, setSpeed] = useState(0.1);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
 
   if (!modelRef.current) {
@@ -785,15 +911,8 @@ export const CatchainVisualizer = () => {
     0,
     model.time - (model.attemptStartedAt || 0)
   );
-  const attemptProgress = clamp(
-    elapsedAttempt / (model.config.K || 1),
-    0,
-    1
-  );
-  const attemptRemaining = Math.max(
-    0,
-    (model.config.K || 0) - elapsedAttempt
-  );
+  const attemptProgress = clamp(elapsedAttempt / (model.config.K || 1), 0, 1);
+  const attemptRemaining = Math.max(0, (model.config.K || 0) - elapsedAttempt);
 
   const reset = () => {
     modelRef.current = createModel(config);
@@ -1025,17 +1144,17 @@ export const CatchainVisualizer = () => {
             </div>
           </div>
 
-            <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-2">
-              <p className="text-xs font-semibold text-slate-700 mb-1">
-                Candidates
-              </p>
-              <div className="flex flex-col gap-2">
-                {candidates.slice(0, 4).map((cand) => (
-                  <div
-                    key={cand.id}
-                    className="rounded-md bg-white border border-slate-200 p-2"
-                  >
-                    <div className="flex items-center justify-between text-sm font-semibold text-slate-800">
+          <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-2">
+            <p className="text-xs font-semibold text-slate-700 mb-1">
+              Candidates
+            </p>
+            <div className="flex flex-col gap-2">
+              {candidates.slice(0, 4).map((cand) => (
+                <div
+                  key={cand.id}
+                  className="rounded-md bg-white border border-slate-200 p-2"
+                >
+                  <div className="flex items-center justify-between text-sm font-semibold text-slate-800">
                     <span>{cand.id}</span>
                     <span className="text-xs text-slate-600">
                       #{cand.short}
@@ -1112,12 +1231,15 @@ export const CatchainVisualizer = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-3 relative z-50" style={{ pointerEvents: "auto" }}>
+        <div
+          className="flex items-center gap-3 relative z-50"
+          style={{ pointerEvents: "auto" }}
+        >
           <span className="text-sm font-semibold text-slate-800">Speed</span>
           <input
             type="range"
-            min="0.001"
-            max="2"
+            min="0.0001"
+            max="1"
             step="0.01"
             value={speed}
             onChange={(e) => setSpeed(parseFloat(e.target.value))}
