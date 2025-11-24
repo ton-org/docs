@@ -77,7 +77,7 @@ jobs:
             exit $ERR
           )
 
-      - name: Manage PR comments
+      - name: Hide prior PR comments and issue a new one in case of failure
         if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') }}
         env:
           COMMENT: ${{ env.COMMENT }}
@@ -96,31 +96,28 @@ jobs:
               issue_number: context.issue.number,
             });
             for (const comment of comments.data) {
-              const minified = await github.graphql(`
+              const isHidden = (await github.graphql(`
                 query($nodeId: ID!) {
                   node(id: $nodeId) {
                     ... on IssueComment {
                       isMinimized
-                      minimizedReason
                     }
                   }
                 }
-              `, { nodeId: comment.node_id });
-              console.log(minified);
+              `, { nodeId: comment.node_id }))?.node?.isMinimized;
+              await exec.exec('sleep 0.5s');
+              if (isHidden) { continue; }
               const body = comment.body;
               const prefix = rawCommentText.slice(1, 30);
-              console.log(`--${body}--`);
-              console.log(`--${prefix}--`);
-              console.log(`-------------`);
               if (
                 comment.user.login === 'github-actions[bot]' &&
                 body.startsWith(prefix)
               ) {
                 console.log(await github.graphql(`
-                  mutation {
+                  mutation($subjectId: ID!, $classifier: ReportedContentClassifiers!) {
                     minimizeComment(input: {
-                      subjectId:$subjectId,
-                      classifier:$classifier
+                      subjectId: $subjectId,
+                      classifier: $classifier
                     }) {
                       clientMutationId
                       minimizedComment {
@@ -133,7 +130,7 @@ jobs:
                   subjectId: comment.node_id,
                   classifier: success ? 'RESOLVED' : 'OUTDATED',
                 }));
-                await exec.exec('sleep 1s');
+                await exec.exec('sleep 0.5s');
               }
             }
             if (!success) {
