@@ -109,7 +109,7 @@ export const CatchainVisualizer = () => {
       votes: new Set(),
       precommits: new Set(),
       commits: new Set(),
-      createdAt: 0,
+      createdAt: null,
       priority: (proposerIndex + round - 1) % PRIORITY_MOD,
     };
   }
@@ -204,6 +204,14 @@ export const CatchainVisualizer = () => {
             0,
             node.pendingActions.length
           );
+          actions.forEach((act) => {
+            if (act.type === "Submit") {
+              const cand = model.candidates[act.candidateId];
+              if (cand && !cand.createdAt) {
+                cand.createdAt = model.time;
+              }
+            }
+          });
           broadcastBlock(model, { from: node.id, actions, includeSelf: false });
         },
         "flush-block"
@@ -221,6 +229,9 @@ export const CatchainVisualizer = () => {
       return;
     node.approved.add(candidateId);
     candidate.approvals.add(node.id);
+    if (!candidate.createdAt && candidate.approvals.size === 1) {
+      candidate.createdAt = model.time;
+    }
     logEvent(
       model,
       `${node.label} approved ${candidate.short} (approvals ${candidate.approvals.size}/${model.config.quorum})`
@@ -397,7 +408,7 @@ export const CatchainVisualizer = () => {
   function sendVoteFor(model) {
     if (!model.isSlow) return;
     const coord = pickCoordinator(model, model.attempt);
-    const candidates = Object.values(model.candidates);
+    const candidates = Object.values(model.candidates).filter((c) => !!c.createdAt);
     if (candidates.length === 0) {
       scheduleTask(model, VOTEFOR_RETRY_MS, () => sendVoteFor(model), "voteFor-retry");
       return;
@@ -612,7 +623,6 @@ export const CatchainVisualizer = () => {
       } else {
         cand.priority = priority;
       }
-      if (!cand.createdAt) cand.createdAt = model.time;
       const submitDelay = Math.max(0, priority * model.config.Delta);
       enqueueAction(
         model,
@@ -766,9 +776,11 @@ export const CatchainVisualizer = () => {
   const activeCandidate = model.activeCandidateId
     ? model.candidates[model.activeCandidateId]
     : null;
-  const candidates = Object.values(model.candidates).sort(
-    (a, b) => b.createdAt - a.createdAt
-  );
+  const candidates = Object.values(model.candidates)
+    .filter((c) =>
+      c.proposerId === "NULL" ? c.approvals.size > 0 : !!c.createdAt
+    )
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   const elapsedAttempt = Math.max(
     0,
     model.time - (model.attemptStartedAt || 0)
@@ -1013,17 +1025,17 @@ export const CatchainVisualizer = () => {
             </div>
           </div>
 
-          <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-2">
-            <p className="text-xs font-semibold text-slate-700 mb-1">
-              Candidates
-            </p>
-            <div className="flex flex-col gap-2">
-              {candidates.slice(0, 4).map((cand) => (
-                <div
-                  key={cand.id}
-                  className="rounded-md bg-white border border-slate-200 p-2"
-                >
-                  <div className="flex items-center justify-between text-sm font-semibold text-slate-800">
+            <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-2">
+              <p className="text-xs font-semibold text-slate-700 mb-1">
+                Candidates
+              </p>
+              <div className="flex flex-col gap-2">
+                {candidates.slice(0, 4).map((cand) => (
+                  <div
+                    key={cand.id}
+                    className="rounded-md bg-white border border-slate-200 p-2"
+                  >
+                    <div className="flex items-center justify-between text-sm font-semibold text-slate-800">
                     <span>{cand.id}</span>
                     <span className="text-xs text-slate-600">
                       #{cand.short}
