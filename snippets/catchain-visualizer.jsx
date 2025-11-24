@@ -284,7 +284,7 @@ export const CatchainVisualizer = () => {
       if (!target) return;
       scheduleTask(
         model,
-        model.config.stageDelay,
+        model.config.Delta,
         () => issueVote(model, node, target.id),
         "vote"
       );
@@ -299,7 +299,7 @@ export const CatchainVisualizer = () => {
       if (!node || node.precommitted.has(candidateId)) return;
       scheduleTask(
         model,
-        model.config.stageDelay,
+        model.config.Delta,
         () => issuePrecommit(model, node, candidateId),
         "precommit"
       );
@@ -314,7 +314,7 @@ export const CatchainVisualizer = () => {
       if (!node || node.committedTo === candidateId) return;
       scheduleTask(
         model,
-        model.config.stageDelay,
+        model.config.Delta,
         () => issueCommit(model, node, candidateId),
         "commit"
       );
@@ -322,7 +322,7 @@ export const CatchainVisualizer = () => {
   }
 
   function calcApprovalDelay(model, node, candidate, isSlow) {
-    const base = isSlow ? 720 : 340;
+    const base = isSlow ? model.config.DeltaInfinity : model.config.Delta;
     const priorityLag = (candidate.proposerIndex + node.label.length) * 18;
     const jitter = randomBetween(25, 180);
     return base + priorityLag + jitter;
@@ -512,7 +512,7 @@ export const CatchainVisualizer = () => {
   function startAttempt(model, options = {}) {
     const forced = options.forceSlow === true;
     model.attempt = options.attempt || model.attempt + 1;
-    model.isSlow = forced || model.attempt > model.config.fastAttempts;
+    model.isSlow = forced || model.attempt > model.config.Y;
     model.attemptStartedAt = model.time;
     model.messages = [];
     model.tasks = [];
@@ -577,7 +577,7 @@ export const CatchainVisualizer = () => {
     if (model.isSlow) {
       scheduleTask(model, 500, () => sendVoteFor(model), "voteFor");
     }
-    scheduleTask(model, model.config.attemptBudget, () => {
+    scheduleTask(model, model.config.K, () => {
       if (!model.committedCandidate) {
         logEvent(model, `⏱️ Attempt ${model.attempt} timed out, moving on`);
         startAttempt(model, { attempt: model.attempt + 1 });
@@ -652,10 +652,11 @@ export const CatchainVisualizer = () => {
     () => ({
       numNodes: 5,
       latency: [420, 900],
-      attemptBudget: 6200,
+      K: 6200,
       roundGap: 1800,
-      stageDelay: 240,
-      fastAttempts: 2,
+      Delta: 240,
+      DeltaInfinity: 1800,
+      Y: 2,
       frameMs: 90,
       quorum: 4,
     }),
@@ -687,6 +688,19 @@ export const CatchainVisualizer = () => {
     : null;
   const candidates = Object.values(model.candidates).sort(
     (a, b) => b.createdAt - a.createdAt
+  );
+  const elapsedAttempt = Math.max(
+    0,
+    model.time - (model.attemptStartedAt || 0)
+  );
+  const attemptProgress = clamp(
+    elapsedAttempt / (model.config.K || 1),
+    0,
+    1
+  );
+  const attemptRemaining = Math.max(
+    0,
+    (model.config.K || 0) - elapsedAttempt
   );
 
   const reset = () => {
@@ -981,6 +995,23 @@ export const CatchainVisualizer = () => {
       </div>
 
       <div className="mt-4 flex flex-col gap-3">
+        <div>
+          <div className="flex items-center justify-between text-sm font-semibold text-slate-800">
+            <span>Attempt timer</span>
+            <span className="text-slate-700">
+              {attemptRemaining > 0
+                ? `${(attemptRemaining / 1000).toFixed(1)}s left`
+                : "next attempt soon"}
+            </span>
+          </div>
+          <div className="mt-2 h-2 rounded-full bg-slate-200 overflow-hidden">
+            <div
+              className="h-full bg-sky-500 transition-[width]"
+              style={{ width: `${Math.min(100, attemptProgress * 100)}%` }}
+            />
+          </div>
+        </div>
+
         <div className="flex items-center gap-3">
           <span className="text-sm font-semibold text-slate-800">Speed</span>
           <input
