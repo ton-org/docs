@@ -26,6 +26,30 @@ export const CatchainVisualizer = () => {
     Commit: "Commit",
   };
 
+  const LAYOUT = {
+    centerX: 230,
+    centerY: 200,
+    nodeRing: 150,
+    backdropRadius: 170,
+    svgWidth: 520,
+    svgHeight: 380,
+    nodeRadius: 30,
+    ringRadius: 34,
+  };
+
+  const LOG_LIMIT = 14;
+  const PRIORITY_MOD = 1000;
+  const PRIORITY_LAG_FACTOR = 18;
+  const APPROVAL_JITTER_MIN = 25;
+  const APPROVAL_JITTER_MAX = 180;
+  const NULL_PRIORITY = 9999;
+  const VOTEFOR_RETRY_MS = 400;
+  const PROPOSER_SELF_APPROVE_EXTRA_MS = 120;
+  const CANVAS_ARROW_MARKER = { width: 6, height: 6, refX: 5, refY: 3 };
+  const LOGO_TEXT_OFFSET = 24;
+  const LAGGING_DROP_PROBABILITY = 0.5;
+  const VOTEFOR_INITIAL_DELAY_MS = 500;
+
   function randomBetween(min, max) {
     return min + Math.random() * (max - min);
   }
@@ -35,9 +59,9 @@ export const CatchainVisualizer = () => {
   }
 
   function createPositions(count) {
-    const cx = 230;
-    const cy = 200;
-    const r = 150;
+    const cx = LAYOUT.centerX;
+    const cy = LAYOUT.centerY;
+    const r = LAYOUT.nodeRing;
     const result = [];
     for (let i = 0; i < count; i += 1) {
       const angle = (Math.PI * 2 * i) / count - Math.PI / 2;
@@ -86,14 +110,14 @@ export const CatchainVisualizer = () => {
       precommits: new Set(),
       commits: new Set(),
       createdAt: 0,
-      priority: (proposerIndex + round - 1) % 1000,
+      priority: (proposerIndex + round - 1) % PRIORITY_MOD,
     };
   }
 
   function logEvent(model, text) {
     model.log.unshift({ t: model.time, text });
-    if (model.log.length > 14) {
-      model.log = model.log.slice(0, 14);
+    if (model.log.length > LOG_LIMIT) {
+      model.log = model.log.slice(0, LOG_LIMIT);
     }
   }
 
@@ -143,7 +167,7 @@ export const CatchainVisualizer = () => {
     if (!sender || sender.status === "crashed") return;
     model.nodes.forEach((node) => {
       if (!includeSelf && node.id === from) return;
-      if (sender.status === "lagging" && Math.random() < 0.5) {
+      if (sender.status === "lagging" && Math.random() < LAGGING_DROP_PROBABILITY) {
         return;
       }
       const latency = randomBetween(
@@ -284,7 +308,7 @@ export const CatchainVisualizer = () => {
       if (!target) return;
       scheduleTask(
         model,
-        model.config.Delta,
+        model.config.simDelay,
         () => issueVote(model, node, target.id),
         "vote"
       );
@@ -299,7 +323,7 @@ export const CatchainVisualizer = () => {
       if (!node || node.precommitted.has(candidateId)) return;
       scheduleTask(
         model,
-        model.config.Delta,
+        model.config.simDelay,
         () => issuePrecommit(model, node, candidateId),
         "precommit"
       );
@@ -314,7 +338,7 @@ export const CatchainVisualizer = () => {
       if (!node || node.committedTo === candidateId) return;
       scheduleTask(
         model,
-        model.config.Delta,
+        model.config.simDelay,
         () => issueCommit(model, node, candidateId),
         "commit"
       );
@@ -323,8 +347,8 @@ export const CatchainVisualizer = () => {
 
   function calcApprovalDelay(model, node, candidate, isSlow) {
     const base = isSlow ? model.config.DeltaInfinity : model.config.Delta;
-    const priorityLag = (candidate.proposerIndex + node.label.length) * 18;
-    const jitter = randomBetween(25, 180);
+    const priorityLag = (candidate.proposerIndex + node.label.length) * PRIORITY_LAG_FACTOR;
+    const jitter = randomBetween(APPROVAL_JITTER_MIN, APPROVAL_JITTER_MAX);
     return base + priorityLag + jitter;
   }
 
@@ -333,12 +357,49 @@ export const CatchainVisualizer = () => {
     return model.nodes[idx];
   }
 
+  function getNodePriority(round, idx, total, C) {
+    const start = (round - 1 + total) % total;
+    let adj = idx;
+    if (adj < start) adj += total;
+    const prio = adj - start;
+    return prio < C ? prio : -1;
+  }
+
+  function ensureNullCandidate(model) {
+    if (model.nullCandidateId) return;
+    const id = `R${model.round}-NULL`;
+    const candidate = {
+      id,
+      short: `${model.round}.⊥`,
+      round: model.round,
+      attempt: model.attempt,
+      proposerIndex: -1,
+      proposerId: "NULL",
+      approvals: new Set(),
+      votes: new Set(),
+      precommits: new Set(),
+      commits: new Set(),
+      createdAt: model.time,
+      priority: NULL_PRIORITY,
+    };
+    model.candidates[id] = candidate;
+    model.nullCandidateId = id;
+    model.nodes.forEach((node) => {
+      scheduleTask(
+        model,
+        model.config.DeltaInfinity,
+        () => issueApproval(model, node, id),
+        "null-approve"
+      );
+    });
+  }
+
   function sendVoteFor(model) {
     if (!model.isSlow) return;
     const coord = pickCoordinator(model, model.attempt);
     const candidates = Object.values(model.candidates);
     if (candidates.length === 0) {
-      scheduleTask(model, 400, () => sendVoteFor(model), "voteFor-retry");
+      scheduleTask(model, VOTEFOR_RETRY_MS, () => sendVoteFor(model), "voteFor-retry");
       return;
     }
     const eligible = candidates.filter(
@@ -351,7 +412,7 @@ export const CatchainVisualizer = () => {
       model,
       `${coord.label} suggests ${choice.short} for slow attempt via VoteFor`
     );
-    enqueueAction(model, coord, { type: "VoteFor", candidateId: choice.id });
+      enqueueAction(model, coord, { type: "VoteFor", candidateId: choice.id });
   }
 
   function handleAction(model, node, action, fromId) {
@@ -468,7 +529,7 @@ export const CatchainVisualizer = () => {
   function handleMessage(model, message) {
     const node = getNode(model, message.to);
     if (!node || node.status === "crashed") return;
-    if (node.status === "lagging" && Math.random() < 0.5) return;
+    if (node.status === "lagging" && Math.random() < LAGGING_DROP_PROBABILITY) return;
     if (message.type !== "Block") return;
     message.actions.forEach((action) =>
       handleAction(model, node, action, message.from)
@@ -531,52 +592,67 @@ export const CatchainVisualizer = () => {
       cand.precommits = new Set();
     });
 
-    const proposerIndex =
-      (model.round + model.attempt - 2) % model.nodes.length;
-    const proposer = model.nodes[proposerIndex];
-    let candidate = Object.values(model.candidates).find(
-      (c) => c.proposerId === proposer.id && c.round === model.round
-    );
-    if (!candidate) {
-      candidate = makeCandidate(
-        model.round,
-        model.attempt,
-        proposerIndex,
-        proposer.id
-      );
-      model.candidates[candidate.id] = candidate;
+    const proposerSet = [];
+    for (let i = 0; i < model.nodes.length; i += 1) {
+      const prio = getNodePriority(model.round, i, model.nodes.length, model.config.C);
+      if (prio >= 0) {
+        proposerSet.push({ node: model.nodes[i], priority: prio, proposerIndex: i });
+      }
     }
-    model.activeCandidateId = candidate.id;
-    if (!candidate.createdAt) candidate.createdAt = model.time;
+    proposerSet.sort((a, b) => a.priority - b.priority);
+
+    proposerSet.forEach(({ node: proposer, priority, proposerIndex }) => {
+      let cand = Object.values(model.candidates).find(
+        (c) => c.proposerId === proposer.id && c.round === model.round
+      );
+      if (!cand) {
+        cand = makeCandidate(model.round, model.attempt, proposerIndex, proposer.id);
+        cand.priority = priority;
+        model.candidates[cand.id] = cand;
+      } else {
+        cand.priority = priority;
+      }
+      if (!cand.createdAt) cand.createdAt = model.time;
+      const submitDelay = Math.max(0, priority * model.config.Delta);
+      enqueueAction(
+        model,
+        proposer,
+        {
+          type: "Submit",
+          candidateId: cand.id,
+          round: model.round,
+          attempt: model.attempt,
+          proposerId: proposer.id,
+          proposerIndex,
+          priority,
+        },
+        submitDelay
+      );
+      scheduleTask(
+        model,
+        submitDelay + PROPOSER_SELF_APPROVE_EXTRA_MS,
+        () => issueApproval(model, proposer, cand.id),
+        "proposer-instant-approve"
+      );
+    });
+
+    const best = proposerSet.find(() => true);
+    model.activeCandidateId = best
+      ? Object.values(model.candidates).find(
+          (c) => c.proposerId === best.node.id && c.round === model.round
+        )?.id || ""
+      : "";
+
     logEvent(
       model,
       `▶️ Round ${model.round}, attempt ${model.attempt} (${
         model.isSlow ? "slow" : "fast"
-      }), proposer ${proposer.label}`
-    );
-    enqueueAction(
-      model,
-      proposer,
-      {
-        type: "Submit",
-        candidateId: candidate.id,
-        round: model.round,
-        attempt: model.attempt,
-        proposerId: proposer.id,
-        proposerIndex,
-      },
-      80
-    );
-    // proposer self-approves its own candidate
-    scheduleTask(
-      model,
-      150,
-      () => issueApproval(model, proposer, candidate.id),
-      "proposer-instant-approve"
+      }), proposer window size ${model.config.C}`
     );
     if (model.isSlow) {
-      scheduleTask(model, 500, () => sendVoteFor(model), "voteFor");
+      scheduleTask(model, VOTEFOR_INITIAL_DELAY_MS, () => sendVoteFor(model), "voteFor");
     }
+    ensureNullCandidate(model);
     scheduleTask(model, model.config.K, () => {
       if (!model.committedCandidate) {
         logEvent(model, `⏱️ Attempt ${model.attempt} timed out, moving on`);
@@ -596,6 +672,7 @@ export const CatchainVisualizer = () => {
     model.tasks = [];
     model.committedCandidate = null;
     model.nextRoundAt = null;
+    model.nullCandidateId = null;
     model.nodes.forEach((node) => {
       node.approved = new Set();
       node.voted = new Set();
@@ -632,6 +709,7 @@ export const CatchainVisualizer = () => {
       nextRoundAt: null,
       log: [],
       voteForTarget: null,
+      nullCandidateId: null,
     };
     startRound(model, true);
     return model;
@@ -652,11 +730,13 @@ export const CatchainVisualizer = () => {
     () => ({
       numNodes: 5,
       latency: [420, 900],
-      K: 6200,
+      K: 8000, // 8 seconds per attempt
       roundGap: 1800,
-      Delta: 240,
-      DeltaInfinity: 1800,
-      Y: 2,
+      Delta: 2000, // Δ_i = 2(i-1) seconds -> base 2s
+      DeltaInfinity: 4000, // 2*C seconds with C=2
+      Y: 3, // fast attempts
+      C: 2, // round candidates
+      simDelay: 250, // local processing/animation delay for follow-up actions
       frameMs: 90,
       quorum: 4,
     }),
@@ -666,7 +746,7 @@ export const CatchainVisualizer = () => {
   const modelRef = useRef(null);
   const [tick, setTick] = useState(0);
   const [running, setRunning] = useState(true);
-  const [speed, setSpeed] = useState(1);
+  const [speed, setSpeed] = useState(0.3);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
 
   if (!modelRef.current) {
@@ -737,14 +817,17 @@ export const CatchainVisualizer = () => {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2 rounded-xl border border-slate-100 bg-slate-50 px-2 py-3">
-          <svg viewBox="0 0 520 380" className="w-full h-[360px]">
+          <svg
+            viewBox={`0 0 ${LAYOUT.svgWidth} ${LAYOUT.svgHeight}`}
+            className="w-full h-[360px]"
+          >
             <defs>
               <marker
                 id="arrow-head"
-                markerWidth="6"
-                markerHeight="6"
-                refX="5"
-                refY="3"
+                markerWidth={CANVAS_ARROW_MARKER.width}
+                markerHeight={CANVAS_ARROW_MARKER.height}
+                refX={CANVAS_ARROW_MARKER.refX}
+                refY={CANVAS_ARROW_MARKER.refY}
                 orient="auto"
                 markerUnits="strokeWidth"
               >
@@ -752,9 +835,9 @@ export const CatchainVisualizer = () => {
               </marker>
             </defs>
             <circle
-              cx="230"
-              cy="200"
-              r="170"
+              cx={LAYOUT.centerX}
+              cy={LAYOUT.centerY}
+              r={LAYOUT.backdropRadius}
               fill="#f8fafc"
               stroke="#e2e8f0"
               strokeWidth="2"
@@ -792,7 +875,7 @@ export const CatchainVisualizer = () => {
                   className="cursor-pointer"
                 >
                   <circle
-                    r="30"
+                    r={LAYOUT.nodeRadius}
                     fill={
                       node.status === "crashed"
                         ? "#fee2e2"
@@ -803,7 +886,12 @@ export const CatchainVisualizer = () => {
                     stroke="#334155"
                     strokeWidth="3"
                   />
-                  <circle r="34" fill="none" stroke={ring} strokeWidth="4" />
+                  <circle
+                    r={LAYOUT.ringRadius}
+                    fill="none"
+                    stroke={ring}
+                    strokeWidth="4"
+                  />
                   <text
                     textAnchor="middle"
                     dominantBaseline="middle"
@@ -814,7 +902,7 @@ export const CatchainVisualizer = () => {
                   </text>
                   {node.committedTo && (
                     <text
-                      y="24"
+                      y={LOGO_TEXT_OFFSET}
                       textAnchor="middle"
                       className="text-[9px]"
                       fill="#0f172a"
@@ -1012,18 +1100,19 @@ export const CatchainVisualizer = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 relative z-50" style={{ pointerEvents: "auto" }}>
           <span className="text-sm font-semibold text-slate-800">Speed</span>
           <input
             type="range"
-            min="0.5"
-            max="2.5"
-            step="0.1"
+            min="0.001"
+            max="2"
+            step="0.01"
             value={speed}
             onChange={(e) => setSpeed(parseFloat(e.target.value))}
             className="flex-1"
+            style={{ position: "relative", zIndex: 60, pointerEvents: "auto" }}
           />
-          <span className="text-sm text-slate-700">{speed.toFixed(1)}x</span>
+          <span className="text-sm text-slate-700">{speed.toFixed(2)}x</span>
         </div>
         <div className="flex items-center gap-3">
           <button
