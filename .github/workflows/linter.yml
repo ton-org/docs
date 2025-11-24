@@ -96,9 +96,19 @@ jobs:
               issue_number: context.issue.number,
             });
             for (const comment of comments.data) {
+              const minified = await github.graphql(`
+                query($commentId: ID!) {
+                  node(id: $commentId) {
+                    ... on IssueComment {
+                      isMinimized
+                      minimizedReason
+                    }
+                  }
+                }
+              `, { commentId: comment.id });
+              console.log(minified);
               const body = comment.body;
               const prefix = rawCommentText.slice(1, 30);
-              console.log(comment);
               console.log(`--${body}--`);
               console.log(`--${prefix}--`);
               console.log(`-------------`);
@@ -109,8 +119,8 @@ jobs:
                 console.log(await github.graphql(`
                   mutation {
                     minimizeComment(input: {
-                      subjectId: "${comment.node_id}",
-                      classifier: "${success ? 'RESOLVED' : 'OUTDATED'}"
+                      subjectId:$subjectId,
+                      classifier:$classifier
                     }) {
                       clientMutationId
                       minimizedComment {
@@ -119,7 +129,10 @@ jobs:
                       }
                     }
                   }
-                `));
+                `, {
+                  subjectId: comment.node_id,
+                  classifier: success ? 'RESOLVED' : 'OUTDATED',
+                }));
                 await exec.exec('sleep 1s');
               }
             }
