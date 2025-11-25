@@ -112,6 +112,7 @@ export const CatchainVisualizer = () => {
       commits: new Set(),
       createdAt: null,
       priority: (proposerIndex + round - 1) % PRIORITY_MOD,
+      submitted: false,
     };
   }
 
@@ -241,10 +242,14 @@ export const CatchainVisualizer = () => {
       model,
       delay,
       () => {
+        if (node.status === "crashed") return;
         if (action.type === "Submit") {
           const cand = model.candidates[action.candidateId];
           if (cand && !cand.createdAt) {
             cand.createdAt = model.time;
+          }
+          if (cand) {
+            cand.submitted = true;
           }
         }
         broadcastBlock(model, {
@@ -471,8 +476,10 @@ export const CatchainVisualizer = () => {
       votes: new Set(),
       precommits: new Set(),
       commits: new Set(),
+      // createdAt: null,
       createdAt: model.time,
       priority: NULL_PRIORITY,
+      submitted: false,
     };
     model.candidates[id] = candidate;
     model.nullCandidateId = id;
@@ -744,6 +751,9 @@ export const CatchainVisualizer = () => {
       } else {
         cand.priority = priority;
       }
+      if (cand.submitted) {
+        return;
+      }
       const submitDelay = Math.max(0, priority * model.config.Delta);
       enqueueAction(
         model,
@@ -885,6 +895,7 @@ export const CatchainVisualizer = () => {
   const [speed, setSpeed] = useState(0.1);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [selectedMessage, setSelectedMessage] = useState(null);
+  const [selectedCandidateId, setSelectedCandidateId] = useState(null);
 
   if (!modelRef.current) {
     modelRef.current = createModel(config);
@@ -920,6 +931,7 @@ export const CatchainVisualizer = () => {
     setTick((t) => t + 1);
     setSelectedNodeId(null);
     setSelectedMessage(null);
+    setSelectedCandidateId(null);
   };
 
   return (
@@ -1161,7 +1173,12 @@ export const CatchainVisualizer = () => {
               {candidates.slice(0, 4).map((cand) => (
                 <div
                   key={cand.id}
-                  className="rounded-md bg-white border border-slate-200 p-2"
+                  className="rounded-md bg-white border border-slate-200 p-2 cursor-pointer hover:border-slate-300"
+                  onClick={() => {
+                    setSelectedCandidateId(cand.id);
+                    setSelectedMessage(null);
+                    setSelectedNodeId(null);
+                  }}
                 >
                   <div className="flex items-center justify-between text-sm font-semibold text-slate-800">
                     <span>{cand.id}</span>
@@ -1331,7 +1348,9 @@ export const CatchainVisualizer = () => {
                     <dd>{node.committedTo || "—"}</dd>
                     <dt className="font-semibold text-slate-800">Locked</dt>
                     <dd>{node.lockedCandidate || "—"}</dd>
-                    <dt className="font-semibold text-slate-800">Vote target</dt>
+                    <dt className="font-semibold text-slate-800">
+                      Vote target
+                    </dt>
                     <dd>{node.voteTarget || "—"}</dd>
                     <dt className="font-semibold text-slate-800">Approvals</dt>
                     <dd>{node.approved.size}</dd>
@@ -1383,9 +1402,12 @@ export const CatchainVisualizer = () => {
                           {selectedMessage.id}
                         </span>
                       </p>
-                      <br/>
+                      <br />
                       <p className="text-sm text-slate-700 font-semibold">
-                        Type: <span className="font-normal">{selectedMessage.primary || selectedMessage.type}</span>
+                        Type:{" "}
+                        <span className="font-normal">
+                          {selectedMessage.primary || selectedMessage.type}
+                        </span>
                       </p>
                     </div>
                     <button
@@ -1398,16 +1420,23 @@ export const CatchainVisualizer = () => {
                   <dl className="text-sm text-slate-700">
                     <div className="flex items-center justify-between py-1">
                       <dt className="font-semibold text-slate-800">From</dt>
-                      <dd className="text-right">{fromNode ? fromNode.label : selectedMessage.from}</dd>
+                      <dd className="text-right">
+                        {fromNode ? fromNode.label : selectedMessage.from}
+                      </dd>
                     </div>
                     <div className="flex items-center justify-between py-1">
                       <dt className="font-semibold text-slate-800">To</dt>
-                      <dd className="text-right">{toNode ? toNode.label : selectedMessage.to}</dd>
+                      <dd className="text-right">
+                        {toNode ? toNode.label : selectedMessage.to}
+                      </dd>
                     </div>
                     <div className="flex items-center justify-between py-1">
-                      <dt className="font-semibold text-slate-800">Send → Receive</dt>
+                      <dt className="font-semibold text-slate-800">
+                        Send → Receive
+                      </dt>
                       <dd className="text-right">
-                        {Math.round(selectedMessage.sendTime)} → {Math.round(selectedMessage.recvTime)} ms
+                        {Math.round(selectedMessage.sendTime)} →{" "}
+                        {Math.round(selectedMessage.recvTime)} ms
                       </dd>
                     </div>
                   </dl>
@@ -1418,12 +1447,180 @@ export const CatchainVisualizer = () => {
                     ) : (
                       <ul className="list-disc pl-4 space-y-1">
                         {actions.map((act, idx) => (
-                          <li key={`${act.type}-${idx}`} className="text-slate-700">
-                            {act.type} {act.candidateId ? `→ ${act.candidateId}` : ""}
+                          <li
+                            key={`${act.type}-${idx}`}
+                            className="text-slate-700"
+                          >
+                            {act.type}{" "}
+                            {act.candidateId ? `→ ${act.candidateId}` : ""}
                           </li>
                         ))}
                       </ul>
                     )}
+                  </div>
+                  <div className="flex items-center justify-between pt-2">
+                    <button
+                      className="rounded-lg border px-3 py-2 text-sm font-medium shadow-sm bg-red-50 border-red-200 text-red-800 hover:bg-red-100"
+                      onClick={() => {
+                        model.messages = model.messages.filter(
+                          (m) => m !== selectedMessage
+                        );
+                        setSelectedMessage(null);
+                        setTick((t) => t + 1);
+                      }}
+                    >
+                      Drop message
+                    </button>
+                    <button
+                      className="text-slate-500 hover:text-slate-800 text-sm"
+                      onClick={() => setSelectedMessage(null)}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+      {selectedCandidateId && (
+        <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-[340px] max-w-full p-4 space-y-3 max-h-[90vh] overflow-auto">
+            {(() => {
+              const cand = model.candidates[selectedCandidateId];
+              if (!cand) return null;
+              const proposer = cand.proposerId
+                ? model.nodes.find((n) => n.id === cand.proposerId)
+                : null;
+              return (
+                <>
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <p className="text-base font-semibold text-slate-800">
+                        Candidate{" "}
+                        <span className="font-normal text-slate-600">
+                          {cand.id}
+                        </span>
+                      </p>
+                      <p className="text-sm text-slate-700">
+                        Round {cand.round}, attempt {cand.attempt}
+                      </p>
+                    </div>
+                    <button
+                      className="text-slate-500 hover:text-slate-800"
+                      onClick={() => setSelectedCandidateId(null)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <dl className="text-sm text-slate-700">
+                    <div className="flex items-center justify-between py-1">
+                      <dt className="font-semibold text-slate-800 pr-4">
+                        Proposer
+                      </dt>
+                      <dd className="text-right">
+                        {proposer ? proposer.label : cand.proposerId}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between py-1">
+                      <dt className="font-semibold text-slate-800 pr-4">
+                        Priority
+                      </dt>
+                      <dd className="text-right">{cand.priority}</dd>
+                    </div>
+                    <div className="flex items-center justify-between py-1">
+                      <dt className="font-semibold text-slate-800 pr-4">
+                        Approvals
+                      </dt>
+                      <dd className="text-right">{cand.approvals.size}</dd>
+                    </div>
+                    <div className="flex items-center justify-between py-1">
+                      <dt className="font-semibold text-slate-800 pr-4">
+                        Votes
+                      </dt>
+                      <dd className="text-right">{cand.votes.size}</dd>
+                    </div>
+                    <div className="flex items-center justify-between py-1">
+                      <dt className="font-semibold text-slate-800 pr-4">
+                        Precommits
+                      </dt>
+                      <dd className="text-right">{cand.precommits.size}</dd>
+                    </div>
+                    <div className="flex items-center justify-between py-1">
+                      <dt className="font-semibold text-slate-800 pr-4">
+                        Commits
+                      </dt>
+                      <dd className="text-right">{cand.commits.size}</dd>
+                    </div>
+                  </dl>
+                  <div className="text-sm text-slate-800">
+                    <p className="font-semibold mb-1">
+                      Per-node approvals seen
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 max-h-32 overflow-auto border border-slate-100 rounded p-2 bg-slate-50">
+                      {model.nodes.map((n) => (
+                        <div
+                          key={n.id}
+                          className="flex items-center justify-between text-xs"
+                        >
+                          <span className="text-slate-700">{n.label}</span>
+                          <span className="text-slate-900">
+                            {n.receivedEvents[cand.id]?.approved || 0}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="text-sm text-slate-800">
+                    <p className="font-semibold mb-1">Per-node votes seen</p>
+                    <div className="grid grid-cols-2 gap-2 max-h-32 overflow-auto border border-slate-100 rounded p-2 bg-slate-50">
+                      {model.nodes.map((n) => (
+                        <div
+                          key={n.id}
+                          className="flex items-center justify-between text-xs"
+                        >
+                          <span className="text-slate-700">{n.label}</span>
+                          <span className="text-slate-900">
+                            {n.receivedEvents[cand.id]?.voted || 0}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="text-sm text-slate-800">
+                    <p className="font-semibold mb-1">
+                      Per-node precommits seen
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 max-h-32 overflow-auto border border-slate-100 rounded p-2 bg-slate-50">
+                      {model.nodes.map((n) => (
+                        <div
+                          key={n.id}
+                          className="flex items-center justify-between text-xs"
+                        >
+                          <span className="text-slate-700">{n.label}</span>
+                          <span className="text-slate-900">
+                            {n.receivedEvents[cand.id]?.precommitted || 0}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="text-sm text-slate-800">
+                    <p className="font-semibold mb-1">Per-node commits seen</p>
+                    <div className="grid grid-cols-2 gap-2 max-h-32 overflow-auto border border-slate-100 rounded p-2 bg-slate-50">
+                      {model.nodes.map((n) => (
+                        <div
+                          key={n.id}
+                          className="flex items-center justify-between text-xs"
+                        >
+                          <span className="text-slate-700">{n.label}</span>
+                          <span className="text-slate-900">
+                            {n.receivedEvents[cand.id]?.commited || 0}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </>
               );
