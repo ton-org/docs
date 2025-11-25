@@ -6,7 +6,6 @@ const React =
           "React global missing. CatchainVisualizer must run inside a React-powered environment."
         );
       })();
-
 export const CatchainVisualizer = () => {
   const MESSAGE_COLORS = {
     Submit: "#6366f1",
@@ -24,6 +23,16 @@ export const CatchainVisualizer = () => {
     VoteFor: "VoteFor",
     Precommit: "PreCommit",
     Commit: "Commit",
+  };
+  const MESSAGE_DESCRIPTIONS = {
+    Submit: "Proposer shares its round candidate with peers.",
+    Approve: "Validator approves a seen proposal so others can vote.",
+    Vote: "Validator votes for a proposal once approvals reach quorum.",
+    VoteFor:
+      "Coordinator guidance for slow attempts; points voting to a candidate.",
+    Precommit:
+      "Validator precommits after quorum votes to lock on a candidate.",
+    Commit: "Validator finalizes a candidate after quorum precommits.",
   };
 
   const LAYOUT = {
@@ -49,6 +58,46 @@ export const CatchainVisualizer = () => {
   const LOGO_TEXT_OFFSET = 24;
   const LAGGING_DROP_PROBABILITY = 0.5;
   const VOTEFOR_INITIAL_DELAY_MS = 500;
+  const SCROLLBAR_CSS = `
+    .catchain-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: #94a3b8 #e2e8f0;
+    }
+    .catchain-scroll::-webkit-scrollbar {
+      width: 10px;
+    }
+    .catchain-scroll::-webkit-scrollbar-track {
+      background: #e2e8f0;
+      border-radius: 9999px;
+    }
+    .catchain-scroll::-webkit-scrollbar-thumb {
+      background: #94a3b8;
+      border-radius: 9999px;
+      border: 2px solid #e2e8f0;
+    }
+    .catchain-scroll::-webkit-scrollbar-thumb:hover {
+      background: #64748b;
+    }
+    .committed-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: #94a3b8 #e2e8f0;
+    }
+    .committed-scroll::-webkit-scrollbar {
+      height: 10px;
+    }
+    .committed-scroll::-webkit-scrollbar-track {
+      background: #e2e8f0;
+      border-radius: 9999px;
+    }
+    .committed-scroll::-webkit-scrollbar-thumb {
+      background: #94a3b8;
+      border-radius: 9999px;
+      border: 2px solid #e2e8f0;
+    }
+    .committed-scroll::-webkit-scrollbar-thumb:hover {
+      background: #64748b;
+    }
+  `;
 
   function randomBetween(min, max) {
     return min + Math.random() * (max - min);
@@ -352,6 +401,17 @@ export const CatchainVisualizer = () => {
       candidate.commits.size >= model.config.quorum
     ) {
       model.committedCandidate = candidateId;
+      model.committedHistory = [
+        ...(model.committedHistory || []),
+        {
+          id: candidateId,
+          short: candidate.short,
+          round: model.round,
+          attempt: model.attempt,
+          proposerId: candidate.proposerId,
+          committedAt: model.time,
+        },
+      ];
       model.nextRoundAt = model.time + model.config.roundGap;
       logEvent(
         model,
@@ -855,6 +915,7 @@ export const CatchainVisualizer = () => {
       committedCandidate: null,
       nextRoundAt: null,
       log: [],
+      committedHistory: [],
       voteForTarget: null,
       nullCandidateId: null,
     };
@@ -872,23 +933,57 @@ export const CatchainVisualizer = () => {
     return model;
   }
 
-  const { useEffect, useMemo, useRef, useState } = React;
-  const config = useMemo(
-    () => ({
-      numNodes: 5,
-      latency: [80, 150],
-      K: 8000, // 8 seconds per attempt
-      roundGap: 400,
-      Delta: 2000, // Δ_i = 2(i-1) seconds -> base 2s
-      DeltaInfinity: 4000, // 2*C seconds with C=2
-      Y: 3, // fast attempts
-      C: 2, // round candidates
-      simDelay: 70, // local processing/animation delay for follow-up actions
-      frameMs: 90,
-      quorum: 4,
-    }),
-    []
-  );
+  const { useEffect, useRef, useState } = React;
+  const DEFAULT_CONFIG = {
+    numNodes: 5,
+    latency: [80, 150],
+    K: 8000, // 8 seconds per attempt
+    roundGap: 200,
+    Delta: 2000, // Δ_i = 2(i-1) seconds -> base 2s
+    DeltaInfinity: 4000, // 2*C seconds with C=2
+    Y: 3, // fast attempts
+    C: 2, // round candidates
+    simDelay: 70, // local processing/animation delay for follow-up actions
+    frameMs: 90,
+    quorum: 4,
+  };
+  const CONFIG_FIELDS = [
+    {
+      key: "K",
+      label: "K (ms)",
+      description: "Attempt duration; 8000ms means 8 seconds per attempt.",
+    },
+    {
+      key: "Delta",
+      label: "Delta (ms)",
+      description: "Base Δ_i delay; 2000ms equals 2s for first step.",
+    },
+    {
+      key: "DeltaInfinity",
+      label: "DeltaInfinity (ms)",
+      description: "Upper delay bound for slow attempts; 2*C seconds.",
+    },
+    {
+      key: "Y",
+      label: "Y",
+      description: "Fast attempts before switching to slow attempts.",
+    },
+    {
+      key: "C",
+      label: "C",
+      description: "Number of round candidates in rotation.",
+    },
+  ];
+  const [config, setConfig] = useState(() => ({ ...DEFAULT_CONFIG }));
+  const [configDraft, setConfigDraft] = useState(() => ({
+    K: `${DEFAULT_CONFIG.K}`,
+    Delta: `${DEFAULT_CONFIG.Delta}`,
+    DeltaInfinity: `${DEFAULT_CONFIG.DeltaInfinity}`,
+    Y: `${DEFAULT_CONFIG.Y}`,
+    C: `${DEFAULT_CONFIG.C}`,
+  }));
+  const [configModalOpen, setConfigModalOpen] = useState(false);
+  const [eventLogOpen, setEventLogOpen] = useState(false);
 
   const modelRef = useRef(null);
   const [tick, setTick] = useState(0);
@@ -897,6 +992,12 @@ export const CatchainVisualizer = () => {
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [selectedMessage, setSelectedMessage] = useState(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState(null);
+  const [hoveredEventType, setHoveredEventType] = useState(null);
+  const [eventTooltipPos, setEventTooltipPos] = useState({
+    x: 0,
+    y: 0,
+    placement: "bottom",
+  });
 
   if (!modelRef.current) {
     modelRef.current = createModel(config);
@@ -927,33 +1028,118 @@ export const CatchainVisualizer = () => {
   const attemptProgress = clamp(elapsedAttempt / (model.config.K || 1), 0, 1);
   const attemptRemaining = Math.max(0, (model.config.K || 0) - elapsedAttempt);
 
-  const reset = () => {
-    modelRef.current = createModel(config);
+  const rebuildModel = (nextConfig) => {
+    modelRef.current = createModel(nextConfig);
     setTick((t) => t + 1);
     setSelectedNodeId(null);
     setSelectedMessage(null);
     setSelectedCandidateId(null);
+    setEventLogOpen(false);
+  };
+
+  const reset = () => {
+    rebuildModel(config);
+  };
+
+  const openConfigModal = () => {
+    setConfigDraft({
+      K: `${config.K}`,
+      Delta: `${config.Delta}`,
+      DeltaInfinity: `${config.DeltaInfinity}`,
+      Y: `${config.Y}`,
+      C: `${config.C}`,
+    });
+    setSelectedNodeId(null);
+    setSelectedMessage(null);
+    setSelectedCandidateId(null);
+    setConfigModalOpen(true);
+  };
+
+  const submitConfig = (e) => {
+    e.preventDefault();
+    const toNumber = (val, fallback) => {
+      if (val === "") return fallback;
+      const parsed = Number(val);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+    const updatedConfig = {
+      ...config,
+      K: toNumber(configDraft.K, config.K),
+      Delta: toNumber(configDraft.Delta, config.Delta),
+      DeltaInfinity: toNumber(configDraft.DeltaInfinity, config.DeltaInfinity),
+      Y: toNumber(configDraft.Y, config.Y),
+      C: toNumber(configDraft.C, config.C),
+    };
+    setConfig(updatedConfig);
+    rebuildModel(updatedConfig);
+    setConfigModalOpen(false);
+  };
+
+  const showEventTooltip = (evt, key) => {
+    if (!MESSAGE_DESCRIPTIONS[key]) {
+      setHoveredEventType(null);
+      return;
+    }
+    const rect = evt.currentTarget.getBoundingClientRect();
+    const viewportWidth =
+      typeof window !== "undefined" ? window.innerWidth : LAYOUT.svgWidth;
+    const viewportHeight =
+      typeof window !== "undefined" ? window.innerHeight : LAYOUT.svgHeight;
+    const tooltipWidth = 240;
+    const tooltipHeight = 90;
+    const gap = 12;
+    const preferAbove = rect.bottom + tooltipHeight > viewportHeight - gap;
+    const left = clamp(
+      rect.left + rect.width / 2,
+      tooltipWidth / 2 + gap,
+      viewportWidth - tooltipWidth / 2 - gap
+    );
+    const rawTop = preferAbove
+      ? rect.top - tooltipHeight - gap
+      : rect.bottom + gap;
+    const top = Math.max(gap, rawTop);
+    setEventTooltipPos({
+      x: left,
+      y: top,
+      placement: preferAbove ? "top" : "bottom",
+    });
+    setHoveredEventType(key);
+  };
+
+  const hideEventTooltip = () => {
+    setHoveredEventType(null);
   };
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 md:p-6">
+      <style>{SCROLLBAR_CSS}</style>
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
-        <div>
-          {/* <p className="text-base font-semibold">Catchain + BCP visualizer</p> */}
-          <p className="text-sm text-slate-600">
-            Fast attempts follow proposer priority; slow attempts follow VoteFor
-            guidance and precommit locking.
-          </p>
+        <div className="flex items-center gap-2">
+          <button
+            className="inline-flex items-center gap-2 rounded-lg bg-sky-600 text-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-sky-700"
+            onClick={openConfigModal}
+          >
+            Adjust simulation config
+          </button>
+          <button
+            className="inline-flex items-center gap-2 rounded-lg bg-sky-600 text-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-sky-700"
+            onClick={() => setEventLogOpen(true)}
+          >
+            <span role="img" aria-label="log">
+              📖
+            </span>
+            Event log
+          </button>
         </div>
         <div className="flex items-center gap-3">
           <button
-            className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium shadow-sm hover:bg-slate-50"
+            className="inline-flex items-center gap-2 rounded-lg bg-sky-600 text-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-sky-700"
             onClick={() => setRunning((v) => !v)}
           >
             <span>{running ? "Pause" : "Resume"}</span>
           </button>
           <button
-            className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium shadow-sm hover:bg-slate-50"
+            className="inline-flex items-center gap-2 rounded-lg bg-sky-600 text-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-sky-700"
             onClick={reset}
           >
             Restart round
@@ -1166,75 +1352,113 @@ export const CatchainVisualizer = () => {
             </div>
           </div>
 
-          <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-2">
+          <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50 p-2 flex flex-col overflow-hidden h-40">
             <p className="text-xs font-semibold text-slate-700 mb-1">
               Candidates
             </p>
-            <div className="flex flex-col gap-2">
-              {candidates.slice(0, 4).map((cand) => (
-                <div
-                  key={cand.id}
-                  className="rounded-md bg-white border border-slate-200 p-2 cursor-pointer hover:border-slate-300"
-                  onClick={() => {
-                    setSelectedCandidateId(cand.id);
-                    setSelectedMessage(null);
-                    setSelectedNodeId(null);
-                  }}
-                >
-                  <div className="flex items-center justify-between text-sm font-semibold text-slate-800">
-                    <span>{cand.id}</span>
-                    <span className="text-xs text-slate-600">
-                      #{cand.short}
-                    </span>
+            <div
+              className="flex-1 min-h-0 overflow-y-scroll pr-1 catchain-scroll"
+              style={{ scrollbarGutter: "stable" }}
+            >
+              <div className="flex flex-col gap-2">
+                {candidates.slice(0, 4).map((cand) => (
+                  <div
+                    key={cand.id}
+                    className="rounded-md bg-white border border-slate-200 p-2 cursor-pointer hover:border-slate-300"
+                    onClick={() => {
+                      setSelectedCandidateId(cand.id);
+                      setSelectedMessage(null);
+                      setSelectedNodeId(null);
+                    }}
+                  >
+                    <div className="flex items-center justify-between text-sm font-semibold text-slate-800">
+                      <span>{cand.id}</span>
+                      <span className="text-xs text-slate-600">
+                        #{cand.short}
+                      </span>
+                    </div>
+                    <div className="mt-1 grid grid-cols-4 gap-2 text-[11px] text-slate-700">
+                      <div>
+                        <span className="font-semibold text-green-600">
+                          {cand.approvals.size}
+                        </span>{" "}
+                        Approve
+                      </div>
+                      <div>
+                        <span className="font-semibold text-cyan-600">
+                          {cand.votes.size}
+                        </span>{" "}
+                        Vote
+                      </div>
+                      <div>
+                        <span className="font-semibold text-amber-600">
+                          {cand.precommits.size}
+                        </span>{" "}
+                        PreCommit
+                      </div>
+                      <div>
+                        <span className="font-semibold text-blue-600">
+                          {cand.commits.size}
+                        </span>{" "}
+                        Commit
+                      </div>
+                    </div>
                   </div>
-                  <div className="mt-1 grid grid-cols-4 gap-2 text-[11px] text-slate-700">
-                    <div>
-                      <span className="font-semibold text-green-600">
-                        {cand.approvals.size}
-                      </span>{" "}
-                      Approve
-                    </div>
-                    <div>
-                      <span className="font-semibold text-cyan-600">
-                        {cand.votes.size}
-                      </span>{" "}
-                      Vote
-                    </div>
-                    <div>
-                      <span className="font-semibold text-amber-600">
-                        {cand.precommits.size}
-                      </span>{" "}
-                      PreCommit
-                    </div>
-                    <div>
-                      <span className="font-semibold text-blue-600">
-                        {cand.commits.size}
-                      </span>{" "}
-                      Commit
-                    </div>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
 
           <div className="mt-3">
             <p className="text-xs font-semibold text-slate-700 mb-1">
-              Event log
+              Committed chain
             </p>
-            <div className="h-32 overflow-auto rounded-md border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-800">
-              {model.log.length === 0 ? (
-                <p className="text-slate-500">Simulation warming up…</p>
-              ) : (
-                model.log.map((item, idx) => (
-                  <p key={`${item.t}-${idx}`} className="leading-tight">
-                    <span className="text-slate-500 mr-1">
-                      t+{Math.round(item.t)}ms
-                    </span>
-                    {item.text}
+            <div
+              className="overflow-x-auto committed-scroll border border-slate-200 rounded-xl bg-white shadow-inner"
+              style={{ scrollbarGutter: "stable both-edges" }}
+            >
+              <div className="flex items-center gap-3 py-3 px-3 min-h-[120px]">
+                {model.committedHistory.length === 0 ? (
+                  <p className="text-[11px] text-slate-500 px-2 py-1">
+                    No committed candidates yet.
                   </p>
-                ))
-              )}
+                ) : (
+                  model.committedHistory.map((entry, idx) => {
+                    const proposer = entry.proposerId
+                      ? model.nodes.find((n) => n.id === entry.proposerId)
+                      : null;
+                    const isLast =
+                      idx === (model.committedHistory || []).length - 1;
+                    return (
+                      <div
+                        key={`${entry.id}-${idx}`}
+                        className="flex items-center gap-3"
+                      >
+                        <div className="min-w-[150px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 shadow-sm shadow-slate-200">
+                          <div className="text-xs font-semibold text-slate-700">
+                            #{idx + 1} · {entry.short}
+                          </div>
+                          <div className="text-[11px] text-slate-600">
+                            Round {entry.round}, attempt {entry.attempt}
+                          </div>
+                          <div className="text-[11px] text-slate-600">
+                            Proposer{" "}
+                            {proposer ? proposer.label : entry.proposerId}
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            t+{Math.round(entry.committedAt)}ms
+                          </div>
+                        </div>
+                        {!isLast && (
+                          <span className="text-slate-400 text-lg select-none">
+                            →
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1277,32 +1501,174 @@ export const CatchainVisualizer = () => {
             {(speed * 4).toFixed(2)}x
           </span>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium shadow-sm hover:bg-slate-50"
-            onClick={() => {
-              startAttempt(modelRef.current, {
-                forceSlow: true,
-                attempt: modelRef.current.attempt + 1,
-              });
-              setTick((t) => t + 1);
-            }}
-          >
-            Start slow attempt
-          </button>
-          <div className="flex items-center gap-2 text-[11px] text-slate-600">
+      </div>
+      <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 p-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:flex-wrap">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+            <span>Event types</span>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[12px] text-slate-700">
             {Object.entries(MESSAGE_COLORS).map(([key, color]) => (
-              <span key={key} className="inline-flex items-center gap-1">
+              <button
+                key={key}
+                type="button"
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 shadow-sm hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                onMouseEnter={(e) => showEventTooltip(e, key)}
+                onMouseLeave={hideEventTooltip}
+                onFocus={(e) => showEventTooltip(e, key)}
+                onBlur={hideEventTooltip}
+              >
                 <span
-                  className="inline-block h-3 w-3 rounded-full"
+                  className="inline-flex items-center justify-center h-5 w-5 rounded-full text-[11px] font-semibold text-white"
                   style={{ background: color }}
-                ></span>
+                >
+                  i
+                </span>
                 {MESSAGE_LABELS[key] || key}
-              </span>
+              </button>
             ))}
           </div>
         </div>
       </div>
+      {hoveredEventType && (
+        <div
+          className="pointer-events-none fixed z-40"
+          style={{
+            left: eventTooltipPos.x,
+            top: eventTooltipPos.y,
+            transform: "translateX(-50%)",
+          }}
+        >
+          <div className="min-w-[190px] max-w-[260px] rounded-md bg-slate-900 px-3 py-2 text-white text-[12px] shadow-lg ring-1 ring-slate-800/70">
+            <div className="flex items-center gap-2 mb-1">
+              <span
+                className="inline-flex h-3.5 w-3.5 rounded-full"
+                style={{ background: MESSAGE_COLORS[hoveredEventType] }}
+              />
+              <span className="font-semibold">
+                {MESSAGE_LABELS[hoveredEventType] || hoveredEventType}
+              </span>
+            </div>
+            <div className="whitespace-pre-line leading-snug text-slate-100">
+              {MESSAGE_DESCRIPTIONS[hoveredEventType]}
+            </div>
+          </div>
+        </div>
+      )}
+      {configModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-[440px] max-w-full p-5 space-y-4">
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <p className="text-base font-semibold text-slate-800 leading-snug">
+                  Simulation config
+                </p>
+                <p className="text-sm text-slate-600 leading-snug">
+                  Update timing parameters; applying will restart the emulation.
+                </p>
+              </div>
+              <button
+                className="text-slate-500 hover:text-slate-800"
+                onClick={() => setConfigModalOpen(false)}
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+            <form className="space-y-3" onSubmit={submitConfig}>
+              {CONFIG_FIELDS.map((field) => (
+                <label key={field.key} className="block text-sm text-slate-700">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-800">
+                      {field.label}
+                    </span>
+                    <input
+                      type="number"
+                      name={field.key}
+                      value={configDraft[field.key]}
+                      onChange={(e) =>
+                        setConfigDraft((prev) => ({
+                          ...prev,
+                          [field.key]: e.target.value,
+                        }))
+                      }
+                      className="ml-3 w-36 rounded-md border border-slate-200 bg-white text-slate-900 px-3 py-2 text-sm focus:border-sky-300 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-slate-600">
+                    {field.description}
+                  </p>
+                </label>
+              ))}
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium shadow-sm hover:bg-slate-50"
+                  onClick={() => setConfigModalOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-800 shadow-sm hover:bg-sky-100"
+                >
+                  Apply config
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {eventLogOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-[460px] max-w-full p-5 space-y-4">
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <p className="text-base font-semibold text-slate-800 leading-snug">
+                  Event log
+                </p>
+                <p className="text-sm text-slate-600 leading-snug">
+                  Latest simulation events (newest first).
+                </p>
+              </div>
+              <button
+                className="text-slate-500 hover:text-slate-800"
+                onClick={() => setEventLogOpen(false)}
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="h-64 overflow-auto rounded-md border border-slate-200 bg-slate-50 p-3 text-[12px] text-slate-800">
+              {model.log.length === 0 ? (
+                <p className="text-slate-500">Simulation warming up…</p>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  {model.log.map((item, idx) => (
+                    <div
+                      key={`${item.t}-${idx}`}
+                      className="leading-tight py-[1px] border-b border-slate-200 last:border-b-0"
+                    >
+                      <span className="text-slate-500 mr-1">
+                        t+{Math.round(item.t)}ms
+                      </span>
+                      {item.text}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end">
+              <button
+                className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium shadow-sm hover:bg-slate-50"
+                onClick={() => setEventLogOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {selectedNodeId && (
         <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-[380px] max-w-full p-5 space-y-4">
