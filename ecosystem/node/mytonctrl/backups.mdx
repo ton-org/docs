@@ -5,17 +5,31 @@ description: "MyTonCtrl bundles helper scripts for creating and restoring node b
 
 import { Aside } from "/snippets/aside.jsx";
 
-<Aside type="caution">Exporting and restoring backups exposes private keys and validator configuration.
-Risk: key leakage allows account takeover; config mistakes can halt validation.
-Scope: this node’s keys and validator state.
-Rollback: create a fresh backup first; you can restore it if needed.
-Environment: test on TON Testnet before using on TON Mainnet.</Aside>
+<Aside type="caution">Exporting and restoring backups exposes private keys and validator configuration. Keep backups securely.</Aside>
 
 ## Operational notes
 
 - Backups capture MyTonCtrl data, validator config, and keyring files. Always store backup archives securely (they contain private keys).
 - Restoration overwrites existing configuration. Ensure the donor node is offline before restoring its backup to avoid data divergence.
 - Both scripts expect `sudo` or equivalent privileges when manipulating system files. Use the `-u` flag to match the original install user if necessary.
+
+## Validator automated backups
+
+To enable automated backups (only in `validator` mode), call `set auto_backup true` on the MyTonCtrl console. These backups will be performed immediately after the node participates in the elections, ensuring that all data needed for the upcoming validation cycle is preserved. By default, automated backups are saved to `/tmp/mytoncore/auto_backups/`. Call `set auto_backup_path <path>` to change this path. 
+
+**Note that automated backups older than 7 days will be automatically deleted.**
+
+## Standby node
+
+It is recommended to maintain at least one standby node that can take over validation duties if the main machine fails.
+
+The standby machine should be hosted at a different physical location/ISP. It should have MyTonCtrl installed in full node mode and be synchronized with the TON Blockchain network. Hardware sizing should match main validator configuration.
+
+Use `create_backup` and `restore_backup` commands described below to transfer validator config to the standby machine.
+
+Before transfering the validator configuration to the standby machine, make sure to stop or disable the TON node on the donor machine for approximately 20 minutes. Failure to follow this step may lead to connectivity issues and crashes on both the donor and target machines.
+
+Create and retain a backup of standby node's original configuration before applying or restoring a backup package from another machine. This backup is needed to revert the standby node back to standby mode.
 
 ## create\_backup
 
@@ -29,13 +43,21 @@ create_backup [filename] [-u <user>]
 
 **Behavior**
 
-- Exports the validator keyring via `exportallprivatekeys`, captures the current `config.json`, and stages them in a temporary directory.
-- Invokes `scripts/create_backup.sh` with:
-  - `-m` pointing to the MyTonCtrl working directory (usually `/var/ton-work`).
-  - `-t` referencing the temporary snapshot directory.
-  - Optional `-d <filename>` when you supply `filename`; otherwise the script chooses its own name.
-  - Optional `-u <user>` to run the backup script as a specific system user (defaults to the effective user).
-- Removes the temporary directory afterwards and prints `create_backup - OK` or `... - Error` based on the script’s exit code.
+- Creates a snapshot of the following data:
+
+  - Node configuration file located at (`/var/ton-work/db/config.json`)
+
+  - Node keyring found in (`/var/ton-work/db/keyring`)
+
+  - Node liteserver and console keys stored in (`/var/ton-work/keys`)
+
+  - MyTonCtrl configuration database and related files located at (`~/.local/share/mytoncore`)
+
+  - Wallet and pool data
+
+- Validates the snapshot (ensures the config and database files deserialize) before compressing it into a `.tar.gz`; defaults to `mytonctrl_backup_<hostname>_<timestamp>.tar.gz` unless you specify `filename`.
+
+- Sets archive ownership back to the requested user (`-u`) and removes the temporary snapshot when done, printing `create_backup - OK` or `... - Error` based on the helper script exit code.
 
 **Examples**
 
@@ -59,11 +81,10 @@ restore_backup <filename> [-y] [--skip-create-backup] [-u <user>]
 - Requires the backup archive filename. Optional flags:
   - `-y` skips the interactive confirmation prompt.
   - `--skip-create-backup` prevents MyTonCtrl from making a safety backup of the current state before restoring.
-  - `-u <user>` runs the restore script as the specified system user (defaults to the current user).
-- Without `--skip-create-backup`, first calls `create_backup` with default arguments so you can roll back if needed.
-- Resolves the node’s IP address, then runs `scripts/restore_backup.sh` with `-m <work_dir>`, `-n <filename>`, `-i <node_ip>` (converted to integer form).
-- If restoration succeeds and validator mode is active, reinitializes BTC Teleport to ensure the service still matches the restored state.
-- Exits MyTonCtrl after a successful restore so you can restart with the new configuration.
+  - `-u <user>` runs the restore operations as the specified system user (defaults to the current user).
+- Unless you pass `--skip-create-backup`, first runs `create_backup` so you can roll back if the restore fails.
+- Stops `validator` and `mytoncore` services, and restores data from the backup, except for IP address, which will be updated accordingly.
+- On success, reloads MyTonCtrl’s local database, reinstalls BTC Teleport if validator mode is active, prints `restore_backup - OK`, and exits so you can restart MyTonCtrl with the restored state.
 
 **Examples**
 
