@@ -53,39 +53,45 @@ const checkUnique = (config) => {
   const redirects = getRedirects(config);
   const redirectSources = redirects.map((it) => it.source);
   const duplicates = redirectSources.filter((source, index) => redirectSources.indexOf(source) !== index);
+  /** @type string[] */
+  const errors = [];
   if (duplicates.length !== 0) {
-    return {
-      ok: false,
-      error: composeErrorList(
+    errors.push(
+      composeErrorList(
         'Found duplicate sources in the redirects array:',
         duplicates,
         'Redirect sources in docs.json must be unique!',
       ),
-    };
+    );
   }
   /** @param src {string} */
   const fmt = (src) => prefixWithSlash(src).replace(/#.*$/, '').replace(/\?.*$/, '');
   const loops = redirects.filter((it) => fmt(it.source) == fmt(it.destination)).map((it) => it.source);
   if (loops.length !== 0) {
-    return {
-      ok: false,
-      error: composeErrorList(
+    errors.push(
+      composeErrorList(
         'Found sources that lead to themselves, i.e., circular references:',
         loops,
         'Redirect sources in docs.json must not self-reference in destinations!',
       ),
-    };
+    );
   }
   const navLinks = getNavLinksSet(config);
   const navOverrides = redirectSources.filter((it) => navLinks.has(fmt(it)));
   if (navOverrides.length !== 0) {
-    return {
-      ok: false,
-      error: composeErrorList(
+    errors.push(
+      composeErrorList(
         'Found sources that override pages in the docs.json structure:',
         navOverrides,
         'Redirect sources in docs.json must not replace existing paths!',
       ),
+    );
+  }
+  // If there are any errors
+  if (errors.length !== 0) {
+    return {
+      ok: false,
+      error: errors.join('\n...and '),
     };
   }
   // Otherwise
@@ -99,40 +105,152 @@ const checkUnique = (config) => {
  * @return {CheckResult}
  */
 const checkExist = (config) => {
-  const uniqDestinations = [...new Set(getRedirects(config).map((it) => it.destination))];
-  let todoDestsExist = false;
-  let repoIssuesDestsExist = false;
-  const missingDests = uniqDestinations.filter((it) => {
-    if (it.startsWith('http')) {
-      if (it.includes('github.com/ton-org/docs/issues')) {
-        repoIssuesDestsExist = true;
+  // All redirects
+  const redirects = getRedirects(config);
+
+  // Tracking found special destinations
+  const specialDestinationsExist = {
+    todos: false,
+    issues: false,
+    otherGithubLinks: false,
+    wikiLinks: false,
+    otherExternalLinks: false,
+  };
+
+  /**
+   * @param path {string}
+   * @returns boolean
+   */
+  const pathIsSpecial = (path) => {
+    // Links
+    if (path.startsWith('http')) {
+      if (path.includes('github.com/ton-org/docs/issues')) {
+        specialDestinationsExist.issues = true;
+      } else if (path.includes('github.com/')) {
+        specialDestinationsExist.otherGithubLinks = true;
+      } else if (path.includes('en.wikipedia.org/')) {
+        specialDestinationsExist.wikiLinks = true;
+      } else {
+        specialDestinationsExist.otherExternalLinks = true;
       }
-      return false;
+      return true;
     }
-    if (it.startsWith('TODO')) {
-      todoDestsExist = true;
-      return false;
+    // TODOs
+    if (path.startsWith('TODO')) {
+      specialDestinationsExist.todos = true;
+      return true;
     }
-    const rel = it.replace(/^\/+/, '').replace(/#.*$/, '').replace(/\?.*$/, '');
-    return (
-      [rel === '' ? `index.mdx` : `${rel}/index.mdx`, `${rel}.mdx`, `${rel}`].some(
-        (path) => existsSync(path) && statSync(path).isFile(),
-      ) === false
-    );
-  });
-  if (repoIssuesDestsExist) {
-    console.log(composeWarning('Found GitHub issue destinations!'));
+    // Otherwise
+    return false;
+  };
+
+  /**
+   * @param path {string}
+   * @returns {{ files: 'one'; path: string } | { files: 'many'; paths: string[] } | { files: 'none' }}
+   */
+  const pathFindFiles = (path) => {
+    const cleanedPath = path.replace(/^\/+/, '').replace(/#.*$/, '').replace(/\?.*$/, '');
+    const existingFiles = [
+      cleanedPath === '' ? `index.mdx` : `${cleanedPath}/index.mdx`,
+      `${cleanedPath}.mdx`,
+      `${cleanedPath}`,
+    ].filter((it) => existsSync(it) && statSync(it).isFile());
+
+    if (existingFiles.length === 0) {
+      return { files: 'none' };
+    }
+    if (existingFiles.length === 1) {
+      return { files: 'one', path: existingFiles[0] };
+    }
+    return { files: 'many', paths: existingFiles };
+  };
+
+  /**
+   * Recursively look for the destination up to N times deep.
+   * After that, the search function should forcibly terminate
+   * and produce an error with a complete trace.
+   *
+   * This is tied to the limitations of the documentation framework.
+   * DO NOT INCREASE without prior testing. Or ever.
+   */
+  const maxRecursionLevelPerRedirect = 3;
+
+  /**
+   * @param path {string}
+   * @param attemptsLeft {number}
+   * @param trace {string[]}
+   * @returns {{ ok: boolean; trace: string[] }}
+   */
+  const pathFindWithTrace = (path, attemptsLeft, trace) => {
+    if (attemptsLeft > 3) {
+      return {
+        ok: false,
+        trace: trace.concat(`Cannot have redirects more than 3 levels deep, received: ${attemptsLeft}`),
+      };
+    }
+    if (attemptsLeft <= 0) {
+      return { ok: false, trace: trace.concat(`Recursed too deep already, skipping: ${path}`) };
+    }
+    if (pathIsSpecial(path)) {
+      return { ok: true, trace: trace.concat(`The destination is special, skipping: ${path}`) };
+    }
+    const foundFiles = pathFindFiles(path);
+    if (foundFiles.files === 'one') {
+      return { ok: true, trace: trace.concat(`Found a file under the destination: ${path} → ${foundFiles.path}`) };
+    }
+    if (foundFiles.files === 'many') {
+      return {
+        ok: false,
+        trace: trace.concat(
+          `Multiple files found under the same destination: ${path} → ${foundFiles.paths.join(', ')}`,
+        ),
+      };
+    }
+    // None, need to look in redirect sources or bail.
+    const redirectSource = redirects.find((it) => it.source === path);
+    if (!redirectSource) {
+      return {
+        ok: false,
+        trace: trace.concat(`No file nor a deeper redirect found for this destination: ${path}`),
+      };
+    }
+    // Otherwise, perform a next iteration with the new destination path.
+    return pathFindWithTrace(redirectSource.destination, attemptsLeft - 1, trace.concat(path));
+  };
+
+  // Main part
+  const uniqDests = [...new Set(redirects.map((it) => it.destination))];
+  const processedDests = uniqDests.map((it) => pathFindWithTrace(it, maxRecursionLevelPerRedirect, []));
+  const invalidatedTraces = processedDests
+    .filter((it) => {
+      if (process.env.DEBUG && process.env.DEBUG === 'true') {
+        console.log(it);
+      }
+      // Trace must be non-zero
+      return !it.ok && it.trace.length !== 0;
+    })
+    .map((it) => it.trace);
+  if (specialDestinationsExist.issues) {
+    console.log(composeWarning('Found GitHub docs repo issue destinations!'));
   }
-  if (todoDestsExist) {
+  if (specialDestinationsExist.todos) {
     console.log(composeWarning('Found TODO-prefixed destinations!'));
   }
-  if (missingDests.length !== 0) {
+  if (specialDestinationsExist.otherExternalLinks) {
+    console.log(composeWarning('Found third-party URLs outside of GitHub or English Wikipedia!'));
+  }
+  if (invalidatedTraces.length !== 0) {
     return {
       ok: false,
       error: composeErrorList(
-        'Nonexistent destinations found:',
-        missingDests,
-        'Some redirect destinations in docs.json do not exist!',
+        'Unreachable or nonexistent redirect destinations found:',
+        invalidatedTraces.map((it) => {
+          if (it.length === 1) {
+            return it.join('');
+          }
+          return it.slice(0, -1).join('\n  → ') + '\n  → ' + it.slice(-1).join('');
+        }),
+        'Some redirect destinations in docs.json do not exist or are unreachable!',
       ),
     };
   }
