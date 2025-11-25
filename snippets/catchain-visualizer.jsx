@@ -884,6 +884,7 @@ export const CatchainVisualizer = () => {
   const [running, setRunning] = useState(true);
   const [speed, setSpeed] = useState(0.1);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const [selectedMessage, setSelectedMessage] = useState(null);
 
   if (!modelRef.current) {
     modelRef.current = createModel(config);
@@ -918,6 +919,7 @@ export const CatchainVisualizer = () => {
     modelRef.current = createModel(config);
     setTick((t) => t + 1);
     setSelectedNodeId(null);
+    setSelectedMessage(null);
   };
 
   return (
@@ -1068,7 +1070,14 @@ export const CatchainVisualizer = () => {
                     }`
                   : MESSAGE_LABELS[primary] || primary;
               return (
-                <g key={msg.id}>
+                <g
+                  key={msg.id}
+                  className="cursor-pointer"
+                  onClick={() => {
+                    setSelectedMessage(msg);
+                    setSelectedNodeId(null);
+                  }}
+                >
                   <line
                     x1={fromNode.pos.x}
                     y1={fromNode.pos.y}
@@ -1275,8 +1284,8 @@ export const CatchainVisualizer = () => {
         </div>
       </div>
       {selectedNodeId && (
-        <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-10">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-[340px] max-w-full p-4">
+        <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-[380px] max-w-full p-5 space-y-4">
             {(() => {
               const node = model.nodes.find((n) => n.id === selectedNodeId);
               if (!node) return null;
@@ -1290,21 +1299,23 @@ export const CatchainVisualizer = () => {
               };
               return (
                 <>
-                  <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-start justify-between mb-4">
                     <div>
-                      <p className="text-base font-semibold">{node.label}</p>
-                      <p className="text-xs text-slate-600">
-                        Status:{" "}
-                        <span
-                          className={
-                            node.status === "crashed"
-                              ? "text-red-600"
-                              : node.status === "lagging"
-                              ? "text-amber-600"
-                              : "text-emerald-600"
-                          }
-                        >
-                          {node.status}
+                      <p className="text-base font-semibold text-slate-800">
+                        {node.label}
+                        <span className="ml-2 text-sm font-normal">
+                          Status:{" "}
+                          <span
+                            className={
+                              node.status === "crashed"
+                                ? "text-red-600"
+                                : node.status === "lagging"
+                                ? "text-amber-600"
+                                : "text-emerald-600"
+                            }
+                          >
+                            {node.status}
+                          </span>
                         </span>
                       </p>
                     </div>
@@ -1315,33 +1326,104 @@ export const CatchainVisualizer = () => {
                       ✕
                     </button>
                   </div>
-                  <div className="text-sm text-slate-700 space-y-1 mb-3">
-                    <p>Committed: {node.committedTo || "—"}</p>
-                    <p>Locked: {node.lockedCandidate || "—"}</p>
-                    <p>Vote target: {node.voteTarget || "—"}</p>
-                    <p>Approvals: {node.approved.size}</p>
-                    <p>Votes: {node.voted.size}</p>
-                    <p>Precommits: {node.precommitted.size}</p>
-                  </div>
+                  <dl className="text-sm text-slate-700 grid grid-cols-2 gap-x-6 gap-y-2 mb-4">
+                    <dt className="font-semibold text-slate-800">Committed</dt>
+                    <dd>{node.committedTo || "—"}</dd>
+                    <dt className="font-semibold text-slate-800">Locked</dt>
+                    <dd>{node.lockedCandidate || "—"}</dd>
+                    <dt className="font-semibold text-slate-800">Vote target</dt>
+                    <dd>{node.voteTarget || "—"}</dd>
+                    <dt className="font-semibold text-slate-800">Approvals</dt>
+                    <dd>{node.approved.size}</dd>
+                    <dt className="font-semibold text-slate-800">Votes</dt>
+                    <dd>{node.voted.size}</dd>
+                    <dt className="font-semibold text-slate-800">Precommits</dt>
+                    <dd>{node.precommitted.size}</dd>
+                  </dl>
                   <div className="flex flex-col gap-2">
                     <button
-                      className="rounded-lg border px-3 py-2 text-sm font-medium shadow-sm bg-emerald-50 border-emerald-200 text-emerald-800"
+                      className="rounded-lg border px-3 py-2 text-sm font-medium shadow-sm bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100"
                       onClick={() => setStatus("good")}
                     >
                       Make good
                     </button>
                     <button
-                      className="rounded-lg border px-3 py-2 text-sm font-medium shadow-sm bg-red-50 border-red-200 text-red-800"
+                      className="rounded-lg border px-3 py-2 text-sm font-medium shadow-sm bg-red-50 border-red-200 text-red-800 hover:bg-red-100"
                       onClick={() => setStatus("crashed")}
                     >
                       Crash
                     </button>
                     <button
-                      className="rounded-lg border px-3 py-2 text-sm font-medium shadow-sm bg-amber-50 border-amber-200 text-amber-800"
+                      className="rounded-lg border px-3 py-2 text-sm font-medium shadow-sm bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100"
                       onClick={() => setStatus("lagging")}
                     >
                       Lagging (50% drop)
                     </button>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+      {selectedMessage && (
+        <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-[380px] max-w-full p-5 space-y-4">
+            {(() => {
+              const fromNode = getNode(model, selectedMessage.from);
+              const toNode = getNode(model, selectedMessage.to);
+              const actions = selectedMessage.actions || [];
+              return (
+                <>
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <p className="text-base font-semibold text-slate-800">
+                        Message
+                        <span className="ml-2 text-sm font-normal text-slate-600 align-middle">
+                          {selectedMessage.id}
+                        </span>
+                      </p>
+                      <br/>
+                      <p className="text-sm text-slate-700 font-semibold">
+                        Type: <span className="font-normal">{selectedMessage.primary || selectedMessage.type}</span>
+                      </p>
+                    </div>
+                    <button
+                      className="text-slate-500 hover:text-slate-800"
+                      onClick={() => setSelectedMessage(null)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <dl className="text-sm text-slate-700">
+                    <div className="flex items-center justify-between py-1">
+                      <dt className="font-semibold text-slate-800">From</dt>
+                      <dd className="text-right">{fromNode ? fromNode.label : selectedMessage.from}</dd>
+                    </div>
+                    <div className="flex items-center justify-between py-1">
+                      <dt className="font-semibold text-slate-800">To</dt>
+                      <dd className="text-right">{toNode ? toNode.label : selectedMessage.to}</dd>
+                    </div>
+                    <div className="flex items-center justify-between py-1">
+                      <dt className="font-semibold text-slate-800">Send → Receive</dt>
+                      <dd className="text-right">
+                        {Math.round(selectedMessage.sendTime)} → {Math.round(selectedMessage.recvTime)} ms
+                      </dd>
+                    </div>
+                  </dl>
+                  <div className="text-sm text-slate-800">
+                    <p className="font-semibold mb-1">Actions</p>
+                    {actions.length === 0 ? (
+                      <p className="text-slate-600">—</p>
+                    ) : (
+                      <ul className="list-disc pl-4 space-y-1">
+                        {actions.map((act, idx) => (
+                          <li key={`${act.type}-${idx}`} className="text-slate-700">
+                            {act.type} {act.candidateId ? `→ ${act.candidateId}` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                 </>
               );
