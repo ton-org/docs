@@ -41,7 +41,7 @@ export const CatchainVisualizer = () => {
   const PRIORITY_MOD = 1000;
   const PRIORITY_LAG_FACTOR = 18;
   const APPROVAL_JITTER_MIN = 25;
-  const APPROVAL_JITTER_MAX = 180;
+  const APPROVAL_JITTER_MAX = 120;
   const NULL_PRIORITY = 9999;
   const VOTEFOR_RETRY_MS = 400;
   const PROPOSER_SELF_APPROVE_EXTRA_MS = 120;
@@ -436,6 +436,7 @@ export const CatchainVisualizer = () => {
     // });
   }
 
+  // TODO: it's for validation, not for actual delay
   function calcApprovalDelay(model, node, candidate, isSlow) {
     const base = isSlow ? model.config.DeltaInfinity : model.config.Delta;
     const priorityLag =
@@ -875,14 +876,14 @@ export const CatchainVisualizer = () => {
   const config = useMemo(
     () => ({
       numNodes: 5,
-      latency: [420, 900],
+      latency: [80, 150],
       K: 8000, // 8 seconds per attempt
-      roundGap: 1000,
+      roundGap: 400,
       Delta: 2000, // Δ_i = 2(i-1) seconds -> base 2s
       DeltaInfinity: 4000, // 2*C seconds with C=2
       Y: 3, // fast attempts
       C: 2, // round candidates
-      simDelay: 250, // local processing/animation delay for follow-up actions
+      simDelay: 70, // local processing/animation delay for follow-up actions
       frameMs: 90,
       quorum: 4,
     }),
@@ -892,7 +893,7 @@ export const CatchainVisualizer = () => {
   const modelRef = useRef(null);
   const [tick, setTick] = useState(0);
   const [running, setRunning] = useState(true);
-  const [speed, setSpeed] = useState(0.1);
+  const [speed, setSpeed] = useState(0.03);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [selectedMessage, setSelectedMessage] = useState(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState(null);
@@ -938,7 +939,7 @@ export const CatchainVisualizer = () => {
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 md:p-6">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
         <div>
-          <p className="text-base font-semibold">Catchain + BCP visualizer</p>
+          {/* <p className="text-base font-semibold">Catchain + BCP visualizer</p> */}
           <p className="text-sm text-slate-600">
             Fast attempts follow proposer priority; slow attempts follow VoteFor
             guidance and precommit locking.
@@ -1264,15 +1265,17 @@ export const CatchainVisualizer = () => {
           <span className="text-sm font-semibold text-slate-800">Speed</span>
           <input
             type="range"
-            min="0.0001"
-            max="1"
-            step="0.01"
+            min="0.00005"
+            max="0.25"
+            step="0.0005"
             value={speed}
             onChange={(e) => setSpeed(parseFloat(e.target.value))}
             className="flex-1"
             style={{ position: "relative", zIndex: 60, pointerEvents: "auto" }}
           />
-          <span className="text-sm text-slate-700">{speed.toFixed(2)}x</span>
+          <span className="text-sm text-slate-700">
+            {(speed * 4).toFixed(2)}x
+          </span>
         </div>
         <div className="flex items-center gap-3">
           <button
