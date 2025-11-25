@@ -1,7 +1,460 @@
 ---
-title: "Security best practices"
+title: Security best practices
 ---
 
-import { Stub } from '/snippets/stub.jsx';
+There are several anti-patterns and potential attack vectors that smart contract developers should be aware of. These can affect the security, efficiency, and correctness of the contracts. Below are some common pitfalls and best practices to avoid them.
 
-<Stub issue="168" />
+## Signed/unsigned integer vulnerabilities
+
+Improper handling of signed integers can allow attackers to exploit overflow/underflow conditions.
+
+### Vulnerable code
+
+```func
+(cell,()) transfer_voting_power(cell votes, slice from, slice to, int amount) impure {
+    int from_votes = get_voting_power(votes, from);
+    int to_votes = get_voting_power(votes, to);
+    
+    from_votes -= amount;  // Can become negative!
+    to_votes += amount;
+    
+    votes~set_voting_power(from, from_votes);
+    votes~set_voting_power(to, to_votes);
+    return (votes,());
+}
+```
+
+### Secure implementation
+
+```func
+(cell,()) transfer_voting_power(cell votes, slice from, slice to, int amount) impure {
+    int from_votes = get_voting_power(votes, from);
+    int to_votes = get_voting_power(votes, to);
+    
+    throw_unless(998, from_votes >= amount);  // Validate sufficient balance
+    
+    from_votes -= amount;
+    to_votes += amount;
+    
+    votes~set_voting_power(from, from_votes);
+    votes~set_voting_power(to, to_votes);
+    return (votes,());
+}
+```
+
+## Sending sensitive data on-chain
+
+The entire smart contract computation is transparent; confidential runtime values can be retrieved through emulation.
+
+### Vulnerable code
+
+```func
+;; DON'T: Storing password hash or private data
+cell private_data = begin_cell()
+    .store_slice("secret_password_hash")
+    .store_uint(user_private_key, 256)
+    .end_cell();
+```
+
+## Account destruction race conditions
+
+Destroying accounts using [send mode](/foundations/messages/modes) `128 + 32` without proper checks can lead to fund loss in race conditions.
+
+### Vulnerable code
+
+```func
+() recv_internal(msg_value, in_msg_full, in_msg_body) {
+    if (in_msg_body.slice_empty?()) {
+        return ();  ;; Dangerous: empty message handling
+    }
+    
+    ;; Process and destroy account
+    send_raw_message(msg, 128 + 32);  ;; Destroys account
+}
+```
+
+### Secure approach
+
+```func
+() recv_internal(msg_value, in_msg_full, in_msg_body) {
+    ;; Proper validation before any destruction
+    throw_unless(error::unauthorized, authorized_sender?(sender));
+    
+    ;; Ensure no pending operations
+    throw_unless(error::pending_operations, safe_to_destroy?());
+    
+    ;; Then proceed with destruction if really needed
+}
+```
+
+## Missing replay protection
+
+Replay protection is a security mechanism that prevents an attacker from [reusing a previous message](https://en.wikipedia.org/wiki/Replay_attack). External messages without replay protection can be re-executed multiple times by an attacker which could lead to fund loss or other undesired behavior.
+
+### Secure implementation
+
+```func
+() recv_external(slice in_msg) impure {
+    slice ds = get_data().begin_parse();
+    int stored_seqno = ds~load_uint(32);
+    int msg_seqno = in_msg~load_uint(32);
+    
+    throw_unless(33, msg_seqno == stored_seqno);  ;; Prevent replay
+    
+    accept_message();
+    
+    ;; Update sequence number
+    set_data(begin_cell().store_uint(stored_seqno + 1, 32).end_cell());
+}
+```
+
+## Unconditional accepting of external messages
+
+Incoming [external messages](/foundations/messages/external-in) do not transfer funds. Receiving smart contract must pay for their processing from its balance. Upon receiving an external message, a smart contract can spend some free gas ([`gas_credit`](/foundations/config#param-20-and-21%3A-gas-prices)) in order to decide whether it is ready to accept it, and then pay for its further processing.
+
+External messages are usually accepted through the [`ACCEPT`](/tvm/instructions#f800-accept) TVM instruction, which sets `gas_limit` to its maximum possible value specified in the network configuration, and sets `gas_credit` to zero. From this point on, the contract will have to pay for the entire processing of the incoming message.
+
+Therefore, if `ACCEPT` is not guarded by a condition, an attacker might repeatedly send messages, and spend the entire balance of the contract.
+
+The [`SETGASLIMIT`](/tvm/instructions#f801-setgaslimit) instruction can lead to the same issue.
+
+### Vulnerable code
+
+```func
+() recv_external(slice in_msg) {
+    accept_message();
+    ;; ...
+}
+```
+
+### Secure implementation
+
+Checks before accepting an external message vary by use case. The following example is a part of [wallet v3 code](https://github.com/ton-blockchain/ton/blob/53ec9684bd213983e1fe0f7610d3e3453a4ec628/crypto/smartcont/wallet3-code.fc), that doesn't accept a message if it isn't signed by the wallet's owner.
+
+```func
+() recv_external(slice in_msg) impure {
+    ;; parse message and contract storage (omitted)
+    throw_unless(33, msg_seqno == stored_seqno);
+    throw_unless(34, subwallet_id == stored_subwallet);
+    throw_unless(35, check_signature(slice_hash(in_msg), signature, public_key));
+    accept_message();
+    ;; handle the message (omitted)
+}
+```
+
+## Invalid throw values
+
+Exit codes `0` and `1` indicate normal execution of the compute phase of the transaction. Execution can be unexpectedly aborted by calling a `throw` directly with exit codes `0` and `1`. This can make debugging very difficult since such aborted execution would be indistinguishable from a normal one.
+
+## Gas limitation
+
+Be careful with the [Out of gas error](/tvm/exit-codes#13%3A-out-of-gas-error). It cannot be handled, so try to pre-calculate the gas consumption whenever possible. This will help avoid wasting extra gas, as the transaction will fail anyway.
+
+### Secure implementation
+
+```tact
+message Vote { votes: Int as int32 }
+
+contract VoteCounter() {
+    const voteGasUsage = 10000; // precompute with tests
+
+    receive(msg: Vote) {
+        require(context().value > getComputeFee(self.voteGasUsage, false), "Not enough gas!");
+        // ...subsequent logic...
+    }
+
+    // Empty receiver for the deployment,
+    // which forwards the remaining value back to the sender
+    receive() { cashback(sender()) }
+}
+```
+
+## Insecure random numbers
+
+Generating truly secure random numbers in TON is challenging. The built-in random functions are pseudo-random and depend on logical time. An attacker can predict the randomized number by [brute-forcing](https://en.wikipedia.org/wiki/Brute-force_attack) the logical time in the current block.
+
+### Secure approach
+
+- For critical applications, avoid relying solely on on-chain solutions.
+
+- Use built-in random functions with randomized logical time to enhance security by making predictions harder for attackers without access to a validator node. Note, however, that it is still not entirely foolproof.
+
+- Consider using the _commit-and-disclose scheme_:
+
+1. Participants generate random numbers off-chain and send their hashes to the contract.
+1. Once all hashes are received, participants disclose their original numbers.
+1. Combine the disclosed numbers (e.g., summing them) to produce a secure random value.
+
+- Don't use randomization in external message receivers, as it remains vulnerable even with randomized logical time.
+
+## Executing third-party code
+
+Executing untrusted code can compromise contract security.
+
+### Prevention
+
+```func
+;; Validate all external code before execution
+throw_unless(error::untrusted_code, verify_code_signature(code));
+throw_unless(error::invalid_code, validate_code_safety(code));
+```
+
+## Race condition of messages
+
+A message cascade can be processed over many blocks. Assume that while one message flow is running, an attacker can initiate a second message flow in parallel. That is, if a property was checked at the beginning, such as whether the user has enough tokens, do not assume that it will still be satisfied at the third stage in the same contract.
+
+## Preventing front-running with signature verification
+
+In TON blockchain, all pending messages are publicly visible in the mempool. Front-running can occur when an attacker observes a pending transaction containing a valid signature and quickly submits their own transaction using the same signature before the original transaction is processed.
+
+### Secure approach
+
+Include critical parameters like the recipient address (`to`) within the data that is signed. This ensures that the signature is valid only for the intended operation and recipient, preventing attackers from reusing the signature for their benefit. Also, implement replay protection to prevent the same signed message from being used multiple times.
+
+```tact
+struct RequestBody {
+    to: Address;
+    seqno: Int as uint64;
+}
+
+message(0x988d4037) Request {
+    signature: Slice as bytes64;
+    requestBody: RequestBody;
+}
+
+contract SecureChecker(
+    publicKey: Int as uint256,
+    seqno: Int as uint64, // Add seqno for replay protection
+) {
+    receive(request: Request) {
+        // Verify the signature against the reconstructed data hash
+        require(checkSignature(request.requestBody.toCell().hash(), request.signature, self.publicKey), "Invalid signature!");
+
+        // Check replay protection
+        require(request.requestBody.seqno == self.seqno, "Invalid seqno"); // Assuming external message with seqno
+        self.seqno += 1; // Increment seqno after successful processing
+
+        // Ensure the message is sent to the address specified in the signed data
+        message(MessageParameters {
+            to: request.requestBody.to, // Use the 'to' from the signed request
+            value: 0,
+            mode: SendRemainingBalance, // Caution: sending the whole balance!
+            bounce: false,
+            body: "Your action payload here".asComment(), // Example body
+        });
+    }
+
+    // Empty receiver for the deployment,
+    // which forwards the remaining value back to the sender
+    receive() { cashback(sender()) }
+
+    get fun seqno(): Int {
+        return self.seqno;
+    }
+}
+
+```
+
+Remember to also implement replay protection to prevent reusing the same signature even if it's correctly targeted.
+
+### Vulnerable approach
+
+Do not sign data without including essential context like the recipient address. An attacker could intercept the message, copy the signature, and replace the recipient address in their own transaction, effectively redirecting the intended action or funds.
+
+```tact
+message(0x988d4037) Request {
+    signature: Slice as bytes64;
+    data: Slice as remaining; // 'to' address is not part of the signed data
+}
+
+contract InsecureChecker(
+    publicKey: Int as uint256,
+) {
+    receive(request: Request) {
+        // The signature only verifies 'request.data', not the intended recipient.
+        if (checkDataSignature(request.data.hash(), request.signature, self.publicKey)) {
+            // Attacker can see this message, copy the signature, and send their own
+            // message to a different 'to' address before this one confirms.
+            // The 'sender()' here is the original sender, but the attacker can initiate
+            // a similar transaction targeting themselves or another address.
+            message(MessageParameters {
+                to: sender(), // Vulnerable: recipient isn't verified by the signature
+                value: 0,
+                mode: SendRemainingBalance, // Caution: sending the whole balance!
+                bounce: false,
+            });
+        }
+    }
+
+    // Empty receiver for the deployment,
+    // which forwards the remaining value back to the sender
+    receive() { cashback(sender()) }
+}
+```
+
+Furthermore, once a signature is used in a transaction, it becomes publicly visible on the blockchain. Without proper replay protection, anyone can potentially reuse this signature and the associated data in a new transaction if the contract logic doesn't prevent it.
+
+## Return gas excesses carefully
+
+If excess gas is not returned to the sender, funds accumulate in contracts over time. This is suboptimal. Add a function to rake out excess, but popular contracts like [Jetton wallet](/standard/tokens/jettons/how-it-works) return it to the sender with a message using the `0xd53276db` opcode.
+
+### Secure gas handling
+
+```func
+message(0xd53276db) Excesses {}
+message Vote { votes: Int as int32 }
+
+contract Sample(
+    votes: Int as uint32,
+) {
+    receive(msg: Vote) {
+        self.votes += msg.votes;
+
+        message(MessageParameters {
+            to: sender(),
+            value: 0,
+            mode: SendRemainingValue | SendIgnoreErrors,
+            body: Excesses {}.toCell(),
+        });
+    }
+
+    // Empty receiver for the deployment,
+    // which forwards the remaining value back to the sender
+    receive() { cashback(sender()) }
+}
+```
+
+## Pulling data from another contract
+
+Contracts in the blockchain can reside in separate shards processed by another set of validators. This means that one contract cannot pull data from another contract. Specifically, no contract can call a getter function from another contract.
+
+Thus, any on-chain communication is asynchronous and done by sending and receiving messages.
+
+### Secure approach
+
+Exchange messages to pull data from another contract.
+
+```tact
+message GetMoney {}
+message ProvideMoney {}
+message TakeMoney { money: Int as coins }
+
+contract OneContract(
+    money: Int as coins,
+) {
+    receive(msg: ProvideMoney) {
+        message(MessageParameters {
+            to: sender(),
+            value: 0,
+            mode: SendRemainingValue | SendIgnoreErrors,
+            body: TakeMoney { money: self.money }.toCell(),
+        });
+    }
+
+    // Empty receiver for the deployment,
+    // which forwards the remaining value back to the sender
+    receive() { cashback(sender()) }
+}
+
+contract AnotherContract(
+    oneContractAddress: Address,
+) {
+    receive(_: GetMoney) {
+        message(MessageParameters {
+            to: self.oneContractAddress,
+            value: 0,
+            mode: SendRemainingValue | SendIgnoreErrors,
+            bounce: false,
+            body: ProvideMoney {}.toCell(),
+        });
+    }
+
+    receive(msg: TakeMoney) {
+        require(sender() == self.oneContractAddress, "Invalid money provider!");
+        // ...further processing...
+    }
+
+    // Empty receiver for the deployment,
+    // which forwards the remaining value back to the sender
+    receive() { cashback(sender()) }
+}
+```
+
+## TON address representation issues
+
+[TON addresses](/foundations/addresses/formats) have multiple formats that must be handled correctly.
+
+### Address formats
+
+```func
+;; Raw: 0:b4c1b2ede12aa76f4a44353944258bcc8f99e9c7c474711a152c78b43218e296
+;; Bounceable: EQC0wbLt4Sqnb0pENTlEJYvMj5npx8R0cRoVLHi0MhjilkPX
+;; Non-bounceable: UQC0wbLt4Sqnb0pENTlEJYvMj5npx8R0cRoVLHi0Mhjilh4S
+
+;; Always validate workchain
+force_chain(to_address);
+```
+
+## Name collision vulnerabilities
+
+Function or variable names can collide with built-in functions or reserved keywords.
+
+### Best practice
+
+```func
+;; Use descriptive, unique names
+int user_balance = 0;  ;; Instead of just 'balance'
+() validate_user_signature()  ;; Instead of just 'validate()'
+```
+
+## Incorrect data type handling
+
+Reading or writing incorrect data types can corrupt contract state.
+
+### Vulnerable code
+
+```func
+;; Writing uint but reading int
+storage~store_uint(value, 32);
+int read_value = storage~load_int(32);  ;; Type mismatch
+```
+
+### Secure implementation
+
+```func
+;; Consistent type usage
+storage~store_uint(value, 32);
+int read_value = storage~load_uint(32);
+```
+
+## Missing function return value checks
+
+Ignoring function return values can lead to logic errors and unexpected behavior.
+
+### Vulnerable code:
+
+```func
+dictinfos~udict_delete?(32, index);  ;; Ignoring success flag
+```
+
+### Secure implementation:
+
+```func
+int success = dictinfos~udict_delete?(32, index);
+throw_unless(error::fail_to_delete_dict, success);
+```
+
+## Contract code updates
+
+Contracts can be updated if not properly protected, changing their behavior unexpectedly.
+
+### Secure implementation
+
+```func
+() update_code(cell new_code) impure {
+    throw_unless(error::unauthorized, authorized_admin?(sender()));
+    throw_unless(error::invalid_code, validate_code?(new_code));
+    
+    set_code(new_code);
+}
+```

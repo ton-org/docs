@@ -56,7 +56,7 @@ jobs:
             echo -e '\nNo such files affected!'
             exit 0
           fi
-          echo -e '\nChecking formatting on the following MDX and Markdown files affected by this PR:\n'
+          echo -e '\nChecking formatting of the following MDX and Markdown files affected by this PR:\n'
           for file in ${ALL_CHANGED_FILES}; do
             echo "- $file"
           done
@@ -88,8 +88,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        # The fetch-depth is not set to 0 to prevent the cspell-action
+        # from misfiring on files that are in main but not on this PR branch
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -108,6 +108,7 @@ jobs:
         with:
           check_dot_files: explicit
           suggestions: true
+          config: ".cspell.jsonc"
 
   redirects-check:
     name: "Redirects"
@@ -146,3 +147,35 @@ jobs:
       # - name: Check redirects against the upstream docs.json structure
       #   if: ${{ !cancelled() }}
       #   run: node scripts/check-redirects.mjs upstream
+
+  navigation-check:
+    name: "Navigation"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          corepack enable
+          npm ci
+
+      - name: Check uniqueness of navigation paths in docs.json
+        if: ${{ !cancelled() }}
+        run: node scripts/check-navigation.mjs unique
+
+      - name: Check existence of navigation .mdx pages in docs.json
+        if: ${{ !cancelled() }}
+        run: node scripts/check-navigation.mjs exist
+
+      - name: Check coverage of .mdx pages by docs.json
+        if: ${{ !cancelled() }}
+        run: node scripts/check-navigation.mjs cover

@@ -1,0 +1,136 @@
+---
+title: "How to handle other events with WalletKit on the Web platform"
+sidebarTitle: "Handle other events"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+<Aside>
+  [Initialize the WalletKit](/ecosystem/ton-connect/walletkit/web/init), [set up at least one TON wallet](/ecosystem/ton-connect/walletkit/web/wallets) and [handle connection requests](/ecosystem/ton-connect/walletkit/web/connections) before using examples on this page.
+</Aside>
+
+In total, there are five distinct kinds of incoming requests from the TON Connect bridge. They form the corresponding events and their handlers:
+
+| Incoming request    | WalletKit method to listen and process the request                                                  |
+| ------------------- | --------------------------------------------------------------------------------------------------- |
+| `connect`           | [`onConnectRequest()`](/ecosystem/ton-connect/walletkit/web/connections#handle-onconnectrequest)    |
+| `disconnect`        | [`onDisconnect()`](/ecosystem/ton-connect/walletkit/web/connections#handle-ondisconnect)            |
+| `transaction`       | [`onTransactionRequest()`](/ecosystem/ton-connect/walletkit/web/events#handle-ontransactionrequest) |
+| `signData`          | [`onSignDataRequest()`](/ecosystem/ton-connect/walletkit/web/events#handle-onsigndatarequest)       |
+| `restoreConnection` | None — this is a connection health check of the JS bridge                                           |
+| Any event error     | [`onRequestError()`](#handle-request-errors)                                                        |
+
+## Handle `onTransactionRequest`
+
+If a dApp is connected to the wallet service, the former can request to initiate a blockchain transaction, which fires the `transaction` request over the bridge. The wallet service then handles it with the `onTransactionRequest` method of the WalletKit.
+
+On TON, transactions are initiated by sending an external message to the TON wallet contract, which then processes it and sends internal messages as requested. To estimate money flows for planned transactions, WalletKit uses emulation via the configured API client, if supported.
+
+<Aside>
+  The API client in use is determined by the optional [`apiClient` configuration parameter](/ecosystem/ton-connect/walletkit/web/init#param-api-client) during [WalletKit initialization](/ecosystem/ton-connect/walletkit/web/init#initialization). By default, the TON Center APIs are used, which provide rich emulation capabilities.
+</Aside>
+
+```ts title="TypeScript"
+kit.onTransactionRequest(async (event) => {
+  try {
+    if (event.preview.result === 'success') {
+      // If the emulation was successful,
+      // show net asset changes to the user for a confirmation.
+      // There, positive amounts mean incoming transfers,
+      // and negative mean outgoing ones.
+      console.log(event.preview.moneyFlow.ourTransfers);
+    } else {
+      // Transaction emulation was not successful,
+      // but you can still allow a user to proceed — with a warning.
+      console.log('Transaction emulation failed');
+    }
+    if (confirm('Do you confirm this transaction?')) {
+      await kit.approveTransactionRequest(event);
+    } else {
+      await kit.rejectTransactionRequest(event, 'User rejected');
+    }
+  } catch (error) {
+    console.error('Transaction handler error:', error);
+    await kit.rejectTransactionRequest(event, 'Fatal error in the connection handler');
+  }
+});
+```
+
+## Handle `onSignDataRequest`
+
+If a dApp is connected to the wallet service, the former can request to sign data with the private key used by the selected TON wallet, which fires the `signData` request over the bridge. The wallet service then handles it with the `onSignDataRequest` method of the WalletKit.
+
+The data to sign can be of several kinds: `text`, `binary`, or a raw [`cell`](/foundations/serialization/cells).
+
+```ts title="TypeScript"
+kit.onSignDataRequest(async (event) => {
+  try {
+    // Data to be signed can be of three distinct types.
+    // Depending on a type, show it to the user for a confirmation.
+    switch (event.request.type) {
+      case 'text':
+        console.log(event.request.text);
+        break;
+      case 'binary':
+        console.log(event.request.bytes);
+        break;
+      case 'cell':
+        // The `request.cell` contains a hex-encoded string with a serialized cell
+        // and the `request.schema` describes a TL-B schema to parse the `request.cell`
+        console.log(event.request.cell);
+        console.log(event.request.schema);
+        break;
+    }
+    if (confirm('Do you confirm this data sign request?')) {
+      try {
+        // Sign the data receiver with the user's approval
+        const result = await kit.signDataRequest(event);
+        console.log('Signed successfully:', result);
+      } catch (error) {
+        console.error('Signing failed:', error);
+      }
+    } else {
+      await kit.rejectTransactionRequest(event, 'User rejected');
+    }
+  } catch (error) {
+    console.error('Data sign handler error:', error);
+    await kit.rejectTransactionRequest(event, 'Fatal error in the data sign handler');
+  }
+});
+```
+
+## Handle request errors
+
+Upon any error in any of the requests, the `onRequestError()` method is invoked. Provide it with a callback function that would handle arbitrary errors and display useful information to the user.
+
+```ts title="TypeScript"
+await kit.onRequestError(async (event) => {
+  // To distinguish incoming events, look for their corresponding type:
+  console.error(event.incomingEvent.method);
+
+  // Event's .method can be one of the following:
+  // - connect (failure in onConnectRequest)
+  // - disconnect (failure in onDisconnect)
+  // - transaction (failure in onTransactionRequest)
+  // - signData (failure in onSignDataRequest)
+  // - restoreConnection (JS bridge failures)
+  // - none (generic request errors)
+  console.error(event.incomingEvent);
+
+  // The result is a following object:
+  // {
+  //   id: string,
+  //   error: {
+  //     code: number,
+  //     message: string,
+  //     data?: unknown,
+  //   }
+  // }
+  console.error(event.result);
+});
+```
+
+## See also
+
+- [WalletKit overview](/ecosystem/ton-connect/walletkit)
+- [TON Connect overview](/ecosystem/ton-connect)
