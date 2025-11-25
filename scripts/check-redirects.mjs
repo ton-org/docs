@@ -112,6 +112,7 @@ const checkExist = (config) => {
   const specialDestinationsExist = {
     todos: false,
     issues: false,
+    olderDocs: false,
     otherGithubLinks: false,
     wikiLinks: false,
     otherExternalLinks: false,
@@ -130,6 +131,8 @@ const checkExist = (config) => {
         specialDestinationsExist.otherGithubLinks = true;
       } else if (path.includes('en.wikipedia.org/')) {
         specialDestinationsExist.wikiLinks = true;
+      } else if (path.includes('old-docs.ton.org/')) {
+        specialDestinationsExist.olderDocs = true;
       } else {
         specialDestinationsExist.otherExternalLinks = true;
       }
@@ -207,7 +210,7 @@ const checkExist = (config) => {
       };
     }
     // None, need to look in redirect sources or bail.
-    const redirectSource = redirects.find((it) => it.source === path);
+    const redirectSource = redirects.find((it) => it.source === path.replace(/#.*$/, ''));
     if (!redirectSource) {
       return {
         ok: false,
@@ -236,9 +239,13 @@ const checkExist = (config) => {
   if (specialDestinationsExist.todos) {
     console.log(composeWarning('Found TODO-prefixed destinations!'));
   }
-  if (specialDestinationsExist.otherExternalLinks) {
-    console.log(composeWarning('Found third-party URLs outside of GitHub or English Wikipedia!'));
+  if (specialDestinationsExist.olderDocs) {
+    console.log(composeWarning('Found destinations that point to old-docs.ton.org!'));
   }
+  // NOTE: this and other special destinations are not currently needed, but their checks must be required in the future.
+  // if (specialDestinationsExist.otherExternalLinks) {
+  //   console.log(composeWarning('Found third-party URLs outside of GitHub or English Wikipedia!'));
+  // }
   if (invalidatedTraces.length !== 0) {
     return {
       ok: false,
