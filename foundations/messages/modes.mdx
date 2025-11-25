@@ -1,0 +1,126 @@
+---
+title: "Sending modes"
+---
+
+By default, message sending process has the following properties:
+
+- the forward fees are paid from the indicated message value, so it is decreased by the amount of forward fees before sending;
+- if sending fails, the transaction is rolled back and a bounce message is not sent.
+
+The purpose of _send modes_ is to modify the above logic by specifying:
+
+- what exactly value should be in the outgoing message (will it be increased by something or even reset to some value);
+- whether to pay forward fees from the account balance or from the message value;
+- whether to rollback the transaction and send a bounce message if sending fails, etc.
+
+The send modes are specified via an 8-bit bitmask `mode` parameter of the [`SENDRAWMSG`](/tvm/instructions#fb00-sendrawmsg) instruction. The resulting mode value can have the following base modes:
+
+| Mode value | Convenient name        | Description                                |
+| ---------: | :--------------------- | ------------------------------------------ |
+|        `0` | `SendDefaultMode`      | Default mode.                              |
+|       `64` | `SendRemainingValue`   | Complex logic. Will be described below.    |
+|      `128` | `SendRemainingBalance` | Send all remaining balance of the account. |
+
+Additionally, the resulting `mode` can have the following optional flags added:
+
+| Flag value | Convenient name            | Description                                                                                                                                              |
+| ---------: | :------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|       `+1` | `SendPayFwdFeesSeparately` | Pay forward fees separately from the message value.                                                                                                      |
+|       `+2` | `SendIgnoreErrors`         | Ignore errors during sending. No bounce message will be sent on failure.                                                                                 |
+|      `+16` | `SendBounceIfActionFail`   | Bounce the transaction in case of any errors during the action phase.                                                                                    |
+|      `+32` | `SendDestroyIfZero`        | The current account (contract) will be destroyed if its resulting balance is zero. This flag has effect only if mode 128, SendRemainingBalance, is used. |
+
+## Behavior
+
+Notation:
+
+- `value` – the amount of Toncoin indicated in the outgoing message.
+- `mode` – the bitmask passed to the `SENDRAWMSG` instruction.
+- `msg_balance_remaining` – the remaining value of the incoming message. At the start of the action phase it equals either the incoming message value or account's balance before compute phase if it was less than the value of incoming message with bounce flag set to `false`. At the start of sending message process, it is zero if there was the previous sending message action with modes `SendRemainingBalance` or `SendRemainingValue`, otherwise it equals the value described above.
+- `remaining_balance` – the remaining balance of the account at the start of the action.
+- `fwd_fees` – the amount of forward fees for sending the message.
+- `gas_fees` – the fees paid for gas used during the computation phase.
+- `action_fine` – the accumulated fine for the previous failed and skipped send message actions.
+- `final_value` – the final value of the outgoing message.
+- `req` – value that will be deducted from the account balance.
+
+The algorithm for the resulting value of outgoing internal message and amount of nanotoncoins that will be deducted from account's balance is as follows:
+
+1. Check that `mode` has flag `SendBounceIfActionFail`:
+   - if so, then in case of any failure the action phase will be interrupted, the bounce phase will be initiated;
+   - if not, then in case of any failure the action phase will be interrupted but no bounce message will be sent.
+1. Check that `mode` has flag `SendIgnoreErrors`:
+   - if so, then in case of almost all failure (errors on which this mode is not work are described in [Errors subsection](/foundations/messages/modes##erros).) during sending the message an error will be ignored and the action phase will continue;
+1. Set `final_value` to the `value`.
+1. Check that `mode` has base mode `SendRemainingBalance`:
+   - if so, then set `final_value` to `remaining_balance` and remove `+1` flag from `mode` if it is presented.
+1. Otherwise, check that `mode` has base mode `SendRemainingValue`:
+   1. Check that `mode` has flag `SendPayFwdFeesSeparately`:
+      - if so, then increase `final_value` by `msg_balance_remaining`;
+      - otherwise, increase `final_value` by `msg_balance_remaining - gas_fees - action_fine`.
+1. Set `req` to `final_value`.
+1. Check that `mode` has flag `SendPayFwdFeesSeparately`:
+   - if so, then increase `req` by `fwd_fees`.
+   - otherwise, decrease `final_value` by `fwd_fees`.
+1. Set `msg_balance_remaining` to zero if `mode` has base modes `SendRemainingValue` or `SendRemainingBalance`.
+1. Decrease `remaining_balance` by `req`.
+1. Check that `mode` has flag `SendDestroyIfZero` and base mode `SendRemainingBalance`:
+   - if so, then destroy the current account (contract) if `remaining_balance` is zero.
+
+### Example
+
+Assume that
+
+- `value = 0.1 TON`;
+- `mode = 80 = 10010000` (that is, `SendRemainingValue + SendBounceIfActionFail`);
+- `msg_balance_remaining = 0 TON` (for instance, there was previous sending message action with mode `SendRemainingValue`);
+- `remaining_balance = 2 TON`;
+- `fwd_fees = 0.01 TON`;
+- `gas_fees = 0.005 TON`;
+- `action_fine = 0 TON`.
+
+Then the sending proceeds as follows:
+
+- `mode` has flag `SendBounceIfActionFail`? Yes.
+- `mode` has flag `SendIgnoreErrors`? No.
+- Set `final_value = 0.1 TON`.
+- `mode` has base mode `SendRemainingBalance`? No.
+- `mode` has base mode `SendRemainingValue`? Yes.
+  - `mode` has flag `SendPayFwdFeesSeparately`? No.
+  - Increase `final_value` by `msg_balance_remaining - gas_fees - action_fine = 0 TON - 0.005 TON - 0 TON = -0.005 TON`.
+  - Now, `final_value = 0.1 TON - 0.005 TON = 0.095 TON`.
+- Set `req = final_value = 0.095 TON`.
+- `mode` has flag `SendPayFwdFeesSeparately`? No.
+  - Decrease `final_value` by `fwd_fees = 0.01 TON`.
+  - Now, `final_value = 0.095 TON - 0.01 TON = 0.085 TON`.
+- Set `msg_balance_remaining` to zero (it is already zero).
+- Decrease `remaining_balance` by `req = 0.095 TON`.
+  - Now, `remaining_balance = 2 TON - 0.095 TON = 1.905 TON`.
+
+### Outgoing external messages
+
+The algorithm above describes the sending process only for outgoing internal messages. However, outgoing external message can have only the following three modes:  `SendBounceIfActionFail`, `SendIgnoreErrors`, and `SendPayFwdFeesSeparately` (use of any other leads to an error). `SendPayFwdFeesSeparately` can be used, but have no effect. `SendBounceIfActionFail` and `SendIgnoreErrors` have the same behavior, i.e. send bounce message in a case of any error and ignore almost all errors during the processing.
+
+There is no `value` field in external messages, so the forward fees are always deducted from account's balance.
+
+## Errors
+
+The following errors can occur during the sending message flow:
+
+- Simultaneous use of modes `SendRemainingBalance` and `SendRemainingValue`, `34` exit code.
+- Modes except `SendIgnoreErrors`, `SendBounceIfActionFail`, and `SendPayFwdFeesSeparately` used for outbound external messages, `34` exit code.
+- Source address in the outbound message is not equal to `addr_none` or the contract address, `35` exit code.
+- Some problems with repacking the message body and [`StateInit`](/foundations/messages/deploy) into references if the message body or `StateInit` is too big to be located in place, `34` exit code.
+- Malformed message structure, `34` exit code.
+- Invalid destination address in the outbound message, `36` exit code.
+- Not enough value to transfer with the message: all of the inbound message value has been consumed, `37` exit code.
+- No enough funds for processing all message references, `40` exit code.
+- The number of bits or references in `StateInit` and message body is too large, `40` exit code.
+- Message has Merkle depth more than two, `40` exit code.
+- If a message has only one `SendRemainingValue` base mode and `final_value` after the step `5` is negative, then an error with `37` exit code is thrown.
+- If `final_value` after step `7` is negative, then an error with `37` exit code is thrown.
+- If `remaining_balance` after step `9` is negative, then an error with `37` exit code is thrown.
+- If `remaining_balance` after pay forward fees step is negative in a case of outgoing external message, then an error with `37` exit code is thrown.
+- Problems related to extra-currency, exit codes `37`, `44`, `38`.
+
+The `SendIgnoreErrors` mode ignore all the above errors except the four first ones (simultaneous use of modes, invalid modes for external messages, source address problems, and problems with repacking).
