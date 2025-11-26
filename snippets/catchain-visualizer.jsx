@@ -44,6 +44,7 @@ export const CatchainVisualizer = () => {
     svgHeight: 380,
     nodeRadius: 30,
     ringRadius: 34,
+    proposerTimerRadius: 40,
   };
 
   const LOG_LIMIT = 14;
@@ -162,6 +163,8 @@ export const CatchainVisualizer = () => {
       createdAt: null,
       priority: (proposerIndex + round - 1) % PRIORITY_MOD,
       submitted: false,
+      submitAt: null,
+      submitDelay: 0,
     };
   }
 
@@ -541,6 +544,8 @@ export const CatchainVisualizer = () => {
       createdAt: model.time,
       priority: NULL_PRIORITY,
       submitted: false,
+      submitAt: null,
+      submitDelay: 0,
     };
     model.candidates[id] = candidate;
     model.nullCandidateId = id;
@@ -764,6 +769,7 @@ export const CatchainVisualizer = () => {
     model.messages = [];
     model.tasks = [];
     model.voteForTarget = null;
+    model.currentProposers = [];
     model.nodes.forEach((node) => {
       node.voted = new Set();
       node.precommitted = new Set();
@@ -812,10 +818,21 @@ export const CatchainVisualizer = () => {
       } else {
         cand.priority = priority;
       }
+      const submitDelay = Math.max(0, priority * model.config.Delta);
+      const submitAt = model.time + submitDelay;
+      model.currentProposers.push({
+        nodeId: proposer.id,
+        candidateId: cand.id,
+        submitAt,
+        submitDelay,
+      });
       if (cand.submitted) {
+        cand.submitAt = null;
+        cand.submitDelay = 0;
         return;
       }
-      const submitDelay = Math.max(0, priority * model.config.Delta);
+      cand.submitAt = submitAt;
+      cand.submitDelay = submitDelay;
       enqueueAction(
         model,
         proposer,
@@ -880,6 +897,7 @@ export const CatchainVisualizer = () => {
     model.committedCandidate = null;
     model.nextRoundAt = null;
     model.nullCandidateId = null;
+    model.currentProposers = [];
     model.nodes.forEach((node) => {
       node.approved = new Set();
       node.voted = new Set();
@@ -918,6 +936,7 @@ export const CatchainVisualizer = () => {
       committedHistory: [],
       voteForTarget: null,
       nullCandidateId: null,
+      currentProposers: [],
     };
     startRound(model, true);
     return model;
@@ -988,7 +1007,7 @@ export const CatchainVisualizer = () => {
   const modelRef = useRef(null);
   const [tick, setTick] = useState(0);
   const [running, setRunning] = useState(true);
-  const [speed, setSpeed] = useState(0.03);
+  const [speed, setSpeed] = useState(0.05);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [selectedMessage, setSelectedMessage] = useState(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState(null);
@@ -1027,6 +1046,13 @@ export const CatchainVisualizer = () => {
   );
   const attemptProgress = clamp(elapsedAttempt / (model.config.K || 1), 0, 1);
   const attemptRemaining = Math.max(0, (model.config.K || 0) - elapsedAttempt);
+  const proposerTimerRadius =
+    LAYOUT.proposerTimerRadius || LAYOUT.ringRadius + 6;
+  const proposerTimerCircumference = 2 * Math.PI * proposerTimerRadius;
+  const proposerTimersByNode = {};
+  (model.currentProposers || []).forEach((entry) => {
+    proposerTimersByNode[entry.nodeId] = entry;
+  });
 
   const rebuildModel = (nextConfig) => {
     modelRef.current = createModel(nextConfig);
@@ -1188,6 +1214,23 @@ export const CatchainVisualizer = () => {
                 !committed &&
                 activeCandidate &&
                 node.approved.has(activeCandidate.id);
+              const proposerTimer = proposerTimersByNode[node.id];
+              let proposerProgress = 0;
+              if (proposerTimer) {
+                const remaining = Math.max(
+                  0,
+                  (proposerTimer.submitAt || 0) - model.time
+                );
+                const total = proposerTimer.submitDelay || 1;
+                proposerProgress = clamp(
+                  1 - remaining / Math.max(total, 1),
+                  0,
+                  1
+                );
+                if (model.candidates[proposerTimer.candidateId]?.submitted) {
+                  proposerProgress = 1;
+                }
+              }
               const ring = committed
                 ? "#3b82f6"
                 : precommitted
@@ -1215,9 +1258,23 @@ export const CatchainVisualizer = () => {
                         ? "#fef3c7"
                         : "#e5e7eb"
                     }
-                    stroke="#334155"
+                    stroke="#94a3b8"
                     strokeWidth="3"
                   />
+                  {proposerTimer && (
+                    <circle
+                      r={proposerTimerRadius}
+                      fill="none"
+                      stroke="#4a5358ff"
+                      strokeWidth="7"
+                      strokeLinecap="round"
+                      strokeDasharray={`${proposerTimerCircumference} ${proposerTimerCircumference}`}
+                      strokeDashoffset={
+                        proposerTimerCircumference * (1 - proposerProgress)
+                      }
+                      transform="rotate(-90)"
+                    />
+                  )}
                   <circle
                     r={LAYOUT.ringRadius}
                     fill="none"
@@ -1227,8 +1284,8 @@ export const CatchainVisualizer = () => {
                   <text
                     textAnchor="middle"
                     dominantBaseline="middle"
-                    className="font-semibold"
-                    fill="#0f172a"
+                    className="font-medium"
+                    fill="#374151"
                   >
                     {node.label}
                   </text>
@@ -1236,8 +1293,8 @@ export const CatchainVisualizer = () => {
                     <text
                       y={LOGO_TEXT_OFFSET}
                       textAnchor="middle"
-                      className="text-[9px]"
-                      fill="#0f172a"
+                      className="text-[9px] font-medium"
+                      fill="#374151"
                     >
                       {node.committedTo}
                     </text>
@@ -1290,15 +1347,15 @@ export const CatchainVisualizer = () => {
                     cy={y}
                     r="6"
                     fill={color}
-                    stroke="#0f172a"
+                    stroke="#6b7280"
                     strokeWidth="1.5"
                   />
                   <text
                     x={x}
                     y={y - 10}
                     textAnchor="middle"
-                    className="text-[9px]"
-                    fill="#0f172a"
+                    className="text-[9px] font-medium"
+                    fill="#4b5563"
                   >
                     {label}
                   </text>
@@ -1563,6 +1620,7 @@ export const CatchainVisualizer = () => {
                 <p className="text-base font-semibold text-slate-800 leading-snug">
                   Simulation config
                 </p>
+                <br/>
                 <p className="text-sm text-slate-600 leading-snug">
                   Update timing parameters; applying will restart the emulation.
                 </p>
@@ -1627,6 +1685,7 @@ export const CatchainVisualizer = () => {
                 <p className="text-base font-semibold text-slate-800 leading-snug">
                   Event log
                 </p>
+                <br/>
                 <p className="text-sm text-slate-600 leading-snug">
                   Latest simulation events (newest first).
                 </p>
