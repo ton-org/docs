@@ -1,0 +1,172 @@
+---
+title: "Onchain Jetton Processing"
+sidebarTitle: "Jetton Processing"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+<Aside>
+  Перед ознакомлением с данной статьёй нужно хорошо понять [архитектуру jetton](/standard/tokens/jettons/overview).
+</Aside>
+
+Очень часто в контрактах нужно работать с jetton. Например, при реализации DEX, ескроу-контрактов, лендинг протоколов и т.д. Проблема, которую нужно решать, звучит так: если пришёл Jetton Notify, то какой жетон был получен?
+
+```mermaid
+graph LR
+A((Jetton Wallet)) -->|JettonNotify (0x7362d09c)| B((Contract))
+```
+
+## Простой случай - работа с конкретным jetton
+
+Часто, в контракте не нужна поддержка произвольных jetton, а достаточно некоторого заранее известного набора. Например контракт может в качестве оплаты принимать только USDT. В случае когда набор jetton masters заранее известен, можно предпосчитать адреса jetton wallet-ов, с которых нужно обрабатывать пополнения. Тогда код в контракте будет выглядеть тривиально
+
+```tolk
+tolk 1.2;
+
+struct Storage {
+    jettonWalletSetter: address;
+    trustedJettonWallet: address?;
+}
+
+fun Storage.load(): Storage {
+    return Storage.fromCell(contract.getData());
+}
+
+fun Storage.save(self) {
+    return contract.setData(self.toCell())
+}
+
+struct (0x7362d09c) JettonNotify {
+    queryId: uint64
+    jettonAmount: coins
+    transferInitiator: address
+    jettonVaultPayload: RemainingBitsAndRefs
+}
+
+struct (0x12345678) SetTrustedJettonWallet {
+    trustedJettonWallet: address
+}
+
+type AllowedMessage = JettonNotify | SetTrustedJettonWallet;
+
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy AllowedMessage.fromSlice(in.body);
+    match (msg) {
+        SetTrustedJettonWallet => {
+            var storage = Storage.load();
+            if (storage.jettonWalletSetter != in.senderAddress || storage.trustedJettonWallet != null) {
+                return;
+            }
+            storage.trustedJettonWallet = msg.trustedJettonWallet;
+            storage.save();
+        },
+        JettonNotify => {
+            var storage = Storage.load();
+            if (storage.trustedJettonWallet == null || storage.trustedJettonWallet != in.senderAddress) {
+                return;
+            }
+            // Process jettons
+        }
+    }
+}
+```
+
+При использовании такого подхода при деплое контракта нужно будет [посчитать корректный адрес jetton wallet-a](/standard/tokens/jettons/find), который будет обрабатывать пополнения. Важно понимать, что положить адрес jettonWallet сразу в стейт инит контракта нельзя, т.к. в этом случае адрес жетон-воллета зависит от адреса контракта, и получается кольцевая зависимость.
+
+## Работа с любым TEP-89 совместимым jetton
+
+Все современные жетоны обычно поддерживают [TEP-89](https://github.com/ton-blockchain/TEPs/blob/master/text/0089-jetton-wallet-discovery.md), который позволяет явно проверить, принадлежит ли jetton wallet конкретному jetton master-у.
+
+В общем случае возможны два варианта того, откуда взять адрес jetton master. Иногда, как, например в [Dedust DEX](https://dedust.io/), адреса jetton master хранятся в контрактах, обрабатывающих пополнения соответствующих jetton. В других случаях, адрес жетон-мастера можно передавать в payload в `JettonNotify`. Какой вариант использовать, зависит от конкретной системы контрактов.
+
+Когда адрес jetton master известен, то на него можно отправить сообщение providesWalletAddress и получить адрес jetton wallet.
+
+```mermaid
+graph LR
+A((Contract))
+B((Jetton Master))
+C((Contract))
+
+    A -->|provideWalletAddress (0x2c76b973)| B
+    B -->|takeWalletAddress (0xd1735400)| C
+```
+
+Тогда контракт, инициализирующий jetton wallet таким образом может выглядеть так:
+```tolk
+tolk 1.2
+
+struct Storage {
+    jettonMasterAddress: address
+    jettonWalletAddress: address?
+}
+
+fun Storage.load(): Storage {
+    return Storage.fromCell(contract.getData());
+}
+
+fun Storage.save(self) {
+    return contract.setData(self.toCell())
+}
+
+struct (0x2c76b973) ProvideWalletAddress {
+    queryId: uint64
+    ownerAddress: address
+    includeAddress: bool
+}
+
+struct (0xd1735400) TakeWalletAddress {
+    queryId: uint64
+    walletAddress: address
+    ownerAddress: Cell<address>?
+}
+
+struct (0x7362d09c) JettonNotify {
+    queryId: uint64
+    jettonAmount: coins
+    transferInitiator: address
+    jettonVaultPayload: RemainingBitsAndRefs
+}
+
+struct (0x12345678) InitContract {}
+
+type AllowedMessage = InitContract | TakeWalletAddress | JettonNotify
+
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy AllowedMessage.fromSlice(in.body);
+    match (msg) {
+        InitContract => {
+            var storage = Storage.load();
+            val msg = createMessage({
+                bounce: true,
+                value: 0,
+                dest: storage.jettonMasterAddress,
+                body: ProvideWalletAddress {
+                    queryId: 0,
+                    ownerAddress: contract.getAddress(),
+                    includeAddress: false,
+                },
+            });
+            msg.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+        }
+        TakeWalletAddress => {
+            var storage = Storage.load();
+            if (storage.jettonMasterAddress != in.senderAddress) {
+                return;
+            }
+            storage.jettonWalletAddress = msg.walletAddress;
+            storage.save();// After receiving such message contract is initialized
+        }
+        JettonNotify => {
+            var storage = Storage.load();
+            if (storage.jettonWalletAddress == null || storage.jettonWalletAddress != in.senderAddress) {
+                return;
+            }
+            // Process jettons
+        }
+    }
+}
+
+```
+## Jettons не поддерживающие TEP-89
+
+Это ситуация является довольно редкой, и, например [TONCO DEX](https://tonco.io/) не поддерживает жетоны, не совместимые с TEP-89. Другие же DEX, такие как [Dedust](https://dedust.io/) и [Bidask](https://bidask.finance/en/) поддерживают такие жетоны через
