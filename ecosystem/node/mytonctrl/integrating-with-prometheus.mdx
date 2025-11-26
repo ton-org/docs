@@ -1,0 +1,87 @@
+---
+title: "Integrate MyTonCtrl with Prometheus"
+---
+
+import { Aside } from "/snippets/aside.jsx";
+
+[MyTonCtrl](/ecosystem/node/setup-mytonctrl) pushes metrics to a [Prometheus](https://prometheus.io/) [Pushgateway](https://prometheus.io/docs/instrumenting/pushing/) so Prometheus (and [Grafana](https://grafana.com/), if used) can scrape them without exposing the node directly.
+
+## Prerequisites
+
+- [Docker](https://www.docker.com/) and [Docker Compose](https://docs.docker.com/compose/) are installed on the host that runs Prometheus.
+- MyTonCtrl installed and running on the node that emits metrics.
+
+## Deploy Prometheus and Pushgateway
+
+1. In an empty directory, create `docker-compose.yml`:
+
+```yaml
+services:
+ pushgateway:
+   image: prom/pushgateway:v1.4.0
+   restart: unless-stopped
+   ports:
+     - "9091:9091"
+
+ prometheus:
+   image: prom/prometheus:v2.52.0
+   restart: unless-stopped
+   volumes:
+     - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+   command:
+     - "--config.file=/etc/prometheus/prometheus.yml"
+   ports:
+     - "9090:9090"
+```
+
+2. Create `prometheus.yml` alongside it:
+
+ ```yaml
+ global:
+   scrape_interval: 15s
+
+ scrape_configs:
+   - job_name: "mytonctrl_pushgateway"
+     static_configs:
+       - targets: ["pushgateway:9091"]
+ ```
+
+3. Start the stack and confirm the container status:
+
+```bash
+docker compose up -d
+docker compose ps
+```
+
+## Configure MyTonCtrl to push metrics
+
+1. Open the MyTonCtrl console:
+
+```bash
+mytonctrl
+```
+
+2. Enable Prometheus mode:
+
+```bash
+MyTonCtrl> enable_mode prometheus
+```
+
+3. Point MyTonCtrl to the Pushgateway (include a job name):
+
+```bash
+MyTonCtrl> set prometheus_url http://<PUSHGATEWAY_HOST>:9091/metrics/job/<JOB_NAME>
+```
+
+`<PUSHGATEWAY_HOST>` — host running the Pushgateway (use `127.0.0.1` when MyTonCtrl and Docker run on the same machine).
+`<JOB_NAME>` — unique label for this node, for example `validator1`.
+
+<Aside type="warning" title="Use unique job names">
+  Do not reuse the same `JOB_NAME` across nodes when scraped by one Prometheus instance, or metrics collide.
+</Aside>
+
+## Verify metrics
+
+- Pushgateway: open `http://<PUSHGATEWAY_HOST>:9091` and confirm metrics appear under `<JOB_NAME>`.
+- Prometheus targets: open `http://<PROMETHEUS_HOST>:9090/targets` and check that `mytonctrl_pushgateway` shows `UP`.
+- Prometheus graph: query `mytonctrl_synced` or other MyTonCtrl metrics at `http://<PROMETHEUS_HOST>:9090/graph`.
