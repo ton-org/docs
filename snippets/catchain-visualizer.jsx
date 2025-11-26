@@ -455,17 +455,6 @@ export const CatchainVisualizer = () => {
       () => issuePrecommit(model, node, candidateId),
       "precommit"
     );
-
-    // candidate.votes.forEach((nodeId) => {
-    //   const node = getNode(model, nodeId);
-    //   if (!node || node.precommitted.has(candidateId)) return;
-    //   scheduleTask(
-    //     model,
-    //     model.config.simDelay,
-    //     () => issuePrecommit(model, node, candidateId),
-    //     "precommit"
-    //   );
-    // });
   }
 
   function tryCommit(model, node, candidateId) {
@@ -486,17 +475,6 @@ export const CatchainVisualizer = () => {
       () => issueCommit(model, node, candidateId),
       "commit"
     );
-
-    // candidate.precommits.forEach((nodeId) => {
-    //   const node = getNode(model, nodeId);
-    //   if (!node || node.committedTo === candidateId) return;
-    //   scheduleTask(
-    //     model,
-    //     model.config.simDelay,
-    //     () => issueCommit(model, node, candidateId),
-    //     "commit"
-    //   );
-    // });
   }
 
   // TODO: it's for validation, not for actual delay
@@ -540,7 +518,6 @@ export const CatchainVisualizer = () => {
       votes: new Set(),
       precommits: new Set(),
       commits: new Set(),
-      // createdAt: null,
       createdAt: model.time,
       priority: NULL_PRIORITY,
       submitted: false,
@@ -1620,7 +1597,7 @@ export const CatchainVisualizer = () => {
                 <p className="text-base font-semibold text-slate-800 leading-snug">
                   Simulation config
                 </p>
-                <br/>
+                <br />
                 <p className="text-sm text-slate-600 leading-snug">
                   Update timing parameters; applying will restart the emulation.
                 </p>
@@ -1685,7 +1662,7 @@ export const CatchainVisualizer = () => {
                 <p className="text-base font-semibold text-slate-800 leading-snug">
                   Event log
                 </p>
-                <br/>
+                <br />
                 <p className="text-sm text-slate-600 leading-snug">
                   Latest simulation events (newest first).
                 </p>
