@@ -169,4 +169,49 @@ fun onInternalMessage(in: InMessage) {
 ```
 ## Jettons не поддерживающие TEP-89
 
-Это ситуация является довольно редкой, и, например [TONCO DEX](https://tonco.io/) не поддерживает жетоны, не совместимые с TEP-89. Другие же DEX, такие как [Dedust](https://dedust.io/) и [Bidask](https://bidask.finance/en/) поддерживают такие жетоны через
+Это ситуация является довольно редкой, и, например [TONCO DEX](https://tonco.io/) не поддерживает жетоны, не совместимые с TEP-89. Другие же DEX, такие как [Dedust](https://dedust.io/) и [Bidask](https://bidask.finance/en/) поддерживают такие жетоны через централизованное одобрение жетонов в ручном режиме. Если по какой-то причине такие жетоны в любом случае требуется обрабатывать, то существует два варианта. Оба варианта объединены идеей того, что если пользователь может прислать [state](/foundations/messages/state-init) контракта, на котором, используя инструкцию [RUNVM](/tvm/instructions#db4-runvm) можно ончейн выполнить [get-method](/tvm/get-method) `get_wallet_address`, который возвращает адрес jetton wallet для любого владельца. Чтобы это сделать можно использовать такую функцию на TVM-assembly:
+
+```tolk
+fun calculateJettonWallet(owner: address, jettonData: cell, jettonCode: cell, jettonMaster: address): address asm """
+    c7 PUSHCTR
+    0 INDEX // Unpack environment information from c7
+    // https://docs.ton.org/tvm/registers#c7-%E2%80%94-environment-information-and-global-variables
+    SWAP
+    8 SETINDEX
+    SWAP
+    DUP
+    ROTREV
+    10 SETINDEX
+    1 TUPLE // Make it singleton back
+    // owner md mc c7
+    ROTREV
+    CTOS            // owner_addr c7 md mc"
+    2 PUSHINT       // owner_addr c7 md mc args"
+    103289 PUSHINT  // owner_addr c7 md mc args get_jwa_method_id"
+    5 0 REVERSE     // owner_addr get_jwa_method_id args mc md c7"
+    ONE 2 -ROLL // Moves the top stack value (ONE) to the third position: [A, B, C] -> [B, C, A]. We expect only 1 return value. Flag +256 for runvm enables this argument
+    // Here is the full list of modes of RUNVM
+    // +1 = same_c3 (set c3 to code)
+    // +2 = push_0 (push an implicit 0 before running the code); only works with +1 enabled
+    // +4 = load c4 (persistent data) from stack and return its final value
+    // +8 = load gas limit from stack and return consumed gas
+    // +16 = load c7 (smart-contract context)
+    // +32 = return c5 (actions)
+    // +64 = pop hard gas limit (enabled by ACCEPT) from stack as well
+    // +128 = isolated gas consumption (separate set of visited cells, reset CHKSIGNU counter)
+    // +256 = pop number N, return exactly N values from stack (only if res=0 or 1; if not enough then res=stk_und)
+    //
+    // We use only +1 +4 +16 +256 = 277
+    // Mode 256 is crucial, because it ignores all stack values except the first one, and protects us from stack poisoning
+    277 RUNVM        // address exit_code c4'"
+    2 BLKDROP       // address";
+"""
+```
+
+### Jettons не поддержвляющие TEP-89, но задеплоенные не через vanity
+Если jetton был задеплоен не через [vanity](/contract-dev/vanity), то можно заметить, что всё время существования контракта, у него был этот гет-метод, а значит, можно использовать `StateInit`. Правильность присланного `StateInit` можно проверить, посчитав от него хэш и сверив его с требуемым JettonMaster
+
+## Jettons, которым не подходит предыдущий метод
+Если в `StateInit` жетона не было гет-метода `get_wallet_address` либо он возвращал неправильные адреса, то нужно использовать актуальный State. Для этого, нужно proof, что предоставленный State сейчас действительно находится на адресе jetton master. Это довольно сложно, и требует очень глубокого понимания организации данных в блокчейне TON, а поэтому описано в [отдельной статье](/foundations/proofs/overview).
+
+
