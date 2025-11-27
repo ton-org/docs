@@ -20,7 +20,7 @@ def humanize_category(key: str) -> str:
 
 def render_alias(alias):
     return f"""
-- **{alias['mnemonic']}**<br />
+- `{alias['mnemonic']}`<br />
 {textwrap.indent(alias['description'].replace('\n', '<br />'), "  ")}
 """.strip()
 
