@@ -6,19 +6,19 @@ sidebarTitle: "Jetton Processing"
 import { Aside } from '/snippets/aside.jsx';
 
 <Aside>
-  Перед ознакомлением с данной статьёй нужно хорошо понять [архитектуру jetton](/standard/tokens/jettons/overview).
+  Read this article after understanding the [jetton architecture](/standard/tokens/jettons/overview).
 </Aside>
 
-Очень часто в контрактах нужно работать с jetton. Например, при реализации DEX, ескроу-контрактов, лендинг протоколов и т.д. Проблема, которую нужно решать, звучит так: если пришёл Jetton Notify, то какой жетон был получен?
+Onchain contracts routinely process jettons for DEX routing, escrow, and lending protocols. Each contract must determine which jetton arrived when a `JettonNotify` message shows up.
 
 ```mermaid
 graph LR
 A((Jetton Wallet)) -->|JettonNotify (0x7362d09c)| B((Contract))
 ```
 
-## Простой случай - работа с конкретным jetton
+## Handle a fixed jetton
 
-Часто, в контракте не нужна поддержка произвольных jetton, а достаточно некоторого заранее известного набора. Например контракт может в качестве оплаты принимать только USDT. В случае когда набор jetton masters заранее известен, можно предпосчитать адреса jetton wallet-ов, с которых нужно обрабатывать пополнения. Тогда код в контракте будет выглядеть тривиально
+Many contracts accept payments only from a known set of jettons, such as a single USDT jetton minter. When the jetton minters are known, precompute the jetton wallet addresses to monitor and allow only those senders.
 
 ```tolk
 tolk 1.2;
@@ -71,32 +71,32 @@ fun onInternalMessage(in: InMessage) {
 }
 ```
 
-При использовании такого подхода при деплое контракта нужно будет [посчитать корректный адрес jetton wallet-a](/standard/tokens/jettons/find), который будет обрабатывать пополнения. Важно понимать, что положить адрес jettonWallet сразу в стейт инит контракта нельзя, т.к. в этом случае адрес жетон-воллета зависит от адреса контракта, и получается кольцевая зависимость.
+When deploying with this pattern, [calculate the jetton wallet address](/standard/tokens/jettons/find) that must receive top-ups. It is impossible to hardcode the jetton wallet address in the contract’s state init, because the wallet address depends on the contract address and creates a circular dependency.
 
-## Работа с любым TEP-89 совместимым jetton
+## Handle any TEP-89 jetton
 
-Все современные жетоны обычно поддерживают [TEP-89](https://github.com/ton-blockchain/TEPs/blob/master/text/0089-jetton-wallet-discovery.md), который позволяет явно проверить, принадлежит ли jetton wallet конкретному jetton master-у.
+Most modern jettons implement [TEP-89](https://github.com/ton-blockchain/TEPs/blob/master/text/0089-jetton-wallet-discovery.md), which proves whether a jetton wallet belongs to a specific jetton minter.
 
-В общем случае возможны два варианта того, откуда взять адрес jetton master. Иногда, как, например в [Dedust DEX](https://dedust.io/), адреса jetton master хранятся в контрактах, обрабатывающих пополнения соответствующих jetton. В других случаях, адрес жетон-мастера можно передавать в payload в `JettonNotify`. Какой вариант использовать, зависит от конкретной системы контрактов.
 
-Когда адрес jetton master известен, то на него можно отправить сообщение providesWalletAddress и получить адрес jetton wallet.
+- Store trusted jetton minter addresses in the receiving contracts, as done in [Dedust DEX](https://dedust.io/).
+- Send a `provideWalletAddress` request to get the jetton wallet address.
 
 ```mermaid
 graph LR
 A((Contract))
-B((Jetton Master))
+B((Jetton minter))
 C((Contract))
 
     A -->|provideWalletAddress (0x2c76b973)| B
     B -->|takeWalletAddress (0xd1735400)| C
 ```
 
-Тогда контракт, инициализирующий jetton wallet таким образом может выглядеть так:
+The contract that initializes the jetton wallet with this pattern can look like this:
 ```tolk
 tolk 1.2
 
 struct Storage {
-    jettonMasterAddress: address
+    jettonMinterAddress: address
     jettonWalletAddress: address?
 }
 
@@ -139,7 +139,7 @@ fun onInternalMessage(in: InMessage) {
             val msg = createMessage({
                 bounce: true,
                 value: 0,
-                dest: storage.jettonMasterAddress,
+                dest: storage.jettonMinterAddress,
                 body: ProvideWalletAddress {
                     queryId: 0,
                     ownerAddress: contract.getAddress(),
@@ -150,7 +150,7 @@ fun onInternalMessage(in: InMessage) {
         }
         TakeWalletAddress => {
             var storage = Storage.load();
-            if (storage.jettonMasterAddress != in.senderAddress) {
+            if (storage.jettonMinterAddress != in.senderAddress) {
                 return;
             }
             storage.jettonWalletAddress = msg.walletAddress;
@@ -165,14 +165,13 @@ fun onInternalMessage(in: InMessage) {
         }
     }
 }
-
 ```
-## Jettons не поддерживающие TEP-89
+## Jettons without TEP-89 support
 
-Это ситуация является довольно редкой, и, например [TONCO DEX](https://tonco.io/) не поддерживает жетоны, не совместимые с TEP-89. Другие же DEX, такие как [Dedust](https://dedust.io/) и [Bidask](https://bidask.finance/en/) поддерживают такие жетоны через централизованное одобрение жетонов в ручном режиме. Если по какой-то причине такие жетоны в любом случае требуется обрабатывать, то существует два варианта. Оба варианта объединены идеей того, что если пользователь может прислать [state](/foundations/messages/state-init) контракта, на котором, используя инструкцию [RUNVM](/tvm/instructions#db4-runvm) можно ончейн выполнить [get-method](/tvm/get-method) `get_wallet_address`, который возвращает адрес jetton wallet для любого владельца. Чтобы это сделать можно использовать такую функцию на TVM-assembly:
+Non-TEP-89 jettons are rare. [TONCO DEX](https://tonco.io/) rejects them, while platforms such as [Dedust](https://dedust.io/) and [Bidask](https://bidask.finance/en/) allow them after a manual approval flow. When processing such jettons is mandatory, two approaches remain. Each approach assumes the contract can receive the jetton minter [state init](/foundations/messages/state-init) and execute the `get_wallet_address` [get-method](/tvm/get-method) on-chain via [RUNVM](/tvm/instructions#db4-runvm) to derive the wallet address for any owner. The following TVM assembly helper performs that call:
 
 ```tolk
-fun calculateJettonWallet(owner: address, jettonData: cell, jettonCode: cell, jettonMaster: address): address asm """
+fun calculateJettonWallet(owner: address, jettonData: cell, jettonCode: cell, jettonMinter: address): address asm """
     c7 PUSHCTR
     0 INDEX // Unpack environment information from c7
     // https://docs.ton.org/tvm/registers#c7-%E2%80%94-environment-information-and-global-variables
@@ -208,10 +207,9 @@ fun calculateJettonWallet(owner: address, jettonData: cell, jettonCode: cell, je
 """
 ```
 
-### Jettons не поддержвляющие TEP-89, но задеплоенные не через vanity
-Если jetton был задеплоен не через [vanity](/contract-dev/vanity), то можно заметить, что всё время существования контракта, у него был этот гет-метод, а значит, можно использовать `StateInit`. Правильность присланного `StateInit` можно проверить, посчитав от него хэш и сверив его с требуемым JettonMaster
+### Jettons without TEP-89 that avoided vanity addresses
+If the jetton was not deployed with [vanity](/contract-dev/vanity), the contract always exposed `get_wallet_address`, so the original `StateInit` is enough. Verify the supplied `StateInit` by hashing it and comparing the result with the expected jetton minter address.
 
-## Jettons, которым не подходит предыдущий метод
-Если в `StateInit` жетона не было гет-метода `get_wallet_address` либо он возвращал неправильные адреса, то нужно использовать актуальный State. Для этого, нужно proof, что предоставленный State сейчас действительно находится на адресе jetton master. Это довольно сложно, и требует очень глубокого понимания организации данных в блокчейне TON, а поэтому описано в [отдельной статье](/foundations/proofs/overview).
-
+## Jettons where the previous method fails
+If the jetton `StateInit` lacks the `get_wallet_address` method or returns incorrect addresses, rely on the current state instead. Proving that the provided state is live at the jetton minter address requires a full state proof, described in the [state proof overview](/foundations/proofs/overview).
 
