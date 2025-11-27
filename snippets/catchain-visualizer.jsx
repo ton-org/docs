@@ -14,6 +14,7 @@ export const CatchainVisualizer = () => {
     VoteFor: "#06b6d4",
     Precommit: "#f59e0b",
     Commit: "#3b82f6",
+    DepRequest: "#475569",
   };
 
   const MESSAGE_LABELS = {
@@ -23,6 +24,7 @@ export const CatchainVisualizer = () => {
     VoteFor: "VoteFor",
     Precommit: "PreCommit",
     Commit: "Commit",
+    DepRequest: "Dep req",
   };
   const MESSAGE_DESCRIPTIONS = {
     Submit: "Proposer shares its round candidate with peers.",
@@ -33,6 +35,8 @@ export const CatchainVisualizer = () => {
     Precommit:
       "Validator precommits after quorum votes to lock on a candidate.",
     Commit: "Validator finalizes a candidate after quorum precommits.",
+    DepRequest:
+      "Catchain-level dependency request for missing messages; peers will resend the requested blocks.",
   };
 
   const LAYOUT = {
@@ -59,6 +63,8 @@ export const CatchainVisualizer = () => {
   const LOGO_TEXT_OFFSET = 24;
   const LAGGING_DROP_PROBABILITY = 0.5;
   const VOTEFOR_INITIAL_DELAY_MS = 500;
+  const DEP_REQUEST_RETRY_MS = 300;
+  const DEFAULT_MAX_DEPS = 4;
   const SCROLLBAR_CSS = `
     .catchain-scroll {
       scrollbar-width: thin;
@@ -144,6 +150,10 @@ export const CatchainVisualizer = () => {
       lockedCandidate: null,
       lockedAtAttempt: 0,
       status: "good",
+      catchainStore: new Map(),
+      pendingCatchain: new Map(),
+      missingRequests: new Set(),
+      lastCatchainHeight: 0,
     };
   }
 
@@ -187,6 +197,263 @@ export const CatchainVisualizer = () => {
     return model.nodes.find((n) => n.id === nodeId);
   }
 
+  function createCatchainEnvelope(model, from, actions, deps = []) {
+    const nextHeight = (model.catchainHeights[from] || 0) + 1;
+    model.catchainHeights[from] = nextHeight;
+    const senderNode = getNode(model, from);
+    const prevId = senderNode?.lastCatchainId || null;
+
+    const idSet = new Set();
+    const senderSet = new Set();
+    let depList = [];
+    const baseDeps = Array.from(new Set(deps || []));
+
+    const senderFromId = (depId) => {
+      if (!depId) return null;
+      const m = /^([^-/]+)-h/.exec(depId);
+      return m ? m[1] : depId;
+    };
+
+    const pushDep = (depId, depSender) => {
+      if (!depId) return;
+      const senderKey = depSender || senderFromId(depId) || depId;
+      if (senderKey === from || idSet.has(depId) || senderSet.has(senderKey))
+        return;
+      idSet.add(depId);
+      senderSet.add(senderKey);
+      depList.push(depId);
+    };
+
+    if (baseDeps.length > 0 && senderNode) {
+      baseDeps.forEach((depId) => {
+        const env = senderNode.catchainStore.get(depId);
+        pushDep(depId, env?.sender);
+      });
+    }
+
+    if (depList.length === 0 && senderNode) {
+      const candidates = Array.from(senderNode.frontier.values()).filter(
+        (entry) => entry && entry.sender !== from
+      );
+      candidates.sort((a, b) => (b.height || 0) - (a.height || 0));
+      for (const c of candidates) {
+        if (depList.length >= model.config.maxDeps) break;
+        pushDep(c.id, c.sender);
+      }
+    }
+
+    depList = Array.from(new Set(depList)).slice(0, model.config.maxDeps);
+
+    return {
+      id: `${from}-h${nextHeight}`,
+      sender: from,
+      height: nextHeight,
+      prev: prevId,
+      deps: depList,
+      actions,
+    };
+  }
+
+  function sendCatchainEnvelope(model, envelope, options = {}) {
+    const { from, to, delay = 0, includeSelf = false } = options;
+    const sender = getNode(model, from);
+    model.nodes.forEach((node) => {
+      if (to && node.id !== to) return;
+      if (!includeSelf && node.id === from) return;
+      if (
+        sender &&
+        sender.status === "lagging" &&
+        Math.random() < LAGGING_DROP_PROBABILITY
+      ) {
+        return;
+      }
+      const latency = randomBetween(
+        model.config.latency[0],
+        model.config.latency[1]
+      );
+      const sendAt = model.time + delay;
+      const primary = envelope.actions?.[0]?.type || "Catchain";
+      model.messages.push({
+        id: `${envelope.id}-${from}-${node.id}-${Math.random()
+          .toString(16)
+          .slice(2, 6)}`,
+        transport: "Catchain",
+        envelope,
+        actions: envelope.actions || [],
+        primary,
+        from,
+        to: node.id,
+        sendTime: sendAt,
+        recvTime: sendAt + latency,
+      });
+    });
+  }
+
+  function sendDepRequest(model, from, to, missingIds) {
+    if (!missingIds || missingIds.length === 0) return;
+    const sender = getNode(model, from);
+    if (
+      sender &&
+      sender.status === "lagging" &&
+      Math.random() < LAGGING_DROP_PROBABILITY
+    ) {
+      return;
+    }
+    const latency = randomBetween(
+      model.config.latency[0],
+      model.config.latency[1]
+    );
+    const sendAt = model.time;
+    model.messages.push({
+      id: `REQ-${from}-${to}-${Math.random().toString(16).slice(2, 6)}`,
+      transport: "DepRequest",
+      missingIds,
+      primary: "DepRequest",
+      from,
+      to,
+      sendTime: sendAt,
+      recvTime: sendAt + latency,
+      actions: [],
+    });
+  }
+
+  function requestMissingDeps(
+    model,
+    node,
+    missingIds,
+    preferredPeer,
+    force = false
+  ) {
+    const uniqueIds = Array.from(new Set(missingIds || []));
+    const outstanding = uniqueIds.filter(
+      (id) => force || !node.missingRequests.has(id)
+    );
+    if (outstanding.length === 0) return;
+    outstanding.forEach((id) => node.missingRequests.add(id));
+    const preferred =
+      preferredPeer && preferredPeer !== node.id
+        ? getNode(model, preferredPeer)
+        : null;
+    const target =
+      preferred && preferred.status !== "crashed"
+        ? preferred
+        : model.nodes.find((n) => n.id !== node.id && n.status !== "crashed");
+    if (!target) return;
+    logEvent(
+      model,
+      `${node.label} requested ${outstanding.length} dep(s) from ${target.label}`
+    );
+    sendDepRequest(model, node.id, target.id, outstanding);
+  }
+
+  function tryDeliverPendingCatchain(model, node) {
+    let progressed = true;
+    while (progressed) {
+      progressed = false;
+      node.pendingCatchain.forEach((entry, mid) => {
+        const remaining = [...entry.missing].filter(
+          (dep) => !node.catchainStore.has(dep)
+        );
+        if (remaining.length === 0) {
+          node.pendingCatchain.delete(mid);
+          deliverCatchainEnvelope(model, node, entry.envelope, entry.from);
+          progressed = true;
+        } else {
+          entry.missing = new Set(remaining);
+        }
+      });
+    }
+  }
+
+  function deliverCatchainEnvelope(model, node, envelope, originalFrom) {
+    if (!node || node.status === "crashed") return;
+    if (node.catchainStore.has(envelope.id)) return;
+    const depsAndPrev = Array.from(
+      new Set([
+        ...(envelope.prev ? [envelope.prev] : []),
+        ...(envelope.deps || []),
+      ])
+    );
+    const missing = depsAndPrev.filter((dep) => !node.catchainStore.has(dep));
+    if (missing.length > 0) {
+      logEvent(
+        model,
+        `${node.label} missing ${missing.length} dep(s) for ${
+          envelope.id
+        }: ${missing.join(", ")}`
+      );
+      node.pendingCatchain.set(envelope.id, {
+        envelope,
+        missing: new Set(missing),
+        from: originalFrom,
+      });
+      requestMissingDeps(model, node, missing, originalFrom);
+      scheduleTask(
+        model,
+        DEP_REQUEST_RETRY_MS,
+        () => {
+          const pending = node.pendingCatchain.get(envelope.id);
+          if (!pending) return;
+          requestMissingDeps(
+            model,
+            node,
+            [...pending.missing],
+            originalFrom,
+            true
+          );
+        },
+        "dep-retry"
+      );
+      return;
+    }
+    const depSenders = new Set();
+    for (const depId of envelope.deps || []) {
+      const depEnv = node.catchainStore.get(depId);
+      if (depEnv) {
+        if (depSenders.has(depEnv.sender)) {
+          logEvent(
+            model,
+            `${node.label} rejected ${envelope.id} (duplicate deps from ${depEnv.sender})`
+          );
+          return;
+        }
+        depSenders.add(depEnv.sender);
+      }
+    }
+    node.catchainStore.set(envelope.id, envelope);
+    node.missingRequests.delete(envelope.id);
+    node.lastCatchainHeight = Math.max(
+      node.lastCatchainHeight || 0,
+      envelope.height || 0
+    );
+    node.lastCatchainId = envelope.id;
+    node.frontier.set(envelope.sender, {
+      id: envelope.id,
+      sender: envelope.sender,
+      height: envelope.height || 0,
+    });
+    (envelope.actions || []).forEach((action) =>
+      handleAction(model, node, action, envelope.sender)
+    );
+    tryDeliverPendingCatchain(model, node);
+  }
+
+  function handleDepRequest(model, node, message) {
+    if (!message.missingIds || message.missingIds.length === 0) return;
+    console.log(message.missingIds);
+    message.missingIds.forEach((id) => {
+      const stored = node.catchainStore.get(id);
+      if (stored) {
+        sendCatchainEnvelope(model, stored, {
+          from: node.id,
+          to: message.from,
+          includeSelf: false,
+          delay: DEP_REQUEST_RETRY_MS / 10,
+        });
+      }
+    });
+  }
+
   function chooseVoteTarget(model, node) {
     const eligible = Object.values(model.candidates).filter((c) => {
       const state = c.approvals.size >= model.config.quorum;
@@ -195,7 +462,6 @@ export const CatchainVisualizer = () => {
         ? false
         : node.receivedEvents[c.id].approved >= model.config.quorum;
 
-      console.log(node.id, c.id, node.receivedEvents[c.id]);
       return state && hasCurrentSeen;
     });
 
@@ -230,33 +496,9 @@ export const CatchainVisualizer = () => {
     if (!actions || actions.length === 0) return;
     const sender = getNode(model, from);
     if (!sender || sender.status === "crashed") return;
-    model.nodes.forEach((node) => {
-      if (!includeSelf && node.id === from) return;
-      if (
-        sender.status === "lagging" &&
-        Math.random() < LAGGING_DROP_PROBABILITY
-      ) {
-        return;
-      }
-      const latency = randomBetween(
-        model.config.latency[0],
-        model.config.latency[1]
-      );
-      const sendAt = model.time + delay;
-      const primary = actions[0]?.type || "Block";
-      model.messages.push({
-        id: `${primary}-${from}-${node.id}-${Math.random()
-          .toString(16)
-          .slice(2, 6)}`,
-        type: "Block",
-        primary,
-        actions,
-        from,
-        to: node.id,
-        sendTime: sendAt,
-        recvTime: sendAt + latency,
-      });
-    });
+    const envelope = createCatchainEnvelope(model, from, actions);
+    deliverCatchainEnvelope(model, sender, envelope, from);
+    sendCatchainEnvelope(model, envelope, { from, delay, includeSelf });
   }
 
   function addEvent(node, candidateId, eventType) {
@@ -698,10 +940,11 @@ export const CatchainVisualizer = () => {
     if (!node || node.status === "crashed") return;
     if (node.status === "lagging" && Math.random() < LAGGING_DROP_PROBABILITY)
       return;
-    if (message.type !== "Block") return;
-    message.actions.forEach((action) =>
-      handleAction(model, node, action, message.from)
-    );
+    if (message.transport === "Catchain") {
+      deliverCatchainEnvelope(model, node, message.envelope, message.from);
+    } else if (message.transport === "DepRequest") {
+      handleDepRequest(model, node, message);
+    }
   }
 
   function deliverMessages(model) {
@@ -875,6 +1118,10 @@ export const CatchainVisualizer = () => {
     model.nextRoundAt = null;
     model.nullCandidateId = null;
     model.currentProposers = [];
+    model.catchainHeights = {};
+    model.nodes.forEach((node) => {
+      model.catchainHeights[node.id] = 0;
+    });
     model.nodes.forEach((node) => {
       node.approved = new Set();
       node.voted = new Set();
@@ -888,6 +1135,12 @@ export const CatchainVisualizer = () => {
       node.lastVotedFor = null;
       node.lastPrecommitFor = null;
       node.lockedCandidate = null;
+      node.catchainStore = new Map();
+      node.pendingCatchain = new Map();
+      node.missingRequests = new Set();
+      node.lastCatchainHeight = 0;
+      node.lastCatchainId = null;
+      node.frontier = new Map();
     });
     startAttempt(model, { attempt: 1 });
   }
@@ -895,6 +1148,10 @@ export const CatchainVisualizer = () => {
   function createModel(config) {
     const positions = createPositions(config.numNodes);
     const nodes = positions.map((pos, idx) => createNode(idx, pos));
+    const heights = {};
+    nodes.forEach((n) => {
+      heights[n.id] = 0;
+    });
     const model = {
       config,
       time: 0,
@@ -914,6 +1171,7 @@ export const CatchainVisualizer = () => {
       voteForTarget: null,
       nullCandidateId: null,
       currentProposers: [],
+      catchainHeights: heights,
     };
     startRound(model, true);
     return model;
@@ -942,6 +1200,7 @@ export const CatchainVisualizer = () => {
     simDelay: 70, // local processing/animation delay for follow-up actions
     frameMs: 90,
     quorum: 4,
+    maxDeps: DEFAULT_MAX_DEPS,
   };
   const CONFIG_FIELDS = [
     {
@@ -969,6 +1228,11 @@ export const CatchainVisualizer = () => {
       label: "C",
       description: "Number of round candidates in rotation.",
     },
+    {
+      key: "maxDeps",
+      label: "maxDeps",
+      description: "Catchain: max dependency links per block (one per sender).",
+    },
   ];
   const [config, setConfig] = useState(() => ({ ...DEFAULT_CONFIG }));
   const [configDraft, setConfigDraft] = useState(() => ({
@@ -977,6 +1241,7 @@ export const CatchainVisualizer = () => {
     DeltaInfinity: `${DEFAULT_CONFIG.DeltaInfinity}`,
     Y: `${DEFAULT_CONFIG.Y}`,
     C: `${DEFAULT_CONFIG.C}`,
+    maxDeps: `${DEFAULT_CONFIG.maxDeps}`,
   }));
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [eventLogOpen, setEventLogOpen] = useState(false);
@@ -1051,6 +1316,7 @@ export const CatchainVisualizer = () => {
       DeltaInfinity: `${config.DeltaInfinity}`,
       Y: `${config.Y}`,
       C: `${config.C}`,
+      maxDeps: `${config.maxDeps}`,
     });
     setSelectedNodeId(null);
     setSelectedMessage(null);
@@ -1072,6 +1338,7 @@ export const CatchainVisualizer = () => {
       DeltaInfinity: toNumber(configDraft.DeltaInfinity, config.DeltaInfinity),
       Y: toNumber(configDraft.Y, config.Y),
       C: toNumber(configDraft.C, config.C),
+      maxDeps: toNumber(configDraft.maxDeps, config.maxDeps),
     };
     setConfig(updatedConfig);
     rebuildModel(updatedConfig);
@@ -1290,18 +1557,22 @@ export const CatchainVisualizer = () => {
                 0,
                 1
               );
+              const isRequest = msg.transport === "DepRequest";
               const x =
                 fromNode.pos.x + (toNode.pos.x - fromNode.pos.x) * progress;
               const y =
                 fromNode.pos.y + (toNode.pos.y - fromNode.pos.y) * progress;
               const primary = msg.primary || msg.type;
-              const color = MESSAGE_COLORS[primary] || "#0ea5e9";
-              const label =
-                msg.actions && msg.actions.length > 1
-                  ? `${MESSAGE_LABELS[primary] || primary}+${
-                      msg.actions.length - 1
-                    }`
-                  : MESSAGE_LABELS[primary] || primary;
+              const color = isRequest
+                ? MESSAGE_COLORS.DepRequest || "#475569"
+                : MESSAGE_COLORS[primary] || "#0ea5e9";
+              const label = isRequest
+                ? "Req"
+                : msg.actions && msg.actions.length > 1
+                ? `${MESSAGE_LABELS[primary] || primary}+${
+                    msg.actions.length - 1
+                  }`
+                : MESSAGE_LABELS[primary] || primary;
               return (
                 <g
                   key={msg.id}
@@ -1317,12 +1588,12 @@ export const CatchainVisualizer = () => {
                     x2={toNode.pos.x}
                     y2={toNode.pos.y}
                     stroke="#cbd5e1"
-                    strokeDasharray="4 6"
+                    strokeDasharray={isRequest ? "2 4" : "4 6"}
                   />
                   <circle
                     cx={x}
                     cy={y}
-                    r="6"
+                    r={isRequest ? "7" : "6"}
                     fill={color}
                     stroke="#6b7280"
                     strokeWidth="1.5"
@@ -1763,6 +2034,10 @@ export const CatchainVisualizer = () => {
                     <dd>{node.voted.size}</dd>
                     <dt className="font-semibold text-slate-800">Precommits</dt>
                     <dd>{node.precommitted.size}</dd>
+                    <dt className="font-semibold text-slate-800">
+                      Pending deps
+                    </dt>
+                    <dd>{node.pendingCatchain.size}</dd>
                   </dl>
                   <div className="flex flex-col gap-2">
                     <button
@@ -1796,6 +2071,7 @@ export const CatchainVisualizer = () => {
             {(() => {
               const fromNode = getNode(model, selectedMessage.from);
               const toNode = getNode(model, selectedMessage.to);
+              const envelope = selectedMessage.envelope;
               const actions = selectedMessage.actions || [];
               return (
                 <>
@@ -1811,7 +2087,7 @@ export const CatchainVisualizer = () => {
                       <p className="text-sm text-slate-700 font-semibold">
                         Type:{" "}
                         <span className="font-normal">
-                          {selectedMessage.primary || selectedMessage.type}
+                          {selectedMessage.primary || selectedMessage.transport}
                         </span>
                       </p>
                     </div>
@@ -1845,6 +2121,39 @@ export const CatchainVisualizer = () => {
                       </dd>
                     </div>
                   </dl>
+                  {selectedMessage.transport === "Catchain" && envelope && (
+                    <div className="text-sm text-slate-800">
+                      <p className="font-semibold mb-1">Catchain info</p>
+                      <div className="text-slate-700">
+                        <span className="font-semibold">Message</span>:{" "}
+                        {envelope.id} (h{envelope.height || 0})
+                      </div>
+                      <div className="text-slate-700">
+                        <span className="font-semibold">Sender</span>:{" "}
+                        {envelope.sender}
+                      </div>
+                      <div className="text-slate-700">
+                        <span className="font-semibold">Prev</span>:{" "}
+                        {envelope.prev || "None"}
+                      </div>
+                      <div className="text-slate-700">
+                        <span className="font-semibold">Deps</span>:{" "}
+                        {(envelope.deps || []).length === 0
+                          ? "None"
+                          : (envelope.deps || []).join(", ")}
+                      </div>
+                    </div>
+                  )}
+                  {selectedMessage.transport === "DepRequest" && (
+                    <div className="text-sm text-slate-800">
+                      <p className="font-semibold mb-1">Requested deps</p>
+                      <div className="text-slate-700">
+                        {(selectedMessage.missingIds || []).length === 0
+                          ? "None listed"
+                          : (selectedMessage.missingIds || []).join(", ")}
+                      </div>
+                    </div>
+                  )}
                   <div className="text-sm text-slate-800">
                     <p className="font-semibold mb-1">Actions</p>
                     {actions.length === 0 ? (
