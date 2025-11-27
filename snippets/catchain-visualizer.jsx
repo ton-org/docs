@@ -1273,6 +1273,47 @@ export const CatchainVisualizer = () => {
     return () => clearInterval(id);
   }, [config.frameMs, running, speed]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleKeyDown = (event) => {
+      const tagName = (event.target?.tagName || "").toUpperCase();
+      const isTyping =
+        tagName === "INPUT" ||
+        tagName === "TEXTAREA" ||
+        tagName === "SELECT" ||
+        tagName === "BUTTON" ||
+        event.target?.isContentEditable;
+
+      if ((event.key === " " || event.key === "Spacebar") && !isTyping) {
+        event.preventDefault();
+        setRunning((prev) => !prev);
+        return;
+      }
+
+      if (event.key === "Escape") {
+        if (selectedMessage) {
+          setSelectedMessage(null);
+        } else if (selectedCandidateId) {
+          setSelectedCandidateId(null);
+        } else if (selectedNodeId) {
+          setSelectedNodeId(null);
+        } else if (configModalOpen) {
+          setConfigModalOpen(false);
+        } else if (eventLogOpen) {
+          setEventLogOpen(false);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    configModalOpen,
+    eventLogOpen,
+    selectedCandidateId,
+    selectedMessage,
+    selectedNodeId,
+  ]);
+
   const model = modelRef.current;
   const activeCandidate = model.activeCandidateId
     ? model.candidates[model.activeCandidateId]
@@ -1383,7 +1424,7 @@ export const CatchainVisualizer = () => {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 md:p-6">
       <style>{SCROLLBAR_CSS}</style>
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-2">
         <div className="flex items-center gap-2">
           <button
             className="inline-flex items-center gap-2 rounded-lg bg-sky-600 text-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-sky-700"
@@ -1406,7 +1447,7 @@ export const CatchainVisualizer = () => {
             className="inline-flex items-center gap-2 rounded-lg bg-sky-600 text-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-sky-700"
             onClick={() => setRunning((v) => !v)}
           >
-            <span>{running ? "Pause" : "Resume"}</span>
+            <span>{running ? "Pause (Space)" : "Resume (Space)"}</span>
           </button>
           <button
             className="inline-flex items-center gap-2 rounded-lg bg-sky-600 text-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-sky-700"
@@ -1416,6 +1457,10 @@ export const CatchainVisualizer = () => {
           </button>
         </div>
       </div>
+      <p className="text-xs text-slate-600 mb-4">
+        Shortcuts: Space to pause/resume the simulation, Esc to close any open
+        pop-up.
+      </p>
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2 rounded-xl border border-slate-100 bg-slate-50 px-2 py-3">
