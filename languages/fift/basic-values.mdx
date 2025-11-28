@@ -1,0 +1,323 @@
+---
+title: "Basic values"
+sidebarTitle: "Basic values"
+noindex: "true"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+## Integers
+
+Fift recognizes integers in decimal, binary, and hexadecimal formats. Binary literals are prefixed by `0b`, hexadecimal literals are prefixed by `0x`, and decimal literals do not require a prefix.
+
+Examples:
+
+```fift
+0b1101     // Binary literal, denoting integer 13
+13         // Decimal literal 
+0xd        // Hexadecimal literal, denoting integer 13
+```
+
+An integer literal may be prefixed by a minus sign `-` to change its sign; the minus sign is accepted both before and after the `0x` and `0b` prefixes.
+
+Examples:
+
+```fift
+-0b1101     // Binary literal, denoting integer -13
+0b-1101     // Binary literal, denoting integer -13
+-13         // Decimal literal 
+-0xd        // Hexadecimal literal, denoting integer -13
+0x-d        // Hexadecimal literal, denoting integer -13
+```
+
+Integer literals are pushed into the Fift stack in the order of their appearance. For example, executing:
+
+```fift
+1 0xa 3 -0b10
+```
+
+produces the stack:
+
+```text
+1 10 3 -2     // Rightmost number is the top of the stack 
+```
+
+In other words, `1` is pushed first, followed by `0xa` (i.e., `10`), followed by `3`, and finally `-0b10` (i.e., `-2`), leaving `-0b10` at the top of the stack.
+
+Fift has special syntax for decimal and common fractions. If a string consists of two valid integer literals separated by a slash `/`, then Fift interprets it as a fractional literal and represents it by two `Integer`\_'s `p` and `q` in the stack, the numerator `p` and the denominator `q`.
+
+For instance, `-17/12` pushes `-17` and `12` into the Fift stack, being thus equivalent to executing `-17 12`; and `-0x11/0b1100` does the same thing. Decimal, binary, and hexadecimal fractions, such as `2.39` or `-0x11.ef`, are also represented by two integers `p` and `q`, where `q` is a suitable power of the base (10, 2, or 16, respectively). For instance, `2.39` is equivalent to `239 100`, and `-0x11.ef` is equivalent to `-0x11ef 0x100`.
+
+Such a representation of fractions is useful for defining _"rational arithmetic operations"_. For example, the following code defines two words `R-` and `R*` that carry out rational subtraction and multiplication, respectively. Word `R-` takes the stack `a b c d`, representing the fractions `a/b` and `c/d`, and produces the stack `(a*d-b*c) b*d`, representing the arithmetical subtraction `a/b - c/d = (a*d-b*c) / (b*d)`. Similarly, word `R*` takes the stack `a b c d`, representing the fractions `a/b` and `c/d`, and produces the stack `a*c b*d`, representing the arithmetical multiplication `a/b * c/d = (a*c) / (b*d)`.
+
+```fift
+// a b c d ---> (a*d-b*c) b*d
+{ -rot over * 2swap tuck * rot - -rot * } : R-
+// a b c d ---> a*c b*d
+{ rot * -rot * swap } : R*
+```
+
+So that, executing `1.7 2/3 R- 5/2 R*` will produce the stack `155 60`, corresponding to the arithmetical operation `(1.7 - 2/3) * 5/2 = 31/30 * 5/2 = 155/60`.
+
+For advanced details on integers, see the [Integers section](/languages/fift/whitepaper#2-8-integer-and-fractional-constants%2C-or-literals) in the Fift whitepaper.
+
+## Strings
+
+A string is any sequence of UTF-8 characters enclosed by double quotes `"`. When Fift recognizes a string, it pushes it into the Fift stack as a value of type `String`. For instance, `"Hello, world!"` pushes the corresponding `String` into the stack:
+
+```fift
+"Hello, world!"
+// String "Hello, world!" is at the top of the stack now
+```
+
+## Booleans
+
+As described in the Types page, Fift does not have a separate type for booleans. Instead, booleans are emulated using `Integer`s, where `-1` represents truth, and `0` falsehood. Comparison primitives normally return `-1` to indicate success and `0` otherwise. Fift has the constants `true` and `false` to push these special integers into the stack:
+
+| Word    | Description                 |
+| :------ | :-------------------------- |
+| `true`  | pushes `-1` into the stack. |
+| `false` | pushes `0` into the stack.  |
+
+Certain operations, like conditional execution of blocks and loops with exit conditions, extend the notion of "true" to any non-zero integer. However, if the intention is to work with bitwise operations over booleans, any non-zero integer must first be transformed into `-1`. Fift has the word `0<>` that transforms any non-zero integer into `-1`, and leaves `0` unchanged. For instance:
+
+```
+5 0<>     // Produces -1 at the top of the stack
+-2 0<>    // Produces -1 at the top of the stack
+0 0<>     // Produces 0 at the top of the stack
+```
+
+## Null
+
+Fift has the two words `null` and `null?` to work with values of type `Null`. The word `null` pushes to the stack the `null` value, while the word `null?` consumes the value at the top of the stack and checks if such value is `null` or not. If the value is `null`, word `null?` pushes `-1` to the stack, `0` otherwise.
+
+For instance:
+
+```fift
+// push null, then check if null.
+// The stack contains -1 at the top.
+null null?
+// push 5, then check if null.
+// The stack contains 0 at the top.
+5 null?
+```
+
+## Boxes
+
+A `Box` is a location or container that can be used to store exactly one value of any Fift-supported type. They are usually used to define variables and mutable data structures, like mutable [tuples](#tuples).
+
+Fift provides the words `hole` and `box` to create boxes. Word `hole` pushes an empty box to the top of the stack, i.e., an empty box is a box containing the [`null`](#null) value. Word `box` consumes the value `v` at the top of the stack and pushes a box containing `v`.
+
+For instance:
+
+```fift
+hole       // Pushes an empty box 
+5 box      // Pushes a box containing 5
+"foo" box  // Pushes a box containing "foo"
+```
+
+The value currently stored in a `Box` may be fetched by means of word `@` (pronounced "fetch"), and modified by means of word `!` (pronounced "store").
+Word `@` consumes the box at the top of the stack and pushes the value contained in the box. Word `!` requires a stack of the form `x p`, where `x` is the value to store and `p` is the box in which `x` is going to be stored. `!` consumes both `x` and `p` and stores `x` in `p`. Word `!` does not push anything into the stack.
+
+For instance:
+
+```fift
+// Create a constant A storing an empty box
+hole constant A
+// Fetch the contents of box in A
+A @   // Pushes null into the stack
+// Store 5 into the box in A 
+5 A !
+// Fetch the contents of box in A
+A @   // Pushes 5 into the stack
+// Store "foo" into the box in A 
+"foo" A !
+// Fetch the contents of box in A
+A @   // Pushes "foo" into the stack
+```
+
+As the example suggests, the value stored in a box does not need to be of the same type as the box contents mutate.
+
+For advanced details about boxes, see the [Named and unnamed variables section](/languages/fift/whitepaper#2-14-named-and-unnamed-variables) in the Fift whitepaper.
+
+## Tuples
+
+Tuples are ordered collections of arbitrary values of any type. When a `Tuple` consists of values `[ x1 ... xn ]` (in that order), the number `n` is called the length of the tuple. Tuples of length two are called _pairs_; tuples of length three are _triples_. A tuple with no elements is called the _empty tuple_.
+
+To construct tuples of known length, Fift provides the word `tuple`. The word `tuple` requires that the tuple's data be laid out in the stack as follows `x1 x2 ..... xn n`, where `x1`, `x2`, `...`, `xn` are the `n` values in the tuple, and `n` is the length of the tuple, located at the top of the stack. For example, to construct tuple `[ 1 2 5 7 ]` consisting of `4` values, execute `1 2 5 7 4 tuple`, which will push the integers `1`, `2`, `5`, `7` into the stack, then it will push integer `4`, which is the tuple's length, and finally, Fift will execute the word `tuple`, which will consume the numbers `1`, `2`, `5`, `7`, `4` from the stack and push the tuple `[ 1 2 5 7 ]` at the top of the stack.
+
+To build pairs and triples it is possible to use the words `pair` and `triple`, respectively. For example, to build pair `[ x1 x2 ]`, execute `x1 x2 pair`, which is equivalent to executing `x1 x2 2 tuple`. To build triple `[ x1 x2 x3 ]`, execute `x1 x2 x3 triple`, which is equivalent to executing `x1 x2 x3 3 tuple`.
+
+To append a value `x` at the end of tuple `t`, Fift provides the word `,`. The word `,` requires that `t` and `x` be laid out in the stack as `t x`, where `x` is at the top of the stack. The word then consumes `t` and `x` from the stack, appends `x` to the end of `t` and pushes the resulting tuple to the end of the stack. For example, suppose the stack contains `[ 1 2 ] 3`, where `[ 1 2 ]` is a tuple, and `3` is the element to add located at the top of the stack; executing `,` will consume `[ 1 2 ]` and `3` from the stack and push the tuple `[ 1 2 3]` at the top of the stack.
+
+Use word `|` to push the empty tuple at the top of the stack. Using words `|` and `,` in combination, allows the construction of tuples in stages, starting from the empty tuple. For instance, the following produces tuple `[ 2 3 9 ]` at the top of the stack:
+
+```fift
+| 2 , 3 , 9 ,
+```
+
+first `|` pushes the empty tuple at the top of the stack; `2` then pushes `2` at the top of the stack, producing the stack `[ ] 2`, where `[ ]` denotes the empty tuple. Next, word `,` consumes `[ ]` and `2`, and pushes the tuple `[ 2 ]` at the top of the stack. Then, `3` pushes `3` at the top of the stack, producing the stack `[ 2 ] 3`, which then gets consumed by word `,` to produce tuple `[ 2 3 ]` at the top of the stack. Finally, `9` pushes `9` to produce stack `[ 2 3 ] 9`, which then gets consumed by word `,` to produce `[ 2 3 9 ]` at the top of the stack.
+
+The components of a `Tuple` are not necessarily of the same type, and the components can also be a `Tuple`. For instance:
+
+```fift
+1 2 "one" triple 4 5 "two" triple pair
+```
+
+produces the tuple at the top of the stack:
+
+```fift
+[ [ 1 2 "one" ] [ 4 5 "two" ] ]
+```
+
+which is a tuple with two tuples as components, and each tuple component contains two integers and one string.
+
+Once a `Tuple` has been constructed, it is possible to extract any of its components, or completely unpack the `Tuple` into the stack. For this, Fift provides words `[]` and `explode`, respectively.
+
+The word `[]` extracts a specific index from a tuple. Word `[]` requires that the stack has the form `t i`, where `t` is the tuple and `i` is the index to extract. When word `[]` executes, it consumes the elements `t i` from the stack and pushes to the top of the stack the `i`-th element in `t`. Indexes start counting from 0, so that if a tuple has `n` components, index `i` must satisfy `0 <= i < n`.
+
+For instance, the following defines a 3x3 matrix of integers `Matrix`, and then, accesses entry at row `1` and column `2`:
+
+```fift
+// The first line defines constant Matrix, 
+// containing the nested tuples:
+// [
+//    [ 1 2 3 ]
+//    [ 4 5 6 ]
+//    [ 7 8 9 ]
+// ]
+1 2 3 triple 4 5 6 triple 7 8 9 triple triple constant Matrix
+Matrix 1 [] 2 []
+```
+
+produces `6` at the top of the stack. Line `Matrix 1 [] 2 []` executes as follows. First, constant `Matrix` pushes the entire matrix at the top of the stack. Next, `1` pushes `1` to the top of the stack, so the the stack now looks like `Matrix 1`. Next, word `[]` consumes `Matrix` and `1` from the stack and pushes `[ 4 5 6 ]` to the top of the stack, i.e., the row at index `1`. Finally, `2` pushes `2` to the stack, and `[]` consumes `[ 4 5 6 ]` and `2`, and pushes `6` to the top of the stack, i.e., the element at index `2`. The notation `Matrix 1 [] 2 []` is very reminiscent of the notation `Matrix[1][2]` usually found in programming languages.
+
+The word `explode` extracts all the components of a tuple and pushes them into the stack. The word `explode` requires that the stack has the form `[x1 x2 ... xn]`, i.e., a tuple of `n` elements at the top of the stack. When `explode` executes, it consumes the tuple at the top of the stack and produces the stack `x1 x2 ... xn n`, where the number of elements `n` is at the top of the stack.
+
+For instance, the following defines a constant `A` containing the tuple `[ 7 8 9 ]`, and the second line decomposes the tuple:
+
+```fift
+// The first line defines constant A
+// containing tuple [ 7 8 9 ]
+7 8 9 triple constant A
+A explode 
+```
+
+produces `7 8 9 3` in the stack, where `3`, the number at the top of the stack, is the number of elements in the original tuple.
+
+`Tuples` are immutable: it is not possible to change a component of a `Tuple`. If the intention is to create something like an array, where the components can be freely updated, a `Tuple` of `Box`es needs to be created.
+
+Fift has the word `allot` that creates a tuple of a specified number of [boxes](#boxes). The word `allot` takes the integer `n` at the top of the stack and creates a tuple of `n` empty boxes, i.e., each box contains `null`. Later, it is possible to mutate the boxes using the word `!`.
+
+For instance, the following defines a constant `A` containing a tuple of `10` empty boxes. Later, it sets the 0-th box to contain the integer `10`, and 2-th box to contain string `"foo"`.
+
+```fift
+// Create a tuple of 10 empty boxes, name it A
+10 allot constant A
+// Set 0-th box to contain 10
+10 A 0 [] !
+// Set 2-th box to contain "foo"
+"foo" A 2 [] !
+```
+
+The code `10 A 0 [] !` pushes `10` into the stack. Then `A 0 []` pushes the 0-th box into the stack. Finally, `!` consumes both the box and `10` and updates the contents of the box to `10`. The code `"foo" A 2 [] !` has a similar explanation.
+
+For advanced details about tuple, see the [Tuples section](/languages/fift/whitepaper#2-15-tuples-and-arrays) in the Fift whitepaper.
+
+## Lists
+
+Lisp-style lists can also be represented in Fift. A list `(1 2 3)` can be represented by nesting 2-tuples `[ 1 [ 2 [ 3 null ] ] ]`, where [`null`](#null) represents the empty list. Fift provides several words to create and deconstruct lists.
+
+The word `cons` takes a stack of the form `h l`, where `h` is a value and `l` is a list, i.e., a nested tuple; consumes both `h` and `l`, and produces the tuple `[ h l ]`.
+
+For instance, the following code produces the list `(1 2 3)`:
+
+```
+1 2 3 null cons cons cons 
+```
+
+First, `1 2 3 null` produces the stack `1 2 3 null`, where `null` is at the top of the stack. Then, the first `cons` produces the stack `1 2 [ 3 null ]`, where tuple `[ 3 null ]` is at the top of the stack. Next, the second `cons` produces the stack `1 [ 2 [ 3 null ] ]`. Finally, the third `cons` produces the stack `[ 1 [ 2 [ 3 null ] ] ]` containing a single tuple at the top, which is the list `(1 2 3)`.
+
+It is so common to build fixed-length lists like in the above example, that Fift provides a special word for building a list when the elements are known. The word `list` takes a stack of the form `x1 ... xn n`, where `n` is the number of elements in the list, and consumes `x1`, `...`, `xn` and `n` from the stack to produce the list `(x1 .... xn)` at the top of the stack.
+
+For instance, the following produces the same list as the previous example:
+
+```fift
+1 2 3 3 list 
+```
+
+<Aside>
+  The list constructed with the code:
+
+  ```fift
+  1 2 3 3 list
+  ```
+
+  is different from the tuple constructed with the code:
+
+  ```fift
+  1 2 3 3 tuple 
+  ```
+
+  The list is really the nested tuple `[ 1 [ 2 [ 3 null ] ] ]`, while the tuple is simply `[ 1 2 3 ]`.
+</Aside>
+
+To deconstruct a list, use the word `uncons`. The word `uncons` consumes the list at the top of the stack and pushes the list's head followed by the list's tail. For instance, the following code defines a constant `A` containing list `(5 6 7)` and deconstruct the list by calling `uncons` several times:
+
+```fift
+// Create the list (5 6 7), name it A
+5 6 7 3 list constant A
+// Deconstruct the list by repeatedly calling uncons
+A uncons uncons uncons
+```
+
+The first `uncons` produces the stack `5 [ 6 [ 7 null ] ]`. The second `uncons` the stack `5 6 [ 7 null ]`. Finally, the third `uncons` produces the stack `5 6 7 null`. Since there is a `null` at the top of the stack, `drop` removes the `null` to produce the stack `5 6 7`.
+
+For advanced details about lists, see the [Lists section](/languages/fift/whitepaper#2-16-lists) in the Fift whitepaper.
+
+## Atoms
+
+An `Atom` is an entity uniquely identified by its name. `Atom`s can be used to represent identifiers, labels, operation names, tags, and stack markers. Fift offers several words to create and manipulate `Atom`s.
+
+The word <code>\`name</code> pushes into the stack the atom identified by `name`. For instance, the following builds the [list](#lists) `(+ 2 (* 3 4))`, which is the Lisp-style representation of arithmetical expression `2 + (3 * 4)`:
+
+```fift
+`+ 2 `* 3 4 3 list 3 list
+```
+
+First <code>\`+ 2 \`\* 3 4 3</code> produces the stack `+ 2 * 3 4 3`, where `+` and `*` are atoms, i.e., identifiers. Then, `list` produces the stack `+ 2 (* 3 4)`, where list `(* 3 4)` is at the top of the stack. Next, `3` produces the stack `+ 2 (* 3 4) 3`. Finally, `list` produces the stack `(+ 2 (* 3 4))`, containing the final list at the top of the stack.
+
+It is possible to compare atoms using the word `eq?`. The word `eq?` consumes the two top-most elements in a stack of the form `u v` where `u` and `v` are the atoms to compare, and pushes to the stack `-1` if the atoms are equal, `0` otherwise.
+
+For instance,
+
+```fift
+`+ `+ eq?   // pushes -1 to the stack 
+`+ `- eq?   // pushes 0 to the stack
+```
+
+For advanced details about atoms, see the [Atoms section](/languages/fift/whitepaper#2-17-atoms) in the Fift whitepaper.
+
+## Slices
+
+A `Slice` is a read-only view of a portion of a `Cell`. Fift uses the syntax `b{<binary-data>}` and `x{<hex-data>}` for defining slices.
+
+`b{<binary-data>}` pushes a slice into the stack that contains no references and up to 1023 data bits specified in `<binary-data>`, which must be a string consisting only of the characters `0` and `1`.
+
+`x{<hex-data>}` pushes a slice into the stack that contains no references and up to 1023 data bits specified in `<hex-data>`. More precisely, each hex digit from `<hex-data>` is transformed into four binary digits in the usual fashion. After that, if the last character of `<hex-data>` is an underscore `_`, then all trailing binary zeroes and the binary digit immediately preceding them are removed from the resulting binary string.
+
+An empty `Slice` can be pushed into the stack by `b{}` or `x{}`.
+
+For example, `b{00011101}` and `x{1d}` both push the same `Slice` consisting of eight data bits and no references. Similarly, `b{111010}` and `x{EA_}` push the same `Slice` consisting of six data bits. For `x{EA_}` the binary representation of `EA` is `11101010`, but since `EA_` has a final underscore, the trailing zeroes in the binary representation are removed together with the binary digit immediately preceding them, i.e., the final `10`, producing `111010`.
+
+To construct a `Slice` with some `Cell` references, Fift provides the word `|_`, which consumes the top-most two elements in a stack of the form `s s'`, where `s` and `s'` are slices. It crates a new slice `s''` obtained from `s` by appending a new reference to a cell containing `s'`; then, pushes `s''` into the stack.
+
+For instance, the following code creates a cell containing the slice `b{001}`, and attaches the cell as a reference to the slice `b{101}`:
+
+```fift
+b{101} b{001} |_
+```
+
+First, `b{101} b{001}` pushes the two slices in that order. Next, `|_` consumes the two slices. Then, `|_` copies `b{101}` into a new slice `s` and creates a cell `c` containing `b{001}`. Finally, `|_` attaches `c` as a reference to `s` and pushes `s` into the stack.
+
+For advanced details about slices, see the [Slices section](/languages/fift/whitepaper#5-1-slice-literals) in the Fift whitepaper. For a list of words for manipulating slices and reading their contents, see the list of common slice words page.
