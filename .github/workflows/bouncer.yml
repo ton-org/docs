@@ -1,0 +1,178 @@
+name: 🏀 Bouncer
+# aka 🚪 Supervisor
+
+env:
+  # additions only
+  MAX_ADDITIONS_FORKS: 500
+  # on rare occasions, when maintainers need to edit a lot of things at once
+  MAX_ADDITIONS_DIRECT_BRANCHES: 1000
+  # the name of this workflow file wrapped in backticks
+  MSG_PREFIX: "`bouncer.yml`"
+
+on:
+  # pull_request: # FIXME: for testing purposes only, delete this and uncomment pull_request_target before opening for review
+  #   branches: ["**"]
+  #   types: [opened, synchronize]
+  pull_request_target: # do NOT use actions/checkout
+    branches: ["**"] # any branches
+    types: [opened, synchronize] # on creation and on new commits
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-bouncer
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  enforce-smaller-requests:
+    name: "Bloat"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set MAX_ADDITIONS for forks
+        if: |
+          github.event_name == 'pull_request_target' &&
+          github.event.pull_request.head.repo.fork == true ||
+          github.event.pull_request.head.repo.full_name != github.repository
+        run: echo 'MAX_ADDITIONS=${{ env.MAX_ADDITIONS_FORKS }}' >> "$GITHUB_ENV"
+
+      - name: Set MAX_ADDITIONS for direct branches
+        if: |
+          github.event.pull_request.head.repo.fork != true ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        run: echo 'MAX_ADDITIONS=${{ env.MAX_ADDITIONS_DIRECT_BRANCHES }}' >> "$GITHUB_ENV"
+
+      - name: Remove prior comments
+        if: github.event.action == 'synchronize'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            });
+            for (const comment of comments.data) {
+                const isHidden = (await github.graphql(`
+                  query($nodeId: ID!) {
+                    node(id: $nodeId) {
+                      ... on IssueComment {
+                        isMinimized
+                      }
+                    }
+                  }
+                `, { nodeId: comment.node_id }))?.node?.isMinimized;
+                await exec.exec('sleep 0.5s');
+                if (isHidden) { continue; }
+                if (
+                  comment.user.login === 'github-actions[bot]' &&
+                  comment.body.startsWith('${{ env.MSG_PREFIX }}')
+                ) {
+                  console.log('Comment node_id:', comment.node_id);
+                  console.log(await github.graphql(`
+                    mutation($subjectId: ID!) {
+                      minimizeComment(input: {
+                        subjectId: $subjectId,
+                        classifier: OUTDATED
+                      }) {
+                        minimizedComment {
+                          isMinimized
+                          minimizedReason
+                        }
+                      }
+                    }
+                  `, {
+                    subjectId: comment.node_id,
+                  }));
+                  await exec.exec('sleep 0.5s');
+                }
+              }
+
+      - name: Check if a number of additions modulo filtered files is within the threshold
+        id: stats
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          # This JavaScript code cannot be moved to a separate file because
+          # this workflow must NOT checkout the repository for security reasons
+          #
+          # The same note applies to all JS code in this file
+          script: |
+            const maxAdditions = Number(process.env.MAX_ADDITIONS ?? '500');
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const filtered = files.filter(
+              (f) =>
+                ![
+                  'package-lock.json',
+                  'ecosystem/api/toncenter/v2.json',
+                  'ecosystem/api/toncenter/v3.yaml',
+                  'ecosystem/api/toncenter/smc-index.json',
+                  'tvm/instructions.mdx',
+                ].includes(f.filename) && !f.filename.endsWith('.py'),
+            );
+            // NOTE: consider looking for .changes
+            const additions = filtered.reduce((acc, it) => acc + it.additions, 0);
+            if (additions > maxAdditions) {
+              core.setOutput('trigger', 'true');
+            } else {
+              core.setOutput('trigger', 'false');
+            }
+
+      - name: ${{ steps.stats.outputs.trigger == 'true' && 'An opened PR is too big to be reviewed at once!' || 'No comments' }}
+        if: github.event.action == 'opened' && steps.stats.outputs.trigger == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: [
+                '${{ env.MSG_PREFIX }}',
+                'Thank you for the contribution!',
+                [
+                  'Unfortunately, it is too large, with over ${{ env.MAX_ADDITIONS }} added lines,',
+                  'excluding some generated or otherwise special files.',
+                  'Thus, this pull request is challenging to review and iterate on.',
+                ].join(' '),
+                [
+                  'Please split the PR into several smaller ones and consider',
+                  'reverting any unrelated changes, writing less, or approaching',
+                  'the problem in the issue from a different angle.',
+                ].join(' '),
+                'I will close this PR and will be looking forward to your next submissions. If there is a mistake and you still intend to proceed, do reopen it.',
+              ].join('\n\n'),
+            });
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              // This is fun
+              state: 'closed',
+            });
+            process.exit(1);
+
+      - name: ${{ steps.stats.outputs.trigger == 'true' && 'Some change in the PR made it too big!' || 'No comments' }}
+        if: github.event.action == 'synchronize' && steps.stats.outputs.trigger == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: [
+                '${{ env.MSG_PREFIX }}',
+                [
+                  'The most recent commit has made this PR go over ${{ env.MAX_ADDITIONS }} added lines.',
+                  'Please, decrease the size of this pull request or consider splitting it into several smaller requests.'
+                ].join(' '),
+                'Until then, the CI will be marked as failed.',
+              ].join('\n\n'),
+            });
+            process.exit(1);
