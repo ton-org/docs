@@ -11,7 +11,7 @@ START_MARK = "{/* STATIC_START tvm_instructions */}"
 END_MARK = "{/* STATIC_END tvm_instructions */}"
 
 
-def humanize_category(key: str) -> str:
+def humanize_category(key):
     if not key:
         return "Uncategorized"
     words = [p.capitalize() for p in key.replace("_", " ").split() if p]
@@ -41,11 +41,11 @@ def render_instruction(insn, aliases):
 """.strip()
 
 
-def render_static_mdx(spec) -> str:
+def render_static_mdx(spec):
     return '\n\n'.join(render_instruction(insn, [alias for alias in spec['aliases'] if alias['alias_of'] == insn['mnemonic']]) for insn in spec['instructions'])
 
 
-def inject_into_mdx(mdx_path: str, new_block: str) -> None:
+def inject_into_mdx(mdx_path, new_block):
     with open(mdx_path, "r", encoding="utf-8") as fh:
         src = fh.read()
     start_idx = src.find(START_MARK)
@@ -68,7 +68,7 @@ def inject_into_mdx(mdx_path: str, new_block: str) -> None:
         fh.write(updated)
 
 
-def generate(spec_input_path, spec_output_path, instructions_mdx_path) -> int:
+def generate(spec_input_path, spec_output_path, instructions_mdx_path):
     with open(spec_input_path) as f:
         spec = json.load(f)
     static_block = render_static_mdx(spec)
