@@ -3,6 +3,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import remarkMdx from 'remark-mdx';
 import unifiedConsistency from 'unified-consistency';
+import stringWidth from 'string-width';
 
 /**
  * @import {} from 'remark-stringify'
@@ -23,6 +24,7 @@ const remarkConfig = {
       remarkGfm,
       {
         singleTilde: false,
+        stringLength: stringWidth,
       },
     ],
     [
