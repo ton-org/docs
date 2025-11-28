@@ -1,0 +1,229 @@
+---
+title: "Words, Constants, and Variables"
+sidebarTitle: "Words, Constants, and Variables"
+noindex: "true"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+## Words
+
+A _word_ is an identifier for a `WordDef`, also known as execution token. To define a new word, first define a `WordDef` by enclosing code inside `{ }`; then invoke word `:` followed by the identifier for the new word. For instance,
+
+```fift
+// Take the square of the integer at the top of the stack
+{ dup * } : square
+```
+
+defines a new word `square`, which executes `dup` and `*` when invoked. In this way, typing `5 square` becomes equivalent to typing `5 dup *`, and produces the same result:
+
+```fift
+5 square   // Produces 25 at the top of the stack
+```
+
+It is possible to use the new word as a part of new definitions:
+
+```fift
+// Raise the integer at the top of the stack to the 5th power
+{ dup square square * } : **5
+3 **5   // Produces 243 at the top of the stack.
+```
+
+If the word indicated after `:` is already defined, it is tacitly redefined. However, all existing definitions of other words will continue to use the old definition of the redefined word. For instance, if `square` is redefined after the definition of `**5` above, `**5` will continue to use the original definition of `square`.
+
+## Constants
+
+A _constant_ is a word that pushes a predefined value when invoked. Constants can defined by using the word `constant`. For instance,
+
+```fift
+1000000000 constant Gram
+```
+
+defines a constant `Gram` equal to `10^9`. In other words, `1000000000` will be pushed into the stack whenever `Gram` is invoked:
+
+```fift
+// Pushes Gram and 2 into the stack.
+// Then, multiplies them, producing 
+// 2000000000 at the top of the stack.
+Gram 2 *   
+```
+
+Of course, it is possible to use the result of a computation to initialize the value of a constant:
+
+```fift
+// Define constant mGram with the result 
+// of the computation Gram 1000 /
+Gram 1000 / constant mGram
+mGram    // Pushes 1000000 into the stack
+```
+
+The value of a constant does not necessarily have to be an `Integer`. For instance, a string constant can be defined in the same way:
+
+```fift
+"Hello, world!" constant hello
+hello   // Pushes "Hello, world!" into the stack
+```
+
+<Aside>
+  If a constant is redefined, all existing definitions of other words will continue to use the old value of the constant. In this respect, a constant does not behave as a global variable.
+</Aside>
+
+It is possible to store two values into one "double" constant by using the word `2constant`. For instance:
+
+```fift
+355 113 2constant pifrac
+```
+
+defines a new word `pifrac`, which will push `355` and `113` (in that order) when invoked. The two components of a double constant can be of different types.
+
+If a constant with a fixed name within a block or a colon definition is needed, use `=:` and `2=:`, instead of `constant` and `2constant`.
+The word `=: <identifier>` takes the value at the top of stack, creates constant `<identifier>` and assigns the value to `<identifier>`.
+Similarly, word `2=: <identifier>` takes the two top-most values in the stack, creates constant `<identifier>` and assigns the values to `<identifier>`.
+
+For instance, the following defines a word `setxy`, which sets constants `x` and `y`:
+
+```fift
+{ dup =: x dup * =: y } : setxy
+3 setxy x y +   // Produces 12 at the top of the stack 
+7 setxy x y +   // Produces 56 at the top of the stack
+```
+
+The code `3 setxy x y +`, which is equivalent to `3 dup =: x dup * =: y x y +`, changes the stack as follows:
+
+```text
+3        Stack: 3
+dup      Stack: 3 3
+=: x     Stack: 3    (x is 3)
+dup      Stack: 3 3
+*        Stack: 9
+=: y     Stack:      (y is 9)
+x        Stack: 3
+y        Stack: 3 9 
++        Stack: 12
+```
+
+The code `7 setxy x y +` has a similar explanation.
+
+To recover the execution-time value of a constant inside a block definition, prefix the constant name with the word `@'`. For instance, using the definition of `setxy` as above, the following code defines a new word `addxy` which accesses the constants `x` and `y` and adds them:
+
+```fift
+{ @' x @' y + } : addxy
+3 setxy addxy    // Produces 12 at the top of the stack 
+```
+
+The code `3 setxy addxy` has the same effect as the code `3 setxy x y +`. The main difference between `3 setxy addxy` and `3 setxy x y +` is that in `3 setxy addxy`, constants `x` and `y` are accessed inside a code block definition, which require the use of word `@'` to access them; while in `3 setxy x y +`, the constants are accessed outside a code block definition, which does not require the use of word `@'` to access them.
+
+The drawback of this approach is that `@'` has to look up the current definition of constants `x` and `y` in the dictionary each time `addxy` is executed. [Variables](#variables) provide a more efficient way to achieve similar results.
+
+## Variables
+
+_Variables_ are a much more efficient way to represent changeable values. To declare a variable, use the word `variable` followed by the identifier. Internally, the word `variable` creates an empty box, which can then be updated with word `!`, and read with word `@`.
+
+For instance:
+
+```fift
+// Create two variables x and y, initialized to null
+variable x variable y
+// Set the value of x to 2
+2 x !
+// Set the value of y to 10
+10 y !
+// Read x and place the value at the top of the stack 
+x @ 
+// Read y and place the value at the top of the stack 
+y @ 
+// Add the two values
++     // Produces 12 at the top of the stack
+```
+
+The word `variable` produces variables initialized to `null`. Instead, to create initialized variables to a specific value, use the phrase `box constant`:
+
+```fift
+17 box constant x
+x 1+! x @ .
+```
+
+prints `"18 ok"`. One can even define a special defining word for initialized variables, if they are needed often:
+
+```fift
+{ box constant } : init-variable
+17 init-variable x
+"test" init-variable y
+x 1+! x @ . y @ type
+```
+
+prints `"18 test ok"`.
+
+The variables have so far only one disadvantage compared to the constants: one has to access their current values by means of an auxiliary word @. Of course, one can mitigate this by defining a "getter" and a "setter" word for a variable, and use these words to write better-looking code:
+
+```fift
+variable x-box
+{ x-box @ } : x
+{ x-box ! } : x!
+{ x x * 5 x * + 6 + } : f(x)
+{ ."( " x . .", " f(x) . .") " } : .xy
+3 x! .xy 5 x! .xy
+```
+
+prints `"( 3 , 30 ) ( 5 , 56 ) ok"`, which are the points `(x, f(x))` on the graph of `f(x) = x 2 + 5x + 6` with `x = 3` and `x = 5`.
+
+Again, if we want to define "getters" for all our variables, we can first define a defining word as explained in 4.8, and use this word to define both a getter and a setter at the same time:
+
+```fift
+{ hole dup 1 ' @ does create 1 ' ! does create } : variable-set
+variable-set x x!
+variable-set y y!
+{ ."x=" x . ."y=" y . ."x*y=" x y * . cr } : show
+{ y 1+ y! } : up
+{ x 1+ x! } : right
+{ x y x! y! } : reflect
+2 x! 5 y!
+```
+
+show up show right show up show reflect show produces
+
+```fift
+x=2 y=5 x*y=10
+x=2 y=6 x*y=12
+x=3 y=6 x*y=18
+x=3 y=7 x*y=21
+x=7 y=3 x*y=21
+```
+
+For instance, the last two code fragments of 2.7 could have been written with the aid of variables instead of constants as follows:
+
+```fift
+variable x variable y
+{ dup x ! dup * y ! } : setxy
+3 setxy x @ . y @ . x @ y @ + .
+7 setxy x @ . y @ . x @ y @ + .
+{ ."( " x @ . .", " y @ . .") " } : showxy
+3 setxy showxy
+```
+
+producing the same output as before:
+
+```fift
+3 9 12 ok
+7 49 56 ok
+( 3 , 9 ) ok
+```
+
+We can implement a simple counter:
+
+```fift
+variable counter
+{ counter 0! } : reset-counter
+{ counter @ 1+ dup counter ! } : next-counter
+reset-counter next-counter . next-counter . next-counter .
+reset-counter next-counter .
+```
+
+produces
+
+```fift
+1 2 3 ok
+1 ok
+```
+
+After these definitions are in place, we can even forget the definition of `counter` by means of the phrase `forget counter`. Then the only way to access the value of this variable is by means of `reset-counter` and `next-counter`.
