@@ -33,7 +33,7 @@ permissions:
 
 jobs:
   enforce-smaller-requests:
-    name: "Bloat"
+    name: "PR is manageable"
     if: github.event.action != 'edited'
     runs-on: ubuntu-latest
     steps:
@@ -198,8 +198,9 @@ jobs:
     if: github.event.action == 'opened' || github.event.action == 'edited'
     runs-on: ubuntu-latest
     steps:
-      # issue title check
+      # pr title check
       - name: "Check that the title conforms to the simplified version of Conventional Commits"
+        if: ${{ !cancelled() }}
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
@@ -208,15 +209,16 @@ jobs:
             const matches = title.match(pattern) !== null;
             if (!matches) {
               core.setFailed([
-                'Title of this pull request does not conform to the simplified version of Conventional Commits (https://www.conventionalcommits.org/en/v1.0.0/)',
+                'Title of this pull request does not conform to the simplified version of Conventional Commits (https://www.conventionalcommits.org/en/v1.0.0/) used in the documentation',
                 'Received: ' + title,
                 'Expected to find a type of feat/fix/chore/refactor/test, followed by an optional scope: description',
               ].join('\n'));
               process.exit(1);
             }
 
-      # issue close limits
+      # pr close issue limits
       - name: "Check that there is no more than ${{ env.MAX_ISSUES_PER_PR }} linked issues"
+        if: ${{ !cancelled() }}
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
@@ -229,6 +231,11 @@ jobs:
               process.exit(1);
             }
             if (issueCount === 0) {
-              core.setFailed(`This pull request does not resolve any issues — no close patterns found in the description. Please, specify an issue by writing \`Closes #that-issue-number\` in the description of this PR. If there is none, create a new one!`);
+              core.setFailed([
+                'This pull request does not resolve any issues — no close patterns found in the description.',
+                'Please, specify an issue by writing `Closes #that-issue-number` in the description of this PR.',
+                'If there is no such issue, create a new one: https://github.com/ton-org/docs/issues/1366#issuecomment-3560650817',
+              ].join(' '));
+
               process.exit(1);
             }
