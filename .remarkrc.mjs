@@ -4,6 +4,7 @@ import remarkMath from 'remark-math';
 import remarkMdx from 'remark-mdx';
 import unifiedConsistency from 'unified-consistency';
 import stringWidth from 'string-width';
+import remarkLintNoTrailingSpaces from 'remark-lint-no-trailing-spaces';
 
 /**
  * @import {} from 'remark-stringify'
@@ -34,6 +35,7 @@ const remarkConfig = {
       },
     ],
     unifiedConsistency,
+    remarkLintNoTrailingSpaces,
   ],
 };
 
