@@ -4,15 +4,24 @@ name: 🏀 Bouncer
 env:
   # additions only
   MAX_ADDITIONS_FORKS: 500
-  # on rare occasions, when maintainers need to edit a lot of things at once
-  MAX_ADDITIONS_DIRECT_BRANCHES: 1000
+  # on rare occasions maintainers need to edit a lot of things at once
+  MAX_ADDITIONS_DIRECT_BRANCHES: 800
+  # many target issues usually mean bigger pull requests
+  MAX_ISSUES_PER_PR: 3
   # the name of this workflow file wrapped in backticks
   MSG_PREFIX: "`bouncer.yml`"
 
 on:
-  pull_request_target: # do NOT use actions/checkout
-    branches: ["**"] # any branches
-    types: [opened, synchronize] # on creation and on new commits
+  pull_request: # FIXME: re-enabled only to check some jobs
+    # any branches
+    branches: ["**"]
+    # on creation, on new commits, and description edits
+    types: [opened, synchronize, edited]
+  pull_request_target: # do NOT use actions/checkout!
+    # any branches
+    branches: ["**"]
+    # on creation, on new commits, and description edits
+    types: [opened, synchronize, edited]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-bouncer
@@ -25,6 +34,7 @@ permissions:
 jobs:
   enforce-smaller-requests:
     name: "Bloat"
+    if: github.event.action != 'edited'
     runs-on: ubuntu-latest
     steps:
       - name: Set MAX_ADDITIONS for forks
@@ -45,12 +55,14 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
+            await exec.exec('sleep 0.5s');
             const comments = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
             });
             for (const comment of comments.data) {
+                await exec.exec('sleep 0.5s');
                 const isHidden = (await github.graphql(`
                   query($nodeId: ID!) {
                     node(id: $nodeId) {
@@ -60,13 +72,13 @@ jobs:
                     }
                   }
                 `, { nodeId: comment.node_id }))?.node?.isMinimized;
-                await exec.exec('sleep 0.5s');
                 if (isHidden) { continue; }
                 if (
                   comment.user.login === 'github-actions[bot]' &&
                   comment.body.startsWith('${{ env.MSG_PREFIX }}')
                 ) {
                   console.log('Comment node_id:', comment.node_id);
+                  await exec.exec('sleep 0.5s');
                   console.log(await github.graphql(`
                     mutation($subjectId: ID!) {
                       minimizeComment(input: {
@@ -82,7 +94,6 @@ jobs:
                   `, {
                     subjectId: comment.node_id,
                   }));
-                  await exec.exec('sleep 0.5s');
                 }
               }
 
@@ -96,6 +107,7 @@ jobs:
           # The same note applies to all JS code in this file
           script: |
             const maxAdditions = Number(process.env.MAX_ADDITIONS ?? '500');
+            await exec.exec('sleep 0.5s');
             const { data: files } = await github.rest.pulls.listFiles({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -125,6 +137,7 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
+            await exec.exec('sleep 0.5s');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -145,6 +158,7 @@ jobs:
                 'I will close this PR and will be looking forward to your next submissions. If there is a mistake and you still intend to proceed, do reopen it.',
               ].join('\n\n'),
             });
+            await exec.exec('sleep 0.5s');
             await github.rest.pulls.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -159,6 +173,7 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
+            await exec.exec('sleep 0.5s');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -173,3 +188,43 @@ jobs:
               ].join('\n\n'),
             });
             process.exit(1);
+
+  enforce-better-descriptions:
+    name: "Title and description"
+    if: github.event.action == 'opened' || github.event.action == 'edited'
+    runs-on: ubuntu-latest
+    steps:
+      # issue title check
+      - name: "Check that the title conforms to the simplified version of Conventional Commits"
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const title = context.payload.pull_request.title;
+            const pattern = /^(revert: )?(feat|fix|chore|refactor|test)(?:\/(feat|fix|chore|refactor|test))?!?(\(.+?\))?!?: [a-z].{1,200}/;
+            const matches = title.match(pattern) !== null;
+            if (!matches) {
+              core.setFailed([
+                'Title of this pull request does not conform to the simplified version of Conventional Commits (https://www.conventionalcommits.org/en/v1.0.0/)',
+                'Received: ' + title,
+                'Expected to find a type of feat/fix/chore/refactor/test, followed by an optional scope: description',
+              ].join('\n'));
+              process.exit(1);
+            }
+
+      # issue close limits
+      - name: "Check that there is no more than ${{ env.MAX_ISSUES_PER_PR }} linked issues"
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const maxIssuesAllowed = Number(process.env.MAX_ISSUES_PER_PR ?? '3');
+            const body = context.payload.pull_request.body || '';
+            const closePatterns = /(?:close[sd]?|fixes|fixed|resolve[sd]?)\s+(?:[a-z0-9_\-\/\:\.]+)?#\d+/gi;
+            const issueCount = [...body.matchAll(closePatterns)].length;
+            if (issueCount > maxIssuesAllowed) {
+              core.setFailed(`This pull request attempts to close ${issueCount} issues, while the maximum number allowed is ${maxIssuesAllowed}!`);
+              process.exit(1);
+            }
+            if (issueCount === 0) {
+              core.setFailed(`This pull request does not resolve any issues — no close patterns found in the description. Please, specify an issue by writing \`Closes #that-issue-number\` in the description of this PR. If there is none, create a new one!`);
+              process.exit(1);
+            }
