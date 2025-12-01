@@ -1,0 +1,227 @@
+name: 🏀 Bouncer
+# aka 🚪 Supervisor
+
+env:
+  # additions only
+  MAX_ADDITIONS_FORKS: 500
+  # on rare occasions maintainers need to edit a lot of things at once
+  MAX_ADDITIONS_DIRECT_BRANCHES: 800
+  # many target issues usually mean bigger pull requests
+  MAX_ISSUES_PER_PR: 3
+  # the name of this workflow file wrapped in backticks
+  MSG_PREFIX: "`bouncer.yml`"
+
+on:
+  pull_request_target: # do NOT use actions/checkout!
+    # any branches
+    branches: ["**"]
+    # on creation, on new commits, and description edits
+    types: [opened, synchronize, edited]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-bouncer
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  enforce-smaller-requests:
+    name: "PR is manageable"
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set MAX_ADDITIONS for forks
+        if: |
+          github.event_name == 'pull_request_target' &&
+          github.event.pull_request.head.repo.fork == true ||
+          github.event.pull_request.head.repo.full_name != github.repository
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: core.exportVariable('MAX_ADDITIONS', '${{ env.MAX_ADDITIONS_FORKS }}')
+
+      - name: Set MAX_ADDITIONS for direct branches
+        if: |
+          github.event.pull_request.head.repo.fork != true ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: core.exportVariable('MAX_ADDITIONS', '${{ env.MAX_ADDITIONS_DIRECT_BRANCHES }}')
+
+      - name: Remove prior comments by their common prefix
+        if: github.event.action == 'synchronize'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          # This JavaScript code cannot be moved to a separate file because
+          # this workflow must NOT checkout the repository for security reasons
+          #
+          # The same note applies to all JS code in this file
+          script: |
+            await exec.exec('sleep 0.5s');
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+            });
+            for (const comment of comments.data) {
+                await exec.exec('sleep 0.5s');
+                const isHidden = (await github.graphql(`
+                  query($nodeId: ID!) {
+                    node(id: $nodeId) {
+                      ... on IssueComment {
+                        isMinimized
+                      }
+                    }
+                  }
+                `, { nodeId: comment.node_id }))?.node?.isMinimized;
+                if (isHidden) { continue; }
+                if (
+                  comment.user.login === 'github-actions[bot]' &&
+                  comment.body.startsWith('${{ env.MSG_PREFIX }}')
+                ) {
+                  console.log('Comment node_id:', comment.node_id);
+                  await exec.exec('sleep 0.5s');
+                  console.log(await github.graphql(`
+                    mutation($subjectId: ID!) {
+                      minimizeComment(input: {
+                        subjectId: $subjectId,
+                        classifier: OUTDATED
+                      }) {
+                        minimizedComment {
+                          isMinimized
+                          minimizedReason
+                        }
+                      }
+                    }
+                  `, {
+                    subjectId: comment.node_id,
+                  }));
+                }
+              }
+
+      - name: Check if a number of additions modulo filtered files is within the threshold
+        id: stats
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const maxAdditions = Number(process.env.MAX_ADDITIONS ?? '500');
+            await exec.exec('sleep 0.5s');
+            const { data: files } = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const filtered = files.filter(
+              (f) =>
+                ![
+                  'package-lock.json',
+                  'ecosystem/api/toncenter/v2.json',
+                  'ecosystem/api/toncenter/v3.yaml',
+                  'ecosystem/api/toncenter/smc-index.json',
+                  'tvm/instructions.mdx',
+                ].includes(f.filename) && !f.filename.endsWith('.py'),
+            );
+            // NOTE: consider looking for .changes
+            const additions = filtered.reduce((acc, it) => acc + it.additions, 0);
+            if (additions > maxAdditions) {
+              core.setOutput('trigger', 'true');
+            } else {
+              core.setOutput('trigger', 'false');
+            }
+
+      - name: ${{ steps.stats.outputs.trigger == 'true' && 'An opened PR is too big to be reviewed at once!' || 'No comments' }}
+        if: github.event.action == 'opened' && steps.stats.outputs.trigger == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            await exec.exec('sleep 0.5s');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: [
+                '${{ env.MSG_PREFIX }}',
+                'Thank you for the contribution!',
+                [
+                  'Unfortunately, it is too large, with over ${{ env.MAX_ADDITIONS }} added lines,',
+                  'excluding some generated or otherwise special files.',
+                  'Thus, this pull request is challenging to review and iterate on.',
+                ].join(' '),
+                [
+                  'Please split the PR into several smaller ones and consider',
+                  'reverting any unrelated changes, writing less, or approaching',
+                  'the problem in the issue from a different angle.',
+                ].join(' '),
+                'I look forward to your next submissions. If you still intend to proceed as is, then you are at the mercy of the reviewers.',
+              ].join('\n\n'),
+            });
+            process.exit(1);
+
+      - name: ${{ steps.stats.outputs.trigger == 'true' && 'Some change in the PR made it too big!' || 'No comments' }}
+        if: github.event.action == 'synchronize' && steps.stats.outputs.trigger == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            await exec.exec('sleep 0.5s');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: [
+                '${{ env.MSG_PREFIX }}',
+                [
+                  'The most recent commit has made this PR go over ${{ env.MAX_ADDITIONS }} added lines.',
+                  'Please, decrease the size of this pull request or consider splitting it into several smaller requests.'
+                ].join(' '),
+                'Until then, the CI will be marked as failed.',
+              ].join('\n\n'),
+            });
+            process.exit(1);
+
+  enforce-better-descriptions:
+    name: "Title and description"
+    if: github.event.action == 'opened' || github.event.action == 'edited'
+    runs-on: ubuntu-latest
+    steps:
+      # pr title check
+      - name: "Check that the title conforms to the simplified version of Conventional Commits"
+        if: ${{ !cancelled() }}
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const title = context.payload.pull_request.title;
+            const pattern = /^(revert: )?(feat|fix|chore|refactor|test)(?:\/(feat|fix|chore|refactor|test))?!?(\(.+?\))?!?: [a-z].{1,200}/;
+            const matches = title.match(pattern) !== null;
+            if (!matches) {
+              core.setFailed([
+                'Title of this pull request does not conform to the simplified version of Conventional Commits used in the documentation',
+                `Received: ${title}`,
+                'Expected to find a type of: feat, fix, chore, refactor, or test, followed by the parts outlined here: https://www.conventionalcommits.org/en/v1.0.0/',
+              ].join('\n'));
+              process.exit(1);
+            }
+
+      # pr close issue limits
+      - name: "Check that there is no more than ${{ env.MAX_ISSUES_PER_PR }} linked issues"
+        if: ${{ !cancelled() }}
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const maxIssuesAllowed = Number(process.env.MAX_ISSUES_PER_PR ?? '3');
+            const body = context.payload.pull_request.body || '';
+            const closePatterns = /\b(?:close[sd]?|fixes|fixed|resolve[sd]?|towards)\s+(?:https?:\/\/github\.com\/|[a-z0-9\-\_\/]*#\d+)/gi;
+            const issueCount = [...body.matchAll(closePatterns)].length;
+            if (issueCount > maxIssuesAllowed) {
+              core.setFailed(`This pull request attempts to close ${issueCount} issues, while the maximum number allowed is ${maxIssuesAllowed}.`);
+              process.exit(1);
+            }
+            if (issueCount === 0) {
+              core.setFailed([
+                'This pull request does not resolve any issues — no close patterns found in the description.',
+                'Please, specify an issue by writing `Closes #that-issue-number` in the description of this PR.',
+                'If there is no such issue, create a new one: https://github.com/ton-org/docs/issues/1366#issuecomment-3560650817',
+              ].join(' '));
+              process.exit(1);
+            }
