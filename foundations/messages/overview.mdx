@@ -16,7 +16,7 @@ message$_
 ```
 
 - `init` is an optional field of [`StateInit`](/foundations/messages/deploy) type used to initialize the contract state, stored either in-place or in a ref of the cell with a message.
-- `body` is the actual message content that can be stored either in-place or in a reference. Typically it is the payload of the message that will be read by the receiver.
+- `body` is the actual message content that can be stored either in-place or in a reference. Typically, it is the payload of the message that will be read by the receiver.
 - `info` describes the type of the message, and fields specific to messages of this type:
   - [Internal messages](/foundations/messages/internal) are messages from one contract to another.
   - [Incoming external](/foundations/messages/external-in) messages are messages from the outside world to the contract.
@@ -32,7 +32,39 @@ A transaction is a record that stores the state changes of a contract. A contrac
 
 However, a transaction may be created independently of message processing by
 
-- [tick-tock transactions](/foundations/messages/exotic-tx)
-- [split-prepare transactions](/foundations/messages/exotic-tx)
-- [split-install transactions](/foundations/messages/exotic-tx)
-- [storage-tx transactions](/foundations/messages/exotic-tx)
+- tick-tock transactions,
+- split-prepare transactions,
+- split-install transactions,
+- storage-tx transactions.
+
+Each transaction has the following structure:
+
+```tlb
+    transaction$0111
+    account_addr:bits256
+    lt:uint64
+    prev_trans_hash:bits256
+    prev_trans_lt:uint64
+    now:uint32
+    outmsg_cnt:uint15
+    orig_status:AccountStatus
+    end_status:AccountStatus
+    ^[
+        in_msg:(Maybe ^(Message Any))
+        out_msgs:(HashmapE 15 ^(Message Any))
+    ]
+    total_fees:CurrencyCollection
+    state_update:^(HASH_UPDATE Account)
+    description:^TransactionDescr
+= Transaction;
+```
+
+Transactions implement the concept of `AccountChain` described in the [TON Blockchain whitepaper](/foundations/whitepapers/tblkch#1-2-1-the-infinite-sharding-paradigm-isp-applied-to-blockchain-block-and-state). Each account state can be interpreted as a separate blockchain, so transactions follow a strict order defined by the `prev_trans_hash` field. Thanks to the TON consensus protocol, a transaction becomes final when the first masterchain block references it by storing the hash of the corresponding `ShardChain` state, which in turn stores the hash of the `AccountChain` state.
+
+Because transactions form the `AccountChain`, each one carries a logical timestamp, `lt`, that strictly increases with every new transaction of the account. The `now` field stores the Unix time when the transaction was created.
+
+The `state_update` field is a [Merkle update](/foundations/serialization/merkle-update) that captures the difference between the previous and current state of the account. The [contract status](/foundations/status) before and after the transaction is duplicated for convenience.
+
+Other fields, such as `in_msg`, `out_msgs`, and `outmsg_cnt`, relate to the [messages](/foundations/messages/overview) processed and emitted during the transaction. A trace may start from a transaction rather than a message, in which case `in_msg` is `Nothing`. However, a trace cannot continue without messages: if it contains `n` transactions it must contain at least `n-1` messages. Consequently, a trace can include at most one non-ordinary transaction, because messages can trigger only an [ordinary transaction](/foundations/messages/ordinary-tx).
+
+The `total_fees` field stores the total number of [fees](/foundations/fees) paid by the transaction. These fees may eventually be paid in extra currencies, but that feature is not implemented yet.

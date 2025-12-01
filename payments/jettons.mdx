@@ -3,6 +3,151 @@ title: "Jettons payments processing"
 sidebarTitle: "Jettons"
 ---
 
-import { Stub } from '/snippets/stub.jsx';
+import { Aside } from "/snippets/aside.jsx";
 
-<Stub issue="700" />
+Processing jetton payments requires understanding TON's sharded token architecture. Unlike single-contract token systems, each jetton type consists of a master contract and individual wallet contracts for each holder.
+
+<Aside type="note">
+  Jettons are fungible tokens on TON. Each jetton has a master contract (minter) and separate wallet contracts for every holder. Read more in [How Jettons Work](/standard/tokens/jettons/how-it-works).
+</Aside>
+
+<Aside
+  type="caution"
+>
+  Jetton processing is security-critical. Incorrect validation of jetton wallet addresses or transfer notifications can lead to accepting fake tokens or crediting wrong amounts.
+</Aside>
+
+## Key concepts
+
+Before implementing jetton payment processing, understand these core concepts:
+
+**Jetton architecture**: Each jetton type has one master contract that stores metadata and total supply. Each address holding the jetton has a separate jetton wallet contract at a deterministic address derived from the master contract and owner address.
+
+**Transfer flow**: Jetton transfers involve multiple messages. A user sends a `transfer` message to their jetton wallet, which sends an `internal_transfer` to the recipient's jetton wallet, which then sends a `transfer_notification` to the recipient's address if `forward_ton_amount > 0`.
+
+<Aside
+  type="caution"
+>
+  Jetton transfers are considered successful only when the recipient receives `transfer_notification`. Services must set `forward_ton_amount` to at least 0.000000001 TON (1 nanoton) when sending tokens to trigger notifications. Without this, transfers won't be compliant and may not be processed by exchanges and other services.
+</Aside>
+
+**Security model**: Always validate that jetton wallets belong to the expected master contract. Anyone can deploy fake jetton wallet contracts with arbitrary balances.
+
+This article covers processing jetton deposits using transfer notifications. All approaches require maintaining an allowlist of trusted jetton master contracts.
+
+For architectural patterns and deposit methods comparison, see [Toncoin processing](/payments/toncoin).
+
+## Processing deposits
+
+<Aside
+  type="danger"
+  title="Funds at risk"
+>
+  Skipping any validation step or changing their order can lead to incorrect deposit processing and potential loss of funds.
+</Aside>
+
+### Setup
+
+Processing jetton deposits requires:
+
+- **Allowlist of trusted jetton masters**: List of jetton master contract addresses to accept
+- **Deposit wallet address**: Service wallet (e.g., wallet v4 or v5)
+
+### Initial configuration
+
+1. For each allowlisted jetton master, derive the jetton wallet address for the deposit wallet using the master contract's `get_wallet_address()` method
+1. Store the mapping of `jetton master` → `jetton wallet` → `deposit wallet` in the database
+1. Begin monitoring transactions to the deposit wallet address
+
+### Processing incoming transactions
+
+When a transaction arrives at the deposit wallet:
+
+1. Check that `tx.in_msg.source` matches a known jetton wallet for this deposit wallet
+1. Verify the master → jetton wallet relationship:
+   - Call `get_wallet_address(deposit-wallet)` on the master contract
+   - Confirm the returned address matches the sender
+1. Verify there are no outgoing messages (`tx.out_msgs.length === 0`)
+1. Parse the message body:
+   - Check the opcode (first 32 bits of `tx.in_msg.body`) equals `0x7362d09c` (transfer\_notification)
+   - Extract `query_id`, `amount`, `sender`, and `forward_payload` [according to TL-B](/standard/tokens/jettons/api)
+1. Verify the amount matches the expected value
+
+### Crediting user accounts
+
+After validation, extract deposit information:
+
+- **For invoice-based deposits**: Parse the invoice ID from `forward_payload`, match it against the database, and credit the corresponding user account
+- **For address-based deposits**: Match the `deposit-wallet` address against the database and credit the user account
+
+<Aside type="note">
+  Not production-ready code, use only for educational purposes
+</Aside>
+
+To understand invoice-based deposit approach in greater detail, see the following TypeScript implementation: [Invoice-based Jetton deposits](https://github.com/ton-org/docs-examples/blob/processing/guidebook/payment-processing/src/deposits/jetton-invoices.ts).
+
+For unique TypeScript implementation addresses see: [Unique address Toncoin deposit](https://github.com/ton-org/docs-examples/blob/processing/guidebook/payment-processing/src/deposits/jetton-unique-addresses.ts).
+
+## Security considerations
+
+### Master-wallet verification
+
+Never trust jetton wallet addresses without verification. Always perform these checks:
+
+1. Get the jetton master address from the allowlist
+1. Call `jetton_master.get_wallet_address(owner_address)`
+1. Verify the returned address matches the jetton wallet that sent the notification
+
+### Transfer notification validation
+
+When processing deposits via `transfer_notification`:
+
+- Verify the opcode is exactly `0x7362d09c`
+- Check the sender address is an expected jetton wallet
+- Extract `amount` in base units (not decimal)
+- Validate the `sender` field against expected user addresses
+- Parse `forward_payload` carefully—it may be malformed
+- Check for bounce indicators (single outgoing message back to sender)
+
+### Fake jetton detection
+
+Attackers can deploy jettons with identical names, symbols, and images:
+
+- Always verify the jetton master address against the allowlist
+- Never trust metadata (name, symbol, image) for authentication
+- Display the master contract address in admin interfaces
+- Implement a manual approval workflow for adding new jettons
+
+## Common attack patterns
+
+### Fake jetton wallets
+
+**Attack**: Attacker deploys a contract claiming to be a jetton wallet with an inflated balance.
+
+**Mitigation**: Verify the master-wallet relationship by calling `get_wallet_address()` on the master contract.
+
+### Invoice ID reuse
+
+**Attack**: User attempts to reuse a settled invoice identifier.
+
+**Mitigation**: Mark invoices as used after the first successful deposit.
+
+### Master contract spoofing
+
+**Attack**: Deploying a fake master contract that validates the attacker's fake jetton wallets.
+
+**Mitigation**: Maintain a strict allowlist of trusted master contracts and verify all jetton wallets against it.
+
+## Implementation checklist
+
+Before enabling jetton processing in production:
+
+### Testing
+
+- [ ] Deploy and test on testnet with real user scenarios
+- [ ] Verify master-wallet relationships for all allowlisted jettons
+- [ ] Test with fake jetton wallets to confirm rejection
+- [ ] Validate transfer notification parsing with various payload formats
+- [ ] Test bounce detection and handling
+- [ ] Test invoice ID collision and reuse scenarios
+- [ ] Test full flow: deposit → credit → withdrawal → confirmation
