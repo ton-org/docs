@@ -448,7 +448,7 @@ const main = async () => {
 
   if (shouldRunAll || argExist) {
     console.log('🏁 Checking the existence of redirect destinations in docs.json...');
-    handleCheckResult(checkExist(config), 'All destinations exist.');
+    handleCheckResult(checkExist(config), 'All non-TODO, local destinations exist.');
   }
 
   if (shouldRunAll || argPrevious) {
