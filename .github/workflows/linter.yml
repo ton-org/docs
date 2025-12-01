@@ -46,36 +46,53 @@ jobs:
           files: |
             **.md
             **.mdx
+          separator: ":"
 
       - name: Check formatting of MDX and Markdown files
         id: check-fmt
         env:
           ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
-        run: |
-          set -euo pipefail
-          if [ -z $(echo -e "${ALL_CHANGED_FILES[@]}" | tr -d '[:space:]') ]; then
-            echo -e '\nNo such files affected!'
-            exit 0
-          fi
-          echo -e '\nChecking formatting of the following MDX and Markdown files affected by this PR:\n'
-          for file in ${ALL_CHANGED_FILES}; do
-            echo "- $file"
-          done
-          FILES="$(echo -e "${ALL_CHANGED_FILES[@]}" | tr '\n' ' ')"
-          ( # try
-            npm run check:fmt:some -- $FILES >/dev/null 2>&1
-          ) || ( # catch
-            ERR="$(echo $?)"
-            # Comment right in the actions output
-            echo -e "\n\033[31mError:\033[0m Some files are not properly formatted!"
-            echo -e "1. Install necessary dependencies: \033[31mnpm ci\033[0m"
-            echo -e "2. Run this command to fix the issues: \033[31mnpm run fmt:some -- ${FILES}\033[0m"
-            # Prepare a comment on the PR
-            COMMENT="To fix the **formatting** issues:\n\n1. Install necessary dependencies: \`npm ci\`\n2. Then, run this command:\n\`\`\`shell\nnpm run fmt:some -- ${FILES}\n\`\`\`"
-            echo "COMMENT='$COMMENT'" >> "$GITHUB_ENV" # notice the ''
-            # Rethrow the exit code of the failed formatting check
-            exit $ERR
-          )
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const files = (process.env.ALL_CHANGED_FILES ?? '').trim().split(':').filter(Boolean);
+            if (files.length === 0) {
+              console.log('\nNo such files affected!');
+              process.exit(0);
+            }
+            console.log('\nChecking formatting of the following MDX and Markdown files affected by this PR:\n');
+            for (const file of files) {
+              console.log(`- ${file}`);
+            }
+            const filesQuoted = files.map((it) => '"' + it + '"');
+            try {
+              await exec.exec('npm', ['run', 'check:fmt:some', '--', ...filesQuoted], {
+                silent: true, // >/dev/null 2>&1
+              });
+            } catch (_) {
+              // Comment right in the actions output
+              const filesJoined = filesQuoted.join(' ');
+              console.log('\n\x1b[31mError:\x1b[0m Some files are not properly formatted!');
+              console.log('1. Install necessary dependencies: \x1b[31mnpm ci\x1b[0m');
+              console.log(`2. Run this command to fix the issues: \x1b[31mnpm run fmt:some -- ${filesJoined}\x1b[0m`);
+
+              // Prepare a comment on the PR
+              const comment = [
+                'To fix the **formatting** issues:\n',
+                '1. Install necessary dependencises: `npm ci`',
+                '2. Then, run this command:',
+                '```shell',
+                `npm run fmt:some -- ${filesJoined}`,
+                '```',
+              ].join('\n');
+
+              // Set environment variable for subsequent steps
+              core.exportVariable('COMMENT', comment);
+
+              // Rethrow the exit code of the failed formatting check
+              core.setFailed('Some files are not properly formatted!');
+              process.exit(1);
+            }
 
       - name: Hide prior PR comments and issue a new one in case of failure
         if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event_name != 'pull_request_target' }}
@@ -85,8 +102,20 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
-            const { default: script } = await import('${{ github.workspace }}/.github/scripts/manage-pr-comments-after-check.mjs');
-            await script({github, context, exec});
+            const { hidePriorCommentsWithPrefix, createComment } = await import('${{ github.workspace }}/.github/scripts/common.mjs');
+            const success = JSON.parse(process.env.SUCCESS ?? 'false');
+            const rawCommentText = process.env.COMMENT ?? '';
+            if (!success && rawCommentText === '') {
+              console.log('There was a formatting error, but no comment was given, skipping...');
+              process.exit(0);
+            }
+            const prefix = rawCommentText.slice(1, 30);
+            await hidePriorCommentsWithPrefix({ github, context, exec, prefix, resolved: success });
+            // Create a new comment in case of a new failure
+            if (!success) {
+              const body = rawCommentText.slice(1, -1).replace(/\\n/g, '\n');
+              await createComment({ github, context, exec, body });
+            }
 
   spell-check:
     name: "Spelling"
