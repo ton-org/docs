@@ -47,21 +47,13 @@ jobs:
             **.md
             **.mdx
           separator: ":"
-          # separator: ","
 
       - name: Check formatting of MDX and Markdown files
         id: check-fmt
-        # env:
-        #   ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
-            const files = ('${{ steps.changed-files.outputs.all_changed_files }}').trim().split(':').filter(Boolean);
-            // console.log(process.env.ALL_CHANGED_FILES);
-            // console.log(process.env.ALL_CHANGED_FILES.trim());
-            // console.log(process.env.ALL_CHANGED_FILES.trim().split(':'));
-            // const files = (process.env.ALL_CHANGED_FILES ?? '').trim().split(':').filter(Boolean);
-            console.log(files); // TMP
+            const files = ("${{ steps.changed-files.outputs.all_changed_files || '' }}").trim().split(':').filter(Boolean);
             if (files.length === 0) {
               console.log('\nNo such files affected!');
               process.exit(0);
@@ -95,10 +87,6 @@ jobs:
               // Set outputs for subsequent steps
               core.setOutput('comment', comment);
 
-              // NOTE: prev.
-              // Set environment variable for subsequent steps
-              // core.exportVariable('COMMENT', comment);
-
               // Rethrow the exit code of the failed formatting check
               core.setFailed('Some files are not properly formatted!');
               process.exit(1);
@@ -106,14 +94,12 @@ jobs:
 
       - name: Hide prior PR comments and issue a new one in case of failure
         if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event_name != 'pull_request_target' }}
-        env:
-          SUCCESS: ${{ steps.check-fmt.conclusion == 'failure' && 'false' || 'true' }}
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
             const { hidePriorCommentsWithPrefix, createComment } = await import('${{ github.workspace }}/.github/scripts/common.mjs');
-            const success = JSON.parse(process.env.SUCCESS ?? 'false');
-            const rawCommentText = '${{ steps.check-fmt.outputs.comment }}' ?? '';
+            const success = JSON.parse("${{ steps.check-fmt.conclusion == 'failure' && 'false' || 'true' }}");
+            const rawCommentText = "${{ steps.check-fmt.outputs.comment || '' }}" ?? '';
             if (!success && rawCommentText === '') {
               console.log('There was a formatting error, but no comment was given, skipping...');
               process.exit(0);
