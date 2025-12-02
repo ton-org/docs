@@ -86,8 +86,12 @@ jobs:
                 '```',
               ].join('\n');
 
+              // Set outputs for subsequent steps
+              core.setOutput('comment', comment);
+
+              // NOTE: prev.
               // Set environment variable for subsequent steps
-              core.exportVariable('COMMENT', comment);
+              // core.exportVariable('COMMENT', comment);
 
               // Rethrow the exit code of the failed formatting check
               core.setFailed('Some files are not properly formatted!');
@@ -97,14 +101,13 @@ jobs:
       - name: Hide prior PR comments and issue a new one in case of failure
         if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event_name != 'pull_request_target' }}
         env:
-          COMMENT: ${{ env.COMMENT }}
           SUCCESS: ${{ steps.check-fmt.conclusion == 'failure' && 'false' || 'true' }}
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
             const { hidePriorCommentsWithPrefix, createComment } = await import('${{ github.workspace }}/.github/scripts/common.mjs');
             const success = JSON.parse(process.env.SUCCESS ?? 'false');
-            const rawCommentText = process.env.COMMENT ?? '';
+            const rawCommentText = '${{ steps.check-fmt.outputs.comment }}' ?? '';
             if (!success && rawCommentText === '') {
               console.log('There was a formatting error, but no comment was given, skipping...');
               process.exit(0);
