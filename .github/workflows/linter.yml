@@ -46,7 +46,7 @@ jobs:
           files: |
             **.md
             **.mdx
-          separator: ":"
+          separator: " "
 
       - name: Check formatting of MDX and Markdown files
         id: check-fmt
@@ -56,29 +56,24 @@ jobs:
         with:
           script: |
             const files = (process.env.ALL_CHANGED_FILES ?? '')
-              .trim().replace('\\', '').split(':').filter(Boolean);
+              .trim().split(' ').filter(Boolean).filter((it) => it.match(/\.mdx?$/) !== null);
             if (files.length === 0) {
               console.log('\nNo such files affected!');
               process.exit(0);
             }
             console.log('\nChecking formatting of the following MDX and Markdown files affected by this PR:\n');
             for (const file of files) {
-              const notice = file.includes(' ')
-                ? ' (filename contains spaces, please remove them!)'
-                : '';
-              console.log(`- ${file}${notice}`);
+              console.log(`- ${file}`);
             }
-            const filesQuoted = files.map((it) => '"' + it + '"');
             try {
-              await exec.exec('npm', ['run', 'check:fmt:some', '--', ...filesQuoted], {
+              await exec.exec('npm', ['run', 'check:fmt:some', '--', ...files], {
                 silent: true, // >/dev/null 2>&1
               });
             } catch (_) {
               // Comment right in the actions output
-              const filesJoined = filesQuoted.join(' ');
               console.log('\n\x1b[31mError:\x1b[0m Some files are not properly formatted!');
               console.log('1. Install necessary dependencies: \x1b[31mnpm ci\x1b[0m');
-              console.log(`2. Run this command to fix the issues: \x1b[31mnpm run fmt:some -- ${filesJoined}\x1b[0m`);
+              console.log(`2. Run this command to fix the issues: \x1b[31mnpm run fmt:some -- ${files.join(' ')}\x1b[0m`);
 
               // Rethrow the exit code of the failed formatting check
               core.setFailed('Some files are not properly formatted!');
@@ -102,13 +97,13 @@ jobs:
             const { hidePriorCommentsWithPrefix, createComment } = await import('${{ github.workspace }}/.github/scripts/common.mjs');
             const success = JSON.parse(process.env.SUCCESS ?? 'false');
             const files = (process.env.ALL_CHANGED_FILES ?? '')
-              .trim().replace('\\', '').split(':').filter(Boolean);
+              .trim().split(' ').filter(Boolean).filter((it) => it.match(/\.mdx?$/) !== null);
             const comment = [
               'To fix the **formatting** issues:\n',
               '1. Install necessary dependencises: `npm ci`',
               '2. Then, run this command:',
               '```shell',
-              `npm run fmt:some -- ${files.map((it) => '"' + it + '"').join(' ')}`,
+              `npm run fmt:some -- ${files.join(' ')}`,
               '```',
             ].join('\n');
             const prefix = comment.slice(0, 30);
