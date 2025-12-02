@@ -53,7 +53,11 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
-            const files = ("${{ steps.changed-files.outputs.all_changed_files || '' }}").trim().split(':').filter(Boolean);
+            // NOTE: Previously, all_changed_files were processed as an env,
+            //       which lead to unwanted escapes being added for Bash envs
+            const files = ("${{ steps.changed-files.outputs.all_changed_files }}").trim().split(':').filter(Boolean);
+            // NOTE: Which is why the comment should also be set via outputs, not an env
+            core.setOutput('comment', '');
             if (files.length === 0) {
               console.log('\nNo such files affected!');
               process.exit(0);
@@ -94,12 +98,15 @@ jobs:
 
       - name: Hide prior PR comments and issue a new one in case of failure
         if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event_name != 'pull_request_target' }}
+        env:
+          # NOTE: Do not set the comment from the outputs here, as that will introduce extra escape characters
+          SUCCESS: ${{ steps.check-fmt.conclusion == 'failure' && 'false' || 'true' }}
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
             const { hidePriorCommentsWithPrefix, createComment } = await import('${{ github.workspace }}/.github/scripts/common.mjs');
-            const success = JSON.parse("${{ steps.check-fmt.conclusion == 'failure' && 'false' || 'true' }}");
-            const rawCommentText = "${{ steps.check-fmt.outputs.comment || '' }}" ?? '';
+            const success = JSON.parse(process.env.SUCCESS ?? 'false');
+            const rawCommentText = "${{ steps.check-fmt.outputs.comment }}";
             if (!success && rawCommentText === '') {
               console.log('There was a formatting error, but no comment was given, skipping...');
               process.exit(0);
