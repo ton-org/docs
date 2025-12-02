@@ -67,7 +67,7 @@ const checkUnique = (config) => {
  * @return {CheckResult}
  */
 const checkExist = (config) => {
-  const uniqPages = [...getNavLinksSet(config)];
+  const uniqPages = [...getNavLinksSet(config)].filter(x=>x.includes("/tolk/"));
   const missingPages = uniqPages.filter((it) => {
     const rel = it.replace(/^\/+/, '').replace(/#.*$/, '') + '.mdx';
     return !(existsSync(rel) && statSync(rel).isFile());
