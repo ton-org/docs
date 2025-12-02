@@ -1,0 +1,310 @@
+---
+title: "How to work with Toncoin using WalletKit on the Web platform"
+sidebarTitle: "Work with Toncoin"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+<Aside>
+  [Initialize the WalletKit](/ecosystem/ton-connect/walletkit/web/init), [set up at least one TON wallet](/ecosystem/ton-connect/walletkit/web/wallets), handle [connection requests](/ecosystem/ton-connect/walletkit/web/connections) and [transaction requests](/ecosystem/ton-connect/walletkit/web/events) before using examples on this page.
+</Aside>
+
+To work with Toncoin, the wallet service needs to handle [contract balances](#balances) and perform transfers initiated [from dApps](#transfers-from-dapps) and [from within the wallet service itself](#transfers-from-the-wallet-service).
+
+## Balances
+
+Blockchain state changes constantly as new blocks are produced. This has implications for when and how to check TON wallet contract balances:
+
+- [Discrete one-off checks](#on-demand-balance-check) have almost no value on their own — the state might change immediately after the query completes, invalidating its results. Thus, such checks are only practical when handling `transaction` requests.
+- [Continuous monitoring](#continuous-balance-monitoring) is useful for UI display, showing the most recent balance to users, but should not be used for transaction confirmations.
+
+Notice that both cases require querying the blockchain data via the API client set during the [WalletKit initialization](/ecosystem/ton-connect/walletkit/web/init#param-api-client). Obtain and provide the key from the selected client to access higher requests-per-second limits.
+
+### On-demand balance check
+
+Use the `getBalance()` method to check the wallet contract balance in TON wallets managed by WalletKit. The balance is returned in nanoToncoin, with 1 Toncoin equal to $10^9$ nanoToncoin.
+
+<Aside
+  type="caution"
+>
+  Do not store the balance check results anywhere in the wallet service's state, as they become outdated very quickly. For UI purposes, do [continuous balance monitoring](#continuous-balance-monitoring).
+</Aside>
+
+```ts title="TypeScript"
+async function getBalance(address: string): Promise<bigint | undefined> {
+  // Get TON wallet instance
+  const wallet = kit.getWallet(address);
+  if (!wallet) return;
+
+  // Query its balance in nanoToncoin
+  return await wallet.getBalance();
+}
+```
+
+Since the kit helps to manage initialized TON wallets, all outgoing transfers are controlled and will not happen on their own.
+
+Therefore, the most practical use of one-off balance checks is right before approving a transaction request. At this point, the actual wallet contract balance cannot be less than the checked amount, though it might be higher if new funds arrived right after the check.
+
+```ts title="TypeScript"
+// An enumeration of various common error codes
+import { SEND_TRANSACTION_ERROR_CODES } from '@ton/walletkit';
+
+kit.onTransactionRequest(async (event) => {
+  const wallet = kit.getWallet(event.walletAddress ?? '');
+  if (!wallet) {
+    console.error('Wallet not found for a transaction request', event);
+    await kit.rejectTransactionRequest(event, {
+      code: SEND_TRANSACTION_ERROR_CODES.UNKNOWN_ERROR,
+      message: 'Wallet not found',
+    });
+    return;
+  }
+
+  // Calculate the minimum balance needed for this transaction
+  const balance = await wallet.getBalance();
+  const minNeededBalance = event.request.messages.reduce(
+    (acc, message) => acc + BigInt(message.amount),
+    0n,
+  );
+
+  // Reject early if balance is clearly insufficient
+  if (balance < minNeededBalance) {
+    await kit.rejectTransactionRequest(event, {
+      code: SEND_TRANSACTION_ERROR_CODES.BAD_REQUEST_ERROR,
+      message: 'Insufficient balance',
+    });
+    return;
+  }
+
+  // Proceed with the regular transaction flow
+  // ...
+});
+```
+
+### Continuous balance monitoring
+
+Poll the balance at regular intervals to keep the displayed value up to date. Use an appropriate interval based on UX requirements — shorter intervals provide fresher data but increase API usage.
+
+This example should be modified according to the wallet service's logic:
+
+```ts title="TypeScript" expandable
+// Configuration
+const POLLING_INTERVAL_MS = 10_000;
+
+/**
+ * Starts the monitoring of a given wallet contract `address`,
+ * calling `onBalanceUpdate()` each `intervalMs` milliseconds
+ *
+ * @returns a function to stop monitoring
+ */
+export function startBalanceMonitoring(
+  address: string,
+  onBalanceUpdate: (balance: bigint) => void,
+  intervalMs: number = POLLING_INTERVAL_MS,
+): () => void {
+  let isRunning = true;
+
+  const poll = async () => {
+    while (isRunning) {
+      const wallet = kit.getWallet(address);
+      if (wallet) {
+        const balance = await wallet.getBalance();
+        onBalanceUpdate(balance);
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  };
+
+  // Start monitoring
+  poll();
+
+  // Return a cleanup function to stop monitoring
+  return () => {
+    isRunning = false;
+  };
+}
+
+// Usage
+const stopMonitoring = startBalanceMonitoring(
+  walletAddress,
+  // The updateUI() function is exemplary and should be replaced by
+  // an existing function in your wallet service that refreshes the
+  // state of the balance displayed in the interface
+  (balance) => updateUI(balance),
+);
+
+// Stop monitoring once it is no longer needed
+stopMonitoring();
+```
+
+## Transfers from dApps
+
+When a connected dApp requests a Toncoin transfer, the wallet service follows this flow:
+
+```mermaid
+sequenceDiagram
+    participant dApp
+    participant Bridge
+    participant WalletKit
+    participant User
+    participant Blockchain
+
+    dApp->>Bridge: Send transaction request
+    Bridge->>WalletKit: Forward request
+    WalletKit->>WalletKit: Emulate transaction
+    WalletKit->>User: Show preview (money flow)
+    User-->>WalletKit: Approve / Decline
+    alt Approved
+        WalletKit->>Blockchain: Send transaction
+        WalletKit->>Bridge: Return success + BoC
+        Bridge->>dApp: Transaction sent
+    else Declined
+        WalletKit->>Bridge: Return rejection
+        Bridge->>dApp: User rejected
+    end
+```
+
+### Emulation and preview
+
+WalletKit automatically emulates every incoming transaction request before presenting it to the user. The emulation result is available in the `event.preview` object:
+
+```ts title="TypeScript"
+kit.onTransactionRequest(async (event) => {
+  if (event.preview.result === 'success') {
+    // Emulation succeeded — show the predicted money flow
+    const { ourTransfers } = event.preview.moneyFlow;
+
+    // This is an array of values,
+    // where positive amounts mean incoming funds
+    // and negative amounts — outgoing funds
+    console.log('Predicted transfers:', ourTransfers);
+  } else {
+    // Emulation failed — warn the user but allow proceeding
+    console.warn('Transaction emulation failed:', event.preview);
+  }
+
+  // Present the preview to the user and await their decision
+  // ...
+});
+```
+
+<Aside>
+  Emulation uses the API client configured during [WalletKit initialization](/ecosystem/ton-connect/walletkit/web/init#param-api-client). The default TON Center APIs provide rich emulation capabilities.
+</Aside>
+
+### Approve or reject
+
+After showing the preview, handle the user's decision:
+
+```ts title="TypeScript" expandable
+// An enumeration of various common error codes
+import { SEND_TRANSACTION_ERROR_CODES } from '@ton/walletkit';
+
+kit.onTransactionRequest(async (event) => {
+  try {
+    // Show the emulation preview to the wallet service user
+    const preview = event.preview;
+    const isEmulationSuccessful = preview.result === 'success';
+
+    // Build a confirmation message
+    let confirmMessage = 'Confirm this transaction?';
+    if (isEmulationSuccessful) {
+      const transfers = preview.moneyFlow.ourTransfers;
+      confirmMessage = `Send ${formatTransfers(transfers)}?`;
+    } else {
+      confirmMessage = 'Emulation failed. Proceed anyway?';
+    }
+
+    // Handle user's decision
+    if (confirm(confirmMessage)) {
+      // Approve — this sends the transaction to the blockchain
+      // and returns the signed message BoC to the dApp
+      await kit.approveTransactionRequest(event);
+      console.log('Transaction approved and sent');
+    } else {
+      // Reject — notify the dApp that the user declined
+      await kit.rejectTransactionRequest(event, {
+        code: SEND_TRANSACTION_ERROR_CODES.USER_REJECTS_ERROR,
+        message: 'User rejected the transaction',
+      });
+    }
+  } catch (error) {
+    console.error('Transaction handler error:', error);
+    await kit.rejectTransactionRequest(event, {
+      code: SEND_TRANSACTION_ERROR_CODES.UNKNOWN_ERROR,
+      message: 'Transaction processing failed',
+    });
+  }
+});
+
+function formatTransfers(
+  transfers: Array<{ amount: bigint; asset: string }>,
+): string {
+  return transfers
+    .map((t) => `${Number(t.amount) / 1e9} ${t.asset}`)
+    .join(', ');
+}
+```
+
+### Confirm transaction delivery
+
+TON achieves transaction [finality](https://en.wikipedia.org/wiki/Blockchain#Finality) after a single masterchain block confirmation, where new blocks are produced approximately every 5 seconds. Once a transaction appears in a masterchain block, it becomes irreversible.
+
+Therefore, to reliably confirm the transaction delivery and status, one needs to check whether a transaction has achieved masterchain finality using the selected API client.
+
+That said, the wallet service should not block the UI while waiting for such confirmation. After all, with [continuous wallet balance monitoring](#continuous-balance-monitoring) and subsequent transaction requests, users will receive the latest information either way. Confirmations are only needed to reliably display a list of past transactions, including the most recent ones.
+
+For detailed transaction tracking, message lookups, and payment processing, the [message lookup guide](/ecosystem/ton-connect/message-lookup) covers finding transactions by external message hash, waiting for confirmations, and applying message normalization.
+
+## Transfers in the wallet service
+
+Transactions can be created directly from the wallet service (not from dApps) and fed into the regular approval flow via `handleNewTransaction()` method of the WalletKit. It creates a new [transaction request event](/ecosystem/ton-connect/walletkit/web/events#handle-ontransactionrequest), enabling the same UI confirmation-to-transaction flow for both dApp-initiated and wallet-initiated transactions.
+
+This example should be modified according to the wallet service's logic:
+
+```ts title="TypeScript"
+import { type TonTransferParams } from '@ton/walletkit';
+
+async function sendToncoin(
+  // Recipient's TON wallet contract address as a string
+  address: string,
+  // Amount in nanoToncoins
+  nanoAmount: BigInt,
+  // Optional comment string
+  comment?: string,
+  // Optional payload body as a BoC in Base64-encoded string
+  payload?: string,
+) {
+  if (comment && payload) {
+    console.error('Cannot attach both a comment or a payload body');
+    return;
+  }
+
+  const from = kit.getWallet(address);
+  if (!from) {
+    console.error('No wallet contract found');
+    return;
+  }
+
+  const transferParams: TonTransferParams = {
+    toAddress: address,
+    amount: nanoAmount.toString(),
+    // Optional comment OR payload, not both
+    ...(comment && { comment: comment }),
+  }
+
+  // Build transaction content
+  const tx = await from.createTransferTonTransaction(transferParams);
+
+  // Route into the normal flow,
+  // triggering the onTransactionRequest() handler
+  await kit.handleNewTransaction(from, tx);
+}
+```
+
+## See also
+
+- [Handle transaction requests](/ecosystem/ton-connect/walletkit/web/events#handle-ontransactionrequest)
+- [Transaction fees](/foundations/fees)
+- [WalletKit overview](/ecosystem/ton-connect/walletkit)
+- [TON Connect overview](/ecosystem/ton-connect)
