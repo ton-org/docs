@@ -50,12 +50,13 @@ jobs:
 
       - name: Check formatting of MDX and Markdown files
         id: check-fmt
+        env:
+          ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
-            // NOTE: Previously, all_changed_files were processed as an `env`,
-            //       which lead to unwanted escapes being added for Bash envs
-            const files = ("${{ steps.changed-files.outputs.all_changed_files }}").trim().split(':').filter(Boolean);
+            const files = (process.env.ALL_CHANGED_FILES ?? '')
+              .trim().replace('\\', '').split(':').filter(Boolean);
             if (files.length === 0) {
               console.log('\nNo such files affected!');
               process.exit(0);
@@ -67,7 +68,7 @@ jobs:
             const filesQuoted = files.map((it) => '"' + it + '"');
             try {
               await exec.exec('npm', ['run', 'check:fmt:some', '--', ...filesQuoted], {
-                // silent: true, // >/dev/null 2>&1
+                silent: true, // >/dev/null 2>&1
               });
             } catch (_) {
               // Comment right in the actions output
@@ -90,16 +91,15 @@ jobs:
             github.event_name != 'pull_request_target'
           )
         env:
-          # NOTE: Do not set the comment from the outputs here, as that will introduce extra escape characters
+          ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
           SUCCESS: ${{ steps.check-fmt.conclusion == 'failure' && 'false' || 'true' }}
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
             const { hidePriorCommentsWithPrefix, createComment } = await import('${{ github.workspace }}/.github/scripts/common.mjs');
             const success = JSON.parse(process.env.SUCCESS ?? 'false');
-            // NOTE: Previously, all_changed_files were processed as an `env`,
-            //       which lead to unwanted escapes being added for Bash envs
-            const files = ("${{ steps.changed-files.outputs.all_changed_files }}").trim().split(':').filter(Boolean);
+            const files = (process.env.ALL_CHANGED_FILES ?? '')
+              .trim().replace('\\', '').split(':').filter(Boolean);
             const comment = [
               'To fix the **formatting** issues:\n',
               '1. Install necessary dependencises: `npm ci`',
