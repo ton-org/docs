@@ -53,11 +53,9 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
-            // NOTE: Previously, all_changed_files were processed as an env,
+            // NOTE: Previously, all_changed_files were processed as an `env`,
             //       which lead to unwanted escapes being added for Bash envs
             const files = ("${{ steps.changed-files.outputs.all_changed_files }}").trim().split(':').filter(Boolean);
-            // NOTE: Which is why the comment should also be set via outputs, not an env
-            core.setOutput('comment', '');
             if (files.length === 0) {
               console.log('\nNo such files affected!');
               process.exit(0);
@@ -78,26 +76,19 @@ jobs:
               console.log('1. Install necessary dependencies: \x1b[31mnpm ci\x1b[0m');
               console.log(`2. Run this command to fix the issues: \x1b[31mnpm run fmt:some -- ${filesJoined}\x1b[0m`);
 
-              // Prepare a comment on the PR
-              const comment = [
-                'To fix the **formatting** issues:\n',
-                '1. Install necessary dependencises: `npm ci`',
-                '2. Then, run this command:',
-                '```shell',
-                `npm run fmt:some -- ${filesJoined}`,
-                '```',
-              ].join('\n');
-
-              // Set outputs for subsequent steps
-              core.setOutput('comment', comment);
-
               // Rethrow the exit code of the failed formatting check
               core.setFailed('Some files are not properly formatted!');
               process.exit(1);
             }
 
       - name: Hide prior PR comments and issue a new one in case of failure
-        if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event_name != 'pull_request_target' }}
+        if: |
+          (
+            !cancelled() &&
+            steps.changed-files.conclusion == 'success' &&
+            github.event_name == 'pull_request' &&
+            github.event_name != 'pull_request_target'
+          )
         env:
           # NOTE: Do not set the comment from the outputs here, as that will introduce extra escape characters
           SUCCESS: ${{ steps.check-fmt.conclusion == 'failure' && 'false' || 'true' }}
@@ -106,17 +97,23 @@ jobs:
           script: |
             const { hidePriorCommentsWithPrefix, createComment } = await import('${{ github.workspace }}/.github/scripts/common.mjs');
             const success = JSON.parse(process.env.SUCCESS ?? 'false');
-            const rawCommentText = "${{ steps.check-fmt.outputs.comment }}";
-            if (!success && rawCommentText === '') {
-              console.log('There was a formatting error, but no comment was given, skipping...');
-              process.exit(0);
-            }
-            const prefix = rawCommentText.slice(0, 30);
+            // NOTE: Previously, all_changed_files were processed as an `env`,
+            //       which lead to unwanted escapes being added for Bash envs
+            const files = ("${{ steps.changed-files.outputs.all_changed_files }}").trim().split(':').filter(Boolean);
+            const comment = [
+              'To fix the **formatting** issues:\n',
+              '1. Install necessary dependencises: `npm ci`',
+              '2. Then, run this command:',
+              '```shell',
+              `npm run fmt:some -- ${files.map((it) => '"' + it + '"').join(' ')}`,
+              '```',
+            ].join('\n');
+            const prefix = comment.slice(0, 30);
             await hidePriorCommentsWithPrefix({ github, context, exec, prefix, resolved: success });
-            // Create a new comment in case of a new failure
+            // Create a new PR comment in case of a new failure
             if (!success) {
-              const body = rawCommentText.replace(/\\n/g, '\n');
-              await createComment({ github, context, exec, body });
+              // const body = comment.replace(/\\n/g, '\n');
+              await createComment({ github, context, exec, body: comment });
             }
 
   spell-check:
