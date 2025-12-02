@@ -8,32 +8,33 @@ import { Aside } from '/snippets/aside.jsx';
 
 ## Words
 
-A _word_ is an identifier for a `WordDef`, also known as execution token. To define a new word, first define a `WordDef` by enclosing code inside `{ }`; then invoke word `:` followed by the identifier for the new word. For instance,
+A _word_ is an identifier for an execution token, also known as a `WordDef`. To define a new word, first define a `WordDef` by enclosing code inside `{ }`; then invoke word `:` followed by the identifier for the word. For instance,
 
 ```fift
-// Take the square of the integer at the top of the stack
+// square takes the square of the integer at the top of the stack
 { dup * } : square
 ```
 
-defines a new word `square`, which executes `dup` and `*` when invoked. In this way, typing `5 square` becomes equivalent to typing `5 dup *`, and produces the same result:
+defines a new word `square`, which executes `dup` and `*` when invoked. Typing `5 square` becomes equivalent to typing `5 dup *`, and produces the same result:
 
 ```fift
 5 square   // Produces 25 at the top of the stack
+5 dup *    // Produces 25 at the top of the stack
 ```
 
-It is possible to use the new word as a part of new definitions:
+It is possible to use the new word inside new word definitions:
 
 ```fift
-// Raise the integer at the top of the stack to the 5th power
+// **5 raises the integer at the top of the stack to the 5th power
 { dup square square * } : **5
 3 **5   // Produces 243 at the top of the stack.
 ```
 
-If the word indicated after `:` is already defined, it is tacitly redefined. However, all existing definitions of other words will continue to use the old definition of the redefined word. For instance, if `square` is redefined after the definition of `**5` above, `**5` will continue to use the original definition of `square`.
+If the word indicated after `:` is already defined, it is redefined. However, all existing definitions of other words will continue to use the old definition of the redefined word. For instance, if `square` is redefined after the definition of `**5` above, `**5` will continue to use the original definition of `square`.
 
 ## Constants
 
-A _constant_ is a word that pushes a predefined value when invoked. Constants can defined by using the word `constant`. For instance,
+A _constant_ is a word that pushes a predefined value when invoked. Constants can defined using the word `constant`. For instance,
 
 ```fift
 1000000000 constant Gram
@@ -139,91 +140,139 @@ y @
 The word `variable` produces variables initialized to `null`. Instead, to create initialized variables to a specific value, use the phrase `box constant`:
 
 ```fift
+// Creates variable x and initializes it with value 17
 17 box constant x
-x 1+! x @ .
+// Read x and place the value at the top of the stack
+x @      // 17 at the top of the stack
+// Increase 17 by 1
+1 +
+// Update x, now storing 18
+x !
 ```
 
-prints `"18 ok"`. One can even define a special defining word for initialized variables, if they are needed often:
+It is possible to define a special word for creating variables, if they are needed often:
 
 ```fift
 { box constant } : init-variable
+// Create a variable x, initialized to 17
 17 init-variable x
+// Create a variable y, initialized to "test"
 "test" init-variable y
-x 1+! x @ . y @ type
 ```
 
-prints `"18 test ok"`.
-
-The variables have so far only one disadvantage compared to the constants: one has to access their current values by means of an auxiliary word @. Of course, one can mitigate this by defining a "getter" and a "setter" word for a variable, and use these words to write better-looking code:
+Variables have one disadvantage compared to [constants](#constants): accessing the value stored in a variable requires the use of word @. This can be mitigated by defining a "getter" and a "setter" word for a variable, and use these words to write better-looking code:
 
 ```fift
+// First, create the box storing the variable contents
 variable x-box
+
+// Define word x so that it is the procedure that 
+// reads the box contents.
+// So, that now, x can be treated as if 
+// it was the "variable".
+// Instead of writing "x-box @" 
+// to read the variable contents, simply write "x".
 { x-box @ } : x
+
+// Define a similar procedure for updating variables x.
 { x-box ! } : x!
-{ x x * 5 x * + 6 + } : f(x)
-{ ."( " x . .", " f(x) . .") " } : .xy
-3 x! .xy 5 x! .xy
+
+// Update variable with 5
+5 x!
+
+// Read the variable twice and add the results
+x x +    // Produces 10 at the top of the stack
 ```
 
-prints `"( 3 , 30 ) ( 5 , 56 ) ok"`, which are the points `(x, f(x))` on the graph of `f(x) = x 2 + 5x + 6` with `x = 3` and `x = 5`.
-
-Again, if we want to define "getters" for all our variables, we can first define a defining word as explained in 4.8, and use this word to define both a getter and a setter at the same time:
+It is possible to define "getters" and "setters" for variables in a more generic way. The following code defines the word `variable-get-set`, which creates a fresh variable and takes the two strings following `variable-get-set` to name the variable's getter and setter, respectively. For example, `variable-get-set x x!` will create a variable with getter `x` and setter `x!`.
 
 ```fift
-{ hole dup 1 ' @ does create 1 ' ! does create } : variable-set
-variable-set x x!
-variable-set y y!
-{ ."x=" x . ."y=" y . ."x*y=" x y * . cr } : show
-{ y 1+ y! } : up
-{ x 1+ x! } : right
-{ x y x! y! } : reflect
-2 x! 5 y!
+{ hole dup 1 ' @ does create 1 ' ! does create } : variable-get-set
 ```
 
-show up show right show up show reflect show produces
+Word `variable-get-set` works as follows:
 
 ```fift
-x=2 y=5 x*y=10
-x=2 y=6 x*y=12
-x=3 y=6 x*y=18
-x=3 y=7 x*y=21
-x=7 y=3 x*y=21
+// Create a fresh box containing null
+hole     Stack: Box
+// Duplicate the box
+dup      Stack: Box Box
+// Push 1
+1        Stack: Box Box 1
+// Push the word definition for @
+' @      Stack: Box Box 1 WordDef-for-@
+// Create an execution token { Box WordDef-for-@ } 
+// that first pushes Box and then calls @.
+// The 1 argument in the stack tells "does" that it should 
+// consume only one argument below 1
+// in the stack.
+does     Stack: Box { Box WordDef-for-@ }
+// Assign the execution token { Box WordDef-for-@ }
+// to the first string comming after the invocation of variable-get-set
+create   Stack: Box
+// Push 1
+1        Stack: Box 1
+// Push the word definition for !
+' !      Stack: Box 1 WordDef-for-!
+// Create an execution token { Box WordDef-for-! } 
+// that first pushes Box and then calls !.
+// The 1 argument in the stack tells "does" that it should 
+// consume only one argument below 1
+// in the stack.
+does     Stack: { Box WordDef-for-! }
+// Assign the execution token { Box WordDef-for-! }
+// to the second string comming after the invocation of variable-get-set
+create   Stack:
 ```
 
-For instance, the last two code fragments of 2.7 could have been written with the aid of variables instead of constants as follows:
+For instance, `variable-get-set` can be used as follows:
 
 ```fift
-variable x variable y
-{ dup x ! dup * y ! } : setxy
-3 setxy x @ . y @ . x @ y @ + .
-7 setxy x @ . y @ . x @ y @ + .
-{ ."( " x @ . .", " y @ . .") " } : showxy
-3 setxy showxy
+// Create a fresh variable with getter x and setter x!
+variable-get-set x x!
+// Create a fresh variable with getter y and setter y!
+variable-get-set y y!
+// Set x and y to 5 and 10, respectively.
+5 x! 10 y!
+// Swap variables x and y
+x y x! y!
+// Push x
+x    // Top of stack has 10
+// Push y
+y    // Top of stack has 5
 ```
 
-producing the same output as before:
+For more details on words `create`, `' <word_name>`, `does`, refer to Sections [4.5](/languages/fift/whitepaper#4-5-defining-words-and-dictionary-manipulation), [4.6](/languages/fift/whitepaper#4-6-dictionary-lookup), and [4.7](/languages/fift/whitepaper#4-7-creating-and-manipulating-word-lists) in the Fift whitepaper.
+
+As another example of `variable-get-set`, the following implements a simple counter. The example uses auxiliary words `reset-counter` and `incr-counter` to reset the counter variable to `0` and increment the counter by one, respectively.
 
 ```fift
-3 9 12 ok
-7 49 56 ok
-( 3 , 9 ) ok
+// Create the getter "counter" and setter "counter!"
+variable-get-set counter counter!
+
+// Resets the counter to 0
+{ 0 counter! } : reset-counter
+
+// Increments the counter by one.
+{ counter 1 + counter! } : incr-counter
+
+reset-counter      // counter variable has 0 
+incr-counter       // counter variable has 1
+incr-counter       // counter variable has 2
+reset-counter      // counter variable has 0
+incr-counter       // counter variable has 1
+counter            // Pushes 1 to the top of the stack
 ```
 
-We can implement a simple counter:
+Word `incr-counter` works as follows:
 
 ```fift
-variable counter
-{ counter 0! } : reset-counter
-{ counter @ 1+ dup counter ! } : next-counter
-reset-counter next-counter . next-counter . next-counter .
-reset-counter next-counter .
+// Push the current value of counter
+counter    Stack: c
+// Push 1
+1          Stack: c 1
+// Add c and 1
++          Stack: c+1
+// Store the new value back into the counter variable 
+counter!   Stack: 
 ```
-
-produces
-
-```fift
-1 2 3 ok
-1 ok
-```
-
-After these definitions are in place, we can even forget the definition of `counter` by means of the phrase `forget counter`. Then the only way to access the value of this variable is by means of `reset-counter` and `next-counter`.
