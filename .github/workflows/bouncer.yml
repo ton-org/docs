@@ -5,11 +5,9 @@ env:
   # additions only
   MAX_ADDITIONS_FORKS: 500
   # on rare occasions maintainers need to edit a lot of things at once
-  MAX_ADDITIONS_DIRECT_BRANCHES: 800
+  MAX_ADDITIONS_DIRECT_BRANCHES: 1000
   # many target issues usually mean bigger pull requests
   MAX_ISSUES_PER_PR: 3
-  # the name of this workflow file wrapped in backticks
-  MSG_PREFIX: "`bouncer.yml`"
 
 on:
   pull_request_target: # do NOT use actions/checkout!
@@ -49,57 +47,6 @@ jobs:
         with:
           script: core.exportVariable('MAX_ADDITIONS', '${{ env.MAX_ADDITIONS_DIRECT_BRANCHES }}')
 
-      - name: Remove prior comments by their common prefix
-        if: github.event.action == 'synchronize'
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
-        with:
-          # This JavaScript code cannot be moved to a separate file because
-          # this workflow must NOT checkout the repository for security reasons
-          #
-          # The same note applies to all JS code in this file
-          script: |
-            await exec.exec('sleep 0.5s');
-            const comments = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-            });
-            for (const comment of comments.data) {
-                await exec.exec('sleep 0.5s');
-                const isHidden = (await github.graphql(`
-                  query($nodeId: ID!) {
-                    node(id: $nodeId) {
-                      ... on IssueComment {
-                        isMinimized
-                      }
-                    }
-                  }
-                `, { nodeId: comment.node_id }))?.node?.isMinimized;
-                if (isHidden) { continue; }
-                if (
-                  comment.user.login === 'github-actions[bot]' &&
-                  comment.body.startsWith('${{ env.MSG_PREFIX }}')
-                ) {
-                  console.log('Comment node_id:', comment.node_id);
-                  await exec.exec('sleep 0.5s');
-                  console.log(await github.graphql(`
-                    mutation($subjectId: ID!) {
-                      minimizeComment(input: {
-                        subjectId: $subjectId,
-                        classifier: OUTDATED
-                      }) {
-                        minimizedComment {
-                          isMinimized
-                          minimizedReason
-                        }
-                      }
-                    }
-                  `, {
-                    subjectId: comment.node_id,
-                  }));
-                }
-              }
-
       - name: Check if a number of additions modulo filtered files is within the threshold
         id: stats
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
@@ -121,9 +68,8 @@ jobs:
                   'ecosystem/api/toncenter/v3.yaml',
                   'ecosystem/api/toncenter/smc-index.json',
                   'tvm/instructions.mdx',
-                ].includes(f.filename) && !f.filename.endsWith('.py'),
+                ].includes(f.filename) && !f.filename.endsWith('.py') && !f.filename.startsWith('snippets'),
             );
-            // NOTE: consider looking for .changes
             const additions = filtered.reduce((acc, it) => acc + it.additions, 0);
             if (additions > maxAdditions) {
               core.setOutput('trigger', 'true');
@@ -142,7 +88,6 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
               body: [
-                '${{ env.MSG_PREFIX }}',
                 'Thank you for the contribution!',
                 [
                   'Unfortunately, it is too large, with over ${{ env.MAX_ADDITIONS }} added lines,',
@@ -154,7 +99,10 @@ jobs:
                   'reverting any unrelated changes, writing less, or approaching',
                   'the problem in the issue from a different angle.',
                 ].join(' '),
-                'I look forward to your next submissions. If you still intend to proceed as is, then you are at the mercy of the reviewers.',
+                [
+                  'I look forward to your next submissions.',
+                  'If you still intend to proceed as is, then you are at the mercy of the reviewers.',
+                ].join(' '),
               ].join('\n\n'),
             });
             process.exit(1);
@@ -164,25 +112,21 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
-            await exec.exec('sleep 0.5s');
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: [
-                '${{ env.MSG_PREFIX }}',
-                [
-                  'The most recent commit has made this PR go over ${{ env.MAX_ADDITIONS }} added lines.',
-                  'Please, decrease the size of this pull request or consider splitting it into several smaller requests.'
-                ].join(' '),
-                'Until then, the CI will be marked as failed.',
-              ].join('\n\n'),
-            });
+            core.setFailed([
+              [
+                'This pull request has gotten over ${{ env.MAX_ADDITIONS }} added lines,',
+                'which can be challenging to review and iterate on',
+                'Please, decrease the size of this PR or consider splitting it into several smaller requests.'
+              ].join(' '),
+              [
+                'Until then, the CI will be soft-marked as failed.',
+                'If you still intend to proceed as is, then you are at the mercy of the reviewers.',
+              ].join(' '),
+            ].join('\n\n'));
             process.exit(1);
 
   enforce-better-descriptions:
     name: "Title and description"
-    if: github.event.action == 'opened' || github.event.action == 'edited'
     runs-on: ubuntu-latest
     steps:
       # pr title check
@@ -192,7 +136,8 @@ jobs:
         with:
           script: |
             const title = context.payload.pull_request.title;
-            const pattern = /^(revert: )?(feat|fix|chore|refactor|test)(?:\/(feat|fix|chore|refactor|test))?!?(\(.+?\))?!?: [a-z].{1,200}/;
+            const types = 'feat|fix|chore|refactor|test';
+            const pattern = new RegExp(`^(revert: )?(${types})(?:\\/(${types}))?!?(\\([^\\)]+\\))?!?: [a-zA-Z].{1,200}`);
             const matches = title.match(pattern) !== null;
             if (!matches) {
               core.setFailed([
@@ -205,7 +150,7 @@ jobs:
 
       # pr close issue limits
       - name: "Check that there is no more than ${{ env.MAX_ISSUES_PER_PR }} linked issues"
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.pull_request.user.login != 'dependabot[bot]' }}
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
