@@ -46,7 +46,7 @@ jobs:
           files: |
             **.md
             **.mdx
-          separator: ":"
+          separator: " "
 
       - name: Check formatting of MDX and Markdown files
         id: check-fmt
@@ -55,7 +55,8 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
-            const files = (process.env.ALL_CHANGED_FILES ?? '').trim().split(':').filter(Boolean);
+            const files = (process.env.ALL_CHANGED_FILES ?? '')
+              .trim().split(' ').filter(Boolean).filter((it) => it.match(/\.mdx?$/) !== null);
             if (files.length === 0) {
               console.log('\nNo such files affected!');
               process.exit(0);
@@ -64,30 +65,15 @@ jobs:
             for (const file of files) {
               console.log(`- ${file}`);
             }
-            const filesQuoted = files.map((it) => '"' + it + '"');
             try {
-              await exec.exec('npm', ['run', 'check:fmt:some', '--', ...filesQuoted], {
+              await exec.exec('npm', ['run', 'check:fmt:some', '--', ...files], {
                 silent: true, // >/dev/null 2>&1
               });
             } catch (_) {
               // Comment right in the actions output
-              const filesJoined = filesQuoted.join(' ');
               console.log('\n\x1b[31mError:\x1b[0m Some files are not properly formatted!');
               console.log('1. Install necessary dependencies: \x1b[31mnpm ci\x1b[0m');
-              console.log(`2. Run this command to fix the issues: \x1b[31mnpm run fmt:some -- ${filesJoined}\x1b[0m`);
-
-              // Prepare a comment on the PR
-              const comment = [
-                'To fix the **formatting** issues:\n',
-                '1. Install necessary dependencises: `npm ci`',
-                '2. Then, run this command:',
-                '```shell',
-                `npm run fmt:some -- ${filesJoined}`,
-                '```',
-              ].join('\n');
-
-              // Set environment variable for subsequent steps
-              core.exportVariable('COMMENT', comment);
+              console.log(`2. Run this command to fix the issues: \x1b[31mnpm run fmt:some -- ${files.join(' ')}\x1b[0m`);
 
               // Rethrow the exit code of the failed formatting check
               core.setFailed('Some files are not properly formatted!');
@@ -95,26 +81,36 @@ jobs:
             }
 
       - name: Hide prior PR comments and issue a new one in case of failure
-        if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event_name != 'pull_request_target' }}
+        if: |
+          (
+            !cancelled() &&
+            steps.changed-files.conclusion == 'success' &&
+            github.event_name == 'pull_request' &&
+            github.event_name != 'pull_request_target'
+          )
         env:
-          COMMENT: ${{ env.COMMENT }}
+          ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
           SUCCESS: ${{ steps.check-fmt.conclusion == 'failure' && 'false' || 'true' }}
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
             const { hidePriorCommentsWithPrefix, createComment } = await import('${{ github.workspace }}/.github/scripts/common.mjs');
             const success = JSON.parse(process.env.SUCCESS ?? 'false');
-            const rawCommentText = process.env.COMMENT ?? '';
-            if (!success && rawCommentText === '') {
-              console.log('There was a formatting error, but no comment was given, skipping...');
-              process.exit(0);
-            }
-            const prefix = rawCommentText.slice(1, 30);
+            const files = (process.env.ALL_CHANGED_FILES ?? '')
+              .trim().split(' ').filter(Boolean).filter((it) => it.match(/\.mdx?$/) !== null);
+            const comment = [
+              'To fix the **formatting** issues:\n',
+              '1. Install necessary dependencises: `npm ci`',
+              '2. Then, run this command:',
+              '```shell',
+              `npm run fmt:some -- ${files.join(' ')}`,
+              '```',
+            ].join('\n');
+            const prefix = comment.slice(0, 30);
             await hidePriorCommentsWithPrefix({ github, context, exec, prefix, resolved: success });
-            // Create a new comment in case of a new failure
+            // Create a new PR comment in case of a new failure
             if (!success) {
-              const body = rawCommentText.slice(1, -1).replace(/\\n/g, '\n');
-              await createComment({ github, context, exec, body });
+              await createComment({ github, context, exec, body: comment });
             }
 
   spell-check:
