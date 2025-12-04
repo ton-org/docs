@@ -1,0 +1,407 @@
+---
+title: "Control flow"
+sidebarTitle: "Control flow"
+noindex: "true"
+---
+
+## Blocks
+
+A block is defined using the special words `{` and `}`. All words listed between `{` and `}` constitute the body of a new block, which is then pushed into the stack as a value of type `WordDef`. A block may be stored as a definition of a new Fift word by means of the word `:` as explained in the Words section, or executed by means of the word `execute`:
+
+```fift
+{ 17 2 * } execute       // Pushes 34 to the stack
+{ 17 2 * } : mult-17-2   // Defines the word mult-17-2
+mult-17-2                // Pushes 34 to the stack
+```
+
+A slightly more convoluted example:
+
+```fift
+// Push block to the stack.
+{ 2 * }       // Stack: { 2 * }
+17            // Stack: { 2 * } 17
+over          // Stack: { 2 * } 17 { 2 * }
+execute       // Stack: { 2 * } 34
+swap          // Stack: 34 { 2 * }
+execute       // Stack: 68
+```
+
+In the above example, block `{ 2 * }` acts as the "anonymous function" `x -> 2x` that gets applied twice on `17`, producing the result `2 * (2 * 17) = 68`. The above examples show that a block is an execution token, which can be duplicated, stored into a constant, used to define a new word, or executed.
+
+The word `'` recovers the current definition of a word. Namely, the construct `' <word-name>` pushes the execution token equivalent to the current definition of the word `<word-name>`. For instance, the following two lines are equivalent:
+
+```fift
+// Push the definition of dup into the stack, 
+// then execute it.
+' dup execute
+dup       // Equivalent to previous line
+```
+
+And,
+
+```fift
+' dup : duplicate
+```
+
+defines `duplicate` as a synonym for the current definition of `dup`.
+
+## Conditional execution of blocks
+
+Conditional execution of blocks is achieved using the words `if`, `ifnot`, and `cond`.
+
+Word `if` expects a stack of the form `v e`, where `v` is a value and `e` is an execution token at the top of the stack. The word `if` consumes both `e` and `v` and executes `e` only if `v` is non-zero. If `v` is zero, it does nothing. Word `if` is roughly equivalent to the statement `if (v) { e }` in a high level programming language.
+
+Word `ifnot` is similar to `if`, but instead, it executes `e` only if `v` is zero. Word `ifnot` is roughly equivalent to the statement `if (not v) { e }` in a high level programming language.
+
+Word `cond` expects a stack of the form `v e e'`, where `v` is a value, `e` and `e'` are execution tokens. The word `cond` consumes `e'`, `e` and `v`, and executes `e` if `v` is non-zero, otherwise it executes `e'`. Word `cond` is roughly equivalent to the statement `if (v) { e } else { e' }` in a high level programming language.
+
+For instance, the last example in 2.12 can be more conveniently rewritten as
+
+```fift
+// Define word ?. that pushes string "true" if 
+// the top of the stack is non-zero; "false" otherwise.
+{ { "true" } { "false" } cond } : ?.
+
+2 3 < ?.   // Pushes "true", since 2 3 < produces -1
+2 3 = ?.   // Pushes "false", since 2 3 = produces 0
+2 3 > ?.   // Pushes "false", since 2 3 > produces 0
+```
+
+Blocks can be arbitrarily nested, as already shown in the previous example. For example, the following code defines word `chksign` that consumes the integer at the top of the stack and pushes either `"positive"`, `"negative"`, or `"zero"`, depending on the sign of the integer.
+
+```fift
+{ 
+  // ?dup duplicates the integer at the top of the 
+  // stack only if it is non-zero.
+  ?dup   
+  { 
+    // 0< produces -1 if the number at the top of 
+    // the stack is less than 0; produces 0 otherwise.
+    0<
+    { "negative" }
+    { "positive" }
+    cond
+  }
+  { "zero" }
+  cond
+} : chksign
+
+-17 chksign   // Consumes -17 and pushes "negative"
+17 chksign    // Consumes 17 and pushes "positive"
+0 chksign     // Consumes 0 and pushes "zero"
+```
+
+To illustrate how `chksign` executes, here are the traces for `-17 chksign`, `17 chksign`, and `0 chksign`.
+
+Trace for `-17 chksign`:
+
+```fift
+-17             // Stack: -17
+?dup            // Stack: -17 -17
+{ 0<
+   { "negative" }
+   { "positive" }
+   cond
+}               // Stack: -17 -17 { 0< ..... }
+{ "zero" }      // Stack: -17 -17 { 0< ..... } { "zero" } 
+cond            // Stack: -17  
+                // cond decides to execute block { 0< ..... }
+                // because -17 is non-zero.
+0<              // Stack: -1
+{ "negative" }  // Stack: -1 { "negative" }
+{ "positive" }  // Stack: -1 { "negative" } { "positive" }
+cond            // Stack: 
+                // cond decides to execute block { "negative" }
+                // because -1 is non-zero.
+"negative"      // Stack: "negative"
+```
+
+Trace for `17 chksign`:
+
+```fift
+17              // Stack: 17
+?dup            // Stack: 17 17
+{ 0<
+   { "negative" }
+   { "positive" }
+   cond
+}               // Stack: 17 17 { 0< ..... }
+{ "zero" }      // Stack: 17 17 { 0< ..... } { "zero" } 
+cond            // Stack: 17  
+                // cond decides to execute block { 0< ..... }
+                // because 17 is non-zero.
+0<              // Stack: 0
+{ "negative" }  // Stack: 0 { "negative" }
+{ "positive" }  // Stack: 0 { "negative" } { "positive" }
+cond            // Stack: 
+                // cond decides to execute block { "positive" }
+                // because 0 is zero.
+"positive"      // Stack: "positive"
+```
+
+Trace for `0 chksign`:
+
+```fift
+0               // Stack: 0
+?dup            // Stack: 0
+{ 0<
+   { "negative" }
+   { "positive" }
+   cond
+}               // Stack: 0 { 0< ..... }
+{ "zero" }      // Stack: 0 { 0< ..... } { "zero" } 
+cond            // Stack:   
+                // cond decides to execute block { "zero" }
+                // because 0 is zero.
+"zero"          // Stack: "zero"
+```
+
+## Loops
+
+### Fixed repeat loops
+
+To execute a code a fixed number of times, use word `times`. Word `times` expects a stack of the form `e n`, where `e` is an execution token and `n` is an integer at the top of the stack. The word `times` consumes both `n` and `e` and executes `e` exactly `n` times. If `n` is negative, `times` throws an exception.
+
+For instance,
+
+```fift
+1 { 10 * } 20 times
+```
+
+pushes `1` and then executes the block `{ 10 * }` exactly `20` times, producing `((1 * 10) * 10) * 10 ...`, i.e., `10^20`.
+
+The following more complex example implements the factorial function, which computes the factorial of the integer at the top of the stack:
+
+```fift
+{ 0 1 rot { swap 1+ tuck * } swap times nip } : fact
+4 fact   // Consumes 4 and pushes 24 to the stack
+         // since the factorial of 4 is 24
+```
+
+Here is the trace for `4 fact`:
+
+```fift
+4      // Stack: 4
+0      // Stack: 4 0
+1      // Stack: 4 0 1
+// rot rotates the three top most 
+// elements in the stack.
+rot    // Stack: 0 1 4
+{ swap 
+  1+ 
+  tuck 
+  * 
+}       // Stack: 0 1 4 { swap 1+ tuck * }
+swap    // Stack: 0 1 { swap 1+ tuck * } 4
+times   // Stack: 0 1
+// First iteration of block { swap 1+ tuck * }
+swap    // Stack: 1 0
+// 1+ increases by 1 the top integer in the stack
+1+      // Stack: 1 1
+// tuck duplicates the top element at the third-from-top slot in the stack
+tuck    // Stack: 1 1 1
+*       // Stack: 1 1
+// Second iteration of block { swap 1+ tuck * }
+swap    // Stack: 1 1
+1+      // Stack: 1 2
+tuck    // Stack: 2 1 2
+*       // Stack: 2 2
+// Third iteration of block { swap 1+ tuck * }
+swap    // Stack: 2 2
+1+      // Stack: 2 3
+tuck    // Stack: 3 2 3
+*       // Stack: 3 6
+// Fourth iteration of block { swap 1+ tuck * }
+swap    // Stack: 6 3
+1+      // Stack: 6 4
+tuck    // Stack: 4 6 4
+*       // Stack: 4 24
+// times finishes 
+// nip drops the second-from-top element 
+nip     // Stack: 24
+```
+
+### Loops with an exit condition
+
+More sophisticated loops can be created with the aid of words `while` and `until`. Word `while` executes a block while a condition is true, and `until` executes a block until a condition becomes true.
+
+Word `while` expects a stack of the form `e e'`, where `e` and `e'` are execution tokens, with `e'` at the top of the stack. The word `while` consumes `e` and `e'`; then, it executes `e`, which produces an integer at the top of the stack, which gets consumed. If this integer is zero, `while` stops execution; otherwise, executes `e'` and begins a new loop iteration by executing `e` and carrying out the integer check again. Word `while` is roughly equivalent to the statement `while (e) { e' }` in a high level programming language, where `e` usually encodes the loop condition.
+
+Word `until` expects a stack of the form `e`, where `e` is an execution token. The word `until` consumes `e`; then, it executes `e`, which produces an integer at the top of the stack, which gets consumed. If this integer is non-zero, `until` stops execution; otherwise, begins a new loop iteration by executing `e` and carrying out the integer check again. Usually, the last instructions in `e` encode the loop condition.
+
+Here is a simple example for `while`:
+
+```fift
+1 { dup 123 < } { 10 * } while
+```
+
+The example multiplies by `10` repeatedly, starting from `1`, but as long as the intermediate result is strictly smaller than `123`. In other words, it pushes number `1000` into the stack. Here is the trace:
+
+```fift
+1                // Stack: 1
+{ dup 123 < }    // Stack: 1 { dup 123 < }
+{ 10 * }         // Stack: 1 { dup 123 < } { 10 * }
+while            // Stack: 1
+// while starts execution of "condition" { dup 123 < }
+dup              // Stack: 1 1
+123              // Stack: 1 1 123
+<                // Stack: 1 -1
+// while consumes -1, since it is non-zero
+// block { 10 * } executes 
+10               // Stack: 1 10
+*                // Stack: 10
+// while executes "condition" { dup 123 < } again
+dup              // Stack: 10 10
+123              // Stack: 10 10 123
+<                // Stack: 10 -1
+// while consumes -1, since it is non-zero
+// block { 10 * } executes 
+10               // Stack: 10 10
+*                // Stack: 100
+// while executes "condition" { dup 123 < } again
+dup              // Stack: 100 100
+123              // Stack: 100 100 123
+<                // Stack: 100 -1
+// while consumes -1, since it is non-zero
+// block { 10 * } executes 
+10               // Stack: 100 10
+*                // Stack: 1000
+// while executes "condition" { dup 123 < } again
+dup              // Stack: 1000 1000
+123              // Stack: 1000 1000 123
+<                // Stack: 1000 0
+// while consumes 0, since it is zero, 
+// while finishes execution.
+                 // Stack: 1000 
+```
+
+Here is the equivalent example, but using `until`:
+
+```fift
+1 { 10 * dup 123 >= } until
+```
+
+The example also multiplies by `10` repeatedly, starting from `1`, but stops until the intermediate result is greater or equal to `123`. It pushes number `1000` into the stack. Here is the trace:
+
+```fift
+1                     // Stack: 1
+{ 10 * dup 123 >= }   // Stack: 1 { 10 * dup 123 >= }
+until                 // Stack: 1
+// until starts execution of block { 10 * dup 123 >= }
+10                    // Stack: 1 10
+*                     // Stack: 10
+dup                   // Stack: 10 10
+123                   // Stack: 10 10 123
+>=                    // Stack: 10 0
+// until consumes 0, since it is zero
+// block { 10 * dup 123 >= } executes again
+10                    // Stack: 10 10
+*                     // Stack: 100
+dup                   // Stack: 100 100
+123                   // Stack: 100 100 123
+>=                    // Stack: 100 0
+// until consumes 0, since it is zero
+// block { 10 * dup 123 >= } executes again
+10                    // Stack: 100 10
+*                     // Stack: 1000
+dup                   // Stack: 1000 1000
+123                   // Stack: 1000 1000 123
+>=                    // Stack: 1000 -1
+// until consumes -1, since it is non-zero, 
+// until finishes execution.
+                      // Stack: 1000
+```
+
+The next is a more complex example that modifies slightly the factorial function defined in the section for [fixed repeat loops](#fixed-repeat-loops). `fact-input` below defines a word that computes the smallest integer that would produce a factorial bigger or equal to the integer at the top of the stack. For example, `10 fact-input` produces `4`, because `4! = 24 >= 10` and `4` is the smallest integer `x` such that `x! >= 10`.
+
+```fift
+{ 0 1 { dup 3 pick < } { swap 1+ tuck * } while drop nip } : fact-input
+10 fact-input   // Consumes 10 and pushes 4 to the stack
+```
+
+Here is the trace for `10 fact-input`:
+
+```fift
+10      // Stack: 10
+0       // Stack: 10 0
+1       // Stack: 10 0 1
+{ dup 
+  3 
+  pick 
+  < 
+}       // Stack: 10 0 1 { dup 3 pick < }
+{ swap 
+  1+ 
+  tuck 
+  * 
+}       // Stack: 10 0 1 { dup 3 pick < } { swap 1+ tuck * }
+while   // Stack: 10 0 1
+// while starts execution of "condition" { dup 3 pick < }
+dup     // Stack: 10 0 1 1
+3 pick  // Stack: 10 0 1 1 10
+<       // Stack: 10 0 1 -1
+// while consumes -1, since it is non-zero
+// block { swap 1+ tuck * } executes  
+swap    // Stack: 10 1 0
+// 1+ increases by 1 the top integer in the stack
+1+      // Stack: 10 1 1
+// tuck duplicates the top element at the third-from-top slot in the stack
+tuck    // Stack: 10 1 1 1
+*       // Stack: 10 1 1
+// while executes "condition" { dup 3 pick < }
+dup     // Stack: 10 1 1 1
+3 pick  // Stack: 10 1 1 1 10
+<       // Stack: 10 1 1 -1
+// while consumes -1, since it is non-zero
+// block { swap 1+ tuck * } executes  
+swap    // Stack: 10 1 1
+1+      // Stack: 10 1 2
+tuck    // Stack: 10 2 1 2
+*       // Stack: 10 2 2
+// while executes "condition" { dup 3 pick < }
+dup     // Stack: 10 2 2 2
+3 pick  // Stack: 10 2 2 2 10
+<       // Stack: 10 2 2 -1
+// while consumes -1, since it is non-zero
+// block { swap 1+ tuck * } executes  
+swap    // Stack: 10 2 2
+1+      // Stack: 10 2 3
+tuck    // Stack: 10 3 2 3
+*       // Stack: 10 3 6
+// while executes "condition" { dup 3 pick < }
+dup     // Stack: 10 3 6 6
+3 pick  // Stack: 10 3 6 6 10
+<       // Stack: 10 3 6 -1
+// while consumes -1, since it is non-zero
+// block { swap 1+ tuck * } executes  
+swap    // Stack: 10 6 3
+1+      // Stack: 10 6 4
+tuck    // Stack: 10 4 6 4
+*       // Stack: 10 4 24
+// while executes "condition" { dup 3 pick < }
+dup     // Stack: 10 4 24 24
+3 pick  // Stack: 10 4 24 24 10
+<       // Stack: 10 4 24 0
+// while consumes 0, since it is zero, 
+// while finishes execution.
+        // Stack: 10 4 24
+drop    // Stack: 10 4
+// nip drops the second-from-top element 
+nip     // Stack: 4
+```
+
+## Throwing exceptions
+
+Fift uses the words `abort` and `abort"<message>"` for throwing exceptions.
+
+Word `abort` takes the string at the top of the stack and throws an exception with the string as the message. Similarly, `abort"<message>"` throws an exception with message `"<message>"` but only if the integer at the top of the stack is non-zero, which is also consumed. If the integer at the top of the stack is zero, `abort"<message>"` consumes the integer but does not throw an exception.
+
+The Fift interpreter handles exceptions by aborting all execution up to the top level and printing a message with the name of the source file being interpreted, the line number, the currently interpreted word, and the specified error message. The entire stack is cleared in the process.
+
+For instance, word `safe/` below is a safe division that checks if the divisor is zero or not. Executing `5 0 safe/` throws an exception with message `safe/: Division by zero` and clears the stack. But executing `5 2 safe/` produces `2` at the top of the stack, since `5/2 = 2` and the divisor `2` is non-zero.
+
+```fift
+{ dup 0= abort"Division by zero" / } : safe/
+```
+
+Additionally, when the Fift interpreter encounters an unknown word that cannot be parsed as an integer literal, an exception with the message `"-?"` is thrown and the stack is cleared.
