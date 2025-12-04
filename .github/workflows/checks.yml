@@ -1,0 +1,88 @@
+# They only run in direct branches and are not available in forks.
+name: ✅ Checks with autofixes
+
+env:
+  HUSKY: 0
+  NODE_VERSION: 20
+
+on:
+  check_run:
+    types: [requested_action]
+    # NOTE: created? then close?
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-checks
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  checks: write
+
+jobs:
+  format-fix:
+    name: "Fix formatting"
+    runs-on: ubuntu-latest
+    if: |
+      github.event.requested_action.identifier == 'btn_fmt' &&
+      (
+        github.event.pull_request.head.repo.fork == true ||
+        github.event.pull_request.head.repo.full_name != github.repository
+      )
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.check_run.head_sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          corepack enable
+          npm ci
+
+      - name: Get changed MDX and Markdown files
+        id: changed-files
+        uses: tj-actions/changed-files@24d32ffd492484c1d75e0c0b894501ddb9d30d62 # v47
+        with:
+          files: |
+            **.md
+            **.mdx
+          separator: " "
+
+      - name: Apply formatting
+        id: fix-fmt
+        env:
+          ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const files = (process.env.ALL_CHANGED_FILES ?? '')
+              .trim().split(' ').filter(Boolean).filter((it) => it.match(/\.mdx?$/) !== null);
+            if (files.length === 0) {
+              console.log('\nNo such files affected!');
+              process.exit(0);
+            }
+            try {
+              await exec.exec('npm', ['run', 'check:fmt:some', '--', ...files], {
+                silent: true, // >/dev/null 2>&1
+              });
+              console.log('\nNo issues');
+              core.setOutput('changes', 'false');
+            } catch (_) {
+              console.log('\nFound issues, fixing...');
+              await exec.exec('npm', ['run', 'fmt:some', '--', ...files], {
+                silent: true, // >/dev/null 2>&1
+              });
+              core.setOutput('changes', 'true');
+            }
+
+      - name: Commit changes, if any
+        if: steps.fix-fmt.outputs.changes == 'true'
+        uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3 # v7.0.0
+        with:
+          commit_message: "fix: apply automatic changes"
