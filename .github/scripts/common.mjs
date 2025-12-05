@@ -74,6 +74,34 @@ export async function createComment({
   );
 }
 
+export async function createCheckButton({
+  github, // injected by GitHub
+  context, // injected by GitHub
+  exec, // injected by GitHub
+  checkName = 'A button',
+  btnLabel = 'Fix',
+  btnDescr = 'Fix',
+  btnID = 'btn',
+}) {
+  await withRetry(() =>
+    github.rest.checks.create({
+      owner: context.repo.owner,
+      repo: context.repo.repo,
+      head_sha: context.sha,
+      name: checkName,
+      // NOTE: try different statuses,
+      // https://docs.github.com/en/rest/guides/using-the-rest-api-to-interact-with-checks?apiVersion=2022-11-28#about-check-runs
+      status: 'completed',
+      conclusion: 'action_required',
+      actions: [{
+        label: btnLabel,
+        description: btnDescr,
+        identifier: btnID,
+      }],
+    })
+  );
+}
+
 /** @param fn {() => Promise<any>} */
 async function withRetry(fn, maxRetries = 3, baseDelayMs = 1500) {
   let lastError;
