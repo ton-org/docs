@@ -22,19 +22,31 @@ defines a new word `square`, which executes `dup` and `*` when invoked. Typing `
 5 dup *    // Produces 25 at the top of the stack
 ```
 
-It is possible to use the new word inside new word definitions:
+It is possible to use the defined word inside new word definitions:
 
 ```fift
-// **5 raises the integer at the top of the stack to the 5th power
+// **5 raises the integer at the top of the stack to the 5th power.
+// It makes use of word square previously defined.
 { dup square square * } : **5
 3 **5   // Produces 243 at the top of the stack.
+```
+
+This is the trace for `3 **5`:
+
+```fift
+3         // Stack: 3
+// Definition of **5 executes
+dup       // Stack: 3 3
+square    // Stack: 3 9
+square    // Stack: 3 81
+*         // Stack: 243
 ```
 
 If the word indicated after `:` is already defined, it is redefined. However, all existing definitions of other words will continue to use the old definition of the redefined word. For instance, if `square` is redefined after the definition of `**5` above, `**5` will continue to use the original definition of `square`.
 
 ## Constants
 
-A _constant_ is a word that pushes a predefined value when invoked. Constants can defined using the word `constant`. For instance,
+A _constant_ is a word that pushes a predefined value when invoked. Constants can be defined using the word `constant`. For instance,
 
 ```fift
 1000000000 constant Gram
@@ -49,7 +61,7 @@ defines a constant `Gram` equal to `10^9`. In other words, `1000000000` will be 
 Gram 2 *   
 ```
 
-Of course, it is possible to use the result of a computation to initialize the value of a constant:
+It is possible to use the result of a computation to initialize the value of a constant:
 
 ```fift
 // Define constant mGram with the result 
@@ -75,10 +87,10 @@ It is possible to store two values into one "double" constant by using the word 
 355 113 2constant pifrac
 ```
 
-defines a new word `pifrac`, which will push `355` and `113` (in that order) when invoked. The two components of a double constant can be of different types.
+defines a new word `pifrac`, which will push `355` and `113`, in that order, when invoked. The two components of a double constant can be of different types.
 
-If a constant with a fixed name within a block or a colon definition is needed, use `=:` and `2=:`, instead of `constant` and `2constant`.
-The word `=: <identifier>` takes the value at the top of stack, creates constant `<identifier>` and assigns the value to `<identifier>`.
+If a constant with a fixed name within a definition is needed, use `=:` and `2=:`, instead of `constant` and `2constant`.
+The word `=: <identifier>` takes the value at the top of the stack, creates constant `<identifier>` and assigns the value to `<identifier>`.
 Similarly, word `2=: <identifier>` takes the two top-most values in the stack, creates constant `<identifier>` and assigns the values to `<identifier>`.
 
 For instance, the following defines a word `setxy`, which sets constants `x` and `y`:
@@ -105,14 +117,14 @@ y        // Stack: 3 9
 
 The code `7 setxy x y +` has a similar explanation.
 
-To recover the execution-time value of a constant inside a block definition, prefix the constant name with the word `@'`. For instance, using the definition of `setxy` as above, the following code defines a new word `addxy` which accesses the constants `x` and `y` and adds them:
+To recover the execution-time value of a constant inside a definition, prefix the constant name with the word `@'`. For instance, using the definition of `setxy` as above, the following code defines a new word `addxy` which accesses the constants `x` and `y` and adds them:
 
 ```fift
 { @' x @' y + } : addxy
 3 setxy addxy    // Produces 12 at the top of the stack 
 ```
 
-The code `3 setxy addxy` has the same effect as the code `3 setxy x y +`. The main difference between `3 setxy addxy` and `3 setxy x y +` is that in `3 setxy addxy`, constants `x` and `y` are accessed inside a code block definition, which require the use of word `@'` to access them; while in `3 setxy x y +`, the constants are accessed outside a code block definition, which does not require the use of word `@'` to access them.
+The code `3 setxy addxy` has the same effect as the code `3 setxy x y +`. The main difference between `3 setxy addxy` and `3 setxy x y +` is that in `3 setxy addxy`, constants `x` and `y` are accessed inside a code definition, which require the use of word `@'` to access them; while in `3 setxy x y +`, the constants are accessed outside a code definition, which does not require the use of word `@'` to access them.
 
 The drawback of this approach is that `@'` has to look up the current definition of constants `x` and `y` in the dictionary each time `addxy` is executed. [Variables](#variables) provide a more efficient way to achieve similar results.
 
@@ -160,21 +172,20 @@ It is possible to define a special word for creating variables, if they are need
 "test" init-variable y
 ```
 
-Variables have one disadvantage compared to [constants](#constants): accessing the value stored in a variable requires the use of word @. This can be mitigated by defining a "getter" and a "setter" word for a variable, and use these words to write better-looking code:
+Variables have one disadvantage compared to [constants](#constants): accessing the value stored in a variable requires the use of word `@`. This can be mitigated by defining a "getter" and a "setter" word for a variable, and use these words to write better-looking code:
 
 ```fift
 // First, create the box storing the variable contents
 variable x-box
 
-// Define word x so that it is the procedure that 
-// reads the box contents.
-// So, that now, x can be treated as if 
+// Define word x so that it reads the box contents.
+// Now, x can be treated as if 
 // it was the "variable".
-// Instead of writing "x-box @" 
+// In other words, instead of writing "x-box @" 
 // to read the variable contents, simply write "x".
 { x-box @ } : x
 
-// Define a similar procedure for updating variables x.
+// Define a similar procedure for updating variable x.
 { x-box ! } : x!
 
 // Update variable with 5
@@ -201,26 +212,30 @@ dup      // Stack: Box Box
 1        // Stack: Box Box 1
 // Push the word definition for @
 ' @      // Stack: Box Box 1 WordDef-for-@
-// Create an execution token { Box WordDef-for-@ } 
-// that first pushes Box and then calls @.
-// The 1 argument in the stack tells "does" that it should 
-// consume only one argument below 1
+// "does" creates the block/execution token { Box WordDef-for-@ execute } 
+// that first pushes Box and then executes @.
+// The 1 integer in the stack tells "does" that it should 
+// consume only one stack element below 1
 // in the stack.
-does     // Stack: Box { Box WordDef-for-@ }
-// Assign the execution token { Box WordDef-for-@ }
-// to the first string comming after the invocation of variable-get-set
+// So, it only takes one Box immediately below 1 to include 
+// it inside the block/execution token.
+does     // Stack: Box { Box WordDef-for-@ execute }
+// Assign the block/execution token { Box WordDef-for-@ execute }
+// to the first string coming after the invocation of variable-get-set
 create   // Stack: Box
 // Push 1
 1        // Stack: Box 1
 // Push the word definition for !
 ' !      // Stack: Box 1 WordDef-for-!
-// Create an execution token { Box WordDef-for-! } 
+// Create a block/execution token { Box WordDef-for-! execute } 
 // that first pushes Box and then calls !.
-// The 1 argument in the stack tells "does" that it should 
+// The 1 integer in the stack tells "does" that it should 
 // consume only one argument below 1
 // in the stack.
-does     // Stack: { Box WordDef-for-! }
-// Assign the execution token { Box WordDef-for-! }
+// So, it only takes one Box immediately below 1 to include 
+// it inside the block/execution token.
+does     // Stack: { Box WordDef-for-! execute }
+// Assign the block/execution token { Box WordDef-for-! execute }
 // to the second string comming after the invocation of variable-get-set
 create   // Stack:
 ```
@@ -242,7 +257,7 @@ x    // Top of stack has 10
 y    // Top of stack has 5
 ```
 
-For more details on words `create`, `' <word_name>`, `does`, refer to Sections [4.5](/languages/fift/whitepaper#4-5-defining-words-and-dictionary-manipulation), [4.6](/languages/fift/whitepaper#4-6-dictionary-lookup), and [4.7](/languages/fift/whitepaper#4-7-creating-and-manipulating-word-lists) in the Fift whitepaper.
+For more details on blocks/execution tokens and words `' <word_name>` and `execute`, refer to the Blocks Section in the Control Flow page. For more details on words `create`, `' <word_name>`, `does`, refer to Sections [4.5](/languages/fift/whitepaper#4-5-defining-words-and-dictionary-manipulation), [4.6](/languages/fift/whitepaper#4-6-dictionary-lookup), and [4.7](/languages/fift/whitepaper#4-7-creating-and-manipulating-word-lists) in the Fift whitepaper.
 
 As another example of `variable-get-set`, the following implements a simple counter. The example uses auxiliary words `reset-counter` and `incr-counter` to reset the counter variable to `0` and increment the counter by one, respectively.
 
@@ -250,10 +265,10 @@ As another example of `variable-get-set`, the following implements a simple coun
 // Create the getter "counter" and setter "counter!"
 variable-get-set counter counter!
 
-// Resets the counter to 0
+// Reset the counter to 0
 { 0 counter! } : reset-counter
 
-// Increments the counter by one.
+// Increment the counter by one.
 { counter 1 + counter! } : incr-counter
 
 reset-counter      // counter variable has 0 
