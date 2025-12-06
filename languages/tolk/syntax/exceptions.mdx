@@ -1,0 +1,140 @@
+---
+title: "Exceptions, throw, assert"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Tolk allows throwing exceptions and catching them via `try catch`.
+If an exception is not caught, the program terminates with `errCode`.
+This is the standard mechanism for reacting on invalid input.
+
+<Aside
+  type="caution"
+>
+  Unlike most languages, exceptions in TVM (the virtual machine) are just numbers.
+  No class `Error` and exception hierarchy, only error codes.
+</Aside>
+
+## Error codes
+
+A suggested pattern is to introduce a constant for every exception that a contract may produce.
+For better navigation, keep them in a separate file, e.g., `errors.tolk`:
+
+```tolk
+const ERR_LOW_BALANCE = 200
+const ERR_SIGNATURE_MISMATCH = 201
+```
+
+Alternatively, introduce an `enum`:
+
+```tolk
+enum ErrCode {
+    LowBalance = 200,
+    SignatureMismatch,    // implicitly 201
+}
+```
+
+These constants are then used in `throw` and related statements.
+
+<Aside
+  type="tip"
+  title={"Use codes between 64 and 2048"}
+>
+  Lower values are [reserved](/tvm/exit-codes) by TVM.
+  Larger codes are gas-expensive because they require additional assembly instructions.
+</Aside>
+
+## `throw` statement
+
+To throw an exception unconditionally:
+
+```tolk
+throw ERR_CODE;
+```
+
+Non-constant expressions such as `throw someVariable` are supported but not recommended.
+It works, but the compiler can't resolve possible codes and provide a correct ABI for external usage.
+
+An exception may additionally carry an **argument**:
+
+```tolk
+throw (ERR_CODE, errArg);
+```
+
+The argument will then be available inside `catch`. It must be a TVM primitive (a single-slot value).
+
+## `assert` statement
+
+A useful shorthand to "throw if an expectation is not satisfied". Commonly used when parsing user input:
+
+```tolk
+assert (msg.seqno == storage.seqno) throw E_INVALID_SEQNO;
+assert (msg.validUntil > blockchain.now()) throw E_EXPIRED;
+```
+
+The long form `assert (condition) throw ERR_CODE` is preferred.
+A short form `assert (condition, ERR_CODE)` exists but is not recommended.
+
+A condition must be a boolean or an integer (will be true if not equals 0). This works the same way as:
+
+```tolk
+if (!condition) {
+    throw ERR_CODE;
+}
+```
+
+## Implicit throws by TVM internals
+
+While a contract is running, it may throw other runtime exceptions. For example:
+
+- `slice.loadInt(8)`, but a slice is empty
+- `builder.storeRef(cell)`, but a builder already has 4 refs
+- `tuple.push(value)`, but a tuple already has 255 elements
+- an "out of gas" exception may occur at any moment
+
+## What happens if execution interrupts
+
+As seen above, exceptions might occur literally everywhere.
+For example, an incoming message is parsed with `Msg.fromSlice()`, but an input is corrupted, and data cannot be successfully deserialized.
+Or some `assert` statement triggers a user-scope exception.
+What happens next?
+
+Then execution of the current request (_compute phase_) interrupts.
+Even if `createMessage` was called, a message won't be sent, because actual sending is done after successful execution, in the _action phase_.
+Instead, a _bounce phase_ starts: all changes are rolled back, and typically the current request is **bounced** back to the caller.
+The caller may handle this bounce in a custom manner.
+
+Of course, after bouncing the current message, the contract remains on-chain and is ready to serve the next request.
+
+Read about [execution phases](/foundations/phases).
+
+## `try catch` statement
+
+The `catch` statement allows reacting to runtime errors. The syntax resembles other languages:
+
+```tolk
+try {
+    // ...
+} catch (errCode) {
+    // errCode is `int`
+}
+```
+
+Use a short form `catch { ... }` if `errCode` is not needed.
+A long form `catch (errCode, arg)` provides data from `throw (errCode, arg)`.
+For just `throw errCode`, the argument is `null`.
+
+```tolk
+try {
+    throw (ERR_LOW_BALANCE, 555);
+} catch (errCode, arg) {
+    val data = arg as int;    // 555
+}
+```
+
+<Aside
+  type="danger"
+>
+  Any error inside a `try` block **reverts** all changes made within it (that's how TVM works).
+  Particularly, local variables and control registers are restored to their values before entering `try`.
+</Aside>
