@@ -1,0 +1,160 @@
+---
+title: "Nullable types, null safety"
+sidebarTitle: "Nullable types"
+---
+
+Tolk supports nullable types `T?`, a shorthand for `T | null`.
+Any type can be made nullable: primitive types, structures, and other composites.
+`null` cannot be assigned to a non-nullable type.
+
+## Null safety
+
+The compiler enforces null safety: nullable values cannot be accessed without an explicit null check.
+
+```tolk
+var value = x > 0 ? 1 : null;  // int?
+
+value + 5;               // error
+b.storeInt(value);       // error
+```
+
+A check for `value != null` is required before:
+
+```tolk
+if (value != null) {     // value is `int` inside
+    value + 5;           // ok
+    b.storeInt(value);   // ok
+}
+```
+
+When a variable has no explicit type, its type is inferred from the initial assignment and does not change.
+Therefore, a variable must be declared explicitly as nullable when required:
+
+```tolk
+var i = 0;
+i = null;       // error, can't assign `null` to `int`
+i = maybeInt;   // error, can't assign `int?` to `int`
+
+// correct form:
+var i: int? = 0;
+i = null;       // ok
+```
+
+Similarly, when the initial value is `null`, its type must be specified:
+
+```tolk
+var i: int? = null;
+// or
+var i = null as int?;
+```
+
+## Smart casts
+
+After a null check, the compiler automatically narrows the type.
+This feature is known as "smart casts". It exists in TypeScript and Kotlin, and makes working with nullable types more natural.
+Examples:
+
+```tolk
+if (lastCell != null) {
+    // here lastCell is `cell`, not `cell?`
+}
+```
+
+```tolk
+if (lastCell == null || prevCell == null) {
+    return;
+}
+// both lastCell and prevCell are `cell`
+```
+
+```tolk
+var x: int? = ...;
+if (x == null) {
+    x = random();
+}
+// here x is `int`
+```
+
+```tolk
+while (lastCell != null) {
+    lastCell = lastCell.beginParse().loadMaybeRef();
+}
+// here lastCell is definitely null
+```
+
+Smart casts apply to local variables, structure fields, and tensor/tuple indices.
+
+```tolk
+struct HasOpt {
+    optionalId: int?
+}
+
+fun demo(obj: HasOpt) {
+    if (obj.optionalId != null) {
+        // obj.optionalId is `int` here
+    }
+}
+```
+
+Smart casts also work for initial values.
+Even if a variable declared as `int?` but initialized with a number, it's a safe non-null integer:
+
+```tolk
+var idx: int? = -1;
+// idx is `int`
+```
+
+When a variable is definitely null, its type becomes `null`, meaning it can be safely passed to any nullable type:
+
+```tolk
+fun takeOptSlice(s: slice?) {}
+
+fun demo() {
+    var i: int? = getOptInt();
+    if (i == null) {
+        takeOptSlice(i);  // ok: pass `null` to `slice|null`
+    }
+}
+```
+
+## Operator `!` (non-null assertion)
+
+The `!` operator in Tolk is similar to `!` in TypeScript and `!!` in Kotlin.
+It allows bypassing the compiler's check:
+
+```tolk
+fun doSmth(c: cell) {}
+
+fun analyzeStorage(nCells: int, lastCell: cell?) {
+    if (nCells > 0) {       // then lastCell is 100% not null
+        doSmth(lastCell!);  // use ! for this fact
+    }
+}
+```
+
+Sometimes "a developer knows better than the compiler". For example:
+
+```tolk
+// this key 100% exists, so force `cell` instead of `cell?`
+val mainValidators = blockchain.configParam(16)!;
+```
+
+Unlike local variables, global variables cannot be smart-cast. The `!` operator is the only way to drop nullability from globals:
+
+```tolk
+global gLastCell: cell?
+
+fun demo() {
+    // we are sure that a global is set, convert to `cell`
+    doSmth(gLastCell!);
+}
+```
+
+Therefore, `!` is useful when non-nullability is guaranteed by conditions outside the code itself.
+
+## Stack layout and serialization
+
+Atomics like `int?` or `cell?` / etc. are backed by either TVM `NULL` or a value. Non-atomics are tagged unions.
+Serialized as: null -> '0', otherwise -> '1'+T, but `address?` is serialized specially.
+
+For details, follow [TVM representation](/languages/tolk/types/overall-tvm-stack) and [Serialization](/languages/tolk/types/overall-serialization).
