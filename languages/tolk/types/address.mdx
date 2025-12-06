@@ -1,0 +1,132 @@
+---
+title: "Address"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Every smart contract has an address that is used for all on-chain interactions.
+When a client sends a message to a contract, the message is effectively sent to its address.
+
+Tolk provides the following types for working with addresses:
+
+- `address` — a standard address; also called "internal address"
+- `address?` (nullable) — a pattern to say "optional address"; also called "internal or none", sometimes "maybe address"
+- `any_address` — allows storing external addresses as well (for emitting logs to the off-chain, for example)
+
+## Address = workchain + hash
+
+A standard (internal) `address` consists of:
+
+- workchain (int8) — currently masterchain (-1) or basechain (0)
+- hash (aka "account ID", uint256) — 256 bits
+
+`address` has methods to retrieve these properties:
+
+```tolk
+fun checkAddress(addr: address, expectHash: uint256) {
+    val (wc, hash) = addr.getWorkchainAndHash();
+    assert (wc == BASECHAIN) throw 123;
+    assert (hash == expectHash) throw 456;
+}
+```
+
+At the binary level, `address` occupies 267 bits: 0b100 (standard address no anycast) + workchain + hash.
+For a detailed description, see [Addresses overview in TON](/foundations/addresses/overview).
+
+During deserialization (for example, when a message contains an `address` field), the value is automatically validated.
+If parsing succeeds, the resulting address is guaranteed to be valid.
+
+## Operator `==` works for addresses
+
+Compare addresses using `==` or `!=`. Internally, it is represented as a binary slice without references, that's why `==` just tests for bits equality.
+
+```tolk
+struct Storage {
+    owner: address
+    // ...
+}
+
+fun onInternalMessage(in: InMessage) {
+    var st = Storage.load();
+    // process a message only from owner
+    if (in.senderAddress == st.owner) {
+        // ...
+    }
+}
+```
+
+## Embedding a const address into a contract
+
+A constant address can be embedded using the `address()` function:
+
+```tolk
+const REFUND_ADDR = address("EQCRDM9h4k3UJdOePPuyX40mCgA4vxge5Dc5vjBR8djbEKC5")
+```
+
+## Nullable address as "optional"
+
+A nullable address is often used to represent a potentially absent value. Examples:
+
+- `adminAddress` in a storage, but it may be unset
+- `sendExcessesTo` in a message — if exists, send money there; if not, keep on contract's balance
+
+**Such a missing value is called "none address" in TON**. So, `address?` means "internal or none".
+
+From the type system perspective, it either holds an address or `null`. So, it must be checked for `null` before usage.
+
+```tolk
+fun send(adminAddress: address?) {  // may have no admin
+    if (adminAddress == null) {
+        return;
+    }
+    // send a message to adminAddress, it's not null
+}
+```
+
+<Aside
+  type="caution"
+>
+  When `null`, it is serialized as '00' — two zero bits, "addr\_none". So, `address?` is 2/267 bits.
+  It aligns with client-side code. For example, `storeMaybeAddress` in TypeScript emits the same binary format.
+</Aside>
+
+## `any_address` — internal/external/none
+
+TON also defines external addresses, although they are rarely used. To represent "any address valid for TON", use `any_address`.
+
+```tolk
+struct CrossBridgeMessage {
+    destination: any_address
+}
+```
+
+A compatible "none" address can be created using `createAddressNone()`.
+
+## Casting to a `slice` and vice versa
+
+To manually operate on the bits of an address, cast it to a slice:
+
+```tolk
+val s = someAddr as slice;
+s.loadUint(3);     // 0b100 — internal address no anycast
+s.loadInt(8);      // workchain
+```
+
+Conversely, since an address is represented as a slice at the TVM level, this cast is permitted.
+For example, after constructing a builder with its binary representation:
+
+```tolk
+var b = beginCell()
+       .storeUint(0b01)   // addr_extern
+       ...;
+var s = b.endCell().beginParse();
+return s as any_address;
+```
+
+Such a transformation is **unsafe**, because no validation is performed at runtime. It may lead to an invalid address, and further `getWorkchain()` or serialization will fail.
+
+## Stack layout and serialization
+
+An address is backed by TVM `SLICE`, just binary data. "Internal" is 267 bits: 0b100 + workchain + hash. "None" is '00' (two zero bits).
+
+For details, follow [TVM representation](/languages/tolk/types/overall-tvm-stack) and [Serialization](/languages/tolk/types/overall-serialization).
