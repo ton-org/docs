@@ -4,19 +4,18 @@ title: "Transaction fees"
 
 import { Aside } from '/snippets/aside.jsx';
 
+Fees in TON align with the [execution phases](/foundations/phases) of a transaction:
+- Storage fees are charged in the [storage phase](/foundations/phases#storage-phase).
+- Compute fees are charged in the [compute phase](/foundations/phases#compute-phase).
+- Forward and action fees are charged in the [action](/foundations/phases#action-phase) and [bounce phases](/foundations/phases#bounce-phase).
+- Import fees apply at the start of smart contract execution, not a specific phase.
 
-Fees in the TON blockchain are strongly connected with the [execution phases](/foundations/phases) of a transaction. More specifically,
-- Storage fees are charged in the [storage phase](/foundations/phases#storage-phase)
-- Compute fees are charged in the [compute phase](/foundations/phases#compute-phase)
-- Forward and action fees are charged in the [action](/foundations/phases#action-phase) and [bounce phase](/foundations/phases#bounce-phase)
-- Import fees are not connected to a particular phase, they are charged in the beginning of smart contract execution.
+The total transaction fee is the sum of these components.
 
-The sum of all fees is the total transaction fee.
-
-The fee level can be changed through a vote by validators. More specifically,
-- The level of storage fees is determined in [the 18th config parameter](/foundations/config#param-18:-storage-prices)
-- The level of compute fees is determined in [the 20th and 21st config parameters](/foundations/config#param-20-and-21:-gas-prices)
-- The level of forward, import and action fees is determined in [the 24th and 25th config parameters](/foundations/config#param-24-and-25:-message-price)
+Validators set fee levels through voting:
+- Storage fees are set in [config parameter 18](/foundations/config#param-18:-storage-prices).
+- Compute fees are set in [config parameters 20 and 21](/foundations/config#param-20-and-21:-gas-prices).
+- Forward, import, and action fees are set in [config parameters 24 and 25](/foundations/config#param-24-and-25:-message-price).
 
 ## Storage fees
 
@@ -26,7 +25,7 @@ basic_price = (account.bits * bit_price +
 storage_fee = ceil(basic_price * time_delta / 2^16)
 ```
 
-When calculating storage fees, the `account.bits` and `account.cells` are calculated from the `AccountStorage` structure, excluding `ExtraCurrencyCollection`, stored in the `other` field. The content of `other` field is replaced with one bit equal to `0`, which means empty `HashmapE`.
+The storage fee uses `account.bits` and `account.cells` from `AccountStorage`, excluding `ExtraCurrencyCollection` stored in the `other` field. The `other` field is replaced with a single `0` bit that represents an empty `HashmapE`.
 
 ```tl-b
 extra_currencies$_ dict:(HashmapE 32 (VarUInteger 32))
@@ -49,11 +48,11 @@ account_storage$_ last_trans_lt:uint64
 
 ## Compute fees
 
-All computation is measured in gas units. Typically, TVM operation has a fixed gas cost, but that is [not always the case](/tvm/gas). The gas price is defined by network configuration and can not be set by users.
+All computation is measured in gas units. A TVM operation typically has a fixed gas cost, but that is [not always the case](/tvm/gas). Network configuration defines gas prices; users cannot override them.
 
 ### Flat gas limit
 
-Contract invocation can't spend less, than `flat_gas_limit` gas units. For using `flat_gas_limit` gas contract pays `flat_gas_price` TONs. If the contract spends `gasUsed` gas, then it pays:
+A contract invocation pays for at least `flat_gas_limit` gas units. Spending up to that limit costs `flat_gas_price` TON. If the contract spends `gasUsed` gas units, the fee is:
 
 ```ts
 const gasUsed = 50_000n;
@@ -77,18 +76,18 @@ bodyFwdFee = priceForCells * (msgSizeInCells - 1)
 fwdFee = lumpPrice + ceil(bodyFwdFee / 2^16)
 ```
 
-where
+where:
 
 - `lumpPrice` is the fixed value [from config](/foundations/config#param-24-and-25%3A-message-price) paid once for the message.
 - `msgSizeInCells` is the number of cells in the message.
 - `msgSizeInBits` is the number of bits in all the cells of the message.
 - `bitsInRoot` is the number of bits in the root cell of the message.
 
-The idea behind this formula is that root cell of the message is not included in the message, as is mainly consists of a message headers. The root cell is paid by the `lumpPrice`.
+The formula excludes the message root cell because it mainly contains headers. `lumpPrice` covers that root cell.
 
 ### Action fee
 
-Action fee is the part of the `fwdFee` that is granted to the validator of the message's source [shard](/foundations/shards#blockchain-sharding). As the opposite, `fwdFee - actionFee` toncoins are granted to the validator of the message's destination shard.
+Action fee is the portion of `fwdFee` granted to the validator of the message's source [shard](/foundations/shards#blockchain-sharding). The remaining `fwdFee - actionFee` amount goes to the validator of the destination shard.
 
 Action fee exists only for [internal messages](/foundations/messages/internal#internal-messages).
 ```cpp
@@ -105,7 +104,7 @@ action_fine = fine_per_cell * min(max_cells, cells_in_msg);
 
 ## Import fee
 
-Import fee is the same as forward fee but for inbound external messages. The root cell and it's contents is covered by the `lump_price` in the same way as for internal messages.
+Import fee mirrors forward fee for inbound external messages. The root cell and its contents are covered by `lumpPrice` in the same way as internal messages.
 
 ## Helper functions (full code)
 
