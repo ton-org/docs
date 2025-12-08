@@ -1,0 +1,367 @@
+---
+title: "Maps (key-value)"
+sidebarTitle: "Maps"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Tolk supports `map<K, V>` — a high‑level type that encapsulates TVM dictionaries:
+
+- Any serializable keys and values.
+- Natural syntax for iterating forwards, backwards, or starting from a specified key.
+- Zero overhead compared to low-level approach.
+
+## Create an empty map
+
+```tolk
+var m: map<int8, int32> = createEmptyMap();
+// or
+var m = createEmptyMap<int8, int32>();
+```
+
+A map is a dedicated type, it may be used in parameters, fields, etc.:
+
+```tolk
+struct Demo {
+    m: map<int64, Point>
+}
+
+fun create(): Demo {
+    return {
+        m: createEmptyMap()
+    }
+}
+```
+
+## Add values to a map
+
+Use `m.set(k, v)` and other methods suggested by an IDE after a dot (a full list is available below):
+
+```tolk
+var m: map<int8, int32> = createEmptyMap();
+m.set(1, 10);
+m.addIfNotExists(2, -20);
+m.replaceIfExists(2, 20);
+m.delete(2);   // now: [ 1 => 10 ]
+
+m.exists(1);   // true
+m.exists(2);   // false
+```
+
+## Get a value by key
+
+`m.get(key)` returns `isFound + loadValue()`:
+
+```tolk
+var r = m.get(1);
+if (r.isFound) {
+    val v = r.loadValue();   // 10
+}
+```
+
+Note: check **not `r == null`, but `r.isFound`**. In other words, `map.get(key)` returns not `V?`, but a special result.
+
+Also use `m.mustGet(key)` that returns `V` and throws if the key is missing:
+
+```tolk
+m.mustGet(1);       // 10
+m.mustGet(100500);  // runtime error
+```
+
+## Iterate forward and backward
+
+There is no dedicated `foreach` syntax. Iteration follows this pattern:
+
+- define the starting key: `r = m.findFirst()` or `r = m.findLast()`
+- while `r.isFound`:
+  - use `r.getKey()` and `r.loadValue()`
+  - move the cursor: `r = m.iterateNext(r)` or `r = m.iteratePrev(r)`
+
+Example: iterate all keys forward
+
+```tolk
+// suppose there is a map [ 1 => 10, 2 => 20, 3 => 30 ]
+// this function will print "1 10 2 20 3 30"
+fun iterateAndPrint<K, V>(m: map<K, V>) {
+    var r = m.findFirst();
+    while (r.isFound) {
+        debug.print(r.getKey());
+        debug.print(r.loadValue());
+        r = m.iterateNext(r);
+    }
+}
+```
+
+Example: iterate backwards from keys ≤ 2
+
+```tolk
+// suppose `m` is `[ int => address ]` and already populated
+// for every key<=2, print addr.workchain
+fun printWorkchainsBackwards(m: map<int32, address>) {
+    var r = m.findKeyLessOrEqual(2);
+    while (r.isFound) {
+        val a = r.loadValue();   // it's `address`
+        debug.print(a.getWorkchain());
+        r = m.iteratePrev(r);
+    }
+}
+```
+
+## Check if a map is empty
+
+```tolk
+m.isEmpty()    // not `m == null`
+```
+
+<Aside
+  type="caution"
+  title={"For experienced readers"}
+>
+  <p>At the TVM level, an empty map is stored as TVM `NULL`.
+  But since `map` is a dedicated type, it must be checked with `isEmpty()`.</p>
+  <p>Nullable maps <code>{'var m: map<' + '...' + '>?'}</code> are valid,
+  then `m` may be null or may hold either an empty map or a non‑empty map.</p>
+</Aside>
+
+## Allowed types for K and V
+
+All the following key and value types are valid:
+
+```tolk
+map<int32, Point?>
+map<address, address>
+map<Point, map<int3, bool>>
+map<uint256, Cell<SnakeData>>
+map<bits18, slice>
+```
+
+Some types are not allowed. General rules:
+
+- Keys must be fixed-width and contain zero references
+  - Valid: `int32`, `address`, `bits256`, `Point`
+  - Invalid: `int`, `coins`, `cell`
+- Values must be serializable
+  - Valid: `coins`, `AnyStruct`, `Cell<AnyStruct>`
+  - Invalid: `int`, `builder`
+
+In practice, keys are most commonly `intN`, `uintN`, or `address`. Values can be any serializable type.
+
+## Available methods for maps
+
+An IDE suggests available methods after a dot. Most methods are self-explanatory.
+
+- `createEmptyMap<K, V>(): map<K, V>`
+
+Returns an empty typed map. Equivalent to `PUSHNULL` since TVM `NULL` represents an empty map.
+
+- `createMapFromLowLevelDict<K, V>(d: dict): map<K, V>`
+
+Converts a low-level TVM dictionary to a typed map. Accepts an optional cell and returns the same optional cell.
+Mismatched key or value types result in failures when calling `map.get` or related methods.
+
+- `m.toLowLevelDict(): dict`
+
+Converts a high-level map to a low-level TVM dictionary. Returns the same optional cell.
+
+- `m.isEmpty(): bool`
+
+Checks whether a map is empty. Use `m.isEmpty()` instead of `m == null`.
+
+- `m.exists(key: K): bool`
+
+Checks whether a key exists in a map.
+
+- `m.get(key: K): MapLookupResult<V>`
+
+Gets an element by key. Returns `isFound = false` if key does not exist.
+
+- `m.mustGet(key: K, throwIfNotFound: int = 9): V`
+
+Gets an element by key and throws if it does not exist.
+
+- `m.set(key: K, value: V): self`
+
+Sets an element by key. Since it returns `self`, calls may be chained.
+
+- `m.setAndGetPrevious(key: K, value: V): MapLookupResult<V>`
+
+Sets an element and returns the previous element. If no previous element, `isFound = false`.
+
+- `m.replaceIfExists(key: K, value: V): bool`
+
+Sets an element only if the key exists. Returns whether an element was replaced.
+
+- `m.replaceAndGetPrevious(key: K, value: V): MapLookupResult<V>`
+
+Sets an element only if the key exists and returns the previous element.
+
+- `m.addIfNotExists(key: K, value: V): bool`
+
+Sets an element only if the key does not exist. Returns true if added.
+
+- `m.addOrGetExisting(key: K, value: V): MapLookupResult<V>`
+
+Sets an element only if the key does not exist. If exists, returns an old value.
+
+- `m.delete(key: K): bool`
+
+Deletes an element by key. Returns true if deleted.
+
+- `m.deleteAndGetDeleted(key: K): MapLookupResult<V>`
+
+Deletes an element by key and returns the deleted element. If not found, `isFound = false`.
+
+- `m.findFirst(): MapEntry<K, V>`
+- `m.findLast(): MapEntry<K, V>`
+
+Finds the first (minimal) or last (maximal) element.
+For integer keys, returns minimal (maximal) integer.
+For addresses or complex keys (represented as slices), returns lexicographically smallest (largest) key.
+Returns `isFound = false` when the map is empty.
+
+- `m.findKeyGreater(pivotKey: K): MapEntry<K, V>`
+- `m.findKeyGreaterOrEqual(pivotKey: K): MapEntry<K, V>`
+- `m.findKeyLess(pivotKey: K): MapEntry<K, V>`
+- `m.findKeyLessOrEqual(pivotKey: K): MapEntry<K, V>`
+
+Finds an element with key compared to pivotKey.
+
+- `m.iterateNext(current: MapEntry<K, V>): MapEntry<K, V>`
+- `m.iteratePrev(current: MapEntry<K, V>): MapEntry<K, V>`
+
+Iterates over a map in ascending (descending) order.
+
+## Augmented hashmaps and prefix dictionaries
+
+These structures are rarely used and are not part of the Tolk type system.
+
+- Prefix dictionaries: `import @stdlib/tvm-dicts` and use assembly functions.
+- Augmented hashmaps and Merkle proofs: implement interaction manually.
+
+## Keys are auto-serialized
+
+At the TVM level, keys can be numbers or slices. Complex keys, such as `Point`, are automatically serialized and deserialized by the compiler.
+
+```tolk
+struct Point {
+    x: int8
+    y: int8
+}
+
+fun demo(m: map<Point, V>) {
+    // a key is automatically packed to a 16-bit slice
+    m.set({x: 10, y: 20}, 123);
+    // and unpacked back to `Point`
+    return m.findFirst().key;
+}
+```
+
+If a key is a struct with a single intN field, it behaves like a number.
+
+```tolk
+struct UserId {
+    v: int32
+}
+
+struct Demo {
+    // equal to K=int32 without extra serialization
+    m: map<UserId, V>
+}
+```
+
+## How to emulate `Set<T>` with maps
+
+Use an "empty tensor" as a type for `V`:
+
+```tolk
+type Set<T> = map<T, ()>
+```
+
+It will work, a bit noisy.
+Lots of methods for maps are just inapplicable to sets, so its "public interface" is wrong.
+Sets have a much simpler API, literally 4 functions.
+It's better to create a simple wrapper:
+
+```tolk
+struct Set<T> {
+    private m: map<T, ()>
+}
+
+fun Set<T>.add(self, value: T) { /* ... */ }
+// etc.
+```
+
+## Low-level: why "isFound" but not "optional value"?
+
+There are two reasons for this design:
+
+- Gas consumption (zero overhead)
+- Nullable values can be supported, like `map<int32, address?>` or `map<K, Point?>`. Returning `V?`, makes it impossible to distinguish between "key exists but value is null" and "key does not exist".
+
+<Aside
+  type="caution"
+>
+  Low-level content below, not required for using maps
+</Aside>
+
+TVM dictionaries store binary data. Having a `map<K, int32>` and doing `m.set(k, 10)`, this "10" is actually 0x0000000A (automatically packed by the compiler).
+All TVM instructions for reading return slices, so at some point, those bits should be decoded back to "10".
+
+TVM instructions put two values on a stack: `(slice -1)` or `(null 0)`. If a choice is to return `V?`, the compiler needs to do something like
+
+```ansi
+IF stack[0] == -1:
+    decode stack[1] to V
+    transform V to V?
+ELSE:
+    drop stack[1]
+    transform null to V?
+```
+
+Then, at usage, it's compared null:
+
+```tolk
+val v = m.get(k);   // internally, IF ELSE: for decoding
+if (v != null) {    // one more IF: for checking
+    ...
+}
+```
+
+So, it results in two runtime checks and three TVM continuations.
+
+That's why instead of `V?`, a special struct is returned:
+
+```tolk
+fun map<K, V>.get(self, key: K): MapLookupResult<V>;
+
+struct MapLookupResult<TValue> {
+    private readonly rawSlice: slice?
+    isFound: bool
+}
+
+fun MapLookupResult<TValue>.loadValue(self): TValue {
+    return TValue.fromSlice(self.rawSlice!)
+}
+```
+
+This struct directly maps onto the TVM stack: `(slice -1)` or `(null 0)`.
+The condition `if (r.isFound)` naturally checks the top element (automatically popped).
+Followed by auto-deserialization at `r.loadValue()` when `rawSlice` is left on the top.
+
+Moreover, some other functions return the same struct. For example, `m.setAndGetPrevious`:
+
+```tolk
+val prev = m.setAndGetPrevious(1, 100500);
+// NOT `if (prev != null)`, but
+if (prev.isFound) {
+   prev.loadValue()   // 10
+}
+```
+
+Overall, this provides zero overhead compared to plain dictionaries.
+
+## Stack layout and serialization
+
+An empty map is backed by TVM `NULL`, serialized as '0'. A non-empty map is TVM `CELL`, serialized as '1'+ref.
+
+For details, follow [TVM representation](/languages/tolk/types/overall-tvm-stack) and [Serialization](/languages/tolk/types/overall-serialization).
