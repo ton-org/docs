@@ -41,9 +41,11 @@ async function getBalance(address: string): Promise<bigint | undefined> {
 }
 ```
 
-Since the kit helps to manage initialized TON wallets, all outgoing transfers are controlled and will not happen on their own.
+The most practical use of one-off balance checks is right before approving a transaction request. At this point, the actual wallet contract balance usually is not less than the checked amount, though it might be higher if new funds arrived right after the check.
 
-Therefore, the most practical use of one-off balance checks is right before approving a transaction request. At this point, the actual wallet contract balance cannot be less than the checked amount, though it might be higher if new funds arrived right after the check.
+<Aside>
+  Despite this check, the transaction may still fail due to insufficient gas if the wallet contract is managed by another wallet service or outside WalletKit. However, in that case, the message will not be sent, and the funds will either remain in the wallet contract or revert to it immediately.
+</Aside>
 
 ```ts title="TypeScript"
 // An enumeration of various common error codes
@@ -240,15 +242,28 @@ kit.onTransactionRequest(async (event) => {
 function formatTransfers(
   transfers: Array<{ amount: bigint; asset: string }>,
 ): string {
+  const formatNano = (value: bigint, decimals: number = 9): string => {
+    const isNegative = value < 0n;
+    const str = (isNegative ? -value : value)
+      .toString()
+      .padStart(decimals + 1, '0');
+
+    const intPart = str.slice(0, -decimals) || '0';
+    const fracPart = str.slice(-decimals).replace(/0+$/, '');
+
+    const formatted = fracPart ? `${intPart}.${fracPart}` : intPart;
+    return `${isNegative ? '-' : ''}${formatted}`;
+  };
+
   return transfers
-    .map((t) => `${Number(t.amount) / 1e9} ${t.asset}`)
+    .map((t) => `${formatNano(t.amount)} ${t.asset}`)
     .join(', ');
 }
 ```
 
 ### Confirm transaction delivery
 
-TON achieves transaction [finality](https://en.wikipedia.org/wiki/Blockchain#Finality) after a single masterchain block confirmation, where new blocks are produced approximately every 5 seconds. Once a transaction appears in a masterchain block, it becomes irreversible.
+TON achieves transaction [finality](https://en.wikipedia.org/wiki/Blockchain#Finality) after a single masterchain block confirmation, where new blocks are produced approximately every 3 seconds. Once a transaction appears in a masterchain block, it becomes irreversible.
 
 Therefore, to reliably confirm the transaction delivery and status, one needs to check whether a transaction has achieved masterchain finality using the selected API client.
 
