@@ -20,7 +20,7 @@ The fee level can be changed through a vote by validators. More specifically,
 
 ## Storage fees
 
-```cpp title="FORMULAS"
+```cpp
 basic_price = (account.bits * bit_price +
               account.cells * cell_price)
 storage_fee = ceil(basic_price * time_delta / 2^16)
@@ -43,6 +43,275 @@ account_storage$_ last_trans_lt:uint64
   type="note"
   title="Deduplication"
 >
-  The system counts only unique hash cells for storage and forward fees. For example, it counts three identical hash cells as one. This mechanism deduplicates data by storing the content of multiple equivalent sub-cells only once, even if they are referenced across different branches.
+  Storage and forward fees treat identical subtrees referenced in multiple branches as one cell. Reused subtrees share a single stored copy and do not accrue additional charges.
 </Aside>
 
+
+## Compute fees
+
+All computation is measured in gas units. Typically, TVM operation has a fixed gas cost, but that is [not always the case](/tvm/gas). The gas price is defined by network configuration and can not be set by users.
+
+### Flat gas limit
+
+Contract invocation can't spend less, than `flat_gas_limit` gas units. For using `flat_gas_limit` gas contract pays `flat_gas_price` TONs. If the contract spends `gasUsed` gas, then it pays:
+
+```ts
+const gasUsed = 50_000n;
+// 0 = basechain, -1 = masterchain
+const prices = getGasPrices(configCell, 0);
+const gasFee =
+    gasUsed <= prices.flat_gas_limit
+    ? prices.flat_gas_price
+    : prices.flat_gas_price +
+    (prices.gas_price * (gasUsed - prices.flat_gas_limit)) / 65536n;
+```
+
+## Forward fee
+
+Forward fee is calculated with this formula:
+
+```
+bodyFwdFee = priceForCells * (msgSizeInCells - 1)
+           + priceForBits * (msgSizeInBits - bitsInRoot)
+
+fwdFee = lumpPrice + ceil(bodyFwdFee / 2^16)
+```
+
+where
+
+- `lumpPrice` is the fixed value [from config](/foundations/config#param-24-and-25%3A-message-price) paid once for the message.
+- `msgSizeInCells` is the number of cells in the message.
+- `msgSizeInBits` is the number of bits in all the cells of the message.
+- `bitsInRoot` is the number of bits in the root cell of the message.
+
+The idea behind this formula is that root cell of the message is not included in the message, as is mainly consists of a message headers. The root cell is paid by the `lumpPrice`.
+
+### Action fee
+
+Action fee is the part of the `fwdFee` that is granted to the validator of the message's source [shard](/foundations/shards#blockchain-sharding). As the opposite, `fwdFee - actionFee` toncoins are granted to the validator of the message's destination shard.
+
+Action fee exists only for [internal messages](/foundations/messages/internal#internal-messages).
+```cpp
+action_fee = floor(fwd_fee * first_frac / 2^16)
+```
+
+Starting with Global Version 4, a failed [SENDMSG action](/foundations/actions/send#send-message) incurs a penalty proportional to the attempted message size. It is calculated as:
+
+```cpp
+fine_per_cell = floor((cell_price >> 16) / 4)
+max_cells = floor(remaining_balance / fine_per_cell)
+action_fine = fine_per_cell * min(max_cells, cells_in_msg);
+```
+
+## Import fee
+
+Import fee is the same as forward fee but for inbound external messages. The root cell and it's contents is covered by the `lump_price` in the same way as for internal messages.
+
+## Helper functions (full code)
+
+```ts expandable
+import { Cell, Slice, beginCell, Dictionary, Message, DictionaryValue } from '@ton/core';
+
+export type GasPrices = {
+	flat_gas_limit: bigint,
+	flat_gas_price: bigint,
+	gas_price: bigint
+};
+
+export type StorageValue = {
+    utime_since: number,
+    bit_price_ps: bigint,
+    cell_price_ps: bigint,
+    mc_bit_price_ps: bigint,
+    mc_cell_price_ps: bigint
+};
+
+export class StorageStats {
+    bits: bigint;
+    cells: bigint;
+
+    constructor(bits?: number | bigint, cells?: number | bigint) {
+        this.bits  = bits  !== undefined ? BigInt(bits)  : 0n;
+        this.cells = cells !== undefined ? BigInt(cells) : 0n;
+    }
+    add(...stats: StorageStats[]) {
+        let cells = this.cells, bits = this.bits;
+        for (let stat of stats) {
+            bits  += stat.bits;
+            cells += stat.cells;
+        }
+        return new StorageStats(bits, cells);
+    }
+    addBits(bits: number | bigint) {
+        return new StorageStats(this.bits + BigInt(bits), this.cells);
+    }
+    addCells(cells: number | bigint) {
+        return new StorageStats(this.bits, this.cells + BigInt(cells));
+    }
+}
+
+function shr16ceil(src: bigint) {
+    const rem = src % 65536n;
+    let res = src / 65536n;
+    if (rem !== 0n) res += 1n;
+    return res;
+}
+
+export function collectCellStats(cell: Cell, visited: Array<string>, skipRoot: boolean = false): StorageStats {
+    let bits  = skipRoot ? 0n : BigInt(cell.bits.length);
+    let cells = skipRoot ? 0n : 1n;
+    const hash = cell.hash().toString();
+    if (visited.includes(hash)) {
+        return new StorageStats();
+    }
+    visited.push(hash);
+    for (const ref of cell.refs) {
+        const r = collectCellStats(ref, visited);
+        cells += r.cells;
+        bits += r.bits;
+    }
+    return new StorageStats(bits, cells);
+}
+
+export function getGasPrices(configRaw: Cell, workchain: 0 | -1): GasPrices {
+    const config = configRaw.beginParse().loadDictDirect(Dictionary.Keys.Int(32), Dictionary.Values.Cell());
+    const ds = config.get(21 + workchain)!.beginParse();
+    if (ds.loadUint(8) !== 0xd1) throw new Error('Invalid flat gas prices tag');
+    const flat_gas_limit = ds.loadUintBig(64);
+    const flat_gas_price = ds.loadUintBig(64);
+    if (ds.loadUint(8) !== 0xde) throw new Error('Invalid gas prices tag');
+    return { flat_gas_limit, flat_gas_price, gas_price: ds.preloadUintBig(64) };
+}
+
+export function computeGasFee(prices: GasPrices, gas: bigint): bigint {
+    if (gas <= prices.flat_gas_limit) return prices.flat_gas_price;
+    return prices.flat_gas_price + (prices.gas_price * (gas - prices.flat_gas_limit)) / 65536n;
+}
+
+export const storageValue: DictionaryValue<StorageValue> = {
+    serialize: (src, builder) => {
+        builder
+            .storeUint(0xcc, 8)
+            .storeUint(src.utime_since, 32)
+            .storeUint(src.bit_price_ps, 64)
+            .storeUint(src.cell_price_ps, 64)
+            .storeUint(src.mc_bit_price_ps, 64)
+            .storeUint(src.mc_cell_price_ps, 64);
+    },
+    parse: (src) => {
+        return {
+            utime_since: src.skip(8).loadUint(32),
+            bit_price_ps: src.loadUintBig(64),
+            cell_price_ps: src.loadUintBig(64),
+            mc_bit_price_ps: src.loadUintBig(64),
+            mc_cell_price_ps: src.loadUintBig(64)
+        };
+    }
+};
+
+export function getStoragePrices(configRaw: Cell): StorageValue {
+    const config = configRaw.beginParse().loadDictDirect(Dictionary.Keys.Int(32), Dictionary.Values.Cell());
+    const storageData = Dictionary.loadDirect(Dictionary.Keys.Uint(32), storageValue, config.get(18)!);
+    const values = storageData.values();
+    return values[values.length - 1];
+}
+
+export function calcStorageFee(prices: StorageValue, stats: StorageStats, duration: bigint) {
+    return shr16ceil((stats.bits * prices.bit_price_ps + stats.cells * prices.cell_price_ps) * duration);
+}
+
+export const configParseMsgPrices = (sc: Slice) => {
+    const magic = sc.loadUint(8);
+    if (magic !== 0xea) throw new Error('Invalid message prices magic number');
+    return {
+        lumpPrice: sc.loadUintBig(64),
+        bitPrice: sc.loadUintBig(64),
+        cellPrice: sc.loadUintBig(64),
+        ihrPriceFactor: sc.loadUintBig(32),
+        firstFrac: sc.loadUintBig(16),
+        nextFrac: sc.loadUintBig(16)
+    };
+};
+
+export type MsgPrices = ReturnType<typeof configParseMsgPrices>;
+
+export const getMsgPrices = (configRaw: Cell, workchain: 0 | -1) => {
+    const config = configRaw.beginParse().loadDictDirect(Dictionary.Keys.Int(32), Dictionary.Values.Cell());
+    const prices = config.get(25 + workchain);
+    if (prices === undefined) throw new Error('No prices defined in config');
+    return configParseMsgPrices(prices.beginParse());
+};
+
+export function computeDefaultForwardFee(msgPrices: MsgPrices) {
+    return msgPrices.lumpPrice - ((msgPrices.lumpPrice * msgPrices.firstFrac) >> 16n);
+}
+
+export function computeFwdFees(msgPrices: MsgPrices, cells: bigint, bits: bigint) {
+    return msgPrices.lumpPrice + shr16ceil(msgPrices.bitPrice * bits + msgPrices.cellPrice * cells);
+}
+
+export function computeFwdFeesVerbose(msgPrices: MsgPrices, cells: bigint | number, bits: bigint | number) {
+    const fees = computeFwdFees(msgPrices, BigInt(cells), BigInt(bits));
+    const res = (fees * msgPrices.firstFrac) >> 16n;
+    return { total: fees, res, remaining: fees - res };
+}
+
+export function computeCellForwardFees(msgPrices: MsgPrices, msg: Cell) {
+    const storageStats = collectCellStats(msg, [], true);
+    return computeFwdFees(msgPrices, storageStats.cells, storageStats.bits);
+}
+
+export function computeMessageForwardFees(msgPrices: MsgPrices, msg: Message) {
+    if (msg.info.type !== 'internal') throw new Error('Helper intended for internal messages');
+    let storageStats = new StorageStats();
+
+    const defaultFwd = computeDefaultForwardFee(msgPrices);
+    if (msg.info.forwardFee === defaultFwd) {
+        return {
+            fees: msgPrices.lumpPrice,
+            res: defaultFwd,
+            remaining: defaultFwd,
+            stats: storageStats
+        };
+    }
+
+    const visited: Array<string> = [];
+
+    if (msg.init) {
+        let addBits = 5n;
+        let refCount = 0;
+        if (msg.init.splitDepth) addBits += 5n;
+        if (msg.init.libraries) {
+            refCount++;
+            storageStats = storageStats.add(
+                collectCellStats(beginCell().storeDictDirect(msg.init.libraries).endCell(), visited, true)
+            );
+        }
+        if (msg.init.code) {
+            refCount++;
+            storageStats = storageStats.add(collectCellStats(msg.init.code, visited));
+        }
+        if (msg.init.data) {
+            refCount++;
+            storageStats = storageStats.add(collectCellStats(msg.init.data, visited));
+        }
+        if (refCount >= 2) {
+            storageStats = storageStats.addCells(1).addBits(addBits);
+        }
+    }
+
+    const lumpBits = BigInt(msg.body.bits.length);
+    const bodyStats = collectCellStats(msg.body, visited, true);
+    storageStats = storageStats.add(bodyStats);
+
+    let feesVerbose = computeFwdFeesVerbose(msgPrices, storageStats.cells, storageStats.bits);
+    if (feesVerbose.remaining < msg.info.forwardFee) {
+        storageStats = storageStats.addCells(1).addBits(lumpBits);
+        feesVerbose = computeFwdFeesVerbose(msgPrices, storageStats.cells, storageStats.bits);
+    }
+    if (feesVerbose.remaining !== msg.info.forwardFee) {
+        throw new Error('Forward fee calculation mismatch');
+    }
+    return { fees: feesVerbose, stats: storageStats };
+}
+```
