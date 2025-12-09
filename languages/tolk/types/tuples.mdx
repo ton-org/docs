@@ -1,0 +1,154 @@
+---
+title: "Tuples (not tensors!)"
+sidebarTitle: "Tuples"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+In TVM (the virtual machine), a **tuple** is a dynamic container that stores from 0 to 255 elements in a single stack slot.
+Tolk supports two tuple forms:
+
+- `tuple` — a dynamic tuple with unknown shape
+- `[T1, T2, ...]` — TVM tuple with known shape
+
+<Aside
+  type="caution"
+>
+  In most languages, `(v1, v2, ...)` denotes a tuple.
+  In TON, however, a "tuple" is a specific TVM primitive.
+  For this reason, `(v1, v2, ...)` in Tolk is called "a tensor".
+  [Read about tensors](/languages/tolk/types/tensors).
+</Aside>
+
+## `tuple`: dynamic tuples
+
+A TVM tuple allows storing from 0 to 255 elements in one stack slot. Push elements into a tuple:
+
+```tolk
+fun demo(): tuple {
+    var t = createEmptyTuple();
+    t.push(10);
+    t.push(beginCell());
+    t.push(null);
+
+    t.size();     // 3
+    return t;
+}
+```
+
+When calling `t.get(idx)`, the type must be provided explicitly or inferred:
+
+```tolk
+val first = t.get<int>(0);
+// or
+val first: int = t.get(0);   // T=int auto-inferred
+```
+
+The syntax `tupleVar.{i}` is also permitted when the type is evident:
+
+```tolk
+val first: int = t.0;
+```
+
+The method `set()` does not create new elements; it only updates existing ones.
+If `idx` is out of bounds in `get()` or `set()`, an exception is thrown.
+
+```tolk
+t.set(value, 100500);    // throws errCode=5
+t.100500 = value;        // throws errCode=5
+```
+
+The following methods are available — `last()`, `set()`, `pop()`, etc. IDE will suggest them after a dot.
+
+## Only primitives can be placed into a tuple
+
+An attempt to call `t.push(somePoint)` will raise an error: only single‑slot values can be added and retrieved.
+
+```tolk
+t.push(somePoint);    // error
+t.push(somePoint.x);  // ok (int)
+```
+
+## Convert an object to a tuple and back
+
+Tolk provides built-in generic methods `T.toTuple()` and `T.fromTuple()`.
+If a value occupies N stack slots, the resulting tuple has size N.
+
+```tolk
+struct Point3d {
+    x: int
+    y: int
+    z: int
+}
+
+fun demo(p: Point3d) {
+    val t = p.toTuple();       // a tuple with 3 elements
+    t.get<int>(2);             // z
+    p = Point3d.fromTuple(t);  // back to a struct
+}
+```
+
+## Typed tuples `[T1, T2, ...]`
+
+Use this syntax to describe a tuple with a known shape:
+
+```tolk
+// its type is `[int, int, builder]`
+val t = [1, 2, beginCell()];
+
+// read
+t.0;    // 1
+
+// modify
+t.1 = 123;
+t.2.storeInt(t.0, 16);
+// t is now (1, 123, builder "0x0001")
+
+t.100500  // compilation error
+```
+
+This syntax is similar to a tensor `(T1, T2, ...)`, but all values are stored in a single stack slot.
+Non-primitive values are also not permitted.
+
+A typed tuple may be destructured into multiple variables:
+
+```tolk
+fun sumFirstTwo(t: [int, int, builder]) {
+    val [first, second, _] = t;
+    return first + second;
+}
+```
+
+## Lisp-style lists
+
+Lisp-style lists are nested two-element tuples: `[1, [2, [3, null]]]` represents the list `[1, 2, 3]`.
+An empty list is conventionally represented as `null`.
+From the type‑system perspective, it's `tuple?` with dynamic contents, not a special type.
+
+It was a common pattern in old contracts, but now it's almost unused.
+Its primary remaining use case is to return more than 255 elements.
+
+Lisp‑style lists can be processed using the following stdlib module:
+
+```tolk
+import "@stdlib/lisp-lists"
+```
+
+## Tuples vs tensors
+
+**A tensor** is `(T1, T2, ...)` — multiple values in parentheses.
+The primary distinction is the stack layout: a tuple is a single stack slot,
+whereas tensor components are placed one by one.
+
+For example, `(coins, builder, int?)` occupies 3 slots, but `[coins, builder, int?]` — only one.
+
+Accessing `tupleVar.{i}` produces TVM asm `{i} INDEX`, but `tensorVar.{i}` is just stack shuffling.
+
+[Read about tensors](/languages/tolk/types/tensors).
+
+## Stack layout and serialization
+
+Tuples are backed by TVM `TUPLE`.
+Serialization is not implemented, but tuples may be returned from get methods, because contract getters operate via the stack rather than serialization.
+
+For details, follow [TVM representation](/languages/tolk/types/overall-tvm-stack) and [Serialization](/languages/tolk/types/overall-serialization).

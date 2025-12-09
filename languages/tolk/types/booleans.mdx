@@ -1,0 +1,91 @@
+---
+title: "Booleans"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Tolk has a `bool` type which can have two values: `true` or `false`.
+
+<Aside
+  type="caution"
+>
+  The TVM (virtual machine) has only `INT`.<br />
+  Booleans are represented as **-1 or 0**.
+  Not 1! But -1.
+</Aside>
+
+```tolk
+fun isGreater10(v: int): bool {
+    return v > 10
+}
+```
+
+Operators `== >= && || ...` return `bool`.
+Many standard library functions also return `bool` values:
+
+```tolk
+var valid = isSignatureValid(...);    // bool
+var end = someSlice.isEmpty();        // bool
+```
+
+## Logical operators accept both `int` and `bool`
+
+- operator `!x` supports both `bool` and `int`
+- the condition of `if` and similar statements accepts both `bool` and `int` (!= 0)
+- logical `&& ||` accept both `bool` and `int`; for example, `a && b` evaluates to true when both operands are `true`, and for integers when both operands are non-zero
+
+Arithmetic operators are restricted to integers.
+
+```tolk
+valid && end;  // ok
+valid & end;   // ok, bitwise & | ^ also work if both are bools
+if (!end)      // ok
+
+valid + end;   // error
+8 & valid;     // error, int & bool not allowed
+```
+
+## Logical vs bitwise operators
+
+Tolk has both bitwise `& ^ |` and logical `&& ||` operators. Both can be used for booleans and integers.
+
+The main difference is that logical are short-circuit: the right operand is evaluated only if required to.
+
+|      Expression      |                    Behavior                    |
+| :------------------: | :--------------------------------------------: |
+|   `condition & f()`  |             `f()` is called always             |
+|  `condition && f()`  |  `f()` is called only if `condition` is `true` |
+|  `condition \| f()`  |             `f()` is called always             |
+| `condition \|\| f()` | `f()` is called only if `condition` is `false` |
+
+The compiler does some optimizations for booleans.
+Example: `!x` for `int` results in asm `0 EQINT`, but `!x` for `bool` results in asm `NOT`.
+
+Bitwise operators may sometimes be used instead of logical operators to avoid generating conditional branches at runtime.
+For example, `(a > 0) && (a < 10)`, being replaced with bitwise, consumes less gas.
+Future versions of the compiler may perform such transformations automatically, although this is non-trivial.
+
+## Casting to `int` via `as` operator
+
+```tolk
+var i = boolValue as int;  // -1 / 0
+```
+
+There are no runtime transformations: `bool` is guaranteed to be -1/0 at the TVM level.
+
+## Q: Why are booleans -1, not 1?
+
+In TVM, there are only integers.
+When all bits in a signed integer are set to 1, it equals -1 in a decimal representation.
+This makes bitwise operations more intuitive — for example, `NOT 0` naturally becomes `-1`.
+
+- `true` = `-1` — all bits set to 1
+- `false` = `0` — all bits set to 0
+
+It is consistent across TVM instructions. For example, operator `a > b` is asm `GREATER`, which returns -1 or 0.
+
+## Stack layout and serialization
+
+A boolean is backed by TVM `INT` (-1 or 0). Serialized as a single bit.
+
+For details, follow [TVM representation](/languages/tolk/types/overall-tvm-stack) and [Serialization](/languages/tolk/types/overall-serialization).

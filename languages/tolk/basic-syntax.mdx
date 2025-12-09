@@ -1,0 +1,334 @@
+---
+title: "Tolk basic syntax"
+sidebarTitle: "Basic syntax"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Syntax of Tolk is similar to TypeScript, Rust, and Kotlin. It is designed to be straightforward to read and write.
+
+Below is a list of basic syntax elements with examples. Most sections end with a link to a detailed topic.
+
+## Imports
+
+Imports exist at the top of the file:
+
+```tolk
+import "another-file"
+
+// symbols from `another-file.tolk` can now be used
+```
+
+In typical workflows, an IDE inserts imports automatically (for example, when selecting an element from auto‑completion).
+
+<Aside type="note">
+  The entire file is imported. There are no "modules" or "exports", all symbols must have unique names project-wise.
+</Aside>
+
+See: [imports](/languages/tolk/syntax/imports).
+
+## Structures
+
+A struct `Point` holding two 8-bit integers:
+
+```tolk
+struct Point {
+    x: int8
+    y: int8
+}
+
+fun demo() {
+    // create an object
+    val p1: Point = { x: 10, y: 20 };
+
+    // the same, type of p2 is auto-inferred
+    val p2 = Point { x: 10, y: 20 };
+}
+```
+
+- methods are declared like `fun Point.method(self)`, read below
+- fields can be of any types: numeric, cell, union, etc. (see [type system](/languages/tolk/types/list-of-types))
+- fields can have default values: `x: int8 = 0`
+- fields can be `private` and `readonly`
+- structs can be generic: `struct Wrapper<T> { ... }`
+
+If all fields are serializable, a struct can be [automatically serialized](/languages/tolk/features/auto-serialization):
+
+```tolk
+// makes a cell containing hex "0A14"
+val c = p1.toCell();
+// back to { x: 10, y: 20 }
+val p3 = Point.fromCell(c);
+```
+
+See: [structures](/languages/tolk/syntax/structures-fields).
+
+## Functions
+
+A function that calculates the sum of two integers:
+
+```tolk
+fun sum(a: int, b: int): int {
+    return a + b;
+}
+```
+
+- parameter types are mandatory
+- the return type can be omitted: it will be auto-inferred, like in TypeScript
+- parameters can have a default value: `fun f(b: int = 0)`
+- statements inside a block are separated by semicolons `;`
+- generic functions: `fun f<T>(value: T) { ... }`
+- assembler functions: `fun f(...): int asm "..."`
+
+See: [functions and methods](/languages/tolk/syntax/functions-methods).
+
+## Methods
+
+A function declared as `fun <receiver>.name(...)` is a method.
+
+- if the first parameter is `self`, it's an **instance method**
+- if not `self`, it's a **static method**
+
+```tolk
+// `self` — instance method (invoked on a value)
+fun Point.sumCoords(self) {
+    return sum(self.x, self.y);
+}
+
+// not `self` — static method
+fun Point.createZero(): Point {
+    return { x: 0, y: 0 };
+}
+
+fun demo() {
+    val p = Point.createZero();    // { 0, 0 }
+    return p.sumCoords();          // 0
+}
+```
+
+- by default, `self` is immutable, but `mutate self` allows modifying an object
+- methods may be declared not only for a struct, but for any type, even a primitive:
+
+```tolk
+fun int.isNegative(self) {
+    return self < 0
+}
+```
+
+See: [functions and methods](/languages/tolk/syntax/functions-methods).
+
+## Variables
+
+Inside functions, variables are declared with `val` or `var` keywords.
+
+The `val` keyword declares a variable that is assigned exactly once (immutable):
+
+```tolk
+val coeff = 5;
+// cannot change its value, `coeff += 1` is an error
+```
+
+The `var` keyword declares a variable that may be reassigned:
+
+```tolk
+var x = 5;
+x += 1;      // now 6
+```
+
+Variable's type can be specified after its name:
+
+```tolk
+var x: int8 = 5;
+```
+
+Declaring variables at the top-level (not inside functions) is supported via `global` keyword.
+
+See: [variables](/languages/tolk/syntax/variables).
+
+## Constants
+
+Declaring constants is allowed at the top-level (not inside functions):
+
+```tolk
+const ONE = 1
+const MAX_AMOUNT = ton("0.05")
+const ADMIN_ADDRESS = address("EQ...")
+```
+
+To group integer constants, [enums](/languages/tolk/types/enums) are also useful.
+
+## Value semantics
+
+Tolk follows value semantics: assignments create independent copies, and function calls do not mutate arguments unless explicitly specified.
+
+```tolk
+var a = Point { x: 1, y: 2 };
+var b = a;   // `b` is a copy
+b.x = 99;    // `a.x` remains 1
+someFn(a);   // pass a copy; `a` will not change
+
+// but there can be mutating functions, called this way:
+anotherFn(mutate a);
+```
+
+See: [mutability](/languages/tolk/syntax/mutability).
+
+## Semicolons
+
+- semicolons are **optional at the top-level** (after imports, aliases, etc.)
+- **required between statements in a function**
+- after the last statement in a block, it's also optional
+
+```tolk
+// optional at the top-level
+const ONE = 1
+type UserId = int
+
+// required inside functions
+fun demo() {
+    val x = 5;
+    val y = 6;
+    return x + y    // optional after the last statement
+}
+```
+
+## Comments
+
+Like most modern languages, Tolk supports single-line (or end-of-line) and multi-line (block) comments:
+
+```tolk
+// This is a single-line comment
+
+/* This is a block comment
+   across multiple lines. */
+
+const TWO = 1 /* + 100 */ + 1    // 2
+```
+
+## Conditional operators
+
+```tolk
+fun sortNumbers(a: int, b: int) {
+    if (a > b) {
+        return (b, a)
+    } else {
+        return (a, b)
+    }
+}
+```
+
+In Tolk, `if` is a statement, with `else if` and `else` optional blocks.
+
+A ternary operator is also available:
+
+```tolk
+val sign = a > 0 ? 1 : a < 0 ? -1 : 0;
+```
+
+See: [conditions and loops](/languages/tolk/syntax/conditions-loops).
+
+## Union types and matching
+
+Union types allow a variable to hold "one of possible types". They are typically handled by `match`:
+
+```tolk
+fun processValue(value: int | slice) {
+    match (value) {
+        int => {
+            value * 2
+        }
+        slice => {
+            value.loadUint(8)
+        }
+    }
+}
+```
+
+Alternatively, test a union with `is` or `!is` operators:
+
+```tolk
+fun processValue(value: int | slice) {
+    if (value is slice) {
+        // call methods for `slice`
+        return;
+    }
+    // value is `int`
+    return value * 2;
+}
+```
+
+Unions types are commonly used when [handling incoming messages](/languages/tolk/features/message-handling).
+
+See: [union types](/languages/tolk/types/unions).
+
+## While loop
+
+```tolk
+while (i > 0) {
+    // ...
+    i -= 1;
+}
+```
+
+The `for` loop does not exist.
+
+See: [conditions and loops](/languages/tolk/syntax/conditions-loops).
+
+## Assert and throw
+
+```tolk
+const ERROR_NO_BALANCE = 403;
+
+// in some function
+throw ERROR_NO_BALANCE;
+
+// or conditional throw
+assert (balance > 0) throw ERROR_NO_BALANCE;
+```
+
+A try-catch statement is also supported, although it is not commonly used in contracts.
+
+See: [exceptions](/languages/tolk/syntax/exceptions).
+
+## Iterate over a map
+
+```tolk
+fun iterateOverMap(m: map<int32, Point>) {
+    var r = m.findFirst();
+    while (r.isFound) {
+        // ...
+        r = m.iterateNext(r);
+    }
+}
+```
+
+See: [maps](/languages/tolk/types/maps).
+
+## Send a message to another contract
+
+An outgoing message body is typically represented by a structure (for example, `RequestedInfo`).
+
+```tolk
+val reply = createMessage({
+    bounce: BounceMode.NoBounce,
+    value: ton("0.05"),
+    dest: someAddress,
+    body: RequestedInfo { ... }
+});
+reply.send(SEND_MODE_REGULAR);
+```
+
+See: [constructing and sending messages](/languages/tolk/features/message-sending).
+
+## Contract getters
+
+Contract getters (or "get methods") are declared with `get fun`:
+
+```tolk
+get fun currentOwner() {
+    val storage = lazy Storage.load();
+    return storage.ownerAddress;
+}
+```
+
+See: [contract getters](/languages/tolk/features/contract-getters).

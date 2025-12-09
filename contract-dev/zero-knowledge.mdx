@@ -1,0 +1,321 @@
+---
+title: "Zero-knowledge proofs on TON"
+sidebarTitle: "Zero-knowledge proofs"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+This guide shows how to create, compile, and test a simple [Circom](https://docs.circom.io/) scheme and verify a [ZK-proof](https://en.wikipedia.org/wiki/Zero-knowledge_proof) using the [`zk-SNARK`](https://en.wikipedia.org/wiki/Non-interactive_zero-knowledge_proof) [`Groth16`](https://eprint.iacr.org/2016/260.pdf) protocol.
+
+<Aside>
+  This guide is also applicable to circuits written in the [Noname](https://github.com/zksecurity/noname) language, since the [`export-ton-verifier`](https://github.com/mysteryon88/export-ton-verifier) library integrates with `snarkjs`, which in turn integrates with the Noname language.
+
+  Other examples can be found [here](https://github.com/zk-examples/zk-ton-examples/).
+</Aside>
+
+## Prerequisites
+
+- [Node.js](https://nodejs.org) 18 or a later LTS.
+- [`circom`](https://docs.circom.io/getting-started/installation/#installing-circom)
+- [`snarkjs`](https://docs.circom.io/getting-started/installation/#installing-snarkjs)
+- [Blueprint](/contract-dev/blueprint/overview)
+
+## Project setup
+
+1. Create a new project using Blueprint:
+
+   ```bash
+   npm create ton@latest ZkSimple
+   cd ZkSimple
+   ```
+1. Install libraries for working with ZK-proofs:
+
+   ```bash
+   npm install snarkjs @types/snarkjs
+   ```
+1. Install the verifier export utility for TON:
+
+   ```bash
+   npm install export-ton-verifier@latest
+   ```
+
+This utility exports verifier contracts for FunC, Tolk, and Tact.
+
+## Create the Circom circuit
+
+Create the directory `circuits/Multiplier` and the file `Multiplier.circom`:
+
+```bash
+mkdir -p circuits/Multiplier
+cd circuits/Multiplier
+```
+
+```circom
+pragma circom 2.2.2;
+
+template Multiplier() {
+  signal input a;
+  signal input b;
+
+  signal output c;
+
+  c <== a*b;
+}
+
+component main = Multiplier();
+```
+
+This circuit proves knowledge of two numbers `a` and `b`, whose product is equal to the public output `c`, without revealing `a` and `b` themselves.
+
+### Compile
+
+Run in `circuits/Multiplier`:
+
+```bash
+circom Multiplier.circom --r1cs --wasm --sym --prime bls12381
+```
+
+After compilation, the following files will appear:
+
+- `Multiplier.r1cs` — circuit constraints (R1CS)
+- `Multiplier.sym` — symbolic signal map
+- `Multiplier.wasm` — artifact for generating proof
+
+Check constraints:
+
+```bash
+snarkjs r1cs info Multiplier.r1cs
+```
+
+Output example:
+
+```
+[INFO]  snarkJS: Curve: bls12-381
+[INFO]  snarkJS: # of Wires: 4
+[INFO]  snarkJS: # of Constraints: 1
+[INFO]  snarkJS: # of Private Inputs: 2
+[INFO]  snarkJS: # of Public Inputs: 0
+[INFO]  snarkJS: # of Outputs: 1
+```
+
+<Aside>
+  `snarkjs` supports the [`alt_bn128`](https://eips.ethereum.org/EIPS/eip-196) and [`bls12-381`](https://electriccoin.co/blog/new-snark-curve/) curves. Ethereum uses `alt_bn128`, but `bls12-381` is used for TON, so it is the one chosen in this guide.
+</Aside>
+
+## Trusted setup (`Groth16`)
+
+The **trusted setup** is a one-time ceremony that generates the proving and verification keys for a circuit. It's called "trusted" because if the setup parameters are compromised, proofs could be forged. For production use, participate in a multi-party trusted setup ceremony. For local development and testing, a simplified single-party setup is sufficient. For local tests, perform a simplified trusted setup ceremony.
+
+The "power of tau" parameter (`10`) has to be chosen
+
+- as low as possible, because it affects execution time;
+- high enough, because the more constraints in the scheme, the higher the parameter required.
+
+```bash
+# first phase
+snarkjs powersoftau new bls12-381 10 pot10_0000.ptau -v
+snarkjs powersoftau contribute pot10_0000.ptau pot10_0001.ptau --name="First contribution" -v -e="some random text"
+
+# second phase (depends on the compiled scheme)
+snarkjs powersoftau prepare phase2 pot10_0001.ptau pot10_final.ptau -v
+snarkjs groth16 setup Multiplier.r1cs pot10_final.ptau Multiplier_0000.zkey
+snarkjs zkey contribute Multiplier_0000.zkey Multiplier_final.zkey --name="1st Contributor" -v -e="some random text"
+
+# export verification key
+snarkjs zkey export verificationkey Multiplier_final.zkey verification_key.json
+```
+
+Clear up unnecessary artifacts:
+
+```sh
+rm pot10_0000.ptau pot10_0001.ptau pot10_final.ptau Multiplier_0000.zkey
+```
+
+## Export the verifier contract
+
+```bash
+# export FunC contract (default)
+npx export-ton-verifier ./circuits/Multiplier/Multiplier_final.zkey ./contracts/verifier_multiplier.fc
+
+# export Tolk contract
+npx export-ton-verifier ./circuits/Multiplier/Multiplier_final.zkey ./contracts/verifier_multiplier.tolk --tolk
+
+# export Tact contract
+npx export-ton-verifier ./circuits/Multiplier/Multiplier_final.zkey ./contracts/verifier_multiplier.tact --tact
+```
+
+For FunC and Tolk, wrappers must be generated manually:
+
+```bash
+npx export-ton-verifier import-wrapper ./wrappers/Verifier.ts --force
+```
+
+This command generates a TypeScript wrapper file that provides type-safe methods to interact with the verifier contract.
+
+## Testing and verification
+
+In `tests/ZkSimple.spec.ts`:
+
+```ts
+import * as snarkjs from 'snarkjs';
+import path from 'path';
+import { dictFromInputList, groth16CompressProof } from 'export-ton-verifier';
+
+// for Tact (After running `npx blueprint build --all`)
+import { Verifier } from '../build/Verifier_tact/tact_Verifier';
+
+// for FunC and Tolk
+import { Verifier } from '../wrappers/Verifier';
+```
+
+Local verification:
+
+```ts
+const wasmPath = path.join(__dirname, '../circuits/Multiplier', 'Multiplier.wasm');
+const zkeyPath = path.join(__dirname, '../circuits/Multiplier', 'Multiplier_final.zkey');
+const verificationKey = require('../circuits/Multiplier/verification_key.json');
+
+const input = { a: '342', b: '1245' };
+
+const { proof, publicSignals } = await snarkjs.groth16.fullProve(input, wasmPath, zkeyPath);
+const okLocal = await snarkjs.groth16.verify(verificationKey, publicSignals, proof);
+```
+
+On-chain verification:
+
+```ts
+const { pi_a, pi_b, pi_c, pubInputs } = await groth16CompressProof(proof, publicSignals);
+
+// Quick check via get-method: verifies the proof locally without changing blockchain state.
+expect(await verifier.getVerify({ pi_a, pi_b, pi_c, pubInputs })).toBe(true);
+
+// Send the proof to the contract in a message
+// The contract will run verification; handling the result/flow is up to the developer using this template.
+await verifier.sendVerify(deployer.getSender(), { pi_a, pi_b, pi_c, pubInputs, value: toNano('0.15') });
+```
+
+<Aside type="tip">
+  Build the contracts before running tests. For Tact contracts, run `npx blueprint build --all` first. For FunC/Tolk, ensure the wrappers are generated.
+</Aside>
+
+## Other Languages
+
+This tutorial follows the path **Circom → `snarkjs` → `export-ton-verifier` → TON**.
+The same workflow applies to other stacks — the key requirement is to obtain a `proof` and a `verification key` in `snarkjs` format.
+
+In the example repository — [`zk-ton-examples`](https://github.com/zk-examples/zk-ton-examples/) — there are already templates for `noname`, `gnark`, and `arkworks`: proofs can be generated in any of these stacks, then converted into `snarkjs` format and verified both locally and on-chain in the same way.
+
+<Aside>
+  Two utilities are available that help convert proofs and verification keys into a format compatible with `snarkjs`:
+
+  - [`ark-snarkjs`](https://github.com/mysteryon88/ark-snarkjs): use for exporting from `arkworks`
+  - [`gnark-to-snarkjs`](https://github.com/mysteryon88/gnark-to-snarkjs): use for exporting from `gnark`
+</Aside>
+
+The idea is always the same: generate `proof.json` and `verification_key.json` in `snarkjs` format, then use `export-ton-verifier` and perform verification in TON.
+
+### Arkworks (Rust)
+
+Use the `arkworks` library to generate the proof and verification key, then convert them into `snarkjs` format with `ark-snarkjs`.
+
+1. Set up an Arkworks project:
+
+```sh
+cargo init
+cargo add ark-bls12-381 ark-ff ark-groth16 ark-r1cs-std ark-relations ark-snark ark-snarkjs ark-std rand@0.8.5
+```
+
+<Aside>
+  The packages listed above are the core dependencies needed for most `arkworks` circuits. Depending on the specific circuit implementation, additional packages may be required.
+</Aside>
+
+2. Write the circuit in Rust. Implement the circuit logic using `arkworks` primitives, similar to how a Circom circuit would be written. Learn how to write constraints in `arkworks` by following the [Arkworks R1CS tutorial](https://github.com/arkworks-rs/r1cs-tutorial). A working example of a simple multiplication circuit can be found in the [`zk-ton-examples` repository](https://github.com/zk-examples/zk-ton-examples/tree/main/circuits/Arkworks/MulCircuit).
+
+2. Compile, generate proof, and perform trusted setup following the same workflow as in the Circom section above.
+
+2. Export the proof and verification key to JSON using `ark-snarkjs`:
+
+```rust
+use ark_snarkjs::{export_proof, export_vk};
+use ark_bls12_381::{Bls12_381, Fr};
+
+let _ = export_proof::<Bls12_381, _>(&proof, &public_inputs, "json/proof.json");
+let _ = export_vk::<Bls12_381, _>(
+    &params.vk,
+    public_inputs.len(),
+    "json/verification_key.json",
+);
+```
+
+The directory and files will be created automatically.
+
+5. Export the verifier contract:
+
+```sh
+# FunC contract
+npx export-ton-verifier ./circuits/Arkworks/MulCircuit/json/verification_key.json ./contracts/verifier_ark.fc
+
+# Tact contract
+npx export-ton-verifier ./circuits/Arkworks/MulCircuit/json/verification_key.json ./contracts/verifier_ark.tact --tact
+
+# Tolk contract
+npx export-ton-verifier ./circuits/Arkworks/MulCircuit/json/verification_key.json ./contracts/verifier_ark.tolk --tolk
+```
+
+### `gnark` (Go)
+
+Use the `gnark` library to generate the proof and verification key, then convert them into `snarkjs` format with `gnark-to-snarkjs`.
+
+1. Set up a `gnark` project. You can find an example circuit in the [`gnark` repository](https://github.com/Consensys/gnark?tab=readme-ov-file#example). A working example of a cubic circuit can be found in the [`zk-ton-examples` repository](https://github.com/zk-examples/zk-ton-examples/tree/main/circuits/Cubic%20%28gnark%29).
+
+1. Add `gnark-to-snarkjs` as a dependency:
+
+```sh
+go get github.com/mysteryon88/gnark-to-snarkjs@latest
+```
+
+3. Export the proof and verification key:
+
+```go
+{
+  proof_out, _ := os.Create("proof.json")
+  defer proof_out.Close()
+  _ = gnarktosnarkjs.ExportProof(proof, []string{"35"}, proof_out)
+}
+{
+  out, _ := os.Create("verification_key.json")
+  defer out.Close()
+  _ = gnarktosnarkjs.ExportVerifyingKey(vk, out)
+}
+```
+
+4. Export the verifier contract:
+
+```sh
+# Tact contract
+npx export-ton-verifier ./circuits/cubic-gnark/verification_key.json ./contracts/verifier_cubic.tact --tact
+
+# FunC contract
+npx export-ton-verifier ./circuits/cubic-gnark/verification_key.json ./contracts/verifier_cubic.fc
+
+# Tolk contract
+npx export-ton-verifier ./circuits/cubic-gnark/verification_key.json ./contracts/verifier_cubic.tolk --tolk
+```
+
+## Conclusion
+
+This guide demonstrates a minimal example: **circuit → trusted setup → verifier export → verification in TON**. This workflow can be extended to support more complex circuits and real-world applications.
+
+## Useful Links
+
+- Example repository: [`zk-ton-examples`](https://github.com/zk-examples/zk-ton-examples/)
+- Verifier export library: [`export-ton-verifier`](https://github.com/mysteryon88/export-ton-verifier)
+- Additional utilities:
+  - [`ark-snarkjs`](https://github.com/mysteryon88/ark-snarkjs)
+  - [`gnark-to-snarkjs`](https://github.com/mysteryon88/gnark-to-snarkjs)
+- Using ZK-proofs in Tact: [docs.tact](https://docs.tact-lang.org/cookbook/zk-proofs/)
+- Circom: [docs.circom.io](https://docs.circom.io/)
+- Noname: [`zksecurity/noname`](https://github.com/zksecurity/noname)
+- `gnark`: [`consensys/gnark`](https://github.com/Consensys/gnark)
+- Arkworks: [`arkworks`](https://arkworks.rs/)
+- SnarkJS: [`iden3/snarkjs`](https://github.com/iden3/snarkjs)

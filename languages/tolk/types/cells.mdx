@@ -1,0 +1,288 @@
+---
+title: "Cells, slices, builders"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+In TON, all data is stored in **cells**.
+Cells opened for reading are called **slices**.
+Cells being constructed are called **builders**.
+Having a builder, only writing is possible. Having a slice, only reading is possible.
+
+Tolk provides low-level capabilities to construct and parse cells manually, as well as automatic packing structures to/from cells.
+
+## Cells
+
+A cell is the fundamental data structure in TON. It's a container that holds **up to 1023 bits** of data and **up to 4 references** to other cells.
+
+Everything in TON (contracts, messages, storage) is represented using cells.
+They are read-only and immutable once created.
+[Read more about cells](/foundations/serialization/cells).
+
+In Tolk, the basic type `cell` describes "some cell".
+
+```tolk
+struct SomeMessage {
+    // ...
+    customPayload: cell
+}
+```
+
+## Typed cells: `Cell<T>`
+
+Besides "some cell", Tolk has a "cell with known shape" `Cell<T>`.
+Since one cell can store only 1023 bits, when storage exceeds this limit, the solution is to split it
+into multiple cells, so they become referencing each other.
+
+```tolk
+struct Demo {
+    ref1: cell          // untyped ref
+    ref2: Cell<Inner>   // typed ref
+    ref3: Cell<int256>? // maybe ref
+}
+```
+
+<Aside type="tip">
+  Yes, `point.toCell()` really gives <code>{'Cell<' + 'Point' + '>'}</code>
+</Aside>
+
+A typed cell can be assigned to `cell` implicitly.
+
+## Slices: cells opened for reading
+
+To manually read data from a cell, use `beginParse()` to get a slice:
+
+```tolk
+var s = cell.beginParse();
+```
+
+Then load data incrementally: integers, coins, sub-slices, references, etc.
+
+```tolk
+val mode = s.loadUint(8);
+val dest = s.loadAddress();
+val firstRef = s.loadRef();   // cell
+
+if (s.remainingBitsCount()) {
+   // ...
+}
+```
+
+An IDE will suggest applicable methods after a dot.
+
+## Builders: cells at the moment of writing
+
+To manually construct a cell, create a builder, write some data, and finalize this builder:
+
+```tolk
+var b = beginCell();
+b.storeUint(123, 8);
+b.storeAddress(dest);
+val c = b.endCell();
+```
+
+Since methods `storeXXX` return `self`, these calls can be chained:
+
+```tolk
+val c = beginCell()
+    .storeUint(123, 8)
+    .storeAddress(dest)
+    .endCell();
+```
+
+## How to read from a builder
+
+The only way to access already written bits is to convert a builder into a slice:
+
+```tolk
+var s = b.asSlice();
+// or (absolutely the same)
+var s = b.endCell().beginParse();
+```
+
+Constructing a cell is generally expensive in terms of gas, but `b.endCell().beginParse()` is optimized to a cheap asm instruction `BTOS` without intermediate cell creation.
+
+## Auto packing to/from cells
+
+Tolk type system is designed to avoid cumbersome manual work with slices and builders.
+Almost every practical use case can be represented with an auto-serializable structure.
+
+```tolk
+struct Something {
+    // ...
+}
+
+fun parseAndModify(c: cell): cell {
+    var smth = Something.fromCell(c);
+    // ...
+    return smth.toCell();
+}
+```
+
+Having `Cell<T>`, just call `load()` to get `T`:
+
+```tolk
+fun parsePoint(c: Cell<Point>) {
+    // same as `Point.fromCell(c)`
+    var p = c.load();
+}
+```
+
+Read a detailed article [automatic serialization](/languages/tolk/features/auto-serialization).
+
+Internally, `fromCell()` does `beginParse()` and reads data from a slice.
+
+## Auto packing to/from builders/slices
+
+A struct can be parsed not only from a cell but also from a slice:
+
+```tolk
+val smth = Something.fromSlice(s);
+```
+
+Auto-serialization works at low-level also: by analogy with `loadUint()` and others, there is a `loadAny<T>()` method:
+
+```tolk
+val smth = s.loadAny<Something>();
+// or even
+val smth: Something = s.loadAny();  // T=Something deduced
+```
+
+<Aside
+  type="caution"
+  title={"T.fromSlice(s) does not mutate the slice, but s.loadAny<T>() does"}
+>
+  By analogy, a call `doSmth(s)`, does not change `s`, whereas `s.loadAddress()` shifts its internal pointer.
+  See [mutability](/languages/tolk/syntax/mutability).
+</Aside>
+
+Similarly, `storeAny<T>()` for a builder accepts any serializable value:
+
+```tolk
+beginCell()
+    .storeAddress(dest)
+    .storeAny(smth)         // T=Something deduced
+    .storeUint(123, 8);
+```
+
+Furthermore, it works not only with structures but also with arbitrary types.
+
+```tolk
+s.loadAny<int32>();           // same as loadInt(32)
+s.loadAny<(coins, bool?)>();  // read a pair (a tensor)
+
+b.storeAny(someAddress);      // same as storeAddress
+b.storeAny(0xFF as uint8);    // same as storeUint(0xFF, 8)
+```
+
+This approach allows both low-level and high-level intentions to be expressed uniformly.
+
+## Builders and slices can NOT be serialized
+
+Builders and slices are low-level primitives used for constructing and parsing cells. They contain raw binary data.
+For this reason, attempting to read an arbitrary slice from another slice is impossible: how many bits should be read?
+
+```tolk
+struct CantBeRead {
+    before: int8
+    s: slice
+    after: int8
+}
+```
+
+An attempt to call `CantBeRead.fromCell(c)` will fire an error _"Can not be deserialized, because `CantBeRead.s` is `slice`"_.
+
+Express shape of data using the type system to make serialization distinct. For example, `s: bits100` if it's exactly 100 bits.
+
+## Type `bitsN`: fixed-size slices
+
+By analogy: `int` can not be serialized, but `int32` and `int64` can.
+The same: `slice` can not be serialized, but `bits32` and `bytes8` can.
+At runtime, `bitsN` is a TVM `SLICE`, like `int32` is a TVM `INT`.
+
+```tolk
+struct OkayToRead {
+    before: int8
+    s: bits100
+    after: int8
+}
+
+fun read(c: cell) {
+    // a cell `c` is expected to be 116 bits
+    val r = OkayToRead.fromCell(c);
+    // on the stack: INT, SLICE, INT
+}
+```
+
+**To cast `slice` to `bitsN`, use the unsafe `as` operator**. It's intentional, because slices may have refs, so explicit casting forces a programmer to think whether this transformation is valid. At runtime, it's no-op.
+
+```tolk
+fun calcHash(raw: bits512) {
+    // ...
+}
+
+fun demo() {
+    calcHash(someSlice);                   // error
+    calcHash(someSlice as bits512);        // ok
+
+    someBytes.loadAddress();               // error
+    (someBytes as slice).loadAddress();    // ok
+}
+```
+
+## "The remaining" slice when reading
+
+A common pattern is to read a portion of data and then retrieve the remainder. With manual parsing, it happens naturally:
+
+```tolk
+val ownerId = s.loadUint(32);
+val dest = s.loadAddress();
+// `s` contains all bits/refs still unread
+val payload = s;
+```
+
+To express the same with the type system use **a special type `RemainingBitsAndRefs`**:
+
+```tolk
+struct WithPayload {
+    ownerId: uint32
+    dest: address
+    payload: RemainingBitsAndRefs
+}
+```
+
+Then, `obj = WithPayload.fromSlice(s)` will return an object, where `obj.payload` contains "all bits/refs left".
+This is a special type:
+
+```tolk
+// declared in stdlib, handled specially by the compiler
+type RemainingBitsAndRefs = slice
+```
+
+Naturally, such a field must appear last in a struct: no more data exists after reading it.
+
+## Embedding constant slices into a contract
+
+A string literal is represented as a slice:
+
+```tolk
+// `slice` with 4 bytes: 97,98,99,100 (0x61626364)
+const SLICE1 = "abcd"
+```
+
+Also, use `stringHexToSlice("...")` to embed hexadecimal binary data:
+
+```tolk
+// `slice` with 2 bytes: 16,32 (0x1020)
+const SLICE2 = stringHexToSlice("1020")
+```
+
+TVM does not have string types; it operates solely on slices. [Read about emulating strings](/languages/tolk/types/strings).
+
+## Stack layout and serialization
+
+Both `cell` and `Cell<T>` are backed by TVM `CELL`. Serialized as a reference; nullable are "maybe reference".
+
+The primitive types `builder` and `slice` cannot be serialized. Use `bitsN` and `RemainingBitsAndRefs`.
+
+For details, follow [TVM representation](/languages/tolk/types/overall-tvm-stack) and [Serialization](/languages/tolk/types/overall-serialization).

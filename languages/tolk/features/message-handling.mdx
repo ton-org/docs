@@ -1,0 +1,262 @@
+---
+title: "Handling messages"
+---
+
+Each Tolk contract has specials **entrypoints** — reserved functions to handle various types of messages.
+From the language perspective, handling an incoming message is just ordinary code.
+
+## onInternalMessage
+
+In 99% of cases, a contract handles **internal messages**.
+An end user does not interact with a contract directly; instead, interaction occurs through the user's wallet,
+which sends an internal message to the contract.
+
+The entrypoint is declared this way:
+
+```tolk
+fun onInternalMessage(in: InMessage) {
+    // internal non-bounced messages arrive here
+}
+```
+
+A basic guideline is the following:
+
+- For each incoming message, declare a `struct` with a unique 32-bit prefix (opcode).
+- Declare a union type "all available messages".
+- Parse this union from `in.body` and `match` it over structures.
+
+```tolk
+struct (0x12345678) CounterIncrement {
+    incBy: uint32
+}
+
+struct (0x23456789) CounterReset {
+    initialValue: int64
+}
+
+type AllowedMessage = CounterIncrement | CounterReset
+
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy AllowedMessage.fromSlice(in.body);
+    match (msg) {
+        CounterIncrement => {
+            // use `msg.incBy`
+        }
+        CounterReset => {
+            // use `msg.initialValue`
+        }
+        else => {
+            // invalid input; a typical reaction is:
+            // ignore empty messages, "wrong opcode" if not
+            assert (in.body.isEmpty()) throw 0xFFFF
+        }
+    }
+}
+```
+
+### Brief explanation of the example
+
+- `struct` declares any business data (particularly, messages and storage). It's like a TypeScript class. See [structures](/languages/tolk/types/structures).
+- `(0x12345678)` is called a "message opcode" (32 bit). Unique prefixes help routing `in.body` (binary data).
+- `AllowedMessage` is a type alias for a union type, similar to TypeScript (and in some way, to Rust's enums). See [union types](/languages/tolk/types/unions).
+- `in: InMessage` provides access to message properties: `in.body`, `in.senderAddress`, and so on.
+- `T.fromSlice` parses binary data to `T`. See [auto-serialization](/languages/tolk/features/auto-serialization). Combined with `lazy`, it's done on demand. See [lazy loading](/languages/tolk/features/lazy-loading).
+- `match` routes a union type. Inside each branch, type of `msg` is narrowed (called "smart cast"). See [pattern matching](/languages/tolk/syntax/pattern-matching).
+- `throw 0xFFFF` is a standard reaction on "unrecognized message". But typically, a contract should ignore empty messages: it's "just top-up balance" (send some Toncoin, body is empty). That's why `throw` is wrapped by `if` or `assert`. See [conditions and loops](/languages/tolk/syntax/conditions-loops).
+
+Bounced messages do not enter `onInternalMessage`.
+Read `onBouncedMessage` below.
+
+### How to define and modify contract's storage
+
+A storage is also a regular structure. It's convenient to add `load` and `store` methods accessing blockchain's persistent data:
+
+```tolk
+struct Storage {
+    counterValue: int64
+}
+
+fun Storage.load() {
+    return Storage.fromCell(contract.getData())
+}
+
+fun Storage.save(self) {
+    contract.setData(self.toCell())
+}
+```
+
+Then, in `match` cases, invoke those methods:
+
+```tolk
+match (msg) {
+    CounterIncrement => {
+        var storage = lazy Storage.load();
+        storage.counterValue += msg.incBy;
+        storage.save();
+    }
+    // ...
+}
+```
+
+Alternatively, load the storage above `match` instead of doing it in every branch.
+
+For further reading, consider [contract's storage in details](/languages/tolk/features/contract-storage).
+
+### Old-fashioned `onInternalMessage`
+
+In old times, a handler was declared this way in FunC language:
+
+```func
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    ;; manually parse in_msg_full to retrieve sender_address and others
+}
+```
+
+Tolk also allows to use old-style declarations:
+
+```tolk
+fun onInternalMessage(myBalance: coins, msgValue: coins, msgFull: cell, msgBody: slice) {
+    // manually parse msgFull to retrieve senderAddress and others
+}
+```
+
+For instance, after using [convert-func-to-tolk](https://github.com/ton-blockchain/convert-func-to-tolk),
+the result is exactly as above.
+
+Prefer using a modern solution with `InMessage`: it's not only easier, but also cheaper in gas terms.
+Transitioning after auto-conversion is trivial:
+
+- `myBalance` => `contract.getOriginalBalance()` (it's not a property of a message, it's a state of a contract)
+- `msgValue` => `in.valueCoins`
+- `msgFull` => use `in.senderAddress` etc., no need for manual parsing
+- `msgBody` => `in.body`
+
+## onBouncedMessage
+
+A special entrypoint for handling **bounced messages** also exists.
+When a contract sends a message to another, but the another fails to handle it, a message is bounced back to the sender.
+
+```tolk
+fun onBouncedMessage(in: InMessageBounced) {
+    // messages sent with BounceMode != NoBounce arrive here
+}
+```
+
+`InMessageBounced` is very similar to `InMessage`.
+The only difference is that `in.bouncedBody` has a special shape depending on how a message was originally sent.
+
+### BounceMode in createMessage
+
+When [sending a message](/languages/tolk/features/message-sending), it's required to specify `bounce` behavior:
+
+```tolk
+val msg1 = createMessage({
+    bounce: BounceMode.NoBounce,
+    body: TransferMessage { ... },
+    // ...
+});
+msg1.send(mode); // will not be bounced on error
+
+val msg2 = createMessage({
+    bounce: BounceMode.RichBounce,
+    body: TransferMessage { ... },
+    // ...
+});
+msg2.send(mode); // may be bounced
+```
+
+`BounceMode` is an enum with these options available:
+
+- `BounceMode.NoBounce`
+- `BounceMode.Only256BitsOfBody` — `in.bouncedBody` will be "0xFFFFFFFF" + first 256 bits _(cheapest, and often sufficient)_
+- `BounceMode.RichBounce` — allows to access the entire `originalBody`; also, `gasUsed`, `exitCode`, and some other properties of a failed request are available _(most expensive)_
+- `BounceMode.RichBounceOnlyRootCell` — the same, but `originalBody` will contain only a root cell
+
+### How to handle `in.bouncedBody`
+
+Depending on `BounceMode`, `in.bouncedBody` will look differently.
+
+If all bounceable messages are sent with a cheap `Only256BitsOfBody`:
+
+```tolk
+fun onBouncedMessage(in: InMessageBounced) {
+    // in.bouncedBody is 0xFFFFFFFF + 256 bits
+    in.bouncedBody.skipBouncedPrefix();
+    // handle the rest, keep the 256-bit limit in mind
+}
+```
+
+If you use `RichBounce`, that's the way:
+
+```tolk
+fun onBouncedMessage(in: InMessageBounced) {
+    val rich = lazy RichBounceBody.fromSlice(in.bouncedBody);
+    // handle rich.originalBody
+    // use rich.xxx to get exitCode, gasUsed, and so on
+}
+```
+
+Mixing different modes (sending some messages as cheap and others as rich) complicates handling and is discouraged.
+
+So, the binary body of an outgoing message (`TransferMessage` above) is either `in.bouncedBody` (256 bits) or `rich.originalBody` (the entire slice).
+To handle this correctly,
+
+- create a union "all messages theoretically bounceable"
+- handle it with `lazy` in `onBouncedMessage`
+
+```tolk
+struct (0x98765432) TransferMessage {
+    // ...
+}
+// ... and other messages
+
+// some of them are bounceable (send not with NoBounce)
+type TheoreticallyBounceable = TransferMessage // | ...
+
+// example for BounceMode.Only256BitsOfBody
+fun onBouncedMessage(in: InMessageBounced) {
+    in.bouncedBody.skipBouncedPrefix();   // skips 0xFFFFFFFF
+
+    val msg = lazy TheoreticallyBounceable.fromSlice(in.bouncedBody);
+    match (msg) {
+        TransferMessage => {
+            // revert changes using `msg.xxx`
+        }
+        // ...
+    }
+}
+```
+
+## onExternalMessage
+
+Besides internal messages, a contract may handle **external messages** that arrive from off-chain.
+For example, a [wallet contract](/standard/wallets/how-it-works) handles external messages, performing signature validation via a public key.
+
+```tolk
+fun onExternalMessage(inMsg: slice) {
+    // external messages arrive here
+}
+```
+
+When a contract accepts an external message, it has a very limited gas amount for execution.
+Once a request is validated, remember to call `acceptExternalMessage()` to increase this limit.
+Also, `commitContractDataAndActions()` might be useful.
+Both are standard functions with detailed comments, an IDE provides them.
+
+## Other reserved entrypoints
+
+Besides the functions above, several predefined prototypes also exist:
+
+- `fun onTickTock` — triggers when tick and tock transactions occur
+- `fun onSplitPrepare` and `fun onSplitInstall` — prepared for split/install transactions, currently unavailable in the blockchain
+- `fun main` is often used for short snippets and demos
+
+This program is correct:
+
+```tolk
+fun main() {
+    return 123
+}
+```
+
+It compiles, runs, and pushes 123 onto the stack. Its TVM _method\_id_ is 0.
