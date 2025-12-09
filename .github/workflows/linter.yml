@@ -16,7 +16,6 @@ concurrency:
 permissions:
   contents: read
   pull-requests: write
-  checks: write
 
 jobs:
   format-check:
@@ -80,31 +79,6 @@ jobs:
               process.exit(1);
             }
 
-      - name: Create a button to apply formatting fixes in a new commit from the bot
-        if: |
-          (
-            steps.check-fmt.conclusion == 'failure' &&
-            github.event_name == 'pull_request' &&
-            (
-              github.event.pull_request.head.repo.fork == true ||
-              github.event.pull_request.head.repo.full_name != github.repository
-            )
-          )
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
-        with:
-          script: |
-              const { createCheckButton } = await import('${{ github.workspace }}/.github/scripts/common.mjs');
-              await createCheckButton({
-                github,
-                context,
-                exec,
-                checkName = 'A button to apply formatting fixes',
-                btnLabel = 'Fix formatting',
-                btnLabel = 'Applies formatting fixes on the changed files, in a new commit from the bot',
-                btnID = 'btn_fmt',
-              });
-
-      # TODO: remove
       - name: Hide prior PR comments and issue a new one in case of failure
         if: |
           (
@@ -112,8 +86,8 @@ jobs:
             steps.changed-files.conclusion == 'success' &&
             github.event_name == 'pull_request' &&
             (
-              github.event.pull_request.head.repo.fork == true ||
-              github.event.pull_request.head.repo.full_name != github.repository
+              github.event.pull_request.head.repo.fork != true ||
+              github.event.pull_request.head.repo.full_name == github.repository
             )
           )
         env:
@@ -130,9 +104,10 @@ jobs:
               'To fix the **formatting** issues:\n',
               '1. Install necessary dependencises: `npm ci`',
               '2. Then, run this command:',
-              '```shell',
-              `npm run fmt:some -- ${files.join(' ')}`,
-              '```',
+              '   ```shell',
+              `   npm run fmt:some -- ${files.join(' ')}`,
+              '   ```',
+              '\nAlternatively, a maintainer can comment /fmt in this PR to auto-apply fixes in a new commit from the bot.',
             ].join('\n');
             const prefix = comment.slice(0, 30);
             await hidePriorCommentsWithPrefix({ github, context, exec, prefix, resolved: success });
