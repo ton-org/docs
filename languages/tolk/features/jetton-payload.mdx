@@ -1,0 +1,172 @@
+---
+title: "Forward payload in jettons"
+sidebarTitle: "Payload in jettons"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+By convention, a jetton transfer may have some `forwardPayload` attached — to provide custom data for a transaction's recipient.
+Below are several approaches to represent a "payload" depending on particular needs.
+
+<Aside type="note">
+  It's not a "language feature", actually.
+  But developers ask so many questions about this topic that a dedicated page is provided.
+</Aside>
+
+## The schema of a jetton payload
+
+By definition, the TL-B format is `(Either Cell ^Cell)`: one bit plus the corresponding data depending on the bit:
+
+- bit '0' means: payload = "all the next bits/refs" (_inline payload_)
+- bit '1' means: payload = "the next ref" (_ref payload_)
+
+Since it may be inline, it's always positioned in the end of a message.
+
+However, many **existing jetton implementations do not follow the schema**.
+
+- Some implementations allow empty data to be passed (no bits at all).
+  It is invalid, because at least one bit must exist.
+  An empty payload should actually be encoded as bit '0': empty inline payload.
+- Some implementations do not check that no extra data is left after bit '1'.
+- Error codes differ between various implementations.
+
+## Canonical typing of the payload
+
+TL-B `(Either X Y)` is essentially a union type `X | Y` in Tolk. Hence, this will work:
+
+```tolk
+struct Transfer {
+    // ...
+    forwardPayload: RemainingBitsAndRefs | cell
+}
+```
+
+It will be parsed/serialized exactly as it should: either bit '0' + inline data or bit '1' + ref.
+
+It is convenient for assignment and client metadata, but **has some disadvantages**:
+
+- if you trust the input and need just to proxy data as-is, this approach consumes more gas due to runtime branching (IF bit '0', etc.)
+- it does not check, that no extra data is left after bit '1'
+
+## Questions to ask yourself
+
+To choose the correct typing, **answer the following questions**:
+
+- Do you need validation or just proxy any data as-is?
+- Do you need custom error codes while validating?
+- Do you need to assign it dynamically or just to carry it forward?
+
+## Various approaches depending on answers
+
+To proxy any data **without validation**, shape the "payload" as "all the rest":
+
+```tolk
+struct Transfer {
+    // ...
+    forwardPayload: RemainingBitsAndRefs
+}
+```
+
+To add **validation of a canonical union** `RemainingBitsAndRefs | cell`, check that no extra data exists after a _ref payload_:
+
+```tolk
+struct Transfer {
+    // ...
+    forwardPayload: RemainingBitsAndRefs | cell
+    mustBeEmpty: RemainingBitsAndRefs
+}
+
+fun Transfer.validatePayload(self) {
+    // if extra data exists, throws 9
+    self.mustBeEmpty.assertEnd()
+    // if no bits at all, failed with 9 beforehand,
+    // because the union could not be loaded
+}
+```
+
+If **gas consumption is critical**, but validation is required — it's cheaper not to allocate unions on the stack,
+but to load a slice, validate it, and keep a slice for further serialization:
+
+```tolk
+struct Transfer {
+    // ...
+    forwardPayload: ForwardPayload
+}
+
+type ForwardPayload = RemainingBitsAndRefs
+
+// validate TL/B `(Either Cell ^Cell)`
+fun ForwardPayload.checkIsCorrectTLBEither(self) {
+    var mutableCopy = self;
+    // throw 9 if no bits at all ("maybe ref" loads one bit)
+    if (mutableCopy.loadMaybeRef() != null) {
+        // if ^Cell, throw 9 if other data exists
+        mutableCopy.assertEnd()
+    }
+}
+```
+
+To throw **custom error codes** (not errCode 9 "cell underflow"), even calling `loadMaybeRef()` like above is discouraged.
+The solution can be:
+
+```tolk
+type ForwardPayload = RemainingBitsAndRefs
+
+struct (0b0) PayloadInline {
+    data: RemainingBitsAndRefs
+}
+
+struct (0b1) PayloadRef {
+    refData: cell
+    rest: RemainingBitsAndRefs
+}
+
+type PayloadInlineOrRef = PayloadInline | PayloadRef
+
+// validate TL/B `(Either Cell ^Cell)`
+fun ForwardPayload.checkIsCorrectTLBEither(self) {
+    val p = lazy PayloadInlineOrRef.fromSlice(self);
+    match (p) {
+        PayloadInline => {
+            // okay, valid
+        }
+        PayloadRef => {
+            // valid if nothing besides ref exists
+            assert (p.rest.isEmpty()) throw ERR_EXTRA_BITS
+        }
+        else => {
+            // both not bit '0' and not bit '1' — empty
+            throw ERR_EMPTY_PAYLOAD_FIELD
+        }
+    }
+}
+```
+
+Keeping a "remainder" is cheaper and allows graceful validation, but it's not convenient
+if you need to **assign a payload dynamically**. It's a plain `slice`, holding an encoded union.
+For example, creating a _ref payload_ from code having a `cell` requires manual work:
+
+```tolk
+fun createRefPayload(ref: cell) {
+    // not like this, mismatched types
+    val err1 = ref;
+    // not like this, incorrect logic
+    val err2 = ref.beginParse();
+
+    // but like this: '1' + ref
+    val payload = beginCell()
+            .storeBool(true).storeRef(ref)
+            .asSlice();
+}
+```
+
+Of course, `RemainingBitsAndRefs | cell` is **much more convenient for assignment**, but as shown above,
+has its own disadvantages.
+
+<Aside
+  type="caution"
+  title={"Conclusion: no universal solution exists"}
+>
+  Payloads are cumbersome, and the solution **depends on particular requirements**.
+  The topic is hard, and this article may require a second read to be fully understood.
+</Aside>
