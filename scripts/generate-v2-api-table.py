@@ -234,7 +234,7 @@ def main():
         else:
             print(f"  No changes needed or markers missing")
     
-    print("\n✨ Done!")
+    print("\n Done")
 
 
 if __name__ == '__main__':
