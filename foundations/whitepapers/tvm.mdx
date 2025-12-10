@@ -91,7 +91,7 @@ A preliminary list of value types supported by TVM is as follows:
 - *Builder* — A *TVM cell builder*, or *builder* for short, is an "incomplete" cell that supports fast operations of appending bitstrings and cell references at its end. Builders are used for packing (or serializing) data from the top of the stack into new cells (e.g., before transferring them to persistent storage).
 - *Continuation* — Represents an "execution token" for TVM, which may be invoked (executed) later. As such, it generalizes function addresses (i.e., function pointers and references), subroutine return addresses, instruction pointer addresses, exception handler addresses, closures, partial applications, anonymous functions, and so on.
 
-This list of value types is incomplete and may be extended in future revisions of TVM without breaking the old TVM code, due mostly to the fact that all originally defined primitives accept only values of types known to them and will fail (generate a type-checking exception) if invoked on values of new types. Furthermore, existing value types themselves can also be extended in the future: for example, 257-bit *Integer* might become 513-bit *LongInteger*, with originally defined arithmetic primitives failing if either of the arguments or the result does not fit into the original subtype *Integer*. Backward compatibility with respect to the introduction of new value types and extension of existing value types will be discussed in more detail later [Changing the behavior of old operations](#5-1-4-changing-the-behavior-of-old-operations).
+This list of value types is incomplete and may be extended in future revisions of TVM without breaking the old TVM code, due mostly to the fact that all originally defined primitives accept only values of types known to them and will fail (generate a type-checking exception) if invoked on values of new types. Furthermore, existing value types themselves can also be extended in the future: for example, 257-bit *Integer* might become 513-bit *LongInteger*, with originally defined arithmetic primitives failing if either of the arguments or the result does not fit into the original subtype *Integer*. Backward compatibility with respect to the introduction of new value types and extension of existing value types will be discussed [later](#5-1-4-changing-the-behavior-of-old-operations).
 
 ## 1.2   Categories of TVM instructions
 
@@ -122,36 +122,24 @@ The original version of TVM defines and uses the following control registers:
 - $\texttt{c0}$ — Contains the *next continuation* or *return continuation* (similar to the subroutine return address in conventional designs). This value must be a *Continuation*.
 - $\texttt{c1}$ — Contains the *alternative (return) continuation*; this value must be a *Continuation*. It is used in some (experimental) control flow primitives, allowing TVM to define and call "subroutines with two exit points".
 - $\texttt{c2}$ — Contains the *exception handler*. This value is a *Continuation*, invoked whenever an exception is triggered.
-- $\texttt{c3}$ — Contains the *current dictionary*, essentially a hashmap containing the code of all functions used in the program. For reasons explained later in [4.6](#4-6-functions%2C-recursion%2C-and-dictionaries), this value is also a *Continuation*, not a *Cell* as one might expect.
+- $\texttt{c3}$ — Contains the *current dictionary*, essentially a hashmap containing the code of all functions used in the program. This value is also a [Continuation](#4-6-functions%2C-recursion%2C-and-dictionaries), not a *Cell* as one might expect.
 - $\texttt{c4}$ — Contains the *root of persistent data*, or simply the *data*. This value is a *Cell*. When the code of a smart contract is invoked, $\texttt{c4}$ points to the root cell of its persistent data kept in the blockchain state. If the smart contract needs to modify this data, it changes $\texttt{c4}$ before returning.
 - $\texttt{c5}$ — Contains the *output actions*. It is also a *Cell* initialized by a reference to an empty cell, but its final value is considered one of the smart contract outputs. For instance, the $\texttt{SENDMSG}$ primitive, specific for the TON Blockchain, simply inserts the message into a list stored in the output actions.
 - $\texttt{c7}$ — Contains the *root of temporary data*. It is a *Tuple*, initialized by a reference to an empty *Tuple* before invoking the smart contract and discarded after its termination.<a id="ref-fn4"></a><sup>[4](#fn4)</sup>
 
 More control registers may be defined in the future for specific TON Blockchain or high-level programming language purposes, if necessary.
 
----
-
-
-Got it! Now I understand:
-
-1. If link fits naturally into existing text → wrap that text with link
-2. If link doesn't fit naturally (has "listed in", "described in", "cf.") → keep descriptive link where the numbered reference was
-
-Let me redo 1.4 and 1.5:
-
----
-
 ## 1.4   Total state of TVM (SCCCG)
 
 The total state of TVM consists of the following components:
 
-- *[Stack](#1-1-tvm-is-a-stack-machine)* — Contains zero or more *[values](#1-1-1-tvm-values)*, each belonging to one of *value types* listed in [Preliminary list of value types](#1-1-3-preliminary-list-of-value-types).
-- *Control registers* $\mathit{c0}$–$\mathit{c15}$ — Contain some specific values as described in [List of control registers](#1-3-2-list-of-control-registers). (Only seven control registers are used in the current version.)
+- *[Stack](#1-1-tvm-is-a-stack-machine)* — Contains zero or more [values](#1-1-1-tvm-values), each belonging to one of [value types](#1-1-3-preliminary-list-of-value-types).
+- *Control registers* $\mathit{c0}$–$\mathit{c15}$ — Contain some [specific values](#1-3-2-list-of-control-registers). (Only seven control registers are used in the current version.)
 - *Current continuation* $\mathit{cc}$ — Contains the current continuation (i.e., the code that would be normally executed after the current primitive is completed). This component is similar to the instruction pointer register ($\texttt{ip}$) in other architectures.
 - *Current codepage* $\mathit{cp}$ — A special signed 16-bit integer value that selects the way the next TVM opcode will be decoded. For example, future versions of TVM might use different codepages to add new opcodes while preserving backward compatibility.
 - *Gas limits* $\mathit{gas}$ — Contains four signed 64-bit integers: the current gas limit $g_l$, the maximal gas limit $g_m$, the remaining gas $g_r$, and the gas credit $g_c$. Always $0\leq g_l\leq g_m$, $g_c\geq0$, and $g_r\leq g_l+g_c$; $g_c$ is usually initialized by zero, $g_r$ is initialized by $g_l+g_c$ and gradually decreases as the TVM runs. When $g_r$ becomes negative or if the final value of $g_r$ is less than $g_c$, an *out of gas* exception is triggered.
 
-Notice that there is no "return stack" containing the return addresses of all previously called but unfinished functions. Instead, only control register $\texttt{c0}$ is used. The reason for this will be explained later in [Subroutine calls: CALLX or EXECUTE primitives](#4-1-9-subroutine-calls%3A-callx-or-execute-primitives).
+Notice that there is no "return stack" containing the return addresses of all previously called but unfinished functions. Instead, only [control register $\texttt{c0}$](#4-1-9-subroutine-calls%3A-or-primitives) is used.
 
 Also notice that there are no general-purpose registers, because [TVM is a stack machine](#1-1-tvm-is-a-stack-machine). So the above list, which can be summarized as "stack, control, continuation, codepage, and gas" (SCCCG), similarly to the classical SECD machine state ("stack, environment, control, dump"), is indeed the *total* state of TVM.<a id="ref-fn5"></a><sup>[5](#fn5)</sup>
 
@@ -179,7 +167,7 @@ TVM also has a primitive $\texttt{MODPOW2}$ $n$, which reduces the integer at th
 
 ### 1.5.5. *Integer* is 257-bit, not 256-bit
 
-One can understand now why TVM's *Integer* is (signed) 257-bit, not 256-bit. The reason is that it is the smallest integer type containing both signed 256-bit integers and unsigned 256-bit integers, which does not require automatic reinterpreting of the same 256-bit string depending on the operation used ([Absence of automatic conversion of integers](#1-5-1-absence-of-automatic-conversion-of-integers)).
+One can understand now why TVM's *Integer* is (signed) 257-bit, not 256-bit. The reason is that it is the smallest integer type containing both signed 256-bit integers and unsigned 256-bit integers, which does not require [automatic reinterpreting](#1-5-1-absence-of-automatic-conversion-of-integers) of the same 256-bit string depending on the operation used.
 
 ### 1.5.6. Division and rounding
 
@@ -195,7 +183,7 @@ To simplify implementation of fixed-point arithmetic, TVM supports combined mult
 
 # 2   The stack
 
-This chapter contains a general discussion and comparison of register and stack machines, expanded further in [Appendix C](#appendix-c-code-density-of-stack-and-register-machines), and describes the two main classes of stack manipulation primitives employed by TVM: the *basic* and the *compound stack manipulation primitives*. An informal explanation of their sufficiency for all stack reordering required for correctly invoking other primitives and user-defined functions is also provided. Finally, the problem of efficiently implementing TVM stack manipulation primitives is discussed in [Efficiency of stack manipulation primitives](#2-3-efficiency-of-stack-manipulation-primitives).
+This chapter contains a general discussion and comparison of register and stack machines, expanded further in [Appendix C](#appendix-c-code-density-of-stack-and-register-machines), and describes the two main classes of stack manipulation primitives employed by TVM: the *basic* and the *compound stack manipulation primitives*. An informal explanation of their sufficiency for all stack reordering required for correctly invoking other primitives and user-defined functions is also provided. Finally, the problem of efficiently implementing TVM [stack manipulation primitives](#2-3-efficiency-of-stack-manipulation-primitives) will be discussed.
 
 ## 2.1    Stack calling conventions
 
@@ -282,7 +270,7 @@ The stack notation is extensively used throughout [Appendix A](#a-instructions-a
 
 Stack machines usually pass the current stack in its entirety to the invoked primitive or function. That primitive or function accesses only the several values near the top of the stack that represent its arguments, and pushes the return values in their place, by convention leaving all deeper values intact. Then the resulting stack, again in its entirety, is returned to the caller.
 
-Most TVM primitives behave in this way, and we expect most user-defined functions to be implemented under such conventions. However, TVM provides mechanisms to specify how many arguments must be passed to a called function ([Determining the number of arguments passed to and/or return values accepted from a subroutine](#4-1-10-determining-the-number-of-arguments-passed-to-and%2For-return-values-accepted-from-a-subroutine)). When these mechanisms are employed, the specified number of values are moved from the caller's stack into the (usually initially empty) stack of the called function, while deeper values remain in the caller's stack and are inaccessible to the callee. The caller can also specify how many return values it expects from the called function.
+Most TVM primitives behave in this way, and we expect most user-defined functions to be implemented under such conventions. However, TVM provides mechanisms to specify how many [arguments](#4-1-10-determining-the-number-of-arguments-passed-to-and%2For-return-values-accepted-from-a-subroutine) must be passed to a called function. When these mechanisms are employed, the specified number of values are moved from the caller's stack into the (usually initially empty) stack of the called function, while deeper values remain in the caller's stack and are inaccessible to the callee. The caller can also specify how many return values it expects from the called function.
 
 Such argument-checking mechanisms might be useful, for example, for a library function that calls user-provided functions passed as arguments to it.
 
@@ -310,7 +298,7 @@ A compiler or a human TVM-code programmer might use the basic stack primitives a
 
 Suppose that the function or primitive to be invoked is to be passed, say, three arguments $x$, $y$, and $z$, currently located in stack registers $\texttt{s}(i)$, $\texttt{s}(j)$, and $\texttt{s}(k)$. In this circumstance, the compiler (or programmer) might issue operation $\texttt{PUSH s}(i)$ (if a copy of $x$ is needed after the call to this primitive) or $\texttt{XCHG s}(i)$ (if it will not be needed afterwards) to put the first argument $x$ into the top of the stack. Then, the compiler (or programmer) could use either $\texttt{PUSH s}(j')$ or $\texttt{XCHG s}(j')$, where $j'=j$ or $j+1$, to put $y$ into the new top of the stack.<a id="ref-fn8"></a><sup>[8](#fn8)</sup>
 
-Proceeding in this manner, we see that we can put the original values of $x$, $y$, and $z$—or their copies, if needed—into locations $\texttt{s2}$, $\texttt{s1}$, and $\texttt{s0}$, using a sequence of push and exchange operations ([Mnemonics of compound stack operations](#2-2-4-mnemonics-of-compound-stack-operations) and [Semantics of compound stack operations](#2-2-5-semantics-of-compound-stack-operations) for a more detailed explanation). In order to generate this sequence, the compiler will need to know only the three values $i$, $j$ and $k$, describing the old locations of variables or temporary values in question, and some flags describing whether each value will be needed thereafter or is needed only for this primitive or function call. The locations of other variables and temporary values will be affected in the process, but a compiler (or a human programmer) can easily track their new locations.
+Proceeding in this manner, we see that we can put the original values of $x$, $y$, and $z$—or their copies, if needed—into locations $\texttt{s2}$, $\texttt{s1}$, and $\texttt{s0}$, using a sequence of push and exchange operations ([2.2.4](#2-2-4-mnemonics-of-compound-stack-operations) and [2.2.5](#2-2-5-semantics-of-compound-stack-operations) for a more detailed explanation). In order to generate this sequence, the compiler will need to know only the three values $i$, $j$ and $k$, describing the old locations of variables or temporary values in question, and some flags describing whether each value will be needed thereafter or is needed only for this primitive or function call. The locations of other variables and temporary values will be affected in the process, but a compiler (or a human programmer) can easily track their new locations.
 
 Similarly, if the results returned from a function need to be discarded or moved to other stack registers, a suitable sequence of exchange and pop operations will do the job. In the typical case of one return value in $\texttt{s0}$, this is achieved either by an $\texttt{XCHG s}(i)$ or a $\texttt{POP s}(i)$ (in most cases, a $\texttt{DROP}$) operation.<a id="ref-fn9"></a><sup>[9](#fn9)</sup>
 
@@ -329,11 +317,11 @@ In order to improve the density of the TVM code and simplify development of comp
 
 Of course, such operations make sense only if they admit a more compact encoding than the equivalent sequence of basic operations. For example, if all top-of-stack exchanges, $\texttt{XCHG s1,s}(i)$ exchanges, and push and pop operations admit one-byte encodings, the only compound stack operations suggested above that might merit inclusion in the set of stack manipulation primitives are $\texttt{PUXC}$, $\texttt{XCHG3}$, and $\texttt{PUSH3}$.
 
-These compound stack operations essentially augment other primitives (instructions) in the code with the "true" locations of their operands, somewhat similarly to what happens with two-address or three-address register machine code. However, instead of encoding these locations inside the opcode of the arithmetic or another instruction, as is customary for register machines, we indicate these locations in a preceding compound stack manipulation operation. As already described in [Arguments to arithmetic primitives on register machines](#2-1-7-arguments-to-arithmetic-primitives-on-register-machines), the advantage of such an approach is that user-defined functions (or rarely used specific primitives added in a future version of TVM) can benefit from it as well ([Sample non-leaf function](#c-3-sample-non-leaf-function) for a more detailed discussion with examples).
+These compound stack operations essentially augment other primitives (instructions) in the code with the "true" locations of their operands, somewhat similarly to what happens with two-address or three-address register machine code. However, instead of encoding these locations inside the opcode of the arithmetic or another instruction, as is customary for register machines, we indicate these locations in a preceding compound stack manipulation operation. The advantage of such an approach is that [user-defined functions](#2-1-7-arguments-to-arithmetic-primitives-on-register-machines) (or rarely used [specific primitives](#c-3-sample-non-leaf-function) added in a future version of TVM) can benefit from it as well.
 
 ### 2.2.4. Mnemonics of compound stack operations
 
-The mnemonics of compound stack operations, some examples of which have been provided in [Compound stack manipulation primitives](#2-2-3-compound-stack-manipulation-primitives), are created as follows.
+The mnemonics of [compound stack](#2-2-3-compound-stack-manipulation-primitives) operations, some examples of which have been provided are created as follows.
 
 The $\gamma\geq2$ formal arguments $\texttt{s}(i_1)$, $\ldots$, $\texttt{s}(i_\gamma)$ to such an operation $O$ represent the values in the original stack that will end up in $\texttt{s}(\gamma-1)$, $\ldots$, $\texttt{s0}$ after the execution of this compound operation, at least if all $i_\nu$, $1\leq\nu\leq\gamma$, are distinct and at least $\gamma$. The mnemonic itself of the operation $O$ is a sequence of $\gamma$ two-letter strings $\texttt{PU}$ and $\texttt{XC}$, with $\texttt{PU}$ meaning that the corresponding argument is to be PUshed (i.e., a copy is to be created), and $\texttt{XC}$ meaning that the value is to be eXChanged (i.e., no other copy of the original value is created). Sequences of several $\texttt{PU}$ or $\texttt{XC}$ strings may be abbreviated to one $\texttt{PU}$ or $\texttt{XC}$ followed by the number of copies. (For instance, we write $\texttt{PUXC2PU}$ instead of $\texttt{PUXCXCPU}$.)
 
@@ -356,6 +344,8 @@ Each compound $\gamma$-ary operation $O$ $\texttt{s}(i_1)$,$\ldots$,$\texttt{s}(
 ### 2.2.6. Stack manipulation instructions are polymorphic
 
 Notice that the stack manipulation instructions are almost the only "polymorphic" primitives in TVM—i.e., they work with values of arbitrary types (including the value types that will appear only in future revisions of TVM). For example, $\texttt{SWAP}$ always interchanges the two top values of the stack, even if one of them is an integer and the other is a cell. Almost all other instructions, especially the data processing instructions (including arithmetic instructions), require each of their arguments to be of some fixed type (possibly different for different arguments).
+
+---
 
 ## 2.3   Efficiency of stack manipulation primitives
 
@@ -397,7 +387,7 @@ This section presents a classification and general descriptions of cell types.
 
 ### 3.1.1. TVM memory and persistent storage consist of cells
 
-Recall that the TVM memory and persistent storage consist of *(TVM) cells*. Each cell contains up to 1023 bits of data and up to four references to other cells.<a id="ref-fn11"></a><sup>[11](#fn11)</sup> Circular references are forbidden and cannot be created by means of TVM ([Absence of circular references](#2-3-5-absence-of-circular-references)). In this way, all cells kept in TVM memory and persistent storage constitute a directed acyclic graph (DAG).
+Recall that the TVM memory and persistent storage consist of *(TVM) cells*. Each cell contains up to 1023 bits of data and up to four references to other cells.<a id="ref-fn11"></a><sup>[11](#fn11)</sup> [Circular references](#2-3-5-absence-of-circular-references) are forbidden and cannot be created by means of TVM. In this way, all cells kept in TVM memory and persistent storage constitute a directed acyclic graph (DAG).
 
 ### 3.1.2. Ordinary and exotic cells
 
@@ -427,7 +417,7 @@ When a cell needs to be transferred by a network protocol or stored in a disk fi
 
 2. Then the data bits are serialized as $\lceil b/8\rceil$ 8-bit octets (bytes). If $b$ is not a multiple of eight, a binary $\texttt{1}$ and up to six binary $\texttt{0}$s are appended to the data bits. After that, the data is split into $\lceil b/8\rceil$ eight-bit groups, and each group is interpreted as an unsigned big-endian integer $0\ldots 255$ and stored into an octet.
 
-3. Finally, each of the $r$ cell references is represented by 32 bytes containing the 256-bit *representation hash* $\text{Hash}(c_i)$, explained below in [The representation hash of a cell](#3-1-5-the-representation-hash-of-a-cell), of the cell $c_i$ referred to.
+3. Finally, each of the $r$ cell references is represented by 32 bytes containing the 256-bit [representation hash](#3-1-5-the-representation-hash-of-a-cell) $\text{Hash}(c_i)$ of the cell $c_i$ referred to.
 
 In this way, $2+\lceil b/8\rceil+32r$ bytes of $\text{CellRepr}(c)$ are obtained.
 
@@ -439,7 +429,7 @@ $$
 \text{Hash}(c):=\text{Sha256}\bigl(\text{CellRepr}(c)\bigr) \tag{2}
 $$
 
-Notice that cyclic cell references are not allowed and cannot be created by means of the TVM ([Absence of circular references](#2-3-5-absence-of-circular-references)), so this recursion always ends, and the representation hash of any cell is well-defined.
+Notice that [cyclic cell references](#2-3-5-absence-of-circular-references) are not allowed and cannot be created by means of the TVM, so this recursion always ends, and the representation hash of any cell is well-defined.
 
 ### 3.1.6. The higher hashes of a cell
 
@@ -479,11 +469,11 @@ Arbitrary values of arbitrary algebraic data types (e.g., all types used in func
 
 The TVM code itself is also represented by a tree of cells. Indeed, TVM code is simply a value of some complex algebraic data type, and as such, it can be serialized into a tree of cells.
 
-The exact way in which the TVM code (e.g., TVM assembly code) is transformed into a tree of cells is explained later ([Normal work of TVM, or the main loop](#4-1-4-normal-work-of-tvm%2C-or-the-main-loop) and [Instruction encoding](#5-2-instruction-encoding)), in sections discussing control flow instructions, continuations, and TVM instruction encoding.
+The exact way in which the TVM code (e.g., TVM assembly code) is transformed into a tree of cells is explained later ([4.1.4](#4-1-4-normal-work-of-tvm%2C-or-the-main-loop) and [5.2](#5-2-instruction-encoding)), in sections discussing control flow instructions, continuations, and TVM instruction encoding.
 
 ### 3.1.10. "Everything is a bag of cells" paradigm
 
-As described in the [“Everything is a bag of cells” philosophy](foundations/whitepapers/ton#2-5-14-“everything-is-a-bag-of-cells”-philosophy), all the data used by the TON Blockchain, including the blocks themselves and the blockchain state, can be represented—and are represented—as collections, or "bags", of cells. We see that TVM's [structure of data] (#3-1-8-all-values-of-algebraic-data-types-are-trees-of-cells) and [code](#3-1-9-tvm-code-is-a-tree-of-cells) nicely fits into this "everything is a bag of cells" paradigm. In this way, TVM can naturally be used to execute smart contracts in the TON Blockchain, and the TON Blockchain can be used to store the code and persistent data of these smart contracts between invocations of TVM. (Of course, both TVM and the TON Blockchain have been designed so that this would become possible.)
+All the data used by the TON Blockchain, including the blocks themselves and the blockchain state, can be represented—and are represented—as collections, or ["bags" of cells](foundations/whitepapers/ton#2-5-14-“everything-is-a-bag-of-cells”-philosophy). We see that TVM's [structure of data](#3-1-8-all-values-of-algebraic-data-types-are-trees-of-cells) and [code](#3-1-9-tvm-code-is-a-tree-of-cells) nicely fits into this "everything is a bag of cells" paradigm. In this way, TVM can naturally be used to execute smart contracts in the TON Blockchain, and the TON Blockchain can be used to store the code and persistent data of these smart contracts between invocations of TVM. (Of course, both TVM and the TON Blockchain have been designed so that this would become possible.)
 
 ## 3.2   Data manipulation instructions and cells
 
@@ -498,9 +488,11 @@ The TVM cell instructions are naturally subdivided into two principal classes:
 
 Additionally, there are *exotic cell instructions* used to create and inspect [exotic cells](#3-1-2-ordinary-and-exotic-cells), which in particular are used to represent pruned branches of Merkle proofs and Merkle proofs themselves.
 
+---
+
 ### 3.2.2. *Builder* and *Slice* values
 
-Cell creation instructions usually work with *Builder* values, which can be kept only in the stack ([Preliminary list of value types](#1-1-3-preliminary-list-of-value-types)). Such values represent partially constructed cells, for which fast operations for appending bitstrings, integers, other cells, and references to other cells can be defined. Similarly, cell parsing instructions make heavy use of *Slice* values, which represent either the remainder of a partially parsed cell, or a value (subcell) residing inside such a cell and extracted from it by a parsing instruction.
+Cell creation instructions usually work with [Builder values](#1-1-3-preliminary-list-of-value-types), which can be kept only in the stack. Such values represent partially constructed cells, for which fast operations for appending bitstrings, integers, other cells, and references to other cells can be defined. Similarly, cell parsing instructions make heavy use of *Slice* values, which represent either the remainder of a partially parsed cell, or a value (subcell) residing inside such a cell and extracted from it by a parsing instruction.
 
 ### 3.2.3. *Builder* and *Slice* values exist only as stack values
 
@@ -531,7 +523,7 @@ The mnemonics of cell serialization primitives usually begin with $\texttt{ST}$.
 - The source of the field width in bits to be used (e.g., $\texttt{X}$ for integer serialization instructions means that the bit width $n$ is supplied in the stack; otherwise it has to be embedded into the instruction as an immediate value).
 - The action to be performed if the operation cannot be completed (by default, an exception is generated; "quiet" versions of serialization instructions are marked by a $\texttt{Q}$ letter in their mnemonics).
 
-This classification scheme is used to create a more complete taxonomy of cell serialization primitives, which can be found in [Cell serialization primitives](#a-7-1-cell-serialization-primitives).
+This classification scheme is used to create a more complete taxonomy of [cell serialization primitives](#a-7-1-cell-serialization-primitives).
 
 ### 3.2.7. Integer serialization primitives
 
@@ -558,7 +550,7 @@ In addition to the cell serialization primitives for certain built-in value type
 
 ### 3.2.11. Taxonomy of cell deserialisation primitives
 
-Cell parsing, or deserialization, primitives can be classified as described in [Taxonomy of cell creation (serialization) primitives](#3-2-6-taxonomy-of-cell-creation-serialization-primitives), with the following modifications:
+Cell parsing, or deserialization, [primitives](#3-2-6-taxonomy-of-cell-creation-serialization-primitives) can be classified with the following modifications:
 
 - They work with *Slices* (representing the remainder of the cell being parsed) instead of *Builders*.
 - They return deserialized values instead of accepting them as arguments.
@@ -577,7 +569,7 @@ In addition to the cell deserialisation primitives outlined above, TVM provides 
 
 The reader might wonder how the values serialized inside a cell may be modified. Suppose a cell contains three serialized 29-bit integers, $(x,y,z)$, representing the coordinates of a point in space, and we want to replace $y$ with $y'=y+1$, leaving the other coordinates intact. How would we achieve this?
 
-TVM does not offer any ways to modify existing values ([Transparency of the implementation: Stack values are "values", not "references"](#2-3-4-transparency-of-the-implementation-stack-values-are-values-not-references) and [Absence of circular references](#2-3-5-absence-of-circular-references)), so our example can only be accomplished with a series of operations as follows:
+TVM does not offer any ways to modify existing values ([2.3.4](#2-3-4-transparency-of-the-implementation-stack-values-are-values-not-references) and [2.3.5](#2-3-5-absence-of-circular-references)), so our example can only be accomplished with a series of operations as follows:
 
 1. Deserialize the original cell into three *Integer*s $x$, $y$, $z$ in the stack (e.g., by $\texttt{CTOS}$; $\texttt{LDI 29}$; $\texttt{LDI 29}$; $\texttt{LDI 29}$; $\texttt{ENDS}$).
 2. Increase $y$ by one (e.g., by $\texttt{SWAP}$; $\texttt{INC}$; $\texttt{SWAP}$).
@@ -585,7 +577,9 @@ TVM does not offer any ways to modify existing values ([Transparency of the impl
 
 ### 3.2.14. Modifying the persistent storage of a smart contract
 
-If the TVM code wants to modify its persistent storage, represented by the tree of cells rooted at $\texttt{c4}$, it simply needs to rewrite control register $\texttt{c4}$ by the root of the tree of cells containing the new value of its persistent storage. (If only part of the persistent storage needs to be modified, see [Modifying a serialized value in a cell](#3-2-13-modifying-a-serialized-value-in-a-cell).)
+If the TVM code wants to modify its persistent storage, represented by the tree of cells rooted at $\texttt{c4}$, it simply needs to rewrite control register $\texttt{c4}$ by the root of the tree of cells containing the new value of its persistent storage. (If only part of the persistent storage needs to be [modified](#3-2-13-modifying-a-serialized-value-in-a-cell).)
+
+---
 
 ## 3.3   Hashmaps, or dictionaries
 
@@ -638,7 +632,7 @@ A TL-B scheme, like the one above, includes the following components.
 
 The right-hand side of each "equation" is a *type*, either simple (such as $\texttt{Bit}$ or $\texttt{True}$) or parametrized (such as $\texttt{Hashmap}$ $n$ $X$). The parameters of a type must be either natural numbers (i.e., non-negative integers, which are required to fit into 32 bits in practice), such as $n$ in $\texttt{Hashmap}$ $n$ $X$, or other types, such as $X$ in $\texttt{Hashmap}$ $n$ $X$.
 
-The left-hand side of each equation describes a way to define, or even to serialize, a value of the type indicated in the right-hand side. Such a description begins with the name of a *constructor*, such as $\texttt{hm\_edge}$ or $\texttt{hml\_long}$, immediately followed by an optional *constructor tag*, such as #\_ or \$10, which describes the bitstring used to encode (serialize) the constructor in question. Such tags may be given in either binary (after a dollar sign) or hexadecimal notation (after a hash sign), using the conventions described in [Notation for bitstrings](#1-0-notation-for-bitstrings). If a tag is not explicitly provided, TL-B computes a default 32-bit constructor tag by hashing the text of the "equation" defining this constructor in a certain fashion. Therefore, empty tags must be explicitly provided by #\_ or \$\_. All constructor names must be distinct, and constructor tags for the same type must constitute a prefix code (otherwise the deserialization would not be unique).
+The left-hand side of each equation describes a way to define, or even to serialize, a value of the type indicated in the right-hand side. Such a description begins with the name of a *constructor*, such as $\texttt{hm\_edge}$ or $\texttt{hml\_long}$, immediately followed by an optional *constructor tag*, such as #\_ or \$10, which describes the bitstring used to encode (serialize) the constructor in question. Such tags may be given in either binary (after a dollar sign) or [hexadecimal notation](#1-0-notation-for-bitstrings) (after a hash sign), using the conventions. If a tag is not explicitly provided, TL-B computes a default 32-bit constructor tag by hashing the text of the "equation" defining this constructor in a certain fashion. Therefore, empty tags must be explicitly provided by #\_ or \$\_. All constructor names must be distinct, and constructor tags for the same type must constitute a prefix code (otherwise the deserialization would not be unique).
 
 The constructor and its optional tag are followed by *field definitions*. Each field definition is of the form $\textit{ident}:\textit{type-expr}$, where $\textit{ident}$ is an identifier with the name of the field<a id="ref-fn16"></a><sup>[16](#fn16)</sup> (replaced by an underscore for anonymous fields), and $\textit{type-expr}$ is the field's type. The type provided here is a *type expression*, which may include simple types or parametrized types with suitable parameters. *Variables*—i.e., the (identifiers of the) previously defined fields of types $\#$ (natural numbers) or $\textit{Type}$ (type of types)—may be used as parameters for the parametrized types. The serialization process recursively serializes each field according to its type, and the serialization of a value ultimately consists of the concatenation of bitstrings representing the constructor (i.e., the constructor tag) and the field values.
 
@@ -654,13 +648,13 @@ Parametrized type $\texttt{\#<= }p$ with $p:\texttt{\#}$ (this notation means "$
 
 ### 3.3.5. Application to the serialization of hashmaps
 
-Let us explain the net result of applying the general rules described in [Brief explanation of TL-B schemes](#3-3-4-brief-explanation-of-tl-b-schemes) to the TL-B scheme presented in [Serialization of hashmaps](#3-3-3-serialization-of-hashmaps).
+Let us explain the net result of applying the [general rules](#3-3-4-brief-explanation-of-tl-b-schemes) to the [TL-B scheme](#3-3-3-serialization-of-hashmaps).
 
-Suppose we wish to serialize a value of type *HashmapE* $n$ $X$ for some integer $0\leq n\leq 1023$ and some type $X$ (i.e., a dictionary with $n$-bit keys and values of type $X$, admitting an abstract representation as a Patricia tree ([Hashmaps as Patricia trees](#3-3-2-hashmaps-as-patricia-trees))).
+Suppose we wish to serialize a value of type *HashmapE* $n$ $X$ for some integer $0\leq n\leq 1023$ and some type $X$ (i.e., a dictionary with $n$-bit keys and values of type $X$, admitting an abstract representation as a [Patricia tree](#3-3-2-hashmaps-as-patricia-trees)).
 
 First of all, if our dictionary is empty, it is serialized into a single binary $\texttt{0}$, which is the tag of nullary constructor $\texttt{hme\_empty}$. Otherwise, its serialization consists of a binary $\texttt{1}$ (the tag of $\texttt{hme\_root}$), along with a reference to a cell containing the serialization of a value of type *Hashmap* $n$ $X$ (i.e., a necessarily non-empty dictionary).
 
-The only way to serialize a value of type *Hashmap* $n$ $X$ is given by the $\texttt{hm\_edge}$ constructor, which instructs us to serialize first the label $\texttt{label}$ of the edge leading to the root of the subtree under consideration (i.e., the common prefix of all keys in our (sub)dictionary). This label is of type $\texttt{HmLabel}$ $l^\perp$ $n$, which means that it is a bitstring of length at most $n$, serialized in such a way that the true length $l$ of the label, $0\leq l\leq n$, becomes known from the serialization of the label. (This special serialization method is described separately in [Serialization of labels](#3-3-6-serialization-of-labels).)
+The only way to serialize a value of type *Hashmap* $n$ $X$ is given by the $\texttt{hm\_edge}$ constructor, which instructs us to serialize first the label $\texttt{label}$ of the edge leading to the root of the subtree under consideration (i.e., the common prefix of all keys in our (sub)dictionary). This label is of type $\texttt{HmLabel}$ $l^\perp$ $n$, which means that it is a bitstring of length at most $n$, serialized in such a way that the true length $l$ of the label, $0\leq l\leq n$, becomes known from the [serialization](#3-3-6-serialization-of-labels) of the label.
 
 The label must be followed by the serialization of a $\texttt{node}$ of type $\texttt{HashmapNode}$ $m$ $X$, where $m=n-l$. It corresponds to a vertex of the Patricia tree, representing a non-empty subdictionary of the original dictionary with $m$-bit keys, obtained by removing from all the keys of the original subdictionary their common prefix of length $l$.
 
@@ -722,7 +716,7 @@ A.0.0.1 := 10 100 0001 0000000100100001
 A.0.1 := 10 111 1101111 1101111100100001
 ```
 
-Here $A$ is the root cell, $A.0$ is the cell at the first reference of $A$, $A.1$ is the cell at the second reference of $A$, and so on. This tree of cells can be represented more compactly using the hexadecimal notation described in [Notation for bitstrings](#1-0-notation-for-bitstrings), using indentation to reflect the tree-of-cells structure:
+Here $A$ is the root cell, $A.0$ is the cell at the first reference of $A$, $A.1$ is the cell at the second reference of $A$, and so on. This tree of cells can be represented more compactly using the [hexadecimal notation](#1-0-notation-for-bitstrings), using indentation to reflect the tree-of-cells structure:
 
 ```
 C_
@@ -755,7 +749,7 @@ Let us present a classification of basic operations with dictionaries (i.e., val
 
 - $\text{Get}(D,k)$ — Given $D$:*HashmapE*$(n,X)$ and a key $k:n\cdot\texttt{bit}$, returns the corresponding value $D[k]:X^?$ kept in $D$.
 
-- $\text{Set}(D,k,x)$ — Given $D$:*HashmapE*$(n,X)$, a key $k:n\cdot\texttt{bit}$, and a value $x:X$, sets $D'[k]$ to $x$ in a copy $D'$ of $D$, and returns the resulting dictionary $D'$ ([Transparency of the implementation: Stack values are "values", not "references"](#2-3-4-transparency-of-the-implementation-stack-values-are-values-not-references)).
+- $\text{Set}(D,k,x)$ — Given $D$:*HashmapE*$(n,X)$, a key $k:n\cdot\texttt{bit}$, and a value $x:X$, sets $D'[k]$ to $x$ in a [copy](#2-3-4-transparency-of-the-implementation-stack-values-are-values-not-references) $D'$ of $D$, and returns the resulting dictionary $D'$.
 
 - $\text{Add}(D,k,x)$ — Similar to $\text{Set}$, but adds the key-value pair $(k,x)$ to $D$ only if key $k$ is absent in $D$.
 
@@ -797,7 +791,7 @@ Let us present a classification of basic operations with dictionaries (i.e., val
 
 ### 3.3.11. Taxonomy of dictionary primitives
 
-The dictionary primitives, described in detail in [Dictionary manipulation primitives](#a-10-dictionary-manipulation-primitives), can be classified according to the following categories:
+The [dictionary primitives](#a-10-dictionary-manipulation-primitives), can be classified according to the following categories:
 
 - Which [dictionary operation](#3-3-10-basic-dictionary-operations) do they perform?
 - Are they specialized for the case $X = \text{\textasciicircum}Y$ If so, do they represent values of type $Y$ by *Cell*s or by *Slice*s? (Generic versions always represent values of type $X$ as *Slice*s.)
@@ -811,11 +805,11 @@ In addition, TVM includes special serialization/deserialization primitives, such
 
 ## 3.4   Hashmaps with variable-length keys
 
-TVM provides some support for dictionaries, or hashmaps, with variable-length keys, in addition to its support for dictionaries with fixed-length keys (as described in [Hashmaps, or dictionaries](#3-3-hashmaps%2C-or-dictionaries) above).
+TVM provides some support for [dictionaries, or hashmaps](#3-3-hashmaps%2C-or-dictionaries), with variable-length keys, in addition to its support for dictionaries with fixed-length keys.
 
 ### 3.4.1. Serialization of dictionaries with variable-length keys
 
-The serialization of a *VarHashmap* into a tree of cells (or, more generally, into a *Slice*) is defined by a TL-B scheme, similar to that described in [Serialization of hashmaps](#3-3-3-serialization-of-hashmaps):
+The [serialization](#3-3-3-serialization-of-hashmaps) of a *VarHashmap* into a tree of cells (or, more generally, into a *Slice*) is defined by a TL-B scheme:
 
 ```
 vhm_edge#_ {n:#} {X:Type} {l:#} {m:#} label:(HmLabel ~l n) 
@@ -866,13 +860,13 @@ We conclude this chapter with a discussion of the problem of recursion and of fa
 
 ## 4.1   Continuations and subroutines
 
-Recall ([Preliminary list of value types](#1-1-3-preliminary-list-of-value-types)) that *Continuation* values represent "execution tokens" that can be executed later—for example, by $\texttt{EXECUTE}$=$\texttt{CALLX}$ ("execute" or "call indirect") or $\texttt{JMPX}$ ("jump indirect") primitives. As such, the continuations are heavily used by control flow primitives, enabling subroutine calls, conditional expressions, loops, and so on.
+Recall that [Continuation values](#1-1-3-preliminary-list-of-value-types) represent "execution tokens" that can be executed later—for example, by $\texttt{EXECUTE}$=$\texttt{CALLX}$ ("execute" or "call indirect") or $\texttt{JMPX}$ ("jump indirect") primitives. As such, the continuations are heavily used by control flow primitives, enabling subroutine calls, conditional expressions, loops, and so on.
 
 ### 4.1.1. Ordinary continuations
 
 The most common kind of continuations are the *ordinary continuations*, containing the following data:
 
-- A *Slice* $\texttt{code}$ ([Preliminary list of value types](#1-1-3-preliminary-list-of-value-types) and [Builder and Slice values](#3-2-2-builder-and-slice-values)), containing (the remainder of) the TVM code to be executed.
+- A *Slice* $\texttt{code}$ ([1.1.3](#1-1-3-preliminary-list-of-value-types) and [3.2.2](#3-2-2-builder-and-slice-values)), containing (the remainder of) the TVM code to be executed.
 - A (possibly empty) *Stack* $\texttt{stack}$, containing the original contents of the stack for the code to be executed.
 - A (possibly empty) list $\texttt{save}$ of pairs $(\texttt{c}(i),v_i)$ (also called "savelist"), containing the values of control registers to be restored before the execution of the code.
 - A 16-bit integer value $\texttt{cp}$, selecting the TVM codepage used to interpret the TVM code from $\texttt{code}$.
@@ -884,24 +878,24 @@ In most cases, the ordinary continuations are the simplest ones, having empty $\
 
 ### 4.1.3. Current continuation cc
 
-The "current continuation" $\texttt{cc}$ is an important part of the total state of TVM, representing the code being executed right now ([TVM is a stack machine](#1-1-tvm-is-a-stack-machine)). In particular, what we call "the current stack" (or simply "the stack") when discussing all other primitives is in fact the stack of the current continuation. All other components of the total state of TVM may be also thought of as parts of the current continuation $\texttt{cc}$; however, they may be extracted from the current continuation and kept separately as part of the total state for performance reasons. This is why we describe the stack, the control registers, and the codepage as separate parts of the TVM state in [Total state of TVM (SCCCG)](#1-4-total-state-of-tvm-scccg).
+The "current continuation" $\texttt{cc}$ is an important part of the [total state of TVM](#1-1-tvm-is-a-stack-machine), representing the code being executed right now. In particular, what we call "the current stack" (or simply "the stack") when discussing all other primitives is in fact the stack of the current continuation. All other components of the total state of TVM may be also thought of as parts of the current continuation $\texttt{cc}$; however, they may be extracted from the current continuation and kept separately as part of the total state for performance reasons. This is why we describe the stack, the control registers, and the codepage as separate parts of the [TVM state](#1-4-total-state-of-tvm-scccg).
 
 ### 4.1.4. Normal work of TVM, or the main loop
 
 TVM usually performs the following operations:
 
-If the current continuation $\texttt{cc}$ is an ordinary one, it decodes the first instruction from the *Slice* $\texttt{code}$, similarly to the way other cells are deserialized by TVM $\texttt{LD*}$ primitives ([Data manipulation instructions and cells](#3-2-data-manipulation-instructions-and-cells) and [Taxonomy of cell deserialization primitives](#3-2-11-taxonomy-of-cell-deserialisation-primitives)): it decodes the opcode first, and then the parameters of the instruction (e.g., 4-bit fields indicating "stack registers" involved for stack manipulation primitives, or constant values for "push constant" or "literal" primitives). The remainder of the *Slice* is then put into the $\texttt{code}$ of the new $\texttt{cc}$, and the decoded operation is executed on the current stack. This entire process is repeated until there are no operations left in $\texttt{cc.code}$.
+If the current continuation $\texttt{cc}$ is an ordinary one, it decodes the first instruction from the *Slice* $\texttt{code}$, similarly to the way other cells are deserialized by TVM $\texttt{LD*}$ primitives ([3.2](#3-2-data-manipulation-instructions-and-cells) and [3.2.11](#3-2-11-taxonomy-of-cell-deserialisation-primitives)): it decodes the opcode first, and then the parameters of the instruction (e.g., 4-bit fields indicating "stack registers" involved for stack manipulation primitives, or constant values for "push constant" or "literal" primitives). The remainder of the *Slice* is then put into the $\texttt{code}$ of the new $\texttt{cc}$, and the decoded operation is executed on the current stack. This entire process is repeated until there are no operations left in $\texttt{cc.code}$.
 
-If the $\texttt{code}$ is empty (i.e., contains no bits of data and no references), or if a (rarely needed) explicit subroutine return ($\texttt{RET}$) instruction is encountered, the current continuation is discarded, and the "return continuation" from control register $\texttt{c0}$ is loaded into $\texttt{cc}$ instead (this process is discussed in more detail starting in [Switching to another continuation: JMP and RET](#4-1-6-switching-to-another-continuation-jmp-and-ret)).<a id="ref-fn20"></a><sup>[20](#fn20)</sup> Then the execution continues by parsing operations from the new current continuation.
+If the $\texttt{code}$ is empty (i.e., contains no bits of data and no references), or if a (rarely needed) explicit subroutine return ($\texttt{RET}$) instruction is encountered, the current continuation is discarded, and the ["return continuation"](#4-1-6-switching-to-another-continuation-jmp-and-ret) from control register $\texttt{c0}$ is loaded into $\texttt{cc}$ instead.<a id="ref-fn20"></a><sup>[20](#fn20)</sup> Then the execution continues by parsing operations from the new current continuation.
 
 ### 4.1.5. Extraordinary continuations
 
-In addition to the ordinary continuations considered so far ([Ordinary continuations](#4-1-1-ordinary-continuations)), TVM includes some *extraordinary continuations*, representing certain less common states. Examples of extraordinary continuations include:
+In addition to the [ordinary continuations](#4-1-1-ordinary-continuations), TVM includes some *extraordinary continuations*, representing certain less common states. Examples of extraordinary continuations include:
 
 - The continuation $\texttt{ec\_quit}$ with its parameter set to zero, which represents the end of the work of TVM. This continuation is the original value of $\texttt{c0}$ when TVM begins executing the code of a smart contract.
 - The continuation $\texttt{ec\_until}$, which contains references to two other continuations (ordinary or not) representing the body of the loop being executed and the code to be executed after the loop.
 
-Execution of an extraordinary continuation by TVM depends on its specific class, and differs from the operations for ordinary continuations described in [Normal work of TVM, or the main loop](#4-1-4-normal-work-of-tvm%2C-or-the-main-loop).<a id="ref-fn21"></a><sup>[21](#fn21)</sup>
+Execution of an extraordinary continuation by TVM depends on its specific class, and differs from the operations for [ordinary continuations](#4-1-4-normal-work-of-tvm%2C-or-the-main-loop).<a id="ref-fn21"></a><sup>[21](#fn21)</sup>
 
 ### 4.1.6. Switching to another continuation: $\texttt{JMP}$ and $\texttt{RET}$
 
@@ -927,9 +921,9 @@ The execution of continuations as subroutines is slightly more complicated than 
 
 Consider the $\texttt{CALLX}$ or $\texttt{EXECUTE}$ primitive, which takes a continuation $c$ from the (current) stack and executes it as a subroutine.
 
-Apart from doing the stack manipulations described in [Switching to another continuation: JMP and RET](#4-1-6-switching-to-another-continuation-jmp-and-ret) and [Determining the number n of arguments passed to the next continuation c](#4-1-7-determining-the-number-n-of-arguments-passed-to-the-next-continuation-c) and setting the new control registers and codepage as described in [Restoring control registers from the new continuation c](#4-1-8-restoring-control-registers-from-the-new-continuation-c), these primitives perform several additional steps:
+Apart from doing the stack manipulations described in [4.1.6](#4-1-6-switching-to-another-continuation-jmp-and-ret) and [4.1.7](#4-1-7-determining-the-number-n-of-arguments-passed-to-the-next-continuation-c) and setting the new [control registers](#4-1-8-restoring-control-registers-from-the-new-continuation-c), these primitives perform several additional steps:
 
-1. After the top $n''$ values are removed from the current stack ([Determining the number n of arguments passed to the next continuation c](#4-1-7-determining-the-number-n-of-arguments-passed-to-the-next-continuation-c)), the (usually empty) remainder is not discarded, but instead is stored in the (old) current continuation $\texttt{cc}$.
+1. After the top $n''$ values are [removed](#4-1-7-determining-the-number-n-of-arguments-passed-to-the-next-continuation-c) from the current stack, the (usually empty) remainder is not discarded, but instead is stored in the (old) current continuation $\texttt{cc}$.  
 
 2. The old value of the special register $\texttt{c0}$ is saved into the (previously empty) savelist $\texttt{cc.save}$.
 
@@ -943,7 +937,7 @@ In this way, the called subroutine can return control to the caller by switching
 
 Similarly to $\texttt{JMPX}$ and $\texttt{RET}$, $\texttt{CALLX}$ also has special (rarely used) forms, which allow us to explicitly specify the number $n''$ of arguments passed from the current stack to the called subroutine (by default, $n''$ equals the depth of the current stack, i.e., it is passed in its entirety). Furthermore, a second number $n'''$ can be specified, used to set $\texttt{nargs}$ of the modified $\texttt{cc}$ continuation before storing it into the new $\texttt{c0}$; the new $\texttt{nargs}$ equals the depth of the old stack minus $n''$ plus $n'''$. This means that the caller is willing to pass exactly $n''$ arguments to the called subroutine, and is willing to accept exactly $n'''$ results in their stead.
 
-Such forms of $\texttt{CALLX}$ and $\texttt{RET}$ are mostly intended for library functions that accept functional arguments and want to invoke them safely. Another application is related to the "virtualization support" of TVM, which enables TVM code to run other TVM code inside a "virtual TVM machine". Such virtualization techniques might be useful for implementing sophisticated payment channels in the TON Blockchain (the [TON Whitepaper, 5](/foundations/whitepapers/ton#chapter-5-payment-and-payment-channels)).
+Such forms of $\texttt{CALLX}$ and $\texttt{RET}$ are mostly intended for library functions that accept functional arguments and want to invoke them safely. Another application is related to the "virtualization support" of TVM, which enables TVM code to run other TVM code inside a "virtual TVM machine". Such virtualization techniques might be useful for implementing sophisticated [payment channels](/foundations/whitepapers/ton#chapter-5-payment-and-payment-channels) in the TON Blockchain.
 
 ### 4.1.11. $\texttt{CALLCC}$: call with current continuation
 
@@ -988,9 +982,9 @@ However, some operations with opaque continuations are still possible, mostly be
 - Push one or several values into the stack of a continuation $c$ (thus creating a partial application of a function, or a closure).
 - Set the saved value of a control register $\texttt{c}(i)$ inside the savelist $c$.$\texttt{save}$ of a continuation $c$. If there is already a value for the control register in question, this operation silently does nothing.
 
-#### 4.3.3. Example: operations with control registers
+### 4.3.3. Example: operations with control registers
 
-TVM has some primitives to set and inspect the values of control registers. The most important of them are $\texttt{PUSH c}(i)$ (pushes the current value of $\texttt{c}(i)$ into the stack) and $\texttt{POP c}(i)$ (sets the value of $\texttt{c}(i)$ from the stack, if the supplied value is of the correct type). However, there is also a modified version of the latter instruction, called $\texttt{POPSAVE c}(i)$, which saves the old value of $\texttt{c}(i)$ (for $i>0$) into the continuation at $\texttt{c0}$ as described in [Allowed operations with continuations](#4-3-2-allowed-operations-with-continuations) before setting the new value.
+TVM has some primitives to set and inspect the values of control registers. The most important of them are $\texttt{PUSH c}(i)$ (pushes the current value of $\texttt{c}(i)$ into the stack) and $\texttt{POP c}(i)$ (sets the value of $\texttt{c}(i)$ from the stack, if the supplied value is of the correct type). However, there is also a modified version of the latter instruction, called $\texttt{POPSAVE c}(i)$, which saves the old value of $\texttt{c}(i)$ (for $i>0$) into the [continuation](#4-3-2-allowed-operations-with-continuations) at $\texttt{c0}$ before setting the new value.
 
 ### 4.3.4. Example: setting the number of arguments to a function in its code
 
@@ -1002,7 +996,7 @@ A continuation $c$ may be thought of as a piece of code with two optional exit p
 
 ### 4.3.6. Composition of continuations
 
-One can *compose* two continuations $c$ and $c'$ simply by setting $c$.$\texttt{c0}$ or $c$.$\texttt{c1}$ to $c'$. This creates a new continuation denoted by $c\circ_0c'$ or $c\circ_1c'$, which differs from $c$ in its savelist. (Recall that if the savelist of $c$ already has an entry corresponding to the control register in question, such an operation silently does nothing as explained in [Allowed operations with continuations](#4-3-2-allowed-operations-with-continuations)).
+One can *compose* two continuations $c$ and $c'$ simply by setting $c$.$\texttt{c0}$ or $c$.$\texttt{c1}$ to $c'$. This creates a new continuation denoted by $c\circ_0c'$ or $c\circ_1c'$, which differs from $c$ in its savelist. (Recall that if the savelist of $c$ already has an entry corresponding to the control register in question, such an operation silently [does nothing](#4-3-2-allowed-operations-with-continuations).
 
 By composing continuations, one can build chains or other graphs, possibly with loops, representing the control flow. In fact, the resulting graph resembles a flow chart, with the boolean circuits corresponding to the "condition nodes" (containing code that will transfer control either to $\texttt{c0}$ or to $\texttt{c1}$ depending on some condition), and the one-exit continuations corresponding to the "action nodes".
 
@@ -1036,7 +1030,7 @@ When somebody wants to invoke a method $m$ of $o$ with arguments $x_1$, $x_2$, $
 
 ### 4.4.2. Serializable objects
 
-Another way of representing Smalltalk-style objects as continuations, or even as trees of cells, consists in using the $\texttt{JMPREFDATA}$ primitive (a variant of $\texttt{JMPXDATA}$, [CALLCC: call with current continuation](#4-1-11-callcc%3A-call-with-current-continuation)), which takes the first cell reference from the code of the current continuation, transforms the cell referred to into a simple ordinary continuation, and transfers control to it, first pushing the remainder of the current continuation as a *Slice* into the stack. In this way, an object might be represented by a cell $\tilde o$ that contains $\texttt{JMPREFDATA}$ at the beginning of its data, and the actual code of the object in the first reference (one might say that the first reference of cell $\tilde o$ is the *class* of object $\tilde o$). Remaining data and references of this cell will be used for storing the fields of the object.
+Another way of representing Smalltalk-style objects as continuations, or even as trees of cells, consists in using the $\texttt{JMPREFDATA}$ primitive (a variant of [$\texttt{JMPXDATA}$](#4-1-11-%3A-call-with-current-continuation)), which takes the first cell reference from the code of the current continuation, transforms the cell referred to into a simple ordinary continuation, and transfers control to it, first pushing the remainder of the current continuation as a *Slice* into the stack. In this way, an object might be represented by a cell $\tilde o$ that contains $\texttt{JMPREFDATA}$ at the beginning of its data, and the actual code of the object in the first reference (one might say that the first reference of cell $\tilde o$ is the *class* of object $\tilde o$). Remaining data and references of this cell will be used for storing the fields of the object.
 
 Such objects have the advantage of being trees of cells, and not just continuations, meaning that they can be stored into the persistent storage of a TON smart contract.
 
@@ -1044,7 +1038,7 @@ Such objects have the advantage of being trees of cells, and not just continuati
 
 It might make sense (in a future revision of TVM) to mark some continuations as *unique*, meaning that they cannot be copied, even in a delayed manner, by increasing their reference counter to a value greater than one. If an opaque continuation is unique, it essentially becomes a *capability*, which can either be used by its owner exactly once or be transferred to somebody else.
 
-For example, imagine a continuation that represents the output stream to a printer (this is an example of a continuation used as an object, [Representing objects using continuations](#4-4-1-representing-objects-using-continuations)). When invoked with one integer argument $n$, this continuation outputs the character with code $n$ to the printer, and returns a new continuation of the same kind reflecting the new state of the stream. Obviously, copying such a continuation and using the two copies in parallel would lead to some unintended side effects; marking it as unique would prohibit such adverse usage.
+For example, imagine a continuation that [represents](#4-4-1-representing-objects-using-continuations) the output stream to a printer (this is an example of a continuation used as an object). When invoked with one integer argument $n$, this continuation outputs the character with code $n$ to the printer, and returns a new continuation of the same kind reflecting the new state of the stream. Obviously, copying such a continuation and using the two copies in parallel would lead to some unintended side effects; marking it as unique would prohibit such adverse usage.
 
 ## 4.5  Exception handling
 
@@ -1064,13 +1058,13 @@ Of course, some exceptions are generated by normal primitives. For example, an a
 
 ### 4.5.4. Exception handling
 
-The exception handling itself consists in a control transfer to the exception handler—i.e., the continuation specified in control register $\texttt{c2}$, with $v$ and $n$ supplied as the two arguments to this continuation, as if a $\texttt{JMP}$ to $\texttt{c2}$ had been requested with $n''=2$ arguments ([Determining the number n of arguments passed to the next continuation c](#4-1-7-determining-the-number-n-of-arguments-passed-to-the-next-continuation-c) and [Switching to another continuation: JMP and RET](#4-1-6-switching-to-another-continuation-jmp-and-ret)). As a consequence, $v$ and $n$ end up in the top of the stack of the exception handler. The remainder of the old stack is discarded.
+The exception handling itself consists in a control transfer to the exception handler—i.e., the continuation specified in control register $\texttt{c2}$, with $v$ and $n$ supplied as the two arguments to this continuation, as if a $\texttt{JMP}$ to $\texttt{c2}$ had been requested with $n''=2$ arguments ([4.1.7](#4-1-7-determining-the-number-n-of-arguments-passed-to-the-next-continuation-c) and [4.1.6](#4-1-6-switching-to-another-continuation-jmp-and-ret)). As a consequence, $v$ and $n$ end up in the top of the stack of the exception handler. The remainder of the old stack is discarded.
 
 Notice that if the continuation in $\texttt{c2}$ has a value for $\texttt{c2}$ in its savelist, it will be used to set up the new value of $\texttt{c2}$ before executing the exception handler. In particular, if the exception handler invokes $\texttt{THROWANY}$, it will re-throw the original exception with the restored value of $\texttt{c2}$. This trick enables the exception handler to handle only some exceptions, and pass the rest to an outer exception handler.
 
 ### 4.5.5. Default exception handler
 
-When an instance of TVM is created, $\texttt{c2}$ contains a reference to the "default exception handler continuation", which is an $\texttt{ec\_fatal}$ extraordinary continuation ([Extraordinary continuations](#4-1-5-extraordinary-continuations)). Its execution leads to the termination of the execution of TVM, with the arguments $v$ and $n$ of the exception returned to the outside caller. In the context of the TON Blockchain, $n$ will be stored as a part of the transaction's result.
+When an instance of TVM is created, $\texttt{c2}$ contains a reference to the "default exception handler continuation", which is an $\texttt{ec\_fatal}$ [extraordinary continuation](#4-1-5-extraordinary-continuations). Its execution leads to the termination of the execution of TVM, with the arguments $v$ and $n$ of the exception returned to the outside caller. In the context of the TON Blockchain, $n$ will be stored as a part of the transaction's result.
 
 ### 4.5.6. $\texttt{TRY}$ primitive
 
@@ -1097,7 +1091,7 @@ Predefined exceptions of TVM correspond to exception numbers $n$ in the range 0�
 - *Fatal error* ($n=12$) — Thrown by TVM in situations deemed impossible.
 - *Out of gas* ($n=13$) — Thrown by TVM when the remaining gas ($g_r$) becomes negative. This exception usually cannot be caught and leads to an immediate termination of TVM.
 
-Most of these exceptions have no parameter (i.e., use a zero integer instead). The order in which these exceptions are checked is outlined below in [Order of stack underflow, type check, and range check exceptions](#4-5-8-order-of-stack-underflow-type-check-and-range-check-exceptions).
+Most of these exceptions have no parameter (i.e., use a zero integer instead). The order in which these exceptions are checked is outlined [below](#4-5-8-order-of-stack-underflow-type-check-and-range-check-exceptions).
 
 ### 4.5.8. Order of stack underflow, type check, and range check exceptions
 
@@ -1109,7 +1103,7 @@ Some primitives accept a variable number of arguments, depending on the values o
 
 ### 4.6.1. The problem of recursion
 
-The conditional and iterated execution primitives described in [Control flow primitives: conditional and iterated execution](#4-2-control-flow-primitives-conditional-and-iterated-execution)—along with the unconditional branch, call, and return primitives described in [Continuations and subroutines](#4-1-continuations-and-subroutines)—enable one to implement more or less arbitrary code with nested loops and conditional expressions, with one notable exception: one can only create new constant continuations from parts of the current continuation. (In particular, one cannot invoke a subroutine from itself in this way.) Therefore, the code being executed—i.e., the current continuation—gradually becomes smaller and smaller.<a id="ref-fn24"></a><sup>[24](#fn24)</sup>
+The [conditional and iterated](#4-2-control-flow-primitives-conditional-and-iterated-execution) execution primitives—along with the unconditional branch, call, and [return primitives](#4-1-continuations-and-subroutines)—enable one to implement more or less arbitrary code with nested loops and conditional expressions, with one notable exception: one can only create new constant continuations from parts of the current continuation. (In particular, one cannot invoke a subroutine from itself in this way.) Therefore, the code being executed—i.e., the current continuation—gradually becomes smaller and smaller.<a id="ref-fn24"></a><sup>[24](#fn24)</sup>
 
 ### 4.6.2. Y-combinator solution: pass a continuation as an argument to itself
 
@@ -1206,7 +1200,7 @@ However, even if we use one of the two previous approaches to combine all functi
 
 ### 4.6.9. Special register $c3$ for the selector function
 
-In fact, TVM uses a dedicated register $\texttt{c3}$ to keep the continuation representing the current or global "selector function", which can be used to invoke any of a family of mutually recursive functions. Special primitives $\texttt{CALL}$ $nn$ or $\texttt{CALLDICT}$ $nn$ ([Dictionary subroutine calls and jumps](#a-8-7-dictionary-subroutine-calls-and-jumps)) are equivalent to $\texttt{PUSHINT}$ $nn$; $\texttt{PUSH c3}$; $\texttt{EXECUTE}$, and similarly $\texttt{JMP}$ $nn$ or $\texttt{JMPDICT}$ $nn$ are equivalent to $\texttt{PUSHINT}$ $nn$; $\texttt{PUSH c3}$; $\texttt{JMPX}$. In this way a TVM program, which ultimately is a large collection of mutually recursive functions, may initialize $\texttt{c3}$ with the correct selector function representing the family of all the functions in the program, and then use $\texttt{CALL}$ $nn$ to invoke any of these functions by its index (sometimes also called the *selector* of a function).
+In fact, TVM uses a dedicated register $\texttt{c3}$ to keep the continuation representing the current or global "selector function", which can be used to invoke any of a family of mutually recursive functions. [Special primitives](#a-8-7-dictionary-subroutine-calls-and-jumps) $\texttt{CALL}$ $nn$ or $\texttt{CALLDICT}$ $nn$ are equivalent to $\texttt{PUSHINT}$ $nn$; $\texttt{PUSH c3}$; $\texttt{EXECUTE}$, and similarly $\texttt{JMP}$ $nn$ or $\texttt{JMPDICT}$ $nn$ are equivalent to $\texttt{PUSHINT}$ $nn$; $\texttt{PUSH c3}$; $\texttt{JMPX}$. In this way a TVM program, which ultimately is a large collection of mutually recursive functions, may initialize $\texttt{c3}$ with the correct selector function representing the family of all the functions in the program, and then use $\texttt{CALL}$ $nn$ to invoke any of these functions by its index (sometimes also called the *selector* of a function).
 
 ### 4.6.10. Initialization of $c3$
 
@@ -1214,13 +1208,13 @@ A TVM program might initialize $\texttt{c3}$ by means of a $\texttt{POP c3}$ ins
 
 ### 4.6.11. Creating selector functions and $\texttt{switch}$ statements
 
-TVM makes special provisions for simple and concise implementation of selector functions (which usually constitute the top level of a TVM program) or, more generally, arbitrary `switch` or `case` statements (which are also useful in TVM programs). The most important primitives included for this purpose are $\texttt{IFBITJMP}$, $\texttt{IFNBITJMP}$, $\texttt{IFBITJMPREF}$, and $\texttt{IFNBITJMPREF}$ ([Conditional control flow primitives](#a-8-2-conditional-control-flow-primitives)). They effectively enable one to combine subroutines, kept either in separate cells or as subslices of certain cells, into a binary decision tree with decisions made according to the indicated bits of the integer passed in the top of the stack.
+TVM makes special provisions for simple and concise implementation of selector functions (which usually constitute the top level of a TVM program) or, more generally, arbitrary `switch` or `case` statements (which are also useful in TVM programs). The most important [primitives](#a-8-2-conditional-control-flow-primitives) included for this purpose are $\texttt{IFBITJMP}$, $\texttt{IFNBITJMP}$, $\texttt{IFBITJMPREF}$, and $\texttt{IFNBITJMPREF}$. They effectively enable one to combine subroutines, kept either in separate cells or as subslices of certain cells, into a binary decision tree with decisions made according to the indicated bits of the integer passed in the top of the stack.
 
-Another instruction, useful for the implementation of sum-product types, is $\texttt{PLDUZ}$ ([Cell deserialization primitives](#a-7-2-cell-deserialization-primitives)). This instruction preloads the first several bits of a *Slice* into an *Integer*, which can later be inspected by $\texttt{IFBITJMP}$ and other similar instructions.
+Another instruction, useful for the implementation of [sum-product](#a-7-2-cell-deserialization-primitives) types, is $\texttt{PLDUZ}$. This instruction preloads the first several bits of a *Slice* into an *Integer*, which can later be inspected by $\texttt{IFBITJMP}$ and other similar instructions.
 
 ### 4.6.12. Alternative: using a hashmap to select the correct function
 
-Yet another alternative is to use a *Hashmap* ([Hashmaps, or dictionaries](#3-3-hashmaps%2C-or-dictionaries)) to hold the "collection" or "dictionary" of the code of all functions in a program, and use the hashmap lookup primitives ([Dictionary manipulation primitives](#a-10-dictionary-manipulation-primitives)) to select the code of the required function, which can then be $\texttt{BLESS}$ed into a continuation ([Creating simple continuations and closures](#a-8-5-creating-simple-continuations-and-closures)) and executed. Special combined "lookup, bless, and execute" primitives, such as $\texttt{DICTIGETJMP}$ and $\texttt{DICTIGETEXEC}$, are also available ([Special get dictionary and prefix code dictionary operations, and constant dictionaries](#a-10-11-special-get-dictionary-and-prefix-code-dictionary-operations-and-constant-dictionaries)). This approach may be more efficient for larger programs and `switch` statements.
+Yet another alternative is to use a [Hashmap](#3-3-hashmaps%2C-or-dictionaries) to hold the "collection" or "dictionary" of the code of all functions in a program, and use the hashmap [lookup primitives](#a-10-dictionary-manipulation-primitives) to select the code of the required function, which can then be $\texttt{BLESS}$ed into a [continuation](#a-8-5-creating-simple-continuations-and-closures) and executed. Special combined "lookup, bless, and execute" primitives, such as $\texttt{DICTIGETJMP}$ and $\texttt{DICTIGETEXEC}$, are also [available](#a-10-11-special-dictionary-and-prefix-code-dictionary-operations%2C-and-constant-dictionaries). This approach may be more efficient for larger programs and `switch` statements.
 
 ---
 
@@ -1236,11 +1230,11 @@ The *codepages* are an essential mechanism of backward compatibility and of futu
 
 ### 5.1.1. Codepages in continuations
 
-Every ordinary continuation contains a 16-bit *codepage* field $\texttt{cp}$ ([Ordinary continuations](#4-1-1-ordinary-continuations)), which determines the codepage that will be used to execute its code. If a continuation is created by a $\texttt{PUSHCONT}$ ([Constant, or literal, continuations](#4-2-3-constant%2C-or-literal%2C-continuations)) or similar primitive, it usually inherits the current codepage (i.e., the codepage of $\texttt{cc}$).<a id="ref-fn25"></a><sup>[25](#fn25)</sup>
+Every [ordinary continuation](#4-1-1-ordinary-continuations) contains a 16-bit *codepage* field $\texttt{cp}$, which determines the codepage that will be used to execute its code. If a [continuation](#4-2-3-constant%2C-or-literal%2C-continuations) is created by a $\texttt{PUSHCONT}$ or similar primitive, it usually inherits the current codepage (i.e., the codepage of $\texttt{cc}$).<a id="ref-fn25"></a><sup>[25](#fn25)</sup>
 
 ### 5.1.2. Current codepage
 
-The current codepage $\texttt{cp}$ ([Total state of TVM (SCCCG)](#1-4-total-state-of-tvm-scccg)) is the codepage of the current continuation $\texttt{cc}$. It determines the way the next instruction will be decoded from $\texttt{cc.code}$, the remainder of the current continuation's code. Once the instruction has been decoded and executed, it determines the next value of the current codepage. In most cases, the current codepage is left unchanged.
+The [current codepage](#1-4-total-state-of-tvm-scccg) $\texttt{cp}$ is the codepage of the current continuation $\texttt{cc}$. It determines the way the next instruction will be decoded from $\texttt{cc.code}$, the remainder of the current continuation's code. Once the instruction has been decoded and executed, it determines the next value of the current codepage. In most cases, the current codepage is left unchanged.
 
 On the other hand, all primitives that switch the current continuation load the new value of $\texttt{cp}$ from the new current continuation. In this way, all code in continuations is always interpreted exactly as it was intended to be.
 
@@ -1276,11 +1270,11 @@ Alternatively, one might create a couple of codepages—say, 4 and 5—which dif
 
 ### 5.1.8. Setting the codepage in the code itself
 
-For convenience, we reserve some opcode in all codepages—say, $\texttt{FF}$ $n$—for the instruction $\texttt{SETCP}$ $n$, with $n$ from 0 to 255 ([Codepage primitives](#a-13-codepage-primitives)). Then by inserting such an instruction into the very beginning of (the main function of) a program (e.g., a TON Blockchain smart contract) or a library function, we can ensure that the code will always be executed in the intended codepage.
+For convenience, we reserve some opcode in all [codepages](#a-13-codepage-primitives)—say, $\texttt{FF}$ $n$—for the instruction $\texttt{SETCP}$ $n$, with $n$ from 0 to 255. Then by inserting such an instruction into the very beginning of (the main function of) a program (e.g., a TON Blockchain smart contract) or a library function, we can ensure that the code will always be executed in the intended codepage.
 
 ## 5.2  Instruction encoding
 
-This section discusses the general principles of instruction encoding valid for all codepages and all versions of TVM. Later, [Instruction encoding in codepage zero](#5-3-instruction-encoding-in-codepage-zero) discusses the choices made for the experimental "codepage zero".
+This section discusses the general principles of instruction encoding valid for all codepages and all versions of TVM. Later, [5.3](#5-3-instruction-encoding-in-codepage-zero) discusses the choices made for the experimental "codepage zero".
 
 ### 5.2.1. Instructions are encoded by a binary prefix code
 
@@ -1292,19 +1286,19 @@ As a consequence of this encoding method, any binary string admits at most one p
 
 ### 5.2.3. Invalid opcode
 
-If no prefix of $\texttt{cc.code}$ encodes a valid instruction in the current codepage, an *invalid opcode exception* is generated ([List of predefined exceptions](#4-5-7-list-of-predefined-exceptions)). However, the case of an empty $\texttt{cc.code}$ is treated separately as explained in [Normal work of TVM, or the main loop](#4-1-4-normal-work-of-tvm%2C-or-the-main-loop) (the exact behavior may depend on the current codepage).
+If no prefix of $\texttt{cc.code}$ encodes a valid instruction in the current codepage, an invalid opcode [exception](#4-5-7-list-of-predefined-exceptions) is generated. However, the case of an empty $\texttt{cc.code}$ is treated [separately](#4-1-4-normal-work-of-tvm%2C-or-the-main-loop) (the exact behavior may depend on the current codepage).
 
 ### 5.2.4. Special case: end-of-code padding
 
 As an exception to the above rule, some codepages may accept some values of $\texttt{cc.code}$ that are too short to be valid instruction encodings as additional variants of $\texttt{NOP}$, thus effectively using the same procedure for them as for an empty $\texttt{cc.code}$. Such bitstrings may be used for padding the code near its end.
 
-For example, if binary string $\texttt{00000000}$ (i.e., $\texttt{x00}$, [Emphasizing that a string is a hexadecimal representation of a bitstring](#1-0-3-emphasizing-that-a-string-is-a-hexadecimal-representation-of-a-bitstring)) is used in a codepage to encode $\texttt{NOP}$, its proper prefixes cannot encode any instructions. So this codepage may accept $\texttt{0}$, $\texttt{00}$, $\texttt{000}$, $\ldots$, $\texttt{0000000}$ as variants of $\texttt{NOP}$ if this is all that is left in $\texttt{cc.code}$, instead of generating an invalid opcode exception.
+For example, if [binary string](#1-0-3-emphasizing-that-a-string-is-a-hexadecimal-representation-of-a-bitstring) $\texttt{00000000}$ (i.e., $\texttt{x00}$, is used in a codepage to encode $\texttt{NOP}$, its proper prefixes cannot encode any instructions. So this codepage may accept $\texttt{0}$, $\texttt{00}$, $\texttt{000}$, $\ldots$, $\texttt{0000000}$ as variants of $\texttt{NOP}$ if this is all that is left in $\texttt{cc.code}$, instead of generating an invalid opcode exception.
 
-Such a padding may be useful, for example, if the $\texttt{PUSHCONT}$ primitive ([Constant, or literal, continuations](#4-2-3-constant%2C-or-literal%2C-continuations)) creates only continuations with code consisting of an integral number of bytes, but not all instructions are encoded by an integral number of bytes.
+Such a padding may be useful, for example, if the $\texttt{PUSHCONT}$ primitive creates only [continuations](#4-2-3-constant%2C-or-literal%2C-continuations) with code consisting of an integral number of bytes, but not all instructions are encoded by an integral number of bytes.
 
 ### 5.2.5. TVM code is a bitcode, not a bytecode
 
-Recall that TVM is a bit-oriented machine in the sense that its *Cell*s (and *Slice*s) are naturally considered as sequences of bits, not just of octets (bytes), [Cells and cell primitives are bit-oriented, not byte-oriented](#3-2-5-cells-and-cell-primitives-are-bit-oriented%2C-not-byte-oriented). Because the TVM code is also kept in cells ([TVM code is a tree of cells](#3-1-9-tvm-code-is-a-tree-of-cells) and [Normal work of TVM, or the main loop](#4-1-4-normal-work-of-tvm%2C-or-the-main-loop)), there is no reason to use only bitstrings of length divisible by eight as encodings of complete instructions. In other words, generally speaking, *the TVM code is a bitcode, not a bytecode*.
+Recall that TVM is a bit-oriented machine in the sense that its *Cell*s (and *Slice*s) are naturally considered as sequences of bits, not just of octets [(bytes)](#3-2-5-cells-and-cell-primitives-are-bit-oriented%2C-not-byte-oriented). Because the TVM code is also kept in cells ([3.1.9](#3-1-9-tvm-code-is-a-tree-of-cells) and [4.1.4](#4-1-4-normal-work-of-tvm%2C-or-the-main-loop)), there is no reason to use only bitstrings of length divisible by eight as encodings of complete instructions. In other words, generally speaking, *the TVM code is a bitcode, not a bytecode*.
 
 That said, some codepages (such as our experimental codepage zero) may opt to use a bytecode (i.e., to use only encodings consisting of an integral number of bytes)—either for simplicity, or for the ease of debugging and of studying memory (i.e., cell) dumps.<a id="ref-fn27"></a><sup>[27](#fn27)</sup>
 
@@ -1334,7 +1328,7 @@ For instance, if stack manipulation instructions constitute approximately half o
 
 In most cases, *simple* encodings of complete instructions are used. Simple encodings begin with a fixed bitstring called the *opcode* of the instruction, followed by, say, 4-bit fields containing the indices $i$ of stack registers $\texttt{s}(i)$ specified in the instruction, followed by all other constant (literal, immediate) parameters included in the complete instruction. While simple encodings may not be exactly optimal, they admit short descriptions, and their decoding and encoding can be easily implemented.
 
-If a (generic) instruction uses a simple encoding with an $l$-bit opcode, then the instruction will utilize $2^{-l}$ portion of the opcode space. This observation might be useful for considerations described in [Almost optimal encodings](#5-2-9-almost-optimal-encodings) and [Example: stack manipulation primitives](#5-2-10-example-stack-manipulation-primitives).
+If a (generic) instruction uses a simple encoding with an $l$-bit opcode, then the instruction will utilize $2^{-l}$ portion of the opcode space. This observation might be useful for considerations described in [5.2.9](#5-2-9-almost-optimal-encodings) and [5.2.10](#5-2-10-example-stack-manipulation-primitives).
 
 ### 5.2.12. Optimizing code density further: Huffman codes
 
@@ -1342,39 +1336,41 @@ One might construct optimally dense binary code for the set of all complete inst
 
 ### 5.2.13. Practical instruction encodings
 
-In practice, instruction encodings used in TVM and other virtual machines offer a compromise between code density and ease of encoding and decoding. Such a compromise may be achieved by selecting simple encodings ([Simple encodings of instructions](#5-2-11-simple-encodings-of-instructions)) for all instructions (maybe with separate simple encodings for some often used variants, such as $\texttt{XCHG s0,s}(i)$ among all $\texttt{XCHG s}(i)\texttt{,s}(j)$), and allocating opcode space for such simple encodings using the heuristics outlined in [Almost optimal encodings](#5-2-9-almost-optimal-encodings) and [Example: stack manipulation primitives](#5-2-10-example-stack-manipulation-primitives); this is the approach currently used in TVM.
+In practice, instruction encodings used in TVM and other virtual machines offer a compromise between code density and ease of encoding and decoding. Such a compromise may be achieved by selecting [simple encodings](#5-2-11-simple-encodings-of-instructions) for all instructions (maybe with separate simple encodings for some often used variants, such as $\texttt{XCHG s0,s}(i)$ among all $\texttt{XCHG s}(i)\texttt{,s}(j)$), and allocating opcode space for such simple encodings using the heuristics outlined in [5.2.9](#5-2-9-almost-optimal-encodings) and [5.2.10](#5-2-10-example-stack-manipulation-primitives); this is the approach currently used in TVM.
+
+---
 
 ## 5.3   Instruction encoding in codepage zero
 
-This section provides details about the experimental instruction encoding for codepage zero, as described elsewhere in this document ([Appendix A](#a-instructions-and-opcodes)) and used in the preliminary test version of TVM.
+This section provides details about the experimental instruction encoding for codepage zero, as described elsewhere in this document [Appendix A](#a-instructions-and-opcodes) and used in the preliminary test version of TVM.
 
 ### 5.3.1. Upgradability
 
-First of all, even if this preliminary version somehow gets into the production version of the TON Blockchain, the codepage mechanism ([Codepages and interoperability of different TVM versions](#5-1-codepages-and-interoperability-of-different-tvm-versions)) enables us to introduce better versions later without compromising backward compatibility.<a id="ref-fn29"></a><sup>[29](#fn29)</sup> So in the meantime, we are free to experiment.
+First of all, even if this preliminary version somehow gets into the production version of the TON Blockchain, the [codepage mechanism](#5-1-codepages-and-interoperability-of-different-tvm-versions)) enables us to introduce better versions later without compromising backward compatibility.<a id="ref-fn29"></a><sup>[29](#fn29)</sup> So in the meantime, we are free to experiment.
 
-#### 5.3.2. Choice of instructions
+### 5.3.2. Choice of instructions
 
-We opted to include many "experimental" and not strictly necessary instructions in codepage zero just to see how they might be used in real code. For example, we have both the basic ([Basic stack manipulation primitives](#2-2-1-basic-stack-manipulation-primitives)) and the compound ([Compound stack manipulation primitives](#2-2-3-compound-stack-manipulation-primitives)) stack manipulation primitives, as well as some "unsystematic" ones such as $\texttt{ROT}$ (mostly borrowed from Forth). If such primitives are rarely used, their inclusion just wastes some part of the opcode space and makes the encodings of other instructions slightly less effective, something we can afford at this stage of TVM's development.
+We opted to include many "experimental" and not strictly necessary instructions in codepage zero just to see how they might be used in real code. For example, we have both the [basic](#2-2-1-basic-stack-manipulation-primitives)) and the [compound](#2-2-3-compound-stack-manipulation-primitives)) stack manipulation primitives, as well as some "unsystematic" ones such as $\texttt{ROT}$ (mostly borrowed from Forth). If such primitives are rarely used, their inclusion just wastes some part of the opcode space and makes the encodings of other instructions slightly less effective, something we can afford at this stage of TVM's development.
 
-#### 5.3.3. Using experimental instructions
+### 5.3.3. Using experimental instructions
 
 Some of these experimental instructions have been assigned quite long opcodes, just to fit more of them into the opcode space. One should not be afraid to use them just because they are long; if these instructions turn out to be useful, they will receive shorter opcodes in future revisions. Codepage zero is not meant to be fine-tuned in this respect.
 
-#### 5.3.4. Choice of bytecode
+### 5.3.4. Choice of bytecode
 
-We opted to use a bytecode (i.e., to use encodings of complete instructions of lengths divisible by eight). While this may not produce optimal code density, because such a length restriction makes it more difficult to match portions of opcode space used for the encoding of instructions with estimated frequencies of these instructions in TVM code ([Simple encodings of instructions](#5-2-11-simple-encodings-of-instructions) and [Almost optimal encodings](#5-2-9-almost-optimal-encodings)), such an approach has its advantages: it admits a simpler instruction decoder and simplifies debugging ([TVM code is a bitcode, not a bytecode](#5-2-5-tvm-code-is-a-bitcode%2C-not-a-bytecode)).
+We opted to use a bytecode (i.e., to use encodings of complete instructions of lengths divisible by eight). While this may not produce optimal code density, because such a length restriction makes it more difficult to match portions of opcode space used for the encoding of instructions with estimated frequencies of these instructions in TVM code (5.2.11](#5-2-11-simple-encodings-of-instructions) and [5.2.9](#5-2-9-almost-optimal-encodings)), such an approach has its advantages: it admits a simpler instruction decoder and simplifies [debugging](#5-2-5-tvm-code-is-a-bitcode%2C-not-a-bytecode).
 
 After all, we do not have enough data on the relative frequencies of different instructions right now, so our code density optimizations are likely to be very approximate at this stage. The ease of debugging and experimenting and the simplicity of implementation are more important at this point.
 
-#### 5.3.5. Simple encodings for all instructions
+### 5.3.5. Simple encodings for all instructions
 
-For similar reasons, we opted to use simple encodings for all instructions ([Simple encodings of instructions](#5-2-11-simple-encodings-of-instructions) and [Practical instruction encodings](#5-2-13-practical-instruction-encodings)), with separate simple encodings for some very frequently used subcases as outlined in [Practical instruction encodings](#5-2-13-practical-instruction-encodings). That said, we tried to distribute opcode space using the heuristics described in [Almost optimal encodings](#5-2-9-almost-optimal-encodings) and [Example: stack manipulation primitives](#5-2-10-example-stack-manipulation-primitives).
+For similar reasons, we opted to use simple encodings for all instructions ([5.2.11](#5-2-11-simple-encodings-of-instructions) and [5.2.13](#5-2-13-practical-instruction-encodings)), with separate simple [encodings](#5-2-13-practical-instruction-encodings) for some very frequently used subcases. That said, we tried to distribute opcode space using the heuristics described in [5.2.9](#5-2-9-almost-optimal-encodings) and [5.2.10](#5-2-10-example-stack-manipulation-primitives).
 
-#### 5.3.6. Lack of context-dependent encodings
+### 5.3.6. Lack of context-dependent encodings
 
-This version of TVM also does not use context-dependent encodings ([Making instruction encoding context-dependent](#5-1-6-making-instruction-encoding-context-dependent)). They may be added at a later stage, if deemed useful.
+This version of TVM also does not use [context-dependent encodings](#5-1-6-making-instruction-encoding-context-dependent). They may be added at a later stage, if deemed useful.
 
-#### 5.3.7. The list of all instructions
+### 5.3.7. The list of all instructions
 
 The list of all instructions available in codepage zero, along with their encodings and (in some cases) short descriptions, may be found in [Appendix A](#a-instructions-and-opcodes).
 
@@ -1383,13 +1379,13 @@ The list of all instructions available in codepage zero, along with their encodi
 
 # A   Instructions and opcodes
 
-This appendix lists all instructions available in the (experimental) codepage zero of TVM, as explained in [Instruction encoding in codepage zero](#5-3-instruction-encoding-in-codepage-zero).
+This appendix lists all [instructions](#5-3-instruction-encoding-in-codepage-zero) available in the (experimental) codepage zero of TVM.
 
 We list the instructions in lexicographical opcode order. However, the opcode space is distributed in such way as to make all instructions in each category (e.g., arithmetic primitives) have neighboring opcodes. So we first list a number of stack manipulation primitives, then constant primitives, arithmetic primitives, comparison primitives, cell primitives, continuation primitives, dictionary primitives, and finally application-specific primitives.
 
-We use hexadecimal notation ([Notation for bitstrings](#1-0-notation-for-bitstrings)) for bitstrings. Stack registers $\texttt{s}(i)$ usually have $0\leq i\leq 15$, and $i$ is encoded in a 4-bit field (or, on a few rare occasions, in an 8-bit field). Other immediate parameters are usually 4-bit, 8-bit, or variable length.
+We use [hexadecimal notation](#1-0-notation-for-bitstrings) for bitstrings. Stack registers $\texttt{s}(i)$ usually have $0\leq i\leq 15$, and $i$ is encoded in a 4-bit field (or, on a few rare occasions, in an 8-bit field). Other immediate parameters are usually 4-bit, 8-bit, or variable length.
 
-The stack notation described in [Stack notation](#2-1-10-stack-notation) is extensively used throughout this appendix.
+The [stack notation](#2-1-10-stack-notation) is extensively used throughout this appendix.
 
 ## A.1  Gas prices
 
@@ -1404,7 +1400,7 @@ By default, the gas price of an instruction equals $P:=P_b+C_r+L+B_w+C_w$.
 
 ## A.2   Stack manipulation primitives
 
-This section includes both the basic ([Basic stack manipulation primitives](#2-2-1-basic-stack-manipulation-primitives)) and the compound ([Compound stack manipulation primitives](#2-2-3-compound-stack-manipulation-primitives)) stack manipulation primitives, as well as some "unsystematic" ones. Some compound stack manipulation primitives, such as $\texttt{XCPU}$ or $\texttt{XCHG2}$, turn out to have the same length as an equivalent sequence of simpler operations. We have included these primitives regardless, so that they can easily be allocated shorter opcodes in a future revision of TVM—or removed for good.
+This section includes both the [basic](#2-2-1-basic-stack-manipulation-primitives)) and the [compound](#2-2-3-compound-stack-manipulation-primitives) stack manipulation primitives, as well as some "unsystematic" ones. Some compound stack manipulation primitives, such as $\texttt{XCPU}$ or $\texttt{XCHG2}$, turn out to have the same length as an equivalent sequence of simpler operations. We have included these primitives regardless, so that they can easily be allocated shorter opcodes in a future revision of TVM—or removed for good.
 
 Some stack manipulation instructions have two mnemonics: one Forth-style (e.g., $\texttt{-ROT}$), the other conforming to the usual rules for identifiers (e.g., $\texttt{ROTREV}$). Whenever a stack manipulation primitive (e.g., $\texttt{PICK}$) accepts an integer parameter $n$ from the stack, it must be within the range $0\ldots255$; otherwise a range check exception happens before any further checks.
 
@@ -1608,7 +1604,7 @@ The general encoding of a $\texttt{DIV}$, $\texttt{DIVMOD}$, or $\texttt{MOD}$ o
 - $0\leq s\leq2$ — Indicates whether either the multiplication or the division have been replaced by shifts: $s=0$—no replacement, $s=1$—division replaced by a right shift, $s=2$—multiplication replaced by a left shift (possible only for $m=1$).
 - $0\leq c\leq1$ — Indicates whether there is a constant one-byte argument $tt$ for the shift operator (if $s\neq0$). For $s=0$, $c=0$. If $c=1$, then $0\leq tt\leq 255$, and the shift is performed by $tt+1$ bits. If $s\neq0$ and $c=0$, then the shift amount is provided to the instruction as a top-of-stack *Integer* in range $0\ldots256$.
 - $1\leq d\leq3$ — Indicates which results of division are required: $1$—only the quotient, $2$—only the remainder, $3$—both.
-- $0\leq f\leq2$ — Rounding mode: $0$—floor, $1$—nearest integer, $2$—ceiling ([Division and rounding](#1-5-6-division-and-rounding)).
+- $0\leq f\leq2$ — Rounding mode: $0$—floor, $1$—nearest integer, $2$—ceiling ([1.5.6](#1-5-6-division-and-rounding)).
 
 Examples:
 
@@ -1941,8 +1937,7 @@ All these primitives first check whether there is enough space in the Builder, a
 - $\texttt{E30D}$ — $\texttt{IFREFELSE}$ ($f$ $c$ -), equivalent to $\texttt{PUSHREFCONT}$; $\texttt{SWAP}$; $\texttt{IFELSE}$, with the optimization that the cell reference is not actually loaded into a *Slice* and then converted into an ordinary *Continuation* if $f=0$. Similar remarks apply to the next two primitives: *Cell*s are converted into *Continuation*s only when necessary.
 - $\texttt{E30E}$ — $\texttt{IFELSEREF}$ ($f$ $c$ -), equivalent to $\texttt{PUSHREFCONT}$; $\texttt{IFELSE}$.
 - $\texttt{E30F}$ — $\texttt{IFREFELSEREF}$ ($f$ -), equivalent to $\texttt{PUSHREFCONT}$; $\texttt{PUSHREFCONT}$; $\texttt{IFELSE}$.
-- $\texttt{E310}$--$\texttt{E31F}$ — reserved for loops with break operators, cf. [A.8.4](#a-8-4-control-flow-primitives-loops) below.
-- $\texttt{E310}$--$\texttt{E31F}$ — reserved for loops with break operators, [Control flow primitives: loops](#a-8-4-control-flow-primitives-loops) below.
+- $\texttt{E310}$--$\texttt{E31F}$ — reserved for loops with break operators, [A.8.4](#a-8-4-control-flow-primitives-loops) below.
 - $\texttt{E39\_}n$ — $\texttt{IFBITJMP}$ $n$ ($x$ $c$ - $x$), checks whether bit $0\leq n\leq 31$ is set in integer $x$, and if so, performs $\texttt{JMPX}$ to continuation $c$. Value $x$ is left in the stack.
 - $\texttt{E3B\_}n$ — $\texttt{IFNBITJMP}$ $n$ ($x$ $c$ - $x$), jumps to $c$ if bit $0\leq n\leq 31$ is not set in integer $x$.
 - $\texttt{E3D\_}n$ — $\texttt{IFBITJMPREF}$ $n$ ($x$ - $x$), performs a $\texttt{JMPREF}$ if bit $0\leq n\leq 31$ is set in integer $x$.
@@ -1950,7 +1945,7 @@ All these primitives first check whether there is enough space in the Builder, a
 
 ### A.8.3. Control flow primitives: loops
 
-Most of the loop primitives listed below are implemented with the aid of extraordinary continuations, such as $\texttt{ec\_until}$ ([Extraordinary continuations](#4-1-5-extraordinary-continuations)), with the loop body and the original current continuation $\texttt{cc}$ stored as the arguments to this extraordinary continuation. Typically a suitable extraordinary continuation is constructed, and then saved into the loop body continuation savelist as $\texttt{c0}$; after that, the modified loop body continuation is loaded into $\texttt{cc}$ and executed in the usual fashion. All of these loop primitives have $\texttt{*BRK}$ versions, adapted for breaking out of a loop; they additionally set $\texttt{c1}$ to the original current continuation (or original $\texttt{c0}$ for $\texttt{*ENDBRK}$ versions), and save the old $\texttt{c1}$ into the savelist of the original current continuation (or of the original $\texttt{c0}$ for $\texttt{*ENDBRK}$ versions).
+Most of the loop primitives listed below are implemented with the aid of [extraordinary continuations](#4-1-5-extraordinary-continuations), such as $\texttt{ec\_until}$, with the loop body and the original current continuation $\texttt{cc}$ stored as the arguments to this extraordinary continuation. Typically a suitable extraordinary continuation is constructed, and then saved into the loop body continuation savelist as $\texttt{c0}$; after that, the modified loop body continuation is loaded into $\texttt{cc}$ and executed in the usual fashion. All of these loop primitives have $\texttt{*BRK}$ versions, adapted for breaking out of a loop; they additionally set $\texttt{c1}$ to the original current continuation (or original $\texttt{c0}$ for $\texttt{*ENDBRK}$ versions), and save the old $\texttt{c1}$ into the savelist of the original current continuation (or of the original $\texttt{c0}$ for $\texttt{*ENDBRK}$ versions).
 
 - $\texttt{E4}$ — $\texttt{REPEAT}$ ($n$ $c$ - ), executes continuation $c$ $n$ times, if integer $n$ is non-negative. If $n\geq2^{31}$ or $n<-2^{31}$, generates a range check exception. Notice that a $\texttt{RET}$ inside the code of $c$ works as a $\texttt{continue}$, not as a $\texttt{break}$. One should use either alternative (experimental) loops or alternative $\texttt{RETALT}$ (along with a $\texttt{SETEXITALT}$ before the loop) to $\texttt{break}$ out of a loop.
 - $\texttt{E5}$ — $\texttt{REPEATEND}$ ($n$ - ), similar to $\texttt{REPEAT}$, but it is applied to the current continuation $\texttt{cc}$.
@@ -2049,12 +2044,9 @@ Most of the loop primitives listed below are implemented with the aid of extraor
 - $\texttt{F2FF}$ — $\texttt{TRY}$ ($c$ $c'$ - ), sets $\texttt{c2}$ to $c'$, first saving the old value of $\texttt{c2}$ both into the savelist of $c'$ and into the savelist of the current continuation, which is stored into $c$.$\texttt{c0}$ and $c'$.$\texttt{c0}$. Then runs $c$ similarly to $\texttt{EXECUTE}$. If $c$ does not throw any exceptions, the original value of $\texttt{c2}$ is automatically restored on return from $c$. If an exception occurs, the execution is transferred to $c'$, but the original value of $\texttt{c2}$ is restored in the process, so that $c'$ can re-throw the exception by $\texttt{THROWANY}$ if it cannot handle it by itself.
 - $\texttt{F3}pr$ — $\texttt{TRYARGS}$ $p$,$r$ ($c$ $c'$ - ), similar to $\texttt{TRY}$, but with $\texttt{CALLARGS}$ $p$,$r$ internally used instead of $\texttt{EXECUTE}$. In this way, all but the top $0\leq p\leq 15$ stack elements will be saved into current continuation's stack, and then restored upon return from either $c$ or $c'$, with the top $0\leq r\leq 15$ values of the resulting stack of $c$ or $c'$ copied as return values.
 
----
-
 ## A.10  Dictionary manipulation primitives
 
-TVM's dictionary support is discussed at length in [Hashmaps, or dictionaries](#3-3-hashmaps%2C-or-dictionaries). The basic operations with dictionaries are listed in [Basic dictionary operations](#3-3-10-basic-dictionary-operations), while the taxonomy of dictionary manipulation primitives is provided in [Taxonomy of dictionary primitives](#3-3-11-taxonomy-of-dictionary-primitives). Here we use the concepts and notation introduced in those sections.
-
+TVM's dictionary support is discussed at length in [Hashmaps, or dictionaries](#3-3-hashmaps%2C-or-dictionaries). The basic operations with [dictionaries](#3-3-10-basic-dictionary-operations), while the taxonomy of dictionary manipulation [primitives](#3-3-11-taxonomy-of-dictionary-primitives). Here we use the concepts and notation introduced in those sections.
 
 Dictionaries admit two different representations as TVM stack values:
 
@@ -2068,8 +2060,8 @@ Opcodes starting with $\texttt{F4}$ and $\texttt{F5}$ are reserved for dictionar
 
 ### A.10.1. Dictionary creation
 
-- $\texttt{6D}$ — $\texttt{NEWDICT}$ ( - $D$), returns a new empty dictionary. It is an alternative mnemonics for $\texttt{PUSHNULL}$, [Null primitives](#a-3-1-null-primitives).
-- $\texttt{6E}$ — $\texttt{DICTEMPTY}$ ($D$ - $?$), checks whether dictionary $D$ is empty, and returns $-1$ or $0$ accordingly. It is an alternative mnemonics for $\texttt{ISNULL}$, [Null primitives](#a-3-1-null-primitives).
+- $\texttt{6D}$ — $\texttt{NEWDICT}$ ( - $D$), returns a new empty dictionary. It is an alternative mnemonics for $\texttt{PUSHNULL}$, [A.3.1](#a-3-1-null-primitives).
+- $\texttt{6E}$ — $\texttt{DICTEMPTY}$ ($D$ - $?$), checks whether dictionary $D$ is empty, and returns $-1$ or $0$ accordingly. It is an alternative mnemonics for $\texttt{ISNULL}$, [A.3.1](#a-3-1-null-primitives).
 
 ### A.10.2. Dictionary serialization and deserialization
 
@@ -2135,7 +2127,7 @@ The mnemonics of the following dictionary primitives are constructed in a system
 
 ### A.10.5. Builder-accepting variants of $\texttt{Set}$ dictionary operations
 
-The following primitives accept the new value as a *Builder* $b$ instead of a *Slice* $x$, which often is more convenient if the value needs to be serialized from several components computed in the stack. (This is reflected by appending a $\texttt{B}$ to the mnemonics of the corresponding $\texttt{Set}$ primitives that work with *Slice*s.) The net effect is roughly equivalent to converting $b$ into a *Slice* by $\texttt{ENDC}$; $\texttt{CTOS}$ and executing the corresponding primitive listed in [Set/Replace/Add dictionary operations](#a-10-4-set-replace-add-dictionary-operations).
+The following primitives accept the new value as a *Builder* $b$ instead of a *Slice* $x$, which often is more convenient if the value needs to be serialized from several components computed in the stack. (This is reflected by appending a $\texttt{B}$ to the mnemonics of the corresponding $\texttt{Set}$ primitives that work with *Slice*s.) The net effect is roughly equivalent to converting $b$ into a *Slice* by $\texttt{ENDC}$; $\texttt{CTOS}$ and executing the [corresponding primitive](#a-10-4-%2F%2F-dictionary-operations).
 
 - $\texttt{F441}$ — $\texttt{DICTSETB}$ ($b$ $k$ $D$ $n$ - $D'$).
 - $\texttt{F442}$ — $\texttt{DICTISETB}$ ($b$ $i$ $D$ $n$ - $D'$).
@@ -2183,14 +2175,14 @@ The following operations assume that a dictionary is used to store values $c^?$ 
 
 These are some basic operations for constructing [prefix code dictionaries](#3-4-2-serialization-of-prefix-codes). The primary application for prefix code dictionaries is deserializing TL-B serialized data structures, or, more generally, parsing prefix codes. Therefore, most prefix code dictionaries will be constant and created at compile time, not by the following primitives.
 
-Some $\texttt{Get}$ operations for prefix code dictionaries may be found in [Special get dictionary and prefix code dictionary operations, and constant dictionaries](#a-10-11-special-get-dictionary-and-prefix-code-dictionary-operations-and-constant-dictionaries). Other prefix code dictionary operations include:
+Some $\texttt{Get}$ operations for prefix code dictionaries may be found in [A.10.11](#a-10-11-special-dictionary-and-prefix-code-dictionary-operations%2C-and-constant-dictionaries). Other prefix code dictionary operations include:
 
 - $\texttt{F470}$ — $\texttt{PFXDICTSET}$ ($x$ $k$ $D$ $n$ - $D'$ $-1$ or $D$ $0$).
 - $\texttt{F471}$ — $\texttt{PFXDICTREPLACE}$ ($x$ $k$ $D$ $n$ - $D'$ $-1$ or $D$ $0$).
 - $\texttt{F472}$ — $\texttt{PFXDICTADD}$ ($x$ $k$ $D$ $n$ - $D'$ $-1$ or $D$ $0$).
 - $\texttt{F473}$ — $\texttt{PFXDICTDEL}$ ($k$ $D$ $n$ - $D'$ $-1$ or $D$ $0$).
 
-These primitives are completely similar to their non-prefix code counterparts $\texttt{DICTSET}$ etc ([Set/Replace/Add dictionary operations](#a-10-4-set-replace-add-dictionary-operations)), with the obvious difference that even a $\texttt{Set}$ may fail in a prefix code dictionary, so a success flag must be returned by $\texttt{PFXDICTSET}$ as well.
+These primitives are completely similar to their [non-prefix code](#a-10-4-%2F%2F-dictionary-operations) counterparts $\texttt{DICTSET}$ etc, with the obvious difference that even a $\texttt{Set}$ may fail in a prefix code dictionary, so a success flag must be returned by $\texttt{PFXDICTSET}$ as well.
 
 ### A.10.9. Variants of $\texttt{GetNext}$ and $\texttt{GetPrev}$ operations
 
@@ -2236,11 +2228,11 @@ These primitives are completely similar to their non-prefix code counterparts $\
 
 ### A.10.11. Special $\texttt{Get}$ dictionary and prefix code dictionary operations, and constant dictionaries
 
-- $\texttt{F4A0}$ — $\texttt{DICTIGETJMP}$ ($i$ $D$ $n$ - ), similar to $\texttt{DICTIGET}$ ([SubDict dictionary operations](#a-10-12-subdict-dictionary-operations)), but with $x$ $\texttt{BLESS}$ed into a continuation with a subsequent $\texttt{JMPX}$ to it on success. On failure, does nothing. This is useful for implementing $\texttt{switch}$/$\texttt{case}$ constructions.
+- $\texttt{F4A0}$ — $\texttt{DICTIGETJMP}$ ($i$ $D$ $n$ - ), similar to $\texttt{DICTIGET}$ ([A.10.12](#a-10-12-dictionary-operations)), but with $x$ $\texttt{BLESS}$ed into a continuation with a subsequent $\texttt{JMPX}$ to it on success. On failure, does nothing. This is useful for implementing $\texttt{switch}$/$\texttt{case}$ constructions.
 - $\texttt{F4A1}$ — $\texttt{DICTUGETJMP}$ ($i$ $D$ $n$ - ), similar to $\texttt{DICTIGETJMP}$, but performs $\texttt{DICTUGET}$ instead of $\texttt{DICTIGET}$.
 - $\texttt{F4A2}$ — $\texttt{DICTIGETEXEC}$ ($i$ $D$ $n$ - ), similar to $\texttt{DICTIGETJMP}$, but with $\texttt{EXECUTE}$ instead of $\texttt{JMPX}$.
 - $\texttt{F4A3}$ — $\texttt{DICTUGETEXEC}$ ($i$ $D$ $n$ - ), similar to $\texttt{DICTUGETJMP}$, but with $\texttt{EXECUTE}$ instead of $\texttt{JMPX}$.
-- $\texttt{F4A6\_}n$ — $\texttt{DICTPUSHCONST}$ $n$ ( - $D$ $n$), pushes a non-empty constant dictionary $D$ (as a $\mathit{Cell}^?$) along with its key length $0\leq n\leq 1023$, stored as a part of the instruction. The dictionary itself is created from the first of remaining references of the current continuation. In this way, the complete $\texttt{DICTPUSHCONST}$ instruction can be obtained by first serializing $\texttt{xF4A8\_}$, then the non-empty dictionary itself (one $\texttt{1}$ bit and a cell reference), and then the unsigned 10-bit integer $n$ (as if by a $\texttt{STU 10}$ instruction). An empty dictionary can be pushed by a $\texttt{NEWDICT}$ primitive ([Dictionary creation](#a-10-1-dictionary-creation)) instead.
+- $\texttt{F4A6\_}n$ — $\texttt{DICTPUSHCONST}$ $n$ ( - $D$ $n$), pushes a non-empty constant dictionary $D$ (as a $\mathit{Cell}^?$) along with its key length $0\leq n\leq 1023$, stored as a part of the instruction. The dictionary itself is created from the first of remaining references of the current continuation. In this way, the complete $\texttt{DICTPUSHCONST}$ instruction can be obtained by first serializing $\texttt{xF4A8\_}$, then the non-empty dictionary itself (one $\texttt{1}$ bit and a cell reference), and then the unsigned 10-bit integer $n$ (as if by a $\texttt{STU 10}$ instruction). An empty dictionary can be pushed by a $\texttt{NEWDICT}$ primitive ([A.10.1](#a-10-1-dictionary-creation)) instead.
 - $\texttt{F4A8}$ — $\texttt{PFXDICTGETQ}$ ($s$ $D$ $n$ - $s'$ $x$ $s''$ $-1$ or $s$ $0$), looks up the unique prefix of *Slice* $s$ present in the prefix code dictionary represented by $\mathit{Cell}^?$ $D$ and $0\leq n\leq 1023$. If found, the prefix of $s$ is returned as $s'$, and the corresponding value (also a *Slice*) as $x$. The remainder of $s$ is returned as a *Slice* $s''$. If no prefix of $s$ is a key in prefix code dictionary $D$, returns the unchanged $s$ and a zero flag to indicate failure.
 - $\texttt{F4A9}$ — $\texttt{PFXDICTGET}$ ($s$ $D$ $n$ - $s'$ $x$ $s''$), similar to $\texttt{PFXDICTGETQ}$, but throws a cell deserialization failure exception on failure.
 - $\texttt{F4AA}$ — $\texttt{PFXDICTGETJMP}$ ($s$ $D$ $n$ - $s'$ $s''$ or $s$), similar to $\texttt{PFXDICTGETQ}$, but on success $\texttt{BLESS}$es the value $x$ into a *Continuation* and transfers control to it as if by a $\texttt{JMPX}$. On failure, returns $s$ unchanged and continues execution.
@@ -2259,7 +2251,7 @@ These primitives are completely similar to their non-prefix code counterparts $\
 - $\texttt{F4B5}$ — $\texttt{SUBDICTRPGET}$ ($k$ $l$ $D$ $n$ - $D'$), similar to $\texttt{SUBDICTGET}$, but removes the common prefix $k$ from all keys of the new dictionary $D'$, which becomes of type $\mathit{HashmapE}(n-l,X)$.
 - $\texttt{F4B6}$ — $\texttt{SUBDICTIRPGET}$ ($x$ $l$ $D$ $n$ - $D'$), variant of $\texttt{SUBDICTRPGET}$ with the prefix represented by a signed big-endian $l$-bit *Integer* $x$, where necessarily $l\leq257$.
 - $\texttt{F4B7}$ — $\texttt{SUBDICTURPGET}$ ($x$ $l$ $D$ $n$ - $D'$), variant of $\texttt{SUBDICTRPGET}$ with the prefix represented by an unsigned big-endian $l$-bit *Integer* $x$, where necessarily $l\leq256$.
-- $\texttt{F4BC}$–$\texttt{F4BF}$ — used by $\texttt{DICT\ldots Z}$ primitives in [Special get dictionary and prefix code dictionary operations, and constant dictionaries](#a-10-11-special-get-dictionary-and-prefix-code-dictionary-operations-and-constant-dictionaries).
+- $\texttt{F4BC}$–$\texttt{F4BF}$ — used by $\texttt{DICT\ldots Z}$ primitives in [A.10.11](#a-10-11-special-dictionary-and-prefix-code-dictionary-operations%2C-and-constant-dictionaries).
 
 ## A.11  Application-specific primitives
 
@@ -2267,7 +2259,7 @@ Opcode range $\texttt{F8}$...$\texttt{FB}$ is reserved for the *application-spec
 
 ### A.11.1. External actions and access to blockchain configuration data
 
-Some of the primitives listed below pretend to produce some externally visible actions, such as sending a message to another smart contract. In fact, the execution of a smart contract in TVM never has any effect apart from a modification of the TVM state. All external actions are collected into a linked list stored in special register $\texttt{c5}$ ("output actions"). Additionally, some primitives use the data kept in the first component of the *Tuple* stored in $\texttt{c7}$ ("root of temporary data" [List of control registers](#1-3-2-list-of-control-registers)). Smart contracts are free to modify any other data kept in the cell $\texttt{c7}$, provided the first reference remains intact (otherwise some application-specific primitives would be likely to throw exceptions when invoked).
+Some of the primitives listed below pretend to produce some externally visible actions, such as sending a message to another smart contract. In fact, the execution of a smart contract in TVM never has any effect apart from a modification of the TVM state. All external actions are collected into a linked list stored in special register $\texttt{c5}$ ("output actions"). Additionally, some primitives use the data kept in the first component of the [Tuple](#1-3-2-list-of-control-registers) stored in $\texttt{c7}$. Smart contracts are free to modify any other data kept in the cell $\texttt{c7}$, provided the first reference remains intact (otherwise some application-specific primitives would be likely to throw exceptions when invoked).
 
 Most of the primitives listed below use 16-bit opcodes.
 
@@ -2275,7 +2267,7 @@ Most of the primitives listed below use 16-bit opcodes.
 
 Of the following primitives, only the first two are "pure" in the sense that they do not use $\texttt{c5}$ or $\texttt{c7}$.
 
-- $\texttt{F800}$ — $\texttt{ACCEPT}$, sets current gas limit $g_l$ to its maximal allowed value $g_m$, and resets the gas credit $g_c$ to zero ([Total state of TVM (SCCCG)](#1-4-total-state-of-tvm-scccg)), decreasing the value of $g_r$ by $g_c$ in the process. In other words, the current smart contract agrees to buy some gas to finish the current transaction. This action is required to process external messages, which bring no value (hence no gas) with themselves.
+- $\texttt{F800}$ — $\texttt{ACCEPT}$, sets current gas limit $g_l$ to its maximal allowed value $g_m$, and resets the gas credit $g_c$ to zero ([1.4](#1-4-total-state-of-tvm-scccg)), decreasing the value of $g_r$ by $g_c$ in the process. In other words, the current smart contract agrees to buy some gas to finish the current transaction. This action is required to process external messages, which bring no value (hence no gas) with themselves.
 - $\texttt{F801}$ — $\texttt{SETGASLIMIT}$ ($g$ - ), sets current gas limit $g_l$ to the minimum of $g$ and $g_m$, and resets the gas credit $g_c$ to zero. If the gas consumed so far (including the present instruction) exceeds the resulting value of $g_l$, an (unhandled) out of gas exception is thrown before setting new gas limits. Notice that $\texttt{SETGASLIMIT}$ with an argument $g\geq 2^{63}-1$ is equivalent to $\texttt{ACCEPT}$.
 - $\texttt{F802}$ — $\texttt{BUYGAS}$ ($x$ - ), computes the amount of gas that can be bought for $x$ nanograms, and sets $g_l$ accordingly in the same way as $\texttt{SETGASLIMIT}$.
 - $\texttt{F804}$ — $\texttt{GRAMTOGAS}$ ($x$ - $g$), computes the amount of gas that can be bought for $x$ nanograms. If $x$ is negative, returns 0. If $g$ exceeds $2^{63}-1$, it is replaced with this value.
@@ -2285,7 +2277,7 @@ Of the following primitives, only the first two are "pure" in the sense that the
 
 ### A.11.3. Pseudo-random number generator primitives
 
-The pseudo-random number generator uses the random seed (parameter #6, [Configuration primitives](#a-11-4-configuration-primitives)), an unsigned 256-bit *Integer*, and (sometimes) other data kept in $\texttt{c7}$. The initial value of the random seed before a smart contract is executed in TON Blockchain is a hash of the smart contract address and the global block random seed. If there are several runs of the same smart contract inside a block, then all of these runs will have the same random seed. This can be fixed, for example, by running $\texttt{LTIME}$; $\texttt{ADDRAND}$ before using the pseudo-random number generator for the first time.
+The pseudo-random number generator uses the random seed ([parameter #6](#a-11-4-configuration-primitives)), an unsigned 256-bit *Integer*, and (sometimes) other data kept in $\texttt{c7}$. The initial value of the random seed before a smart contract is executed in TON Blockchain is a hash of the smart contract address and the global block random seed. If there are several runs of the same smart contract inside a block, then all of these runs will have the same random seed. This can be fixed, for example, by running $\texttt{LTIME}$; $\texttt{ADDRAND}$ before using the pseudo-random number generator for the first time.
 
 - $\texttt{F810}$ — $\texttt{RANDU256}$ ( - $x$), generates a new pseudo-random unsigned 256-bit Integer $x$. The algorithm is as follows: if $r$ is the old value of the random seed, considered as a 32-byte array (by constructing the big-endian representation of an unsigned 256-bit integer), then its $\text{Sha512}(r)$ is computed; the first 32 bytes of this hash are stored as the new value $r'$ of the random seed, and the remaining 32 bytes are returned as the next random value $x$.
 - $\texttt{F811}$ — $\texttt{RAND}$ ($y$ - $z$), generates a new pseudo-random integer $z$ in the range $0\ldots y-1$ (or $y\ldots-1$, if $y<0$). More precisely, an unsigned random value $x$ is generated as in $\texttt{RAND256U}$; then $z:=\lfloor xy/2^{256}\rfloor$ is computed. Equivalent to $\texttt{RANDU256}$; $\texttt{MULRSHIFT 256}$.
@@ -2312,9 +2304,9 @@ The following primitives read configuration data provided in the *Tuple* stored 
 
 ### A.11.5. Global variable primitives
 
-The "global variables" may be helpful in implementing some high-level smart-contract languages. They are in fact stored as components of the *Tuple* at $\texttt{c7}$: the $k$-th global variable simply is the $k$-th component of this *Tuple*, for $1\leq k\leq 254$. By convention, the $0$-th component is used for the "configuration parameters" of [A.11.4](#a-11-4-configuration-primitives), so it is not available as a global variable.
+The "global variables" may be helpful in implementing some high-level smart-contract languages. They are in fact stored as components of the *Tuple* at $\texttt{c7}$: the $k$-th global variable simply is the $k$-th component of this *Tuple*, for $1\leq k\leq 254$. By convention, the $0$-th component is used for the ["configuration parameters"](#a-11-4-configuration-primitives), so it is not available as a global variable.
 
-- $\texttt{F840}$ — $\texttt{GETGLOBVAR}$ ($k$ - $x$), returns the $k$-th global variable for $0\leq k<255$. Equivalent to $\texttt{PUSH c7}$; $\texttt{SWAP}$; $\texttt{INDEXVARQ}$ ([Tuple primitives](#a-3-2-tuple-primitives)).
+- $\texttt{F840}$ — $\texttt{GETGLOBVAR}$ ($k$ - $x$), returns the $k$-th global variable for $0\leq k<255$. Equivalent to $\texttt{PUSH c7}$; $\texttt{SWAP}$; $\texttt{INDEXVARQ}$ ([A.3.2](#a-3-2-tuple-primitives)).
 - $\texttt{F85\_}k$ — $\texttt{GETGLOB}$ $k$ ( - $x$), returns the $k$-th global variable for $1\leq k\leq 31$. Equivalent to $\texttt{PUSH c7}$; $\texttt{INDEXQ}$ $k$.
 - $\texttt{F860}$ — $\texttt{SETGLOBVAR}$ ($x$ $k$ - ), assigns $x$ to the $k$-th global variable for $0\leq k<255$. Equivalent to $\texttt{PUSH c7}$; $\texttt{ROTREV}$; $\texttt{SETINDEXVARQ}$; $\texttt{POP c7}$.
 - $\texttt{F87\_}k$ — $\texttt{SETGLOB}$ $k$ ($x$ - ), assigns $x$ to the $k$-th global variable for $1\leq k\leq 31$. Equivalent to $\texttt{PUSH c7}$; $\texttt{SWAP}$; $\texttt{SETINDEXQ}$ $k$; $\texttt{POP c7}$.
@@ -2434,11 +2426,11 @@ Next we describe the debug primitives that might (and actually are) implemented 
 
 ## A.13. Codepage primitives
 
-The following primitives, which begin with byte $\texttt{FF}$, typically are used at the very beginning of a smart contract's code or a library subroutine to select another TVM codepage. Notice that we expect all codepages to contain these primitives with the same codes, otherwise switching back to another codepage might be impossible ([Setting the codepage in the code itself](#5-1-8-setting-the-codepage-in-the-code-itself)).
+The following primitives, which begin with byte $\texttt{FF}$, typically are used at the very beginning of a smart contract's code or a library subroutine to select another TVM codepage. Notice that we expect all codepages to contain these primitives with the same codes, otherwise switching back to another [codepage]#5-1-8-setting-the-codepage-in-the-code-itself) might be impossible.
 
 - $\texttt{FF}nn$ — $\texttt{SETCP}$ $nn$, selects TVM codepage $0\leq nn<240$. If the codepage is not supported, throws an invalid opcode exception.
 - $\texttt{FF00}$ — $\texttt{SETCP0}$, selects TVM (test) codepage zero as described in this document.
-- $\texttt{FFF}z$ — $\texttt{SETCP}$ $z-16$, selects TVM codepage $z-16$ for $1\leq z\leq 15$. Negative codepages $-13\ldots-1$ are reserved for restricted versions of TVM needed to validate runs of TVM in other codepages as explained in [Codepage −1](#b-2-6-codepage--1). Negative codepage $-14$ is reserved for experimental codepages, not necessarily compatible between different TVM implementations, and should be disabled in the production versions of TVM.
+- $\texttt{FFF}z$ — $\texttt{SETCP}$ $z-16$, selects TVM codepage $z-16$ for $1\leq z\leq 15$. Negative codepages $-13\ldots-1$ are reserved for restricted versions of TVM needed to validate runs of TVM in other [codepages](#b-2-6-codepage). Negative codepage $-14$ is reserved for experimental codepages, not necessarily compatible between different TVM implementations, and should be disabled in the production versions of TVM.
 - $\texttt{FFF0}$ — $\texttt{SETCPX}$ ($c$ - ), selects codepage $c$ with $-2^{15}\leq c<2^{15}$ passed in the top of the stack.
 
 # B   Formal properties and specifications of TVM
@@ -2588,13 +2580,13 @@ This bootstrapping process could be iterated even further, by providing an emula
 
 # C   Code density of stack and register machines
 
-This appendix extends the general consideration of stack manipulation primitives provided in [Stack manipulation primitives](#2-2-stack-manipulation-primitives), explaining the choice of such primitives for TVM, with a comparison of stack machines and register machines in terms of the quantity of primitives used and the code density. We do this by comparing the machine code that might be generated by an optimizing compiler for the same source files, for different (abstract) stack and register machines.
+This appendix extends the general consideration of [stack manipulation](#2-2-stack-manipulation-primitives) primitives, explaining the choice of such primitives for TVM, with a comparison of stack machines and register machines in terms of the quantity of primitives used and the code density. We do this by comparing the machine code that might be generated by an optimizing compiler for the same source files, for different (abstract) stack and register machines.
 
-It turns out that the stack machines (at least those equipped with the basic stack manipulation primitives described in [Basic stack manipulation primitives](#2-2-1-basic-stack-manipulation-primitives)) have far superior code density. Furthermore, the stack machines have excellent extendability with respect to additional arithmetic and arbitrary data processing operations, especially if one considers machine code automatically generated by optimizing compilers.
+It turns out that the stack machines (at least those equipped with the [basic stack manipulation primitives](#2-2-1-basic-stack-manipulation-primitives)) have far superior code density. Furthermore, the stack machines have excellent extendability with respect to additional arithmetic and arbitrary data processing operations, especially if one considers machine code automatically generated by optimizing compilers.
 
 ## C.1   Sample leaf function
 
-We start with a comparison of machine code generated by an (imaginary) optimizing compiler for several abstract register and stack machines, corresponding to the same high-level language source code that contains the definition of a leaf function (i.e., a function that does not call any other functions). For both the register machines and stack machines, we observe the notation and conventions introduced in [Stack calling conventions](#2-1-stack-calling-conventions).
+We start with a comparison of machine code generated by an (imaginary) optimizing compiler for several abstract register and stack machines, corresponding to the same high-level language source code that contains the definition of a leaf function (i.e., a function that does not call any other functions). For both the register machines and stack machines, we observe the notation and [conventions](#2-1-stack-calling-conventions).
 
 ### C.1.1. Sample source file for a leaf function
 
@@ -2619,11 +2611,11 @@ The source code of the function, in a programming language similar to C, might l
 }
 ```
 
-We assume ([Stack calling conventions](#2-1-stack-calling-conventions)) that the register machines we consider accept the six parameters $a$ $\ldots$ $f$ in registers $\texttt{r0}$ $\ldots$ $\texttt{r5}$, and return the two values $x$ and $y$ in $\texttt{r0}$ and $\texttt{r1}$. We also assume that the register machines have 16 registers, and that the stack machine can directly access $\texttt{s0}$ to $\texttt{s15}$ by its stack manipulation primitives; the stack machine will accept the parameters in $\texttt{s5}$ to $\texttt{s0}$, and return the two values in $\texttt{s0}$ and $\texttt{s1}$, somewhat similarly to the register machine. Finally, we assume at first that the register machine is allowed to destroy values in all registers (which is slightly unfair towards the stack machine); this assumption will be revisited later.
+We assume that the [register machines](#2-1-stack-calling-conventions) we consider accept the six parameters $a$ $\ldots$ $f$ in registers $\texttt{r0}$ $\ldots$ $\texttt{r5}$, and return the two values $x$ and $y$ in $\texttt{r0}$ and $\texttt{r1}$. We also assume that the register machines have 16 registers, and that the stack machine can directly access $\texttt{s0}$ to $\texttt{s15}$ by its stack manipulation primitives; the stack machine will accept the parameters in $\texttt{s5}$ to $\texttt{s0}$, and return the two values in $\texttt{s0}$ and $\texttt{s1}$, somewhat similarly to the register machine. Finally, we assume at first that the register machine is allowed to destroy values in all registers (which is slightly unfair towards the stack machine); this assumption will be revisited later.
 
 ### C.1.2. Three-address register machine
 
-The machine code (or rather the corresponding assembly code) for a three-address register machine ([Arguments to arithmetic primitives on register machines](#2-1-7-arguments-to-arithmetic-primitives-on-register-machines)) might look as follows:
+The machine code (or rather the corresponding assembly code) for a three-address [register machine](#2-1-7-arguments-to-arithmetic-primitives-on-register-machines)) might look as follows:
 
 ```
 IMUL r6,r0,r3  // r6 := r0 * r3 = ad
@@ -2701,7 +2693,7 @@ We have used 23 operations; if we assume one-byte encoding for all arithmetic op
 
 ### C.1.5. Stack machine with basic stack primitives
 
-The machine code for a stack machine equipped with basic stack manipulation primitives described in [Basic stack manipulation primitives](#2-2-1-basic-stack-manipulation-primitives) might look as follows:
+The machine code for a stack machine equipped with [basic stack manipulation primitives](#2-2-1-basic-stack-manipulation-primitives) might look as follows:
 
 
 ```
@@ -2740,7 +2732,7 @@ We have used 29 operations; assuming one-byte encodings for all stack operations
 
 Notice as well that we have implicitly used the commutativity of multiplication in this code, computing $de-bf$ instead of $ed-bf$ as specified in high-level language source code. If we were not allowed to do so, an extra $\texttt{XCHG s1}$ would need to be inserted before the third $\texttt{IMUL}$, increasing the total size of the code by one operation and one byte.
 
-The code presented above might have been produced by a rather unsophisticated compiler that simply computed all expressions and subexpressions in the order they appear, then rearranged the arguments near the top of the stack before each operation as outlined in [Basic stack manipulation primitives suffice](#2-2-2-basic-stack-manipulation-primitives-suffice). The only "manual" optimization done here involves computing $ec$ before $af$; one can check that the other order would lead to slightly shorter code of 28 operations and bytes (or 29, if we are not allowed to use the commutativity of multiplication), but the $\texttt{ROT}$ optimization would not be applicable.
+The code presented above might have been produced by a rather unsophisticated compiler that simply computed all expressions and subexpressions in the order they appear, then rearranged the arguments near the [top of the stack](#2-2-2-basic-stack-manipulation-primitives-suffice) before each operation. The only "manual" optimization done here involves computing $ec$ before $af$; one can check that the other order would lead to slightly shorter code of 28 operations and bytes (or 29, if we are not allowed to use the commutativity of multiplication), but the $\texttt{ROT}$ optimization would not be applicable.
  
 ### C.1.6. Stack machine with compound stack primitives
 
@@ -2815,7 +2807,7 @@ It is interesting to note that this version of stack machine code contains only 
 
 ## C.2   Comparison of machine code for sample leaf function
 
-[Table 1](#c-2-comparison-of-machine-code-for-sample-leaf-function) summarizes the properties of machine code corresponding to the same source file described in [Sample source file for a leaf function](#c-1-1-sample-source-file-for-a-leaf-function), generated for a hypothetical three-address register machine ([Three-address register machine](#c-1-2-three-address-register-machine)), with both "optimistic" and "realistic" instruction encodings; a two-address machine ([Two-address register machine](#c-1-3-two-address-register-machine)); a one-address machine ([One-address register machine](#c-1-4-one-address-register-machine)); and a stack machine, similar to TVM, using either only the basic stack manipulation primitives ([Stack machine with basic stack primitives](#c-1-5-stack-machine-with-basic-stack-primitives)) or both the basic and the composite stack primitives ([Stack machine with compound stack primitives and manually optimized code](#c-1-7-stack-machine-with-compound-stack-primitives-and-manually-optimized-code)).
+[Table 1](#c-2-comparison-of-machine-code-for-sample-leaf-function) summarizes the properties of machine code corresponding to the [same source file](#c-1-1-sample-source-file-for-a-leaf-function), generated for a hypothetical [three-address register machine](#c-1-2-three-address-register-machine), with both "optimistic" and "realistic" instruction encodings; a [two-address machine](#c-1-3-two-address-register-machine); a [one-address machine](#c-1-4-one-address-register-machine); and a stack machine, similar to TVM, using either only the [basic stack manipulation primitives](#c-1-5-stack-machine-with-basic-stack-primitives) or both the basic and the [composite stack primitives](#c-1-7-stack-machine-with-compound-stack-primitives-and-manually-optimized-code).
 
 The meaning of the columns in [Table 1](#c-2-comparison-of-machine-code-for-sample-leaf-function) is as follows:
 
@@ -2848,7 +2840,7 @@ Finally, the stack machine wins the competition in terms of code density (27 or 
 
 To summarize: the two-address machine and stack machine achieve the best extendability with respect to additional arithmetic or data processing instructions (using only 1/256 of code space for each such instruction), while the stack machine additionally achieves the best code density by a small margin. The stack machine utilizes a significant part of its code space (more than a quarter) for data (i.e., stack) manipulation instructions; however, this does not seriously hamper extendability, because the stack manipulation instructions occupy a constant part of the opcode space, regardless of all other instructions and extensions.
 
-While one might still be tempted to use a two-address register machine, we will explain shortly ([Sample non-leaf function](#c-3-sample-non-leaf-function)) why the two-address register machine offers worse code density and extendability in practice than it appears based on this table.
+While one might still be tempted to use a two-address register machine, we will explain [shortly](#c-3-sample-non-leaf-function) why the two-address register machine offers worse code density and extendability in practice than it appears based on this table.
 
 As for the choice between a stack machine with only basic stack manipulation primitives or one supporting compound stack primitives as well, the case for the more sophisticated stack machine appears to be weaker: it offers only one or two fewer bytes of code at the expense of using considerably more opcode space for stack manipulation, and the optimized code using these additional instructions is hard for programmers to write and for compilers to automatically generate.
 
@@ -2870,7 +2862,7 @@ This case has been considered and summarized in [C.2](#c-2-comparison-of-machine
 
 This case is the most painful one for the called function. It is especially difficult for leaf functions like the one we have been considering, which do not benefit at all from the fact that other functions preserve some registers when called—they do not call any functions, but instead must preserve all registers themselves.
 
-In order to estimate the consequences of assuming $m=n=16$, we will assume that all our register machines are equipped with a stack, and with one-byte instructions $\texttt{PUSH r}(i)$ and $\texttt{POP r}(i)$, which push or pop a register into/from the stack. For example, the three-address machine code provided in [Three-address register machine](#c-1-2-three-address-register-machine) destroys the values in registers $\texttt{r2}$, $\texttt{r3}$, $\texttt{r6}$, and $\texttt{r7}$; this means that the code of this function must be augmented by four instructions $\texttt{PUSH r2}$; $\texttt{PUSH r3}$; $\texttt{PUSH r6}$; $\texttt{PUSH r7}$ at the beginning, and by four instructions $\texttt{POP r7}$; $\texttt{POP r6}$; $\texttt{POP r3}$; $\texttt{POP r2}$ right before the $\texttt{RET}$ instruction, in order to restore the original values of these registers from the stack. These four additional $\texttt{PUSH}$/$\texttt{POP}$ pairs would increase the operation count and code size in bytes by $4\times 2=8$. A similar analysis can be done for other register machines as well, leading to [Table 2](#c-2-3-case-m-n-16).
+In order to estimate the consequences of assuming $m=n=16$, we will assume that all our register machines are equipped with a stack, and with one-byte instructions $\texttt{PUSH r}(i)$ and $\texttt{POP r}(i)$, which push or pop a register into/from the stack. For example, the [three-address machine code](#c-1-2-three-address-register-machine) destroys the values in registers $\texttt{r2}$, $\texttt{r3}$, $\texttt{r6}$, and $\texttt{r7}$; this means that the code of this function must be augmented by four instructions $\texttt{PUSH r2}$; $\texttt{PUSH r3}$; $\texttt{PUSH r6}$; $\texttt{PUSH r7}$ at the beginning, and by four instructions $\texttt{POP r7}$; $\texttt{POP r6}$; $\texttt{POP r3}$; $\texttt{POP r2}$ right before the $\texttt{RET}$ instruction, in order to restore the original values of these registers from the stack. These four additional $\texttt{PUSH}$/$\texttt{POP}$ pairs would increase the operation count and code size in bytes by $4\times 2=8$. A similar analysis can be done for other register machines as well, leading to [Table 2](#c-2-3-case-m-n-16).
 
 | Machine | $\mathit{r}$ | Operations |  |  | Code bytes |  |  | Opcode space |  |  |
 |---------|--------------|------------|-------|-------|------------|-------|-------|--------------|-------|-------|
@@ -2882,7 +2874,7 @@ In order to estimate the consequences of assuming $m=n=16$, we will assume that 
 | stack (basic) | *0* | 16 | 11 | 28 | 16 | 11 | **28** | 64/256 | **4/256** | 69/256 |
 | stack (comp.) | *0* | 9 | 11 | 21 | 15 | 11 | **27** | 84/256 | **4/256** | 89/256 |
 
-**Table 2.** A summary of machine code properties for hypothetical 3-address, 2-address, 1-address, and stack machines, generated for a sample leaf function ([Sample source file for a leaf function](#c-1-1-sample-source-file-for-a-leaf-function)), assuming all of the 16 registers must be preserved by called functions ($m=n=16$). The new column labeled $r$ denotes the number of registers to be saved and restored, leading to $2r$ more operations and code bytes compared to [Table 1](#c-2-comparison-of-machine-code-for-sample-leaf-function). Newly-added $\texttt{PUSH}$ and $\texttt{POP}$ instructions for register machines also utilize 32/256 of the opcode space. The two rows corresponding to stack machines remain unchanged.
+**Table 2.** A summary of machine code properties for hypothetical 3-address, 2-address, 1-address, and stack machines, generated for a [sample leaf function](#c-1-1-sample-source-file-for-a-leaf-function), assuming all of the 16 registers must be preserved by called functions ($m=n=16$). The new column labeled $r$ denotes the number of registers to be saved and restored, leading to $2r$ more operations and code bytes compared to [Table 1](#c-2-comparison-of-machine-code-for-sample-leaf-function). Newly-added $\texttt{PUSH}$ and $\texttt{POP}$ instructions for register machines also utilize 32/256 of the opcode space. The two rows corresponding to stack machines remain unchanged.
 
 We see that under these assumptions the stack machines are the obvious winners in terms of code density, and are in the winning group with respect to extendability.
 
@@ -2900,9 +2892,9 @@ The analysis of this case is similar to the previous one. The results are summar
 | stack (basic) | *0* | 16 | 11 | 28 | 16 | 11 | **28** | 64/256 | **4/256** | 69/256 |
 | stack (comp.) | *0* | 9 | 11 | 21 | 15 | 11 | **27** | 84/256 | **4/256** | 89/256 |
 
-**Table 3.** A summary of machine code properties for hypothetical 3-address, 2-address, 1-address and stack machines, generated for a sample leaf function ([Sample source file for a leaf function](#c-1-1-sample-source-file-for-a-leaf-function)), assuming that only the last 8 of the 16 registers must be preserved by called functions ($m=8$, $n=16$). This table is similar to [Table 2](#c-2-3-case-m%3Dn%3D16%3A-all-registers-must-be-preserved), but has smaller values of $r$.
+**Table 3.** A summary of machine code properties for hypothetical 3-address, 2-address, 1-address and stack machines, generated for a [sample leaf function](#c-1-1-sample-source-file-for-a-leaf-function), assuming that only the last 8 of the 16 registers must be preserved by called functions ($m=8$, $n=16$). This table is similar to [Table 2](#c-2-3-case-m%3Dn%3D16%3A-all-registers-must-be-preserved), but has smaller values of $r$.
 
-Notice that the resulting table is very similar to [Table 1](#c-2-comparison-of-machine-code-for-sample-leaf-function), apart from the "Opcode space" columns and the row for the one-address machine. Therefore, the conclusions of [Comparison of machine code for sample leaf function](#c-2-comparison-of-machine-code-for-sample-leaf-function) still apply in this case, with some minor modifications. We must emphasize, however, that *these conclusions are valid only for leaf functions, i.e., functions that do not call other functions*. Any program aside from the very simplest will have many non-leaf functions, especially if we are minimizing resulting machine code size (which prevents inlining of functions in most cases).
+Notice that the resulting table is very similar to [Table 1](#c-2-comparison-of-machine-code-for-sample-leaf-function), apart from the "Opcode space" columns and the row for the one-address machine. Therefore, the conclusions of [C.2](#c-2-comparison-of-machine-code-for-sample-leaf-function) still apply in this case, with some minor modifications. We must emphasize, however, that *these conclusions are valid only for leaf functions, i.e., functions that do not call other functions*. Any program aside from the very simplest will have many non-leaf functions, especially if we are minimizing resulting machine code size (which prevents inlining of functions in most cases).
 
 ### C.2.5. A fairer comparison using a binary code instead of a byte code
 
@@ -2923,7 +2915,7 @@ We can see that the performance of the various machines is much more balanced, w
 | stack (basic) | *0* | 16 | 11 | 28 | 16 | 11 | **28** | 64/256 | **4/256** | 69/256 |
 | stack (comp.) | *0* | 9 | 11 | 21 | 15 | 11 | **27** | 84/256 | **4/256** | 89/256 |
 
-**Table 4.** A summary of machine code properties for hypothetical 3-address, 2-address, 1-address and stack machines, generated for a sample leaf function ([Sample source file for a leaf function](#c-1-1-sample-source-file-for-a-leaf-function)), assuming that only 8 of the 16 registers must be preserved by functions ($m=8$, $n=16$). This time we can use fractions of bytes to encode instructions, so as to match opcode space used by different machines. All arithmetic instructions have 8-bit opcodes, all data/stack manipulation instructions have 4-bit opcodes. In other respects this table is similar to [Table 3](#c-2-4-case-m%3D8%2C-n%3D16%3A-registers-r8…r15-must-be-preserved).
+**Table 4.** A summary of machine code properties for hypothetical 3-address, 2-address, 1-address and stack machines, generated for a [sample leaf function](#c-1-1-sample-source-file-for-a-leaf-function)), assuming that only 8 of the 16 registers must be preserved by functions ($m=8$, $n=16$). This time we can use fractions of bytes to encode instructions, so as to match opcode space used by different machines. All arithmetic instructions have 8-bit opcodes, all data/stack manipulation instructions have 4-bit opcodes. In other respects this table is similar to [Table 3](#c-2-4-case-m%3D8%2C-n%3D16%3A-registers-r8…r15-must-be-preserved).
 
 ---
 
@@ -2933,7 +2925,7 @@ This section compares the machine code for different register machines for a sam
 
 ### C.3.1. Sample source code for a non-leaf function
 
-A sample source file may be obtained by replacing the built-in integer type with a custom *Rational* type, represented by a pointer to an object in memory, in our function for solving systems of two linear equations ([Sample source file for a leaf function](#c-1-1-sample-source-file-for-a-leaf-function)):
+A sample source file may be obtained by replacing the built-in integer type with a custom *Rational* type, represented by a pointer to an object in memory, in our function for solving systems of [two linear equations](#c-1-1-sample-source-file-for-a-leaf-function):
 
 ```
 struct Rational;
@@ -3011,7 +3003,7 @@ We have used 41 instructions: 17 one-byte (eight $\texttt{PUSH}$/$\texttt{POP}$ 
 
 ### C.3.3. Three-address and two-address register machines, $m=8$ preserved registers
 
-Now we have eight registers, $\texttt{r8}$ to $\texttt{r15}$, that are preserved by subroutine calls. We might keep some intermediate values there instead of pushing them into the stack. However, the penalty for doing so consists in a $\texttt{PUSH}$/$\texttt{POP}$ pair for every such register that we choose to use, because our function is also required to preserve its original value. It seems that using these registers under such a penalty does not improve the density of the code, so the optimal code for three- and two-address machines for $m=8$ preserved registers is the same as that provided in [Three-address and two-address register machines, preserved registers](#c-3-2-three-address-and-two-address-register-machines%2C-preserved-registers-2), with a total of 42 instructions and 74 code bytes.
+Now we have eight registers, $\texttt{r8}$ to $\texttt{r15}$, that are preserved by subroutine calls. We might keep some intermediate values there instead of pushing them into the stack. However, the penalty for doing so consists in a $\texttt{PUSH}$/$\texttt{POP}$ pair for every such register that we choose to use, because our function is also required to preserve its original value. It seems that using these registers under such a penalty does not improve the density of the code, so the optimal code for three- and two-address machines for $m=8$ [preserved registers](#c-3-2-three-address-and-two-address-register-machines%2C-preserved-registers-2) is the same, with a total of 42 instructions and 74 code bytes.
 
 ### C.3.4. Three-address and two-address register machines, $m=16$ preserved registers
 
@@ -3059,14 +3051,13 @@ POP r0      // x
 RET
 ```
 
-We have used 39 instructions: 11 one-byte, 17 two-byte (among them 5 "new" instructions), and 11 three-byte, for a total of $11\cdot1+17\cdot2+11\cdot3=78$ bytes. Somewhat paradoxically, the code size in bytes is slightly longer than in the previous case ([Three-address and two-address register machines, preserved registers](#c-3-2-three-address-and-two-address-register-machines%2C-preserved-registers-2)), contrary to what one might have expected. This is partially due to the fact that we have assumed two-byte encodings for "new" $\texttt{MOV}$ and $\texttt{XCHG}$ instructions involving the stack, similarly to the "old" instructions. Most existing architectures (such as x86-64) use longer encodings (maybe even twice as long) for their counterparts of our "new" move and exchange instructions compared to the "usual" register-register ones. Taking this into account, we see that we would have obtained here 83 bytes (versus 87 for the code in [Three-address and two-address register machines, preserved registers](#c-3-2-three-address-and-two-address-register-machines%2C-preserved-registers-2)) assuming three-byte encodings of new operations, and 88 bytes (versus 98) assuming four-byte encodings. This shows that, for two-address architectures without optimized encodings for register-stack move and exchange operations, $m=16$ preserved registers might result in slightly shorter code for some non-leaf functions, at the expense of leaf functions ([Case m=n=16: all registers must be preserved](#c-2-3-case-m%3Dn%3D16%3A-all-registers-must-be-preserved) and [Case m=8, n=16: registers r8…r15 must be preserved](#c-2-4-case-m%3D8%2C-n%3D16%3A-registers-r8…r15-must-be-preserved)), which would become considerably longer.
-
+We have used 39 instructions: 11 one-byte, 17 two-byte (among them 5 "new" instructions), and 11 three-byte, for a total of $11\cdot1+17\cdot2+11\cdot3=78$ bytes. Somewhat paradoxically, the code size in bytes is slightly longer than in the [previous case](#c-3-2-three-address-and-two-address-register-machines%2C-preserved-registers-2), contrary to what one might have expected. This is partially due to the fact that we have assumed two-byte encodings for "new" $\texttt{MOV}$ and $\texttt{XCHG}$ instructions involving the stack, similarly to the "old" instructions. Most existing architectures (such as x86-64) use longer encodings (maybe even twice as long) for their counterparts of our "new" move and exchange instructions compared to the "usual" register-register ones. Taking this into account, we see that we would have obtained here 83 bytes (versus 87 for the [code](#c-3-2-three-address-and-two-address-register-machines%2C-preserved-registers-2)) assuming three-byte encodings of new operations, and 88 bytes (versus 98) assuming four-byte encodings. This shows that, for two-address architectures without optimized encodings for register-stack move and exchange operations, $m=16$ preserved registers might result in slightly shorter code for some non-leaf functions, at the expense of leaf functions [C.2.3](#c-2-3-case-%3A-all-registers-must-be-preserved) and [C.2.4](#c-2-4-case-%2C-%3A-registers-must-be-preserved), which would become considerably longer.
 
 ### C.3.5. One-address register machine, $m=0$ preserved registers
 
 For our one-address register machine, we assume that new register-stack instructions work through the accumulator only. Therefore, we have three new instructions, $\texttt{LD s}(j)$ (equivalent to $\texttt{MOV r0,s}(j)$ of two-address machines), $\texttt{ST s}(j)$ (equivalent to $\texttt{MOV s}(j)\texttt{,r0}$), and $\texttt{XCHG s}(j)$ (equivalent to $\texttt{XCHG r0,s}(j)$). To make the comparison with two-address machines more interesting, we assume one-byte encodings for these new instructions, even though this would consume $48/256=3/16$ of the opcode space.
 
-By adapting the code provided in [Three-address and two-address register machines, preserved registers](#c-3-2-three-address-and-two-address-register-machines%2C-preserved-registers-2) to the one-address machine, we obtain the following:
+By adapting the [code](#c-3-2-three-address-and-two-address-register-machines%2C-preserved-registers) to the one-address machine, we obtain the following:
 
 ```
 PUSH r4     // STACK: e
@@ -3116,16 +3107,16 @@ POP r0      // r0:=x ; ..
 RET
 ```
 
-We have used 45 instructions: 34 one-byte and 11 three-byte, for a total of 67 bytes. Compared to the 76 bytes used by two- and three-address machines in [Three-address and two-address register machines, preserved registers](#c-3-2-three-address-and-two-address-register-machines%2C-preserved-registers-2), we see that, again, the one-address register machine code may be denser than that of two-register machines, at the expense of utilizing more opcode space (just as shown in [Comparison of machine code for sample leaf function](#c-2-comparison-of-machine-code-for-sample-leaf-function)). However, this time the extra 3/16 of the opcode space was used for data manipulation instructions, which do not depend on specific arithmetic operations or user functions invoked.
+We have used 45 instructions: 34 one-byte and 11 three-byte, for a total of 67 bytes. Compared to the 76 bytes used by [two- and three-address machines](#c-3-2-three-address-and-two-address-register-machines%2C-preserved-registers), we see that, again, the one-address register machine code may be denser than that of two-register machines, at the expense of utilizing more [opcode space](#c-2-comparison-of-machine-code-for-sample-leaf-function)). However, this time the extra 3/16 of the opcode space was used for data manipulation instructions, which do not depend on specific arithmetic operations or user functions invoked.
 
 
 ### C.3.6. One-address register machine, $m=8$ preserved registers
 
-As explained in [Three-address and two-address register machines, preserved registers](#c-3-3-three-address-and-two-address-register-machines-preserved-registers-2), the preservation of $\texttt{r8}$—$\texttt{r15}$ between subroutine calls does not improve the size of our previously written code, so the one-address machine will use for $m=8$ the same code provided in [One-address register machine, preserved registers](#c-3-5-one-address-register-machine-preserved-registers).
+As explained [above](#c-3-3-three-address-and-two-address-register-machines%2C-preserved-registers), the preservation of $\texttt{r8}$—$\texttt{r15}$ between subroutine calls does not improve the size of our previously written code, so the one-address machine will use for $m=8$ the same [code](#c-3-5-one-address-register-machine%2C-preserved-registers).
 
 ### C.3.7. One-address register machine, $m=16$ preserved registers
 
-We simply adapt the code provided in [C.3.4](#c-3-4-three-address-and-two-address-register-machines%2C-preserved-registers) to the one-address register machine:
+We simply adapt the [code](#c-3-4-three-address-and-two-address-register-machines%2C-preserved-registers) to the one-address register machine:
 
 ```
 PUSH r0     // STACK: a
@@ -3174,7 +3165,7 @@ We have used 40 instructions: 18 one-byte, 11 two-byte, and 11 three-byte, for a
 
 ### C.3.8. Stack machine with basic stack primitives
 
-We reuse the code provided in [Stack machine with basic stack primitives](#c-1-5-stack-machine-with-basic-stack-primitives), simply replacing arithmetic primitives (VM instructions) with subroutine calls. The only substantive modification is the insertion of the previously optional $\texttt{XCHG s1}$ before the third multiplication, because even an optimizing compiler cannot now know whether $\texttt{CALL r\_mul}$ is a commutative operation. We have also used the "tail recursion optimization" by replacing the final $\texttt{CALL r\_div}$ followed by $\texttt{RET}$ with $\texttt{JMP r\_div}$.
+We reuse the [code](#c-1-5-stack-machine-with-basic-stack-primitives), simply replacing arithmetic primitives (VM instructions) with subroutine calls. The only substantive modification is the insertion of the previously optional $\texttt{XCHG s1}$ before the third multiplication, because even an optimizing compiler cannot now know whether $\texttt{CALL r\_mul}$ is a commutative operation. We have also used the "tail recursion optimization" by replacing the final $\texttt{CALL r\_div}$ followed by $\texttt{RET}$ with $\texttt{JMP r\_div}$.
 
 ```
 PUSH s5     // a b c d e f a
@@ -3212,7 +3203,7 @@ We have used 29 instructions; assuming one-byte encodings for all stack operatio
 
 ### C.3.9. Stack machine with compound stack primitives
 
-We again reuse the code provided in [Stack machine with compound stack primitives and manually optimized code](#c-1-7-stack-machine-with-compound-stack-primitives-and-manually-optimized-code), replacing arithmetic primitives with subroutine calls and making the tail recursion optimization:
+We again reuse the [code](#c-1-7-stack-machine-with-compound-stack-primitives-and-manually-optimized-code), replacing arithmetic primitives with subroutine calls and making the tail recursion optimization:
 
 
 ```
@@ -3244,7 +3235,7 @@ This code uses only 20 instructions, 9 stack-related and 11 control flow-related
 
 ## C.4   Comparison of machine code for sample non-leaf function
 
-[Table 5](#c-4-comparison-of-machine-code-for-sample-non-leaf-function) summarizes the properties of machine code corresponding to the same source file provided in [Sample source code for a non-leaf function](#c-3-1-sample-source-code-for-a-non-leaf-function). We consider only the "realistically" encoded three-address machines. Three-address and two-address machines have the same code density properties, but differ in the utilization of opcode space. The one-address machine, somewhat surprisingly, managed to produced shorter code than the two-address and three-address machines, at the expense of using up more than half of all opcode space. The stack machine is the obvious winner in this code density contest, without compromizing its excellent extendability (measured in opcode space used for arithmetic and other data transformation instructions).
+[Table 5](#c-4-comparison-of-machine-code-for-sample-non-leaf-function) summarizes the properties of machine code corresponding to the [same source file](#c-3-1-sample-source-code-for-a-non-leaf-function). We consider only the "realistically" encoded three-address machines. Three-address and two-address machines have the same code density properties, but differ in the utilization of opcode space. The one-address machine, somewhat surprisingly, managed to produced shorter code than the two-address and three-address machines, at the expense of using up more than half of all opcode space. The stack machine is the obvious winner in this code density contest, without compromizing its excellent extendability (measured in opcode space used for arithmetic and other data transformation instructions).
 
 | Machine          | $m$   | **Operations** |     |     | **Code bytes** |     |     | **Opcode space** |     |     |
 |------------------|--------|---------------|-----|-----|----------------|-----|-----|------------------|-----|-----|
@@ -3258,17 +3249,17 @@ This code uses only 20 instructions, 9 stack-related and 11 control flow-related
 | stack (basic)    | $-$    | 18 | 11 | 29 | 18 | 33 | **51** | 64/256 | **4/256** | 71/256 |
 | stack (comp.)    | $-$    | 9 | 11 | 20 | 15 | 33 | **48** | 84/256 | **4/256** | 91/256 |
 
-**Table 5**: A summary of machine code properties for hypothetical 3-address, 2-address, 1-address, and stack machines, generated for a sample non-leaf function ([Sample source code for a non-leaf function](#c-3-1-sample-source-code-for-a-non-leaf-function)), assuming $m$ of the 16 registers must be preserved by called subroutines.
+**Table 5**: A summary of machine code properties for hypothetical 3-address, 2-address, 1-address, and stack machines, generated for a [sample non-leaf function](#c-3-1-sample-source-code-for-a-non-leaf-function), assuming $m$ of the 16 registers must be preserved by called subroutines.
 
 ### C.4.1. Combining with results for leaf functions
 
-It is instructive to compare this table with the results in [Comparison of machine code for sample leaf function](#c-2-comparison-of-machine-code-for-sample-leaf-function) for a sample leaf function, summarized in [Table 1](#c-2-comparison-of-machine-code-for-sample-leaf-function) (for $m=0$ preserved registers) and the very similar [Table 3](#c-2-4-case-m%3D8%2C-n%3D16%3A-registers-r8…r15-must-be-preserved) (for $m=8$ preserved registers), and, if one is still interested in case $m=16$ (which turned out to be worse than $m=8$ in almost all situations), also to [Table 2](#c-2-3-case-m%3Dn%3D16%3A-all-registers-must-be-preserved).
+It is instructive to compare this table with the results in [C.2](#c-2-comparison-of-machine-code-for-sample-leaf-function) for a sample leaf function, summarized in [Table 1](#c-2-comparison-of-machine-code-for-sample-leaf-function) (for $m=0$ preserved registers) and the very similar [Table 3](#c-2-4-case-m%3D8%2C-n%3D16%3A-registers-r8…r15-must-be-preserved) (for $m=8$ preserved registers), and, if one is still interested in case $m=16$ (which turned out to be worse than $m=8$ in almost all situations), also to [Table 2](#c-2-3-case-m%3Dn%3D16%3A-all-registers-must-be-preserved).
 
 We see that the stack machine beats all register machines on non-leaf functions. As for the leaf functions, only the three-address machine with the "optimistic" encoding of arithmetic instructions was able to beat the stack machine, winning by 15%, by compromising its extendability. However, the same three-address machine produces 25% longer code for non-leaf functions. If a typical program consists of a mixture of leaf and non-leaf functions in approximately equal proportion, then the stack machine will still win.
 
 ### C.4.2. A fairer comparison using a binary code instead of a byte code
 
-Similarly to [A fairer comparison using a binary code instead of a byte code](#c-2-5-a-fairer-comparison-using-a-binary-code-instead-of-a-byte-code), we may offer a fairer comparison of different register machines and the stack machine by using arbitrary binary codes instead of byte codes to encode instructions, and matching the opcode space used for data manipulation and arithmetic instructions by different machines. The results of this modified comparison are summarized in [Table 6](#c-4-2-a-fairer-comparison-using-a-binary-code-instead-of-a-byte-code). We see that the stack machines still win by a large margin, while using less opcode space for stack/data manipulation.
+Similarly to [C.2.5](#c-2-5-a-fairer-comparison-using-a-binary-code-instead-of-a-byte-code), we may offer a fairer comparison of different register machines and the stack machine by using arbitrary binary codes instead of byte codes to encode instructions, and matching the opcode space used for data manipulation and arithmetic instructions by different machines. The results of this modified comparison are summarized in [Table 6](#c-4-2-a-fairer-comparison-using-a-binary-code-instead-of-a-byte-code). We see that the stack machines still win by a large margin, while using less opcode space for stack/data manipulation.
 
 | Machine          | $m$   | **Operations** |     |     | **Code bytes** |     |     | **Opcode space** |     |     |
 |------------------|--------|---------------|-----|-----|----------------|-----|-----|------------------|-----|-----|
@@ -3283,7 +3274,7 @@ Similarly to [A fairer comparison using a binary code instead of a byte code](#c
 | stack (comp.)    | $-$    | 9 | 11 | 20 | 15 | 33 | **48** | 84/256 | **4/256** | 91/256 |
 
 
-**Table 6**: A summary of machine code properties for hypothetical 3-address, 2-address, 1-address, and stack machines, generated for a sample non-leaf function ([Sample source code for a non-leaf function](#c-3-1-sample-source-code-for-a-non-leaf-function)), assuming $m$ of the 16 registers must be preserved by called subroutines. This time we use fractions of bytes to encode instructions, enabling a fairer comparison. Otherwise, this table is similar to [Table 5](#c-4-comparison-of-machine-code-for-sample-non-leaf-function).
+**Table 6**: A summary of machine code properties for hypothetical 3-address, 2-address, 1-address, and stack machines, generated for a [sample non-leaf function](#c-3-1-sample-source-code-for-a-non-leaf-function), assuming $m$ of the 16 registers must be preserved by called subroutines. This time we use fractions of bytes to encode instructions, enabling a fairer comparison. Otherwise, this table is similar to [Table 5](#c-4-comparison-of-machine-code-for-sample-non-leaf-function).
 
 
 ### C.4.3. Comparison with real machines
@@ -3294,9 +3285,10 @@ For example, the very popular two-address register architecture x86-64 produces 
 
 ### C.4.4. Automatic generation of optimized code
 
-An interesting point is that the stack machine code in our samples might have been generated automatically by a very simple optimizing compiler, which rearranges values near the top of the stack appropriately before invoking each primitive or calling a function as explained in [Basic stack manipulation primitives suffice](#2-2-2-basic-stack-manipulation-primitives-suffice) and [Semantics of compound stack operations](#2-2-5-semantics-of-compound-stack-operations). The only exception is the unimportant "manual" $\texttt{XCHG3}$ optimization described in [Stack machine with compound stack primitives and manually optimized code](#c-1-7-stack-machine-with-compound-stack-primitives-and-manually-optimized-code), which enabled us to shorten the code by one more byte.
+An interesting point is that the stack machine code in our samples might have been generated automatically by a very simple optimizing compiler, which rearranges values near the top of the stack appropriately before invoking each primitive or calling a function as explained in [2.2.2](#2-2-2-basic-stack-manipulation-primitives-suffice) and [2.2.5](#2-2-5-semantics-of-compound-stack-operations). The only exception is the unimportant ["manual"](#c-1-7-stack-machine-with-compound-stack-primitives-and-manually-optimized-code) $\texttt{XCHG3}$ optimization, which enabled us to shorten the code by one more byte.
 
-By contrast, the heavily optimized (with respect to size) code for register machines shown in [Three-address and two-address register machines, preserved registers](#c-3-2-three-address-and-two-address-register-machines%2C-preserved-registers-2) and [Three-address and two-address register machines, preserved registers](#c-3-3-three-address-and-two-address-register-machines%2C-preserved-registers-2) is unlikely to be produced automatically by an optimizing compiler. Therefore, if we had compared compiler-generated code instead of manually-generated code, the advantages of stack machines with respect to code density would have been even more striking.
+By contrast, the heavily optimized (with respect to size) code for register machines shown in [C.3.2](#c-3-2-three-address-and-two-address-register-machines%2C-preserved-registers) and [c.3.3](#c-3-3-three-address-and-two-address-register-machines%2C-preserved-registers) is unlikely to be produced automatically by an optimizing compiler. Therefore, if we had compared compiler-generated code instead of manually-generated code, the advantages of stack machines with respect to code density would have been even more striking.
+
 
 ## References
 
