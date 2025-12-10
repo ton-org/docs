@@ -1,0 +1,188 @@
+---
+title: "Structures and fields"
+---
+
+Tolk supports structures — similar to TypeScript classes.
+This page focuses on syntax details only.
+See also [structures in the type system](/languages/tolk/types/structures).
+
+## Syntax of structures
+
+```tolk
+struct Demo {
+    allowExotic: bool = false
+    customData: tuple
+}
+```
+
+- every field has a mandatory type and an optional default value
+- fields are separated by newlines (preferred), commas, or semicolons
+- fields may be `private` and `readonly`
+
+## Create an object
+
+Use `{ ... }` when the type is clear, or `StructName { ... }` explicitly.
+
+```tolk
+fun demo() {
+    // the type is clear from the assignment
+    var o1: Demo = { customData: someTuple };
+    o1.someMethod();
+
+    // alternatively, `Demo { ... }`
+    Demo{customData: someTuple}.someMethod();
+}
+```
+
+## Shorthand object syntax
+
+Similar to TypeScript, `{ a, b }` means `{ a: a, b: b }`.
+
+```tolk
+fun createDemo(allowExotic: bool, customData: tuple) {
+    return Demo { allowExotic, customData }
+}
+```
+
+## Methods for structures
+
+Methods are declared separately as extension functions:
+
+```tolk
+fun Demo.hasData(self): bool {
+    return self.customData.size() != 0
+}
+```
+
+See [Functions and methods](/languages/tolk/syntax/functions-methods).
+
+## Empty structures
+
+An empty structure without fields serves as a grouping construct for static methods.
+
+For example, standard functions `blockchain.now()` and others are declared this way:
+
+```tolk
+struct blockchain
+
+fun blockchain.now(): int
+    asm "NOW"
+
+fun blockchain.logicalTime(): int
+    asm "LTIME"
+```
+
+These methods are static because they do not accept `self`.
+
+## Default values for fields
+
+Fields that have defaults may be missed out of a literal:
+
+```tolk
+struct DefDemo {
+    f1: int = 0
+    f2: int? = null
+    f3: (int, coins) = (0, ton("0.05"))
+}
+
+fun demo() {
+    var d: DefDemo = {};         // ok
+    var d: DefDemo = { f2: 5 };  // ok
+}
+```
+
+## Private and readonly fields
+
+- `private` — accessible only within methods
+- `readonly` — immutable after object creation
+
+```tolk
+struct PositionInTuple {
+    private readonly t: tuple
+    currentIndex: int
+}
+
+fun PositionInTuple.create(t: tuple): PositionInTuple {
+    return { t, currentIndex: 0 }
+}
+
+fun PositionInTuple.next(mutate self) {
+    // self.t cannot be modified: it is readonly
+    self.currentIndex += 1;
+}
+
+fun demo() {
+    var p = PositionInTuple.create(someTuple);
+    // p.t is unavailable here: it is private
+}
+```
+
+As a consequence, the only way to create an object with a private field is through a static method or an assembler function.
+
+## Generic structs
+
+Generics exist only at the type level and incur no runtime cost.
+
+```tolk
+struct Nullable<T> {
+    value: T?
+}
+```
+
+See [generics](/languages/tolk/types/generics) for structures and type aliases.
+
+## Methods for generic structs
+
+When parsing the receiver in `fun <receiver>.f()`, the compiler treats unknown symbols as type parameters:
+
+```tolk
+fun Nullable<T>.isNull(self) {
+    return self.value == null
+}
+```
+
+It's a generalization. For example, `fun T.copy()` works for "any receiver".
+
+Method overloading (also known as partial specialization) is also allowed.
+
+```tolk
+fun Nullable<map<K, V>>.isNull(self) {
+    return self.value.isEmpty()
+}
+```
+
+See examples in [Functions and methods](/languages/tolk/syntax/functions-methods#generic-methods).
+
+## Serialization prefixes and opcodes
+
+Syntax `struct (PREFIX) Name { ... }` allows specifying **serialization prefixes**.
+Typically, 32-bit prefixes for messages are called **opcodes**.
+
+```tolk
+struct (0x7362d09c) TransferNotification {
+    queryId: uint64
+    // ...
+}
+```
+
+For example, such an outgoing message will start with this hex number:
+
+```tolk
+// message will be '0x7362d09c0000000000000000' + ...
+createMessage({
+    // ...
+    body: TransferNotification {
+        queryId: 0,
+        // ...
+    }
+});
+```
+
+Prefixes are not restricted to 32 bits:
+
+- `0x000F` — 16-bit prefix
+- `0b010` is 3-bit (binary form, notice '0b')
+
+Non‑32‑bit prefixes are useful for controlling union types when expressing TL‑B's multiple constructors.
+
+Read about [serialization of structures](/languages/tolk/types/overall-serialization#structures).
