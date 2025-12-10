@@ -1,0 +1,132 @@
+---
+title: "Operate a storage provider"
+sidebarTitle: "Storage provider"
+---
+
+import { Aside } from "/snippets/aside.jsx";
+
+A storage provider is a paid TON Storage service. It combines a smart contract that holds client balances with a `storage-daemon` that downloads bags, keeps them available, and submits storage proofs.
+
+## Prerequisites
+
+- `storage-daemon` running with network connectivity and persistent storage
+- Wallet with at least 1 TON to deploy and fund the provider contract
+- Global network config file and access to the TON blockchain (mainnet or testnet)
+
+## How the provider flow works
+
+1. The provider owner starts `storage-daemon`, deploys the provider contract, and configures limits and rates.
+2. A client packages files into a bag and generates a storage request message for the provider contract.
+3. The contract creates a dedicated storage contract for that bag.
+4. The daemon detects the request, downloads the bag, and activates the storage contract.
+5. The client tops up the storage contract balance. The provider submits periodic proofs to continue earning payments.
+6. When the balance drains or the provider declines the request, the contract deactivates and the obligation to store the bag ends.
+
+<Aside type="note">
+  Clients can always retrieve their files by proving ownership to the storage contract. After a successful claim, the contract deactivates.
+</Aside>
+
+## Use an existing provider (client side)
+
+1. Fetch provider parameters to confirm limits and rates:
+
+   ```bash
+   get-provider-params <PROVIDER_ADDRESS>
+   ```
+
+   The output includes whether new contracts are accepted, min/max bag size (bytes), storage rate (nanoTON per MB per day), and max proof interval.
+
+2. Create a bag and generate the storage request body:
+
+   ```bash
+   new-contract-message <BAG_ID> <output-file> --query-id 0 --provider <PROVIDER_ADDRESS>
+   ```
+
+   - Large bags can take time to process.
+   - The message body is saved to `<output-file>`; it is not a full internal message.
+   - Query ID can be any `0` to `2^64-1`. The provider will echo it back.
+   - The generated body embeds the provider's current rate and max span. Regenerate the message if the provider changes these before sending.
+
+3. Send the generated body as an internal message to `<PROVIDER_ADDRESS>` from any wallet. On success the storage contract returns a message with `op=0xbf7bd0c1`. After the provider downloads the bag it sends `op=0xd4caedcd`.
+
+### Track balance and close a contract
+
+- The storage contract balance decreases over time according to the provider's rate and the bag size.
+- Top up at any time by transferring TON to the storage contract address.
+- Read the current balance with the `get_storage_contract_data` getter (`balance` is the second value).
+- Close voluntarily by sending a message with `op=0x79f937ea` from the client's wallet; reuse any query ID.
+
+## Run a provider (operator side)
+
+1. Start `storage-daemon` with provider mode enabled:
+
+   ```bash
+   storage-daemon ... -P
+   ```
+
+2. Deploy the provider contract from `storage-daemon-cli`:
+
+   ```bash
+   deploy-provider
+   ```
+
+   <Aside type="caution">
+     The CLI prompts for a non-bounceable 1 TON message to initialize the contract. Confirm deployment with `get-provider-info`.
+   </Aside>
+
+3. Set local limits to control daemon behavior:
+
+   ```bash
+   set-provider-config --max-contracts 100 --max-total-size 100000000000
+   ```
+
+   - `max contracts` — maximum concurrent storage contracts
+   - `max total size` — total size of bags the provider accepts
+
+4. Set on-chain parameters before accepting clients:
+
+   ```bash
+   set-provider-params --accept 1 --rate 1000000000 --max-span 86400 --min-file-size 1024 --max-file-size 1000000000
+   ```
+
+   - Omit any flag to keep its current value.
+   - Avoid running several `set-provider-params` commands back to back; wait for on-chain updates to finalize.
+   - Fund the provider contract with more than 1 TON to cover future transactions, but avoid large deposits during initial non-bounceable setup.
+
+After `accept` is set to `1`, the provider contract starts creating storage contracts for incoming requests. The daemon automatically downloads bags, seeds them, and submits proofs.
+
+## Operate and withdraw
+
+- List active contracts and balances:
+
+  ```bash
+  get-provider-info --contracts --balances
+  ```
+
+  `Client$` shows client-provided funds; `Contract$` shows total contract funds. The difference is the provider's earnings.
+
+- Withdraw earnings:
+
+  ```bash
+  withdraw <ADDRESS>
+  withdraw-all
+  ```
+
+- Close a contract explicitly:
+
+  ```bash
+  close-contract <CONTRACT_ADDRESS>
+  ```
+
+  Closing transfers available funds to the main provider contract. Bags are deleted unless shared by other active contracts.
+
+- Send TON from the provider contract to any address:
+
+  ```bash
+  send-coins <ADDRESS> <AMOUNT_NANOTON>
+  send-coins <ADDRESS> <AMOUNT_NANOTON> --message "optional note"
+  ```
+
+<Aside type="caution">
+  All bags stored by the provider are listed with `list`. Do not delete them or use the same daemon to manage unrelated bags; this can disrupt proofs and payouts.
+</Aside>
