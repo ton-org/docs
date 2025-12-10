@@ -1,0 +1,112 @@
+---
+title: "Generic structs and aliases"
+sidebarTitle: "Generics"
+---
+
+Generic structs and type aliases exist only at the type level and incur no runtime cost.
+
+```tolk
+struct Container<T> {
+    element: T?
+}
+
+struct Nothing
+
+type Wrapper<T> = Nothing | Container<T>
+```
+
+Example usage:
+
+```tolk
+fun checkElement<T>(c: Container<T>) {
+    return c.element != null;
+}
+
+fun demo() {
+    var c: Container<int32> = { element: null };
+
+    var n: Wrapper<int> = Nothing {};
+    var i: Wrapper<int32> = Container { element: 0 };
+}
+```
+
+## Type arguments must be specified
+
+When referencing a generic `Container`, `T` must be provided explicitly:
+
+```tolk
+fun getItem(c: Container)        // error
+fun getItem(c: Container<int>)   // ok
+fun getItem<T>(c: Container<T>)  // ok
+```
+
+For generic functions, type arguments can be inferred from the call site:
+
+```tolk
+fun doSmth<T>(value: Container<T>) {
+    // ...
+}
+
+fun demo() {
+    doSmth({ element: 123 });         // T = int
+    doSmth({ element: cellOrNull });  // T = cell?
+}
+```
+
+## Default type arguments
+
+A type parameter can have a default type: `<T = xxx>`. Such type parameters may be omitted at use sites.
+
+```tolk
+struct StrangeUnion<T1, T2 = null> {
+    item: T1 | T2
+}
+
+fun demo() {
+    var m1: StrangeUnion<int> = { item: 10 };
+    var m2: StrangeUnion<int, bool> = { item: 20 };
+    // m1.item is `int?`
+    // m2.item is `int | bool`
+}
+```
+
+Type arguments cannot currently reference one another; expressions such as `T2 = T1` are invalid.
+
+## Not only structs, but also type aliases
+
+The following example demonstrates a generic type alias `Response<TResult, TError>`:
+
+```tolk
+struct Ok<TResult> { result: TResult }
+struct Err<TError> { err: TError }
+
+type Response<R, E> = Ok<R> | Err<E>
+
+fun loadNextRef(mutate s: slice): Response<cell, int32> {
+    return s.remainingRefsCount()
+        ? Ok { result: s.loadRef() }
+        : Err { err: ERR_NO_MORE_REFS }
+}
+
+fun demo() {
+    match (val r = loadNextRef(mutate parsedSlice)) {
+        Ok => { r.result }    // cell
+        Err => { r.err }      // int32
+    }
+}
+```
+
+## Methods for generic types
+
+Methods for generics are declared exactly as for regular structures.
+In this form, the compiler treats `T` (unknown symbol) as a type parameter:
+
+```tolk
+fun Container<T>.getElement(self) {
+    return self.element
+}
+```
+
+Notice the first `self` parameter. Without it, a method will be static.
+
+See [Functions and methods](/languages/tolk/syntax/functions-methods) for examples.
