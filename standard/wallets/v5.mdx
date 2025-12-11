@@ -27,11 +27,27 @@ contract_state$_
 
 - `is_signature_allowed`: 1-bit flag that restricts or allows access through the signature and stored public key.
 - `seqno`: 32-bit sequence number.
-- `wallet_id`: 32-bit wallet ID (equivalent to subwallet\_id in previous versions).
+- `wallet_id`: 32-bit wallet ID (see the wallet ID scheme below).
 - `public_key`: 256-bit public key.
 - `extensions_dict`: dictionary containing extensions (may be empty).
 
-As you can see, the `ContractState`, compared to previous versions, hasn't changed much. The main difference is the new `is_signature_allowed` 1-bit flag, which restricts or allows access through the signature and stored public key. We will describe the importance of this change in later topics.
+## Wallet ID scheme
+
+In Wallet V5 the `wallet_id` field is a 32-bit signed integer derived from the network global identifier and a 32-bit context value:
+
+- `wallet_id = network_global_id ^ context_id`
+
+The scheme used by the reference implementation and official wrapper is:
+
+- `network_global_id`: 32-bit network identifier (`-239` for mainnet, `-3` for testnet).
+- `context_id`: 32-bit value that encodes either a client context or a custom context:
+  - Client context: `context_id_client$1 = wc:int8 wallet_version:uint8 counter:uint15`
+    - `wc`: workchain identifier.
+    - `wallet_version`: version discriminator; for Wallet V5R1 it is `0`.
+    - `counter`: 15-bit subwallet number.
+  - Custom context: `context_id_backoffice$0 = counter:uint31`, reserved for specialized infrastructure and back-office uses.
+
+For compatibility, the get-method is still named `get_subwallet_id()`, but in Wallet V5 it returns the derived `wallet_id` value described above rather than a plain `subwallet_id`.
 
 ## Message layout
 
@@ -72,6 +88,15 @@ We can consider `InnerRequest` as two lists of actions: the first, `OutList`, is
 
 Learn more about actions [here](/standard/wallets/v5-api).
 
+### Action list validation
+
+Wallet V5 allows precomputed outgoing actions to be placed in the TVM `C5` register as a raw `OutList`. Before executing them, the contract validates `C5` (see `verify_c5_actions` in `wallet_v5.fc`):
+
+- only `action_send_msg` actions are allowed; actions such as `set_code`, `reserve_currency`, or `change_library` are rejected;
+- each action must contain an 8-bit `send_mode` and exactly two references (next-action reference and `MessageRelaxed` reference);
+- for external messages, `send_mode` must have the `+2` (“ignore errors”) bit set; otherwise exit code `137` is thrown;
+- the number of actions is limited to 255; exceeding this bound or violating the structure results in exit code `147` (`invalid_c5`).
+
 ## Exit codes
 
 | Exit code | Description                                                                        |
@@ -104,7 +129,7 @@ Learn more about actions [here](/standard/wallets/v5-api).
 
 1. `int is_signature_allowed()` returns stored `is_signature_allowed` flag.
 1. `int seqno()` returns current stored seqno.
-1. `int get_wallet_id()` returns current wallet ID.
+1. `int get_subwallet_id()` returns current `wallet_id` value (for Wallet V5 this is the derived identifier described in the wallet ID scheme).
 1. `int get_public_key()` returns current stored public key.
 1. `cell get_extensions()` returns extensions dictionary.
 

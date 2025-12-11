@@ -36,39 +36,50 @@ This means that the mnemonic alone does not determine an address uniquely: `wall
 
 For Wallet V4R2 `wallet_id` is defined as first 4 bytes from TON mainnet blockchain initial state hash. There is no specific logic why this number was chosen, community needed some default value and this one works well enough.
 
-For Wallet V5, `wallet_id` is different between Mainnet and Testnet for security reasons. There will be different wallet addresses for different networks with the same mnemonic. This prevents replaying transactions from testnet on mainnet, and ensuing loss of funds. The `wallet_id` value is obtained from
+For Wallet V5, `wallet_id` is different between mainnet and testnet for security reasons. Wallet addresses for the same mnemonic differ across networks. This prevents replaying transactions from testnet on mainnet and ensuing loss of funds. The `wallet_id` value is obtained from
 
-- `network_id`: `-239` for mainnet, `-3` for testnet,
-- `wallet_version`: currently always `0`,
-- `subwallet_number`: `0` by default,
-- `workchain`: `0` for basechain
+- `network_id`: `-239` for mainnet, `-3` for testnet;
+- `wallet_version`: currently always `0`;
+- `subwallet_number`: `0` by default;
+- `workchain`: `0` for basechain;
 
-by the following algorithm:
+using the following derivation scheme (client context):
 
 ```ts
-type WalletIdV5 = {
-    // currently always 0
-    readonly walletVersion: number;
-    // -239 for mainnet, -3 for testnet
-    readonly networkGlobalId: number;
-    // 0 for basechain
-    readonly workchain: number;
-    // 0 for the first wallet with this mnemonic
-    readonly subwalletNumber: number;
-}
+import { beginCell, Builder } from '@ton/core';
 
-export function storeWalletIdV5(walletId: WalletIdV5) {
-    return (builder: Builder) => {
-        builder.storeInt(walletId.networkGlobalId, 32);
-        builder.storeInt(walletId.workchain, 8);
-        builder.storeUint(walletId.walletVersion, 8);
-        builder.storeUint(walletId.subwalletNumber, 32);
-    }
+type WalletIdV5ClientContext = {
+  // -239 for mainnet, -3 for testnet
+  readonly networkGlobalId: number;
+  // 0 for basechain
+  readonly workchain: number;
+  // currently always 0 for V5R1
+  readonly walletVersion: number;
+  // 0 for the first wallet with this mnemonic
+  readonly subwalletNumber: number; // 0..2^15-1
+};
+
+export function storeWalletIdV5R1(ctx: WalletIdV5ClientContext) {
+  return (builder: Builder) => {
+    // context_id_client$1 = wc:int8 wallet_version:uint8 counter:uint15
+    const context = beginCell()
+      .storeUint(1, 1)
+      .storeInt(ctx.workchain, 8)
+      .storeUint(ctx.walletVersion, 8)
+      .storeUint(ctx.subwalletNumber, 15)
+      .endCell()
+      .beginParse()
+      .loadInt(32);
+
+    const walletId = ctx.networkGlobalId ^ context;
+
+    builder.storeInt(walletId, 32);
+  };
 }
 ```
 
 <Aside type="note">
-  Algorithm here is presented for educational purposes, in most cases there is no need to reimplement it. Use the existing implementation from TON SDKs instead.
+  This code mirrors the official `WalletV5R1WalletId` implementation in the [`@ton/ton`](https://github.com/ton-org/ton) SDK and is shown for educational purposes. In production code, use the SDK implementation directly instead of reimplementing it.
 </Aside>
 
 ### Examples
