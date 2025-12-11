@@ -1,0 +1,143 @@
+---
+title: "Enums"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Tolk supports enums, similar to TypeScript and C++ enums.
+
+In the TVM (virtual machine) all enums are integers.
+From the compiler's point of view, it's a distinct type.
+
+```tolk
+// will be 0 1 2
+enum Color {
+    Red
+    Green
+    Blue
+}
+```
+
+## Enum members
+
+Values can be specified manually. Otherwise, auto-calculated as `+1`.
+
+```tolk
+enum Mode {
+    Foo = 256,
+    Bar,        // implicitly 257
+}
+```
+
+## Enums are distinct types, not integers
+
+`Color.Red` is `Color`, not `int`, although it holds the value `0` at runtime.
+
+```tolk
+fun isRed(c: Color) {
+    return c == Color.Red
+}
+
+fun demo() {
+    isRed(Color.Blue);    // ok
+    isRed(1);             // error, pass `int` to `Color`
+}
+```
+
+Since enums are types, they can be:
+
+- used as variable and parameters,
+- extended with methods for an enum,
+- used in struct fields, unions, generics, and other type contexts:
+
+```tolk
+struct Gradient {
+    from: Color
+    to: Color? = null
+}
+
+fun Color.isRed(self) {
+    return self == Color.Red
+}
+
+var g: Gradient = { from: Color.Blue };
+g.from.isRed();       // false
+Color.Red.isRed();    // true
+
+match (g.to) {
+    null => ...
+    Color => ...
+}
+```
+
+## `match` for enums is exhaustive
+
+Pattern matching on enums requires coverage of all cases:
+
+```tolk
+match (someColor) {
+    Color.Red => {}
+    Color.Green => {}
+    // error: Color.Blue is missing
+}
+```
+
+Alternatively, use `else` to handle remaining values:
+
+```tolk
+match (someColor) {
+    Color.Red => {}
+    else => {}
+}
+```
+
+Operator `==` compares values directly:
+
+```tolk
+if (someColor == Color.Red) {}
+else {}
+```
+
+## Enums are integers under the hood
+
+At the TVM level, every enum is represented as `int`. Casting between the enum and `int` is allowed:
+
+- `Color.Blue as int` evaluates to `2`
+- `2 as Color` evaluates to `Color.Blue`
+
+<Aside
+  type="caution"
+>
+  Operator `as` can produce invalid values: `100 as Color`.
+  Then operator `==` will return false, and exhaustive `match` will throw 5 ("out of range").
+</Aside>
+
+During deserialization with `fromCell()`, the compiler performs checks to ensure that encoded integers correspond to valid enum values.
+
+<Aside type="tip">
+  Enums in Tolk differ from Rust.
+  In Rust, each enum member can have a distinct structure.
+  In Tolk, union types provide that capability, so enums are only integers.
+</Aside>
+
+## Enums are allowed in `throw` and `assert`
+
+```tolk
+enum Err {
+    InvalidId = 0x100
+    TooHighId
+}
+
+fun validate(id: int) {
+    assert (id < 1000) throw Err.TooHighId;  // excno = 257
+}
+```
+
+## Stack layout and serialization
+
+Every enum is backed by TVM `INT`. Serialized as `(u)intN` where `N` is:
+
+- specified manually: `enum Role: int8 { ... }`
+- or calculated automatically to fit all values
+
+For details, follow [TVM representation](/languages/tolk/types/overall-tvm-stack) and [Serialization](/languages/tolk/types/overall-serialization).
