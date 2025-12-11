@@ -39,8 +39,8 @@ const remarkConfig = {
       return (tree, file) => {
         // a JSX element embedded in flow (block)
         visitParents(tree, 'mdxJsxFlowElement', (node, ancestors) => {
-          if (!node.attributes) { return; }
           try {
+            if (!node.attributes) { return; }
             for (const attr of node.attributes) {
               if (
                 attr.type === 'mdxJsxAttribute' &&
@@ -55,6 +55,7 @@ const remarkConfig = {
                 }
 
                 // Multi-line expressions
+                if (!expr.data) { continue; }
                 const indent = ancestors.length === 0 ? 0 : ancestors.length;
                 const formatted = generate(expr.data.estree.body[0].expression, {
                   startingIndentLevel: indent,
@@ -64,15 +65,13 @@ const remarkConfig = {
               }
             }
           } catch (_) {
-            console.error(
-              `Could not format a node in the file ${file.path}: ${JSON.stringify(node)}`
-            );
+            // NOTE: Let's silently do nothing — this is the default behavior anyways
           }
         });
         // a JSX element embedded in text (span, inline)
         visitParents(tree, 'mdxJsxTextElement', (node) => {
-          if (!node.attributes) { return; }
           try {
+            if (!node.attributes) { return SKIP; }
             for (const attr of node.attributes) {
               if (
                 attr.type === 'mdxJsxAttribute' &&
@@ -80,44 +79,42 @@ const remarkConfig = {
                 attr.value.data?.estree
               ) {
                 const expr = attr.value;
+                if (!expr.data) { continue; }
                 const formatted = generate(expr.data.estree.body[0].expression);
                 expr.value = formatted;
                 delete expr.data.estree;
               }
             }
-            return 'skip';
+            return SKIP;
           } catch (_) {
-            console.error(
-              `Could not format a node in the file ${file.path}: ${JSON.stringify(node)}`
-            );
+            // NOTE: Let's silently do nothing — this is the default behavior anyways
           }
         });
         // a JavaScript expression embedded in flow (block)
         visitParents(tree, 'mdxFlowExpression', (node) => {
-          if (!node.data) { return; }
           try {
+            if (!node.data) { return SKIP; }
             const formatted = generate(node.data.estree.body[0].expression);
             node.value = formatted;
             delete node.data.estree;
             return SKIP;
           } catch (_) {
-            console.error(
-              `Could not format a node in the file ${file.path}: ${JSON.stringify(node)}`
-            );
+            // NOTE: Let's silently do nothing — this is the default behavior anyways
           }
         });
         // a JavaScript expression embedded in text (span, inline)
         visitParents(tree, 'mdxTextExpression', (node) => {
-          if (!node.data) { return; }
           try {
+            if (!node.data) { return SKIP; }
             const formatted = generate(node.data.estree.body[0].expression);
             node.value = formatted;
             delete node.data.estree;
             return SKIP;
           } catch (_) {
-            console.error(
-              `Could not format a node in the file ${file.path}: ${JSON.stringify(node)}`
-            );
+            // NOTE: Let's silently do nothing — this is the default behavior anyways
+            // console.error(
+            //   `Could not format a node in the file ${file.path}: ${JSON.stringify(node)}`
+            // );
           }
         });
       };
