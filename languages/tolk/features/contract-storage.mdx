@@ -43,14 +43,14 @@ fun demoModify() {
 }
 ```
 
-- `fun Storage.f(self)` defines an instance method. See [functions](/languages/tolk/syntax/functions-methods).
-- `T.fromCell()` deserializes a cell into `T`, and `obj.toCell()` packs it back into a cell. See [automatic serialization](/languages/tolk/features/auto-serialization).
-- `lazy` operator does this parsing on demand. See [lazy loading](/languages/tolk/features/lazy-loading).
-- `contract.getData()` fetches persistent data. See [standard library](/languages/tolk/features/standard-library).
+- `fun Storage.f(self)` defines an instance [method](/languages/tolk/syntax/functions-methods).
+- `T.fromCell()` deserializes a cell into `T`, and [`obj.toCell()`](/languages/tolk/features/auto-serialization#unpackoptions-and-packoptions) packs it back into a cell.
+- The [`lazy`](/languages/tolk/features/lazy-loading) operator does the parsing on demand.
+- [`contract.getData()`](/languages/tolk/features/standard-library#contract-getdata) fetches persistent data.
 
 ## Default values
 
-In TON, a contract's address depends on its initial storage when it is created on-chain. Assign default values to fields that must be defined at deployment:
+In TON, a contract's address depends on its initial storage when it is [created on-chain](/foundations/addresses/derive#on-chain-—-simple). Assign default values to fields that must be defined at deployment:
 
 ```tolk
 struct WalletStorage {
@@ -89,36 +89,24 @@ fun deploy(ownerAddress: address, minterAddress: address) {
 }
 ```
 
-See [sending messages](/languages/tolk/features/message-sending) for examples of deployment.
+## Changing storage shape
 
-## Storage that changes its shape
+Contracts may start with a storage layout and extend it after deployment. For example:
+- At deployment, storage contains only `a`, `b`, `c`.
+- Followed by a message supplying  `d` and `e`, storage becomes `a`, `b`, `c`, `d`, `e`.
 
-Another pattern for address calculation and for security is:
+This behavior is not related to [nullable types](/languages/tolk/types/nullable). Nullable values such as `int8?` or `cell?` serialize with an explicit null marker 0 bit. In this case, fields are absent entirely, and no extra bits appear in serialization.
 
-- when a contract is deployed, it has fields `a,b,c` (uninitialized storage)
-- followed by a message supplying `d,e` — it becomes `a,b,c,d,e`
+This pattern is common in NFT contracts. Initially, an NFT contains only `itemIndex` and `collectionAddress`. After initialization, `ownerAddress` and `content` are added to the storage.
 
-<Aside
-  type="caution"
->
-  It's not about nullable types — nullables like `int8?` or `cell?`, being serialized as `null`,
-  are encoded as '0' bit.
-  It's about the absence of fields at all — no extra bits in serialization.
-</Aside>
+Since arbitrary imperative code is allowed, the approach is:
 
-Such patterns are common in NFTs.
-Initially, an NFT has only `itemIndex` and `collectionAddress`, nothing more (an _uninitialized NFT_).
-Upon initialization, fields `ownerAddress` and `content` are appended to a storage.
-How can such logic be implemented?
+- Define two structures: initialized and uninitialized storages.
+- Start loading using `contract.getData()`.
+- Determine whether the storage is initialized based on its bits and refs counts.
+- Parse into the corresponding struct.
 
-Since arbitrary imperative code is allowed, the suggested approach is:
-
-- describe two structures: "initialized" and "uninitialized" storage
-- start loading `contract.getData()`
-- detect whether storage is initialized based on its bits/refs counts
-- parse into one or another struct
-
-A long demo with detailed comments:
+Example:
 
 ```tolk expandable
 // two structures representing different storage states
@@ -182,5 +170,5 @@ var storage = loadingStorage.endLoading();
 // and the remaining logic: lazy match, etc.
 ```
 
-Different shapes with missing fields may also be expressed using [generics](/languages/tolk/types/generics) and the [void type](/languages/tolk/types/void-never).
+Different shapes with missing fields can also be expressed using [generics](/languages/tolk/types/generics) and the [void type](/languages/tolk/types/void-never).
 
