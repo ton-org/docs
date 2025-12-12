@@ -57,283 +57,483 @@ Simple TVM programs may be represented by `Slice` literals with the aid of the `
 
 ## Fift assembler basics
 
-The _Fift assembler_ transforms human-readable mnemonics of TVM instructions into their binary representation. For instance, one could write `<{ s1 s2 XCHG OVER }>s` instead of `x{1221}`, as done in the example of [previous section](#calling-tvm-from-fift).
+The _Fift assembler_ transforms human-readable mnemonics of TVM instructions into their binary representation. For instance, one could write `<{ s1 s2 XCHG OVER }>s` instead of `x{1221}`, as in the example of the [previous section](#calling-tvm-from-fift). This section explains the basics of notation like `<{ s1 s2 XCHG OVER }>s`.
 
-The Fift assembler is located in file `Asm.fif` in the Fift library directory. It is loaded by putting the phrase `"Asm.fif" include` at the very beginning of a program that needs to use Fift assembler. File `Asm.fif` is resolved using the path provided in the `-I` command-line argument of the Fift interpreter.
+### Importing the assembler
+
+The Fift assembler is located in file `Asm.fif` in the Fift library directory. It is loaded by putting the phrase `"Asm.fif" include` at the very beginning of a program that needs to use the Fift assembler. File `Asm.fif` is resolved using the path provided in the `-I` command-line argument of the Fift interpreter.
+
+<Aside>
+  The rest of the page assumes that all code snippets have included the `Asm.fif` file using the the phrase `"Asm.fif" include` at the top.
+</Aside>
 
 The Fift assembler inherits from Fift its postfix operation notation, i.e., the arguments or parameters are written before the corresponding instructions. For instance, the TVM assembler instruction represented as `XCHG s1,s2` is represented in the Fift assembler as `s1 s2 XCHG`.
 
-Fift assembler code is usually opened by a special opening word, such as `<{`, and terminated by a closing word, such as `}>` or `}>s`. For instance,
+### Assembler code blocks
+
+Assembler code is opened by a special opening word, such as `<{`, which pushes an empty `Builder` at the top of the stack and loads the namespace for assembler words. After this, assembler words can be invoked to serialize the corresponding TVM instruction into the builder. For example, the word `OVER` will write the bits `00100001` into the builder, which correspond to the binary code for the `OVER` TVM instruction. Finally, the assembler code is terminated by a closing word, such as `}>`, `}>s`, or `}>c`.
+
+Word `}>` leaves the builder at the top of the stack, but it also closes the assembler namespace, as long as it is the most external closing brace. This means that words representing TVM instructions, such as `OVER`, can only be used inside assembler code blocks like `<{ }>`. Word `}>s` does the same as `}>`, but it also transforms the builder at the top of the stack into a slice. Word `}>c` does the same as `}>`, but it also transforms the builder at the top of the stack into a cell.
+
+### TVM Stack registers
+
+Fift uses special assembler words to represent stack registers while writing down assembler code. Words `s0` up to `s15` represent the first 16 TVM stack registers, where register `s0` represents the top of the TVM stack. Words `s0` up to `s15` push a cell into the Fift stack, encoding the corresponding TVM stack register.
+
+Certain assembler words expect cells encoding TVM stack registers; for example, `XCHG` expects a stack of the form `b c c'`, where `b` is the builder being constructed, and `c`, `c'` are two cells encoding TVM stack registers. For instance, `s0 s1 XCHG` first pushes to the Fift stack a cell encoding the TVM stack register `s0`, and a cell encoding the next-from-top `s1`. Then, word `XCHG` serializes into the builder the TVM binary code for exchanging TVM stack registers `s0` and `s1`.
+
+To refer to TVM stack registers below `s15`, Fift provides the more general word `s()`, which expects the TVM stack register index `0 <= i <= 255` to be at the top of the Fift stack. Word `s()` consumes integer `i` and pushes a cell to the Fift stack encoding the TVM stack register `s_i`. For instance, `40 s() 20 s() XCHG` first pushes to the Fift stack a cell encoding the TVM stack register `s40`, and a cell encoding the TVM stack register `s20`. Then, word `XCHG` serializes into the builder the TVM binary code for exchanging TVM stack registers `s40` and `s20`.
+
+### Basic examples with integers
+
+The word `PUSHINT`, or equivalently `INT`, consumes the integer `x` at the top of the Fift stack and serializes into the builder the TVM binary code for pushing integer `x` into the TVM stack. For instance, here is the trace for `<{ 239 17 * INT }>s`,
 
 ```fift
-"Asm.fif" include
-<{ s1 s2 XCHG OVER }>s
-csr.
+<{       // Fift Stack: Builder
+239      // Fift Stack: Builder 239
+17       // Fift Stack: Builder 239 17
+*        // Fift Stack: Builder 4063
+INT      // Fift Stack: Builder'
+// Builder' contains the TVM binary code for 
+// pushing integer 4063 into the TVM stack 
+
+}>s      // Fift Stack: Slice
+// "Slice" contains the TVM binary code for 
+// pushing integer 4063 into the TVM stack.
+// "Slice" can now be executed by using 
+// word runvmcode
 ```
 
-compiles two TVM instructions `XCHG s1,s2` and OVER, and returns the result as a _Slice_ (because `}>s` is used). The resulting _Slice_ is displayed by `csr.`, yielding
+In the above example the multiplication `239 * 17 = 4063` happens in the Fift stack, **not** during TVM runtime. If the intention is to carry out the computation in the TVM, the assembler block should be written as `<{ 239 INT 17 INT MUL }>s`. Here is the trace:
 
 ```fift
-x{1221}
+<{       // Fift Stack: Builder
+239      // Fift Stack: Builder 239
+INT      // Fift Stack: Builder1
+// Builder1 contains the TVM binary code for 
+// pushing integer 239 into the TVM stack 
+
+17       // Fift Stack: Builder1 17
+INT      // Fift Stack: Builder2
+// Builder2 contains the TVM binary code for:
+// - Pushing integer 239 into the TVM stack
+// - Pushing integer 17 into the TVM stack
+
+MUL      // Fift Stack: Builder3
+// Builder3 contains the TVM binary code for:
+// - Pushing integer 239 into the TVM stack
+// - Pushing integer 17 into the TVM stack
+// - Execute multiplication
+
+}>s      // Fift Stack: Slice
+// "Slice" contains the TVM binary code for 
+// multiplying 239 and 17 in the TVM stack.
+// "Slice" can now be executed by using 
+// word runvmcode
 ```
-
-One can use Appendix A and verify that `x{12}` is indeed the (codepage zero) code of the TVM instruction `XCHG s1,s2`, and that `x{21}` is the code of the TVM instruction `OVER` (not to be confused with Fift primitive `over`).
-
-In the future, we will assume that the Fift assembler is already loaded and omit the phrase `"Asm.fif" include` from our examples.
-
-The Fift assembler uses the Fift stack in a straightforward fashion, using the top several stack entries to hold a _Builder_ with the code being assembled,
-and the arguments to TVM instructions. For example:
-
-| Word            | Stack             | Description                                                                                                                                                                                                                    |
-| :-------------- | :---------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`<{`**        | _`( – b)`_        | begins a portion of Fift assembler code by pushing an empty _Builder_ into the Fift stack (and potentially switching the namespace to the one containing all Fift assembler-specific words). Approximately equivalent to `<b`. |
-| **`}>`**        | _`(b – b')`_      | terminates a portion of Fift assembler code and returns the assembled portion as a _Builder_ (and potentially recovers the original namespace). Approximately equivalent to `nop` in most situations.                          |
-| **`}>c`**       | _`(b – c)`_       | terminates a portion of Fift assembler code and returns the assembled portion as a _Cell_ (and potentially recovers the original namespace). Approximately equivalent to `b>`.                                                 |
-| **`}>s`**       | _`(b – s)`_       | terminates a portion of Fift assembler code similarly to `}>`, but returns the assembled portion as a _Slice_. Equivalent to `}>c <s`.                                                                                         |
-| **`OVER`**      | _`(b – b')`_      | assembles the code of the TVM instruction `OVER` by appending it to the _Builder_ at the top of the stack. Approximately equivalent to `x{21} s,`.                                                                             |
-| **`s1`**        | _`( – s)`_        | pushes a special _Slice_ used by the Fift assembler to represent the "stack register" s1 of TVM.                                                                                                                               |
-| **`s0... s15`** | _`( – s)`_        | words similar to `s1`, but pushing the _Slice_ representing other "stack registers" of TVM. Notice that `s16... s255` must be accessed using the word `s()`.                                                                   |
-| **`s()`**       | _`(x – s)`_       | takes an _Integer_ argument `0 ≤ x ≤ 255` and returns a special _Slice_ used by the Fift assembler to represent "stack register" `s(x)`.                                                                                       |
-| **`XCHG`**      | _`(b s s0 – b0)`_ | takes two special Slices representing two "stack registers" `s(i)` and `s(j)` from the stack, and appends to _Builder_ `b` the code for the TVM instruction `XCHG s(i),s(j)`.                                                  |
-
-In particular, note that the word `OVER` defined by the Fift assembler has a completely different effect from Fift primitive over.
-
-The actual action of `OVER` and other Fift assembler words is somewhat more complicated than that of `x{21} s,`. If the new instruction code does not fit into the _Builder_ `b` (i.e., if `b` would contain more than 1023 data bits after adding the new instruction code), then this and all subsequent instructions are assembled into a new _Builder_ `˜b`, and the old _Builder_ `b` is augmented by a reference to the _Cell_ obtained from `˜b` once the generation of `˜b` is finished. In this way long stretches of TVM code are automatically split into chains of valid Cells containing at most 1023 bits each. Because TVM interprets a lonely cell reference at the end of a continuation as an implicit `JMPREF`, this partitioning of TVM code into cells has almost no effect on the execution.
-
-## Pushing integer constants
-
-The TVM instruction `PUSHINT x`, pushing an _Integer_ constant `x` when invoked, can be assembled with the aid of Fift assembler words `INT` or `PUSHINT`:
-
-| Word          | Stack          | Description                                             |
-| :------------ | :------------- | :------------------------------------------------------ |
-| **`PUSHINT`** | _`(b x – b0)`_ | assembles TVM instruction `PUSHINT x` into a _Builder_. |
-| **`INT`**     | _`(b x – b0)`_ | equivalent to `PUSHINT`.                                |
-
-Notice that the argument to `PUSHINT` is an _Integer_ value taken from the Fift stack and is not necessarily a literal. For instance, `<{ 239 17 * INT }>s` is a valid way to assemble a `PUSHINT 4063` instruction, because `239·17 = 4063`. Notice that the multiplication is performed by Fift during assemble time, not during the TVM runtime. The latter computation might be performed by means of `<{ 239 INT 17 INT MUL }>s`:
-
-```fift
-<{ 239 17 * INT }>s dup csr. runvmcode .s 2drop
-<{ 239 INT 17 INT MUL }>s dup csr. runvmcode .s 2drop
-```
-
-produces
-
-```fift
-x{810FDF}
-execute PUSHINT 4063
-execute implicit RET
-4063 0
- ok
-x{8100EF8011A8}
-execute PUSHINT 239
-execute PUSHINT 17
-execute MUL
-execute implicit RET
-4063 0
- ok
-```
-
-Notice that the Fift assembler chooses the shortest encoding of the `PUSHINT x` instruction depending on its argument `x`.
-
-Some TVM instructions (such as PUSHINT) accept immediate arguments. These arguments are usually passed to the Fift word assembling the corresponding instruction in the Fift stack. _Integer_ immediate arguments are usually represented by _Integer_'s, cells by _Cell_'s, continuations by _Builder_'s and _Cell_'s, and cell slices by _Slice_'s. For instance, `17 ADDCONST` assembles TVM instruction `ADDCONST 17`, and `x{ABCD_} PUSHSLICE` assembles `PUSHSLICE xABCD_`:
-
-```fift
-239 <{ 17 ADDCONST x{ABCD_} PUSHSLICE }>s dup csr.
-runvmcode . swap . csr.
-```
-
-produces
-
-```fift
-x{A6118B2ABCD0}
-execute ADDINT 17
-execute PUSHSLICE xABCD_
-execute implicit RET
-0 256 x{ABCD_}
-```
-
-On some occasions, the Fift assembler pretends to be able to accept immediate arguments that are out of range for the corresponding TVM instruction. For instance, `ADDCONST x` is defined only for `−128 ≤ x < 128`, but the Fift assembler accepts `239 ADDCONST`:
-
-```fift
-17 <{ 239 ADDCONST }>s dup csr. runvmcode .s
-```
-
-produces
-
-```fift
-x{8100EFA0}
-execute PUSHINT 239
-execute ADD
-execute implicit RET
-256 0
-```
-
-We can see that `"ADDCONST 239"` has been tacitly replaced by `PUSHINT 239` and `ADD`. This feature is convenient when the immediate argument to `ADDCONST` is itself a result of a Fift computation, and it is difficult to estimate whether it will always fit into the required range.
-
-In some cases, there are several versions of the same TVM instructions, one accepting an immediate argument and another without any arguments. For instance, there are both `LSHIFT n` and `LSHIFT` instructions. In the Fift assembler, such variants are assigned distinct mnemonics. In particular, `LSHIFT n` is represented by `n LSHIFT#`, and `LSHIFT` is represented by itself.
 
 ## TVM continuations
 
-When an immediate argument is a continuation, it is convenient to create the corresponding _Builder_ in the Fift stack by means of a nested `<{ ... }>` construct. For instance, TVM assembler instructions
+[TVM continuations](/tvm/continuations) can be assembled using the word `PUSHCONT`. This word consumes the builder at the top of the Fift stack. Such builder should contain the code for the continuation, which can be assembled using a nested `<{ ... }>` construct.
+
+For example, the following assembler block builds code that will add numbers `3` and `5` when executed in the TVM. The code uses the nested `<{ 5 INT ADD }>` to assemble the continuation that "adds `5` to the number at the top of the stack". The nested `<{ 5 INT ADD }>` then gets serialized as a continuation with the word `PUSHCONT`:
 
 ```fift
-PUSHINT 1
-SWAP
-PUSHCONT {
-    MULCONST 10
-}
-REPEAT
+<{ 3 INT <{ 5 INT ADD }> PUSHCONT EXECUTE }>s
 ```
 
-can be assembled and executed by
+Here is the trace:
 
 ```fift
-7
-<{ 1 INT SWAP <{ 10 MULCONST }> PUSHCONT REPEAT }>s dup csr.
-runvmcode drop .
+<{          // Fift Stack: Builder
+3           // Fift Stack: Builder 3
+INT         // Fift Stack: Builder1
+// Builder1 contains the TVM binary code for 
+// pushing integer 3 into the TVM stack 
+
+<{          // Fift Stack: Builder1 Builder'
+5           // Fift Stack: Builder1 Builder' 5
+INT         // Fift Stack: Builder1 Builder1'
+// Builder1' contains the TVM binary code for 
+// pushing integer 5 into the TVM stack
+
+ADD         // Fift Stack: Builder1 Builder2'
+// Builder2' contains the TVM binary code for:
+// - Pushing integer 5 into the TVM stack
+// - Adding the two top-most integers in the TVM stack
+
+}>          // Fift Stack: Builder1 Builder2'
+PUSHCONT    // Fift Stack: Builder2
+// Builder2 contains the TVM binary code for:
+// - Pushing integer 3 into the TVM stack
+// - Pushing the continuation { 5 INT ADD } into the TVM stack
+
+EXECUTE     // Fift Stack: Builder3
+// Builder3 contains the TVM binary code for:
+// - Pushing integer 3 into the TVM stack
+// - Pushing the continuation { 5 INT ADD } into the TVM stack
+// - Execute the continuation { 5 INT ADD } at the top of the TVM stack
+//   which will push 5, and then add 3 and 5.
+
+}>s         // Fift Stack: Slice
+// "Slice" contains the TVM binary code for 
+// adding 3 and 5 in the TVM stack.
+// "Slice" can now be executed by using 
+// word runvmcode
 ```
 
-producing
+An equivalent way to introduce continuations is with the construct `CONT:<{ ... }>`, which is equivalent to `<{ ... }> PUSHCONT`. For instance, the above example can also be assembled as:
 
 ```fift
-x{710192A70AE4}
-execute PUSHINT 1
-execute SWAP
-execute PUSHCONT xA70A
-execute REPEAT
-repeat 7 more times
-execute MULINT 10
+<{ 3 INT CONT:<{ 5 INT ADD }> EXECUTE }>s
+```
+
+## TVM conditionals and loops
+
+The `IF` word assembles the TVM instruction `IF`, which when executed in the TVM expects a TVM stack of the form `i c`, where `i` is an integer, and `c` is a continuation at the top of the stack. The instruction `IF` consumes both `i` and `c`. Then, it checks if `i` is zero or not. If `i` is non-zero, `IF` executes `c`; otherwise, `IF` does nothing. The `IF` instruction is roughly equivalent to the statement `IF i THEN { c }` in a high level programming language.
+
+For instance,
+
+```fift
+<{ 3 INT CONT:<{ 5 INT }> IF }>s runvmcode
+```
+
+produces the following TVM trace in the interpreter output, with added comments to clarify the steps:
+
+```text
+execute PUSHINT 3            // TVM Stack: 3
+execute PUSHCONT x75A0       // TVM Stack: 3 { PUSHINT 5 }
+execute IF                   // TVM Stack: 3 { PUSHINT 5 }
+                             // Since 3 is non-zero, IF executes the continuation
+execute PUSHINT 5            // TVM Stack: 5
+execute implicit RET         // Control flow goes outside of the continuation
+execute implicit RET         // The code finalizes
+```
+
+When the TVM finishes execution, the Fift stack is loaded with the numbers `5 0`. The first number is what remained as result in the TVM stack. Integer `0` is the TVM exit code for a successful execution.
+
+A more concise, but equivalent way, to write the previous example is with the use of `IF:<{`:
+
+```fift
+<{ 3 INT IF:<{ 5 INT }> }>s runvmcode
+```
+
+Or using `}>IF`:
+
+```fift
+<{ 3 INT <{ 5 INT }>IF }>s runvmcode
+```
+
+Word `IFNOT` is similar to `IF`, but it executes the continuation only if `i` is zero. The `IFNOT` instruction is roughly equivalent to the statement `IF (NOT i) THEN { c }` in a high level programming language. Word `IFNOT` also admits the constructs `IFNOT:<{` and `}>IFNOT`.
+
+Word `IFELSE` assembles the TVM instruction `IFELSE`, which when executed in the TVM expects a TVM stack of the form `i c c'`, where `i` is an integer, and `c`, `c'` are continuations with `c'` at the top of the stack. The instruction `IFELSE` consumes `i`, `c`, and `c'`. Then, it checks if `i` is zero or not. If `i` is non-zero, `IFELSE` executes `c`; otherwise, `IFELSE` executes `c'`. The `IFELSE` instruction is roughly equivalent to the statement `IF i THEN { c } ELSE { c' }` in a high level programming language.
+
+For instance,
+
+```fift
+<{ 3 INT CONT:<{ 5 INT }> CONT:<{ 10 INT }> IFELSE }>s runvmcode
+```
+
+produces the following TVM trace in the interpreter output, with added comments to clarify the steps:
+
+```text
+execute PUSHINT 3            // TVM Stack: 3
+execute PUSHCONT x75         // TVM Stack: 3 { PUSHINT 5 }
+execute PUSHCONT x7A         // TVM Stack: 3 { PUSHINT 5 } { PUSHINT 10 }
+execute IFELSE               // TVM Stack: 3 { PUSHINT 5 } { PUSHINT 10 }
+                             // Since 3 is non-zero, IFELSE executes the first continuation
+execute PUSHINT 5            // TVM Stack: 5
+execute implicit RET         // Control flow goes outside of the continuation
+execute implicit RET         // The code finalizes
+```
+
+When the TVM finishes execution, the Fift stack is loaded with the numbers `5 0`.
+
+A more concise, but equivalent way, to write the previous example is with the use of `IF:<{ ... }>ELSE<{ ... }>`:
+
+```fift
+<{ 3 INT IF:<{ 5 INT }>ELSE<{ 10 INT }> }>s runvmcode
+```
+
+The following will execute the "else" continuation:
+
+```fift
+<{ 0 INT IF:<{ 5 INT }>ELSE<{ 10 INT }> }>s runvmcode
+```
+
+as the following trace shows:
+
+```text
+execute PUSHINT 0            // TVM Stack: 0
+execute PUSHCONT x75         // TVM Stack: 0 { PUSHINT 5 }
+execute PUSHCONT x7A         // TVM Stack: 0 { PUSHINT 5 } { PUSHINT 10 }
+execute IFELSE               // TVM Stack: 0 { PUSHINT 5 } { PUSHINT 10 }
+                             // Since 0 is zero, IFELSE executes the second continuation
+execute PUSHINT 10           // TVM Stack: 10
+execute implicit RET         // Control flow goes outside of the continuation
+execute implicit RET         // The code finalizes
+```
+
+Instruction `REPEAT` executes a continuation a fixed number of times. Word `REPEAT` assembles the TVM instruction `REPEAT`, which when executed in the TVM expects a TVM stack of the form `i c`, where `i` is an integer and `c` is a continuation at the top of the stack. The instruction `REPEAT` consumes both `i` and `c`. Then, it executes `c` exactly `i` times. The `REPEAT` instruction is roughly equivalent to the statement `REPEAT (i) { c }` in a high level programming language.
+
+For instance, the following increments the initial `0`, two times:
+
+```fift
+<{ 0 INT 2 INT CONT:<{ INC }> REPEAT }>s runvmcode
+```
+
+When `runvmcode` executes, it produces the following output, with added comments to clarify the steps:
+
+```text
+execute PUSHINT 0        // TVM Stack: 0
+execute PUSHINT 2        // TVM Stack: 0 2
+execute PUSHCONT xA4     // TVM Stack: 0 2 { INC }
+execute REPEAT           // TVM Stack: 0
+repeat 2 more times
+execute INC              // TVM Stack: 1
 execute implicit RET
-repeat 6 more times
-...
 repeat 1 more times
-execute MULINT 10
+execute INC              // TVM Stack: 2
 execute implicit RET
 repeat 0 more times
+execute implicit RET     // TVM Stack: 2
+```
+
+A more concise, but equivalent way, to write the previous example is with the use of `REPEAT:<{`:
+
+```fift
+<{ 0 INT 2 INT REPEAT:<{ INC }> }>s runvmcode
+```
+
+or with `}>REPEAT`:
+
+```fift
+<{ 0 INT 2 INT <{ INC }>REPEAT }>s runvmcode
+```
+
+Instruction `WHILE` executes a continuation while a condition remains true. Word `WHILE` assembles the TVM instruction `WHILE`, which when executed in the TVM expects a TVM stack of the form `c c'`, where `c`, `c'` are continuations with `c'` at the top of the stack. The instruction `WHILE` consumes `c`, and `c'`. Then, it executes `c` and pops an integer `i` from the stack. If `i` is non-zero, `WHILE` executes `c'` and repeats the process by executing `c` and popping an integer again. If `i` is zero, `WHILE` stops execution. The `WHILE` instruction is roughly equivalent to the statement `WHILE { c } DO { c' }` in a high level programming language.
+
+For instance, the following increments the initial `0` while it is less than `2`:
+
+```fift
+<{ 0 INT CONT:<{ DUP 2 INT LESS }> CONT:<{ INC }> WHILE }>s runvmcode
+```
+
+When `runvmcode` executes, it produces the following output, with added comments to clarify the steps:
+
+```text
+execute PUSHINT 0              // TVM Stack: 0
+execute PUSHCONT x2072B9       // TVM Stack: 0 { DUP 2 INT LESS }
+execute PUSHCONT xA4           // TVM Stack: 0 { DUP 2 INT LESS } { INC }
+execute WHILE                  // TVM Stack: 0
+execute DUP                    // TVM Stack: 0 0
+execute PUSHINT 2              // TVM Stack: 0 0 2
+execute LESS                   // TVM Stack: 0 -1
+execute implicit RET           
+while loop condition end       // WHILE pops -1, since it is non-zero, 
+                               // executes continuation { INC }
+execute INC                    // TVM Stack: 1
 execute implicit RET
-10000000
+while loop body end            // WHILE executes again the first continuation
+execute DUP                    // TVM Stack: 1 1
+execute PUSHINT 2              // TVM Stack: 1 1 2 
+execute LESS                   // TVM Stack: 1 -1
+execute implicit RET           
+while loop condition end       // WHILE pops -1, since it is non-zero, 
+                               // executes continuation { INC }
+execute INC                    // TVM Stack: 2
+execute implicit RET
+while loop body end            // WHILE executes again the first continuation
+execute DUP                    // TVM Stack: 2 2
+execute PUSHINT 2              // TVM Stack: 2 2 2
+execute LESS                   // TVM Stack: 2 0
+execute implicit RET
+while loop condition end       // WHILE pops 0, since it is zero,
+                               // it finishes execution
+while loop terminated          
+execute implicit RET           // TVM Stack: 2
 ```
 
-More convenient ways to use literal continuations created by means of the Fift assembler exist. For instance, the above example can be also assembled by
+A more concise, but equivalent way, to write the previous example is with the use of `WHILE:<{ ... }>DO<{ ... }>`:
 
 ```fift
-<{ 1 INT SWAP CONT:<{ 10 MULCONST }> REPEAT }>s csr.
+<{ 0 INT WHILE:<{ DUP 2 INT LESS }>DO<{ INC }> }>s runvmcode
 ```
 
-or even
+Instruction `UNTIL` executes a continuation until a condition becomes true. Word `UNTIL` assembles the TVM instruction `UNTIL`, which when executed in the TVM expects a TVM stack of the form `c`, where `c` is a continuation at the top of the stack. The instruction `UNTIL` consumes `c`. Then, it executes `c` and pops an integer `i` from the stack. If `i` is zero, `UNTIL` repeats the process by executing `c` and popping an integer again. However, if `i` is non-zero, `UNTIL` stops execution.
+
+For instance, the following increments the initial `0` until it is bigger than `2`:
 
 ```fift
-<{ 1 INT SWAP REPEAT:<{ 10 MULCONST }> }>s csr.
+<{ 0 INT CONT:<{ INC DUP 2 INT GREATER }> UNTIL }>s runvmcode
 ```
 
-both producing `"x{710192A70AE4} ok"`.
+When `runvmcode` executes, it produces the following output, with added comments to clarify the steps:
 
-Incidentally, a better way of implementing the above loop is by means of `REPEATEND`:
-
-```fift
-7 <{ 1 INT SWAP REPEATEND 10 MULCONST }>s dup csr.
-runvmcode drop .
+```text
+execute PUSHINT 0             // TVM Stack: 0
+execute PUSHCONT xA42072BC    // TVM Stack: 0 { INC DUP 2 INT GREATER }
+execute UNTIL                 // TVM Stack: 0
+                              // UNTIL executes for the first time
+execute INC                   // TVM Stack: 1
+execute DUP                   // TVM Stack: 1 1
+execute PUSHINT 2             // TVM Stack: 1 1 2
+execute GREATER               // TVM Stack: 1 0
+execute implicit RET
+until loop body end           // UNTIL pops 0, since it is zero, 
+                              // executes again the continuation
+execute INC                   // TVM Stack: 2
+execute DUP                   // TVM Stack: 2 2
+execute PUSHINT 2             // TVM Stack: 2 2 2
+execute GREATER               // TVM Stack: 2 0
+execute implicit RET
+until loop body end           // UNTIL pops 0, since it is zero, 
+                              // executes again the continuation
+execute INC                   // TVM Stack: 3
+execute DUP                   // TVM Stack: 3 3
+execute PUSHINT 2             // TVM Stack: 3 3 2
+execute GREATER               // TVM Stack: 3 -1
+execute implicit RET
+until loop body end           // UNTIL pops -1, since it is non-zero,
+                              // it stops execution 
+until loop terminated
+execute implicit RET          // TVM Stack: 3
 ```
 
-or
+A more concise, but equivalent way, to write the previous example is with the use of `UNTIL:<{`:
 
 ```fift
-7 <{ 1 INT SWAP REPEAT: 10 MULCONST }>s dup csr.
-runvmcode drop .
+<{ 0 INT UNTIL:<{ INC DUP 2 INT GREATER }> }>s runvmcode
 ```
 
-both produce `"x{7101E7A70A}"` and output `"10000000"` after seven iterations of the loop.
-
-Notice that several TVM instructions that store a continuation in a separate cell reference (such as JMPREF) accept their argument in a _Cell_, not in a _Builder_. In such situations, the `<{ ... }>c` construct can be used to produce this immediate argument.
-
-## TVM Control flow: loops and conditionals
-
-Almost all TVM control flow instructions—such as `IF`, `IFNOT`, `IFRET`, `IFNOTRET`, `IFELSE`, `WHILE`, `WHILEEND`, `REPEAT`, `REPEATEND`, `UNTIL`, and `UNTILEND` — can be assembled similarly to `REPEAT` and `REPEATEND` in the examples of 7.5 when applied to literal continuations. For instance, TVM assembler code
+or with `}>UNTIL`:
 
 ```fift
-DUP
-PUSHINT 1
-AND
-PUSHCONT {
-    MULCONST 3
-    INC
-}
-PUSHCONT {
-    RSHIFT 1
-}
-IFELSE
+<{ 0 INT <{ INC DUP 2 INT GREATER }>UNTIL }>s runvmcode
 ```
 
-which computes `3n + 1` or `n/2` depending on whether its argument `n` is odd or even, can be assembled and applied to `n = 7` by
+## Larger programs and subroutines
+
+Larger TVM programs, such as TON Blockchain smart contracts, typically consist of several mutually recursive subroutines, with one or several of them selected as top-level subroutines (called `main()` or `recv_internal()`). The execution starts from one of the top-level subroutines, which is free to call any of the other defined subroutines, which in turn can call whatever other subroutines they need.
+
+Such TVM programs are implemented by means of a selector function, which accepts an extra integer argument in the TVM stack; this integer selects the actual subroutine to be invoked. Before execution, the code of this selector function is loaded both into special register `c3` and into the current continuation `cc`. The selector of the `main` function is pushed into the initial stack, and the TVM execution is started. Afterwards, a subroutine can be invoked by means of a suitable TVM instruction, such as `CALLDICT n`, where `n` is the integer selector of the subroutine to be called.
+
+The Fift assembler offers several words facilitating the implementation of such large TVM programs. In particular, subroutines can be defined separately and assigned symbolic names, instead of numeric selectors, which can be used to call them afterwards. The Fift assembler automatically creates a selector function from these separate subroutines and returns it as the top-level assembly result.
+
+Here is an example of a program consisting of several subroutines. This program computes the complex number `(5 + i)^4 + (239 - i)` in the `main` subroutine, where a complex number `a + bi` is represented in the stack as the two numbers `a b`:
 
 ```fift
-<{ DUP 1 INT AND
-   IF:<{ 3 MULCONST INC }>ELSE<{ 1 RSHIFT# }>
-}>s dup csr.
-7 swap runvmcode drop .
+PROGRAM{
+
+NEWPROC add
+NEWPROC mul
+
+// compute (5+i)^4 + (239-i)
+main PROC:<{
+  5 INT 1 INT      // Stack: 5 1     (represents 5 + i)
+  2DUP             // Stack: 5 1 5 1
+  mul CALL         // Stack: 24 10   (represents 24 + 10i)
+  2DUP             // Stack: 24 10 24 10
+  mul CALL         // Stack: 476 480 (represents: 476 + 480i)
+  239 INT -1 INT   // Stack: 476 480 239 -1
+  add CALL         // Stack: 715 479 (represents 715 + 479i)
+}>
+
+// Complex number addition
+// (a + bi) + (c + di) = a + c + (b + d)i
+// Stack representation: a b c d --> a+c b+d 
+add PROC:<{     // Initial stack: a b c d
+  s1 s2 XCHG    // Stack: a c b d
+  ADD           // Stack: a c b+d
+  -ROT          // Stack: b+d a c
+  ADD           // Stack: b+d a+c
+  SWAP          // Stack: a+c b+d
+}>
+
+// Complex number multiplication
+// (a + bi) * (c + di) = ac - bd + (ad + bc)i
+// Stack representation: a b c d --> ac-bd ad+bc 
+mul PROC:<{   // Initial stack: a b c d
+  s3 s1 PUSH2 // Stack: a b c d a c
+  MUL         // Stack: a b c d ac
+  s3 s1 PUSH2 // Stack: a b c d ac b d
+  MUL         // Stack: a b c d ac bd
+  SUB         // Stack: a b c d ac-bd
+  s4 s4 XCHG2 // Stack: ac-bd b c a d
+  MUL         // Stack: ac-bd b c ad
+  -ROT        // Stack: ac-bd ad b c
+  MUL         // Stack: ac-bd ad bc
+  ADD         // Stack: ac-bd ad+bc
+}>
+
+}END>s
 ```
 
-producing
+Here are some observations and comments about the previous example:
 
-```fift
-x{2071B093A703A492AB00E2}
- ok
-execute DUP
+- A TVM program is opened by `PROGRAM{` and closed by either `}END>c`, which returns the assembled program as a cell, or `}END>s`, which returns a slice.
+- A new subroutine identifier is declared by means of the phrase `NEWPROC <NAME>`. This declaration assigns the next positive integer as a selector for the subroutine, and stores this integer into the constant `<NAME>`. For instance, the declarations `NEWPROC add` and `NEWPROC mul` in the example define `add` and `mul` as integer constants equal to `1` and `2`, respectively. This means that `add` and `mul` can be used anywhere as integer constants, i.e., they will push the integer selector for such subroutine.
+- Some subroutines identifiers are pre-declared and do not need to be declared again with `NEWPROC`. For instance, `main` is a subroutine identifier always bound to integer selector `0`.
+- Other predefined subroutine selectors such as `recv_internal` (equal to `0`) or `recv_external` (equal to `-1`), useful for implementing TON Blockchain smart contracts, can be declared by means of constants, instead of `NEWPROC`. For example, `-1 constant recv_external`.
+- A subroutine can be defined either with the aid of the word `PROC`, which takes the integer selector of the subroutine and the slice containing the code for this subroutine from the Fift stack, or with the aid of `PROC:<{ ... }>`, convenient for defining larger subroutines. In the example, `main`, `add`, and `mul` are defined using `PROC:<{ ... }>`.
+- The `CALLDICT` TVM instruction is assembled with the word `CALL`, which takes the integer selector of the subroutine from the top of the Fift stack. For example, `add CALL` will push the integer selector for `add`, which is `1`, and then assemble the instruction `CALLDICT 1`.
+- The current implementation of the Fift assembler collects all subroutines into a dictionary with 14-bit signed integer keys. Therefore, all subroutine selectors must be in the range `-2^(13) ... 2^(13) - 1`.
+- If a subroutine with an unknown selector is called during runtime, an exception with code `11` is thrown.
+- The Fift assembler checks that all subroutine identifiers declared by `NEWPROC` are actually defined by `PROC` or `PROC:<{` before the end of the program. It also checks that a subroutine is not redefined.
+
+The above program can be executed with `runvmdict`, which initializes the TVM registers `c3` and `cc` with the program and also pushes integer `0` to the top of the TVM stack, which is the selector for the `main` subroutine. This means that the first subroutine that TVM will execute is `main`. Word `runvmdict` produces the following TVM trace in the interpreter output, where comments were added to help identify the subroutine calls and control flow:
+
+```text
+implicit PUSH 0 at start       // The stack initializes with 0, the selector for "main"
+execute SETCP 0
+execute DICTPUSHCONST 19 (xC_,1)
+execute DICTIGETJMPZ
+execute PUSHINT 5              // "main" starts execution
 execute PUSHINT 1
-execute AND
-execute PUSHCONT xA703A4
-execute PUSHCONT xAB00
-execute IFELSE
-execute MULINT 3
-execute INC
-execute implicit RET
-execute implicit RET
-22 ok
+execute 2DUP
+execute CALLDICT 2             // Call to "mul"
+execute SETCP 0
+execute DICTPUSHCONST 19 (xC_,1)
+execute DICTIGETJMPZ
+execute PUSH2 s3,s1            // "mul" starts execution
+execute MUL
+execute PUSH2 s3,s1
+execute MUL
+execute SUB
+execute XCHG2 s4,s4
+execute MUL
+execute ROTREV
+execute MUL
+execute ADD
+execute implicit RET           // Control flow returned to "main"
+execute 2DUP                   // "main" resumes execution
+execute CALLDICT 2             // Second call to "mul"
+execute SETCP 0
+execute DICTPUSHCONST 19 (xC_,1)
+execute DICTIGETJMPZ
+execute PUSH2 s3,s1            // "mul" starts execution
+execute MUL
+execute PUSH2 s3,s1
+execute MUL
+execute SUB
+execute XCHG2 s4,s4
+execute MUL
+execute ROTREV
+execute MUL
+execute ADD
+execute implicit RET           // Control flow returned to "main"
+execute PUSHINT 239            // "main" resumes execution
+execute PUSHINT -1
+execute CALLDICT 1             // Call to "add"
+execute SETCP 0
+execute DICTPUSHCONST 19 (xC_,1)
+execute DICTIGETJMPZ
+execute XCHG s1,s2             // "add" starts execution
+execute ADD
+execute ROTREV
+execute ADD
+execute SWAP
+execute implicit RET           // Control flow returned to "main"
+execute implicit RET           // "main" finalizes with an implicit RET
 ```
 
-Of course, a more compact and efficient way to implement this conditional expression would be
-
-```fift
-<{ DUP 1 INT AND
-   IF:<{ 3 MULCONST INC }>ELSE: 1 RSHIFT#
-}>s dup csr.
-```
-
-or
-
-```fift
-<{ DUP 1 INT AND
-   CONT:<{ 3 MULCONST INC }> IFJMP
-   1 RSHIFT#
-}>s dup csr.
-```
-
-both producing the same code `"x{2071B093A703A4DCAB00}"`.
-
-Fift assembler words that can be used to produce such "high-level" conditionals and loops include `IF:<{`, `IFNOT:<{`, `IFJMP:<{`, `}>ELSE<{`, `}>ELSE:`,
-`}>IF`, `REPEAT:<{`, `UNTIL:<{`, `WHILE:<{`, `}>DO<{`, `}>DO:`, `AGAIN:<{`, `}>AGAIN`, `}>REPEAT`, and `}>UNTIL`. Their complete list can be found in the source file `Asm.fif`. For instance, an `UNTIL` loop can be created by `UNTIL:<{ ... }>` or `<{ ... }>UNTIL`, and a `WHILE` loop by `WHILE:<{ ... }>DO<{ ... }>`.
-
-If we choose to keep a conditional branch in a separate cell, we can use the `<{ ... }>c` construct along with instructions such as `IFJMPREF`:
-
-```fift
-<{ DUP 1 INT AND
-   <{ 3 MULCONST INC }>c IFJMPREF
-   1 RSHIFT#
-}>s dup csr.
-3 swap runvmcode .s
-```
-
-has the same effect as the code from the previous example when executed, but it is contained in two separate cells:
-
-```fift
-x{2071B0E302AB00}
- x{A703A4}
-execute DUP
-execute PUSHINT 1
-execute AND
-execute IFJMPREF (2946....A1DD)
-execute MULINT 3
-execute INC
-execute implicit RET
-10 0
-```
+Once the TVM finishes, the Fift stack is loaded with the numbers `715 479 0`. The first two numbers represent the complex number `715 + 479i` which is the result of `(5+i)^4 + (239-i)`. Integer `0` is the TVM exit code for a successful execution.
