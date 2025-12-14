@@ -136,7 +136,7 @@ def generate_table(endpoints: list) -> str:
 def inject_table_into_mdx(mdx_path: Path, table: str) -> bool:
     """Inject generated table into MDX file between marker comments."""
     if not mdx_path.exists():
-        print(f"  ⚠️  MDX not found: {mdx_path}")
+        print(f"   MDX not found: {mdx_path}")
         return False
     
     content = mdx_path.read_text()
