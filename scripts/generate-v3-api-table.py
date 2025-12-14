@@ -31,6 +31,12 @@ TAG_ORDER = [
     'api/v2',
 ]
 
+# Map tag slugs to Mintlify's actual URL slugs
+TAG_SLUG_MAP = {
+    'api-v2': 'legacy-v2-compatible',
+}
+
+
 def load_openapi_spec(filepath: Path) -> dict:
     """Load the OpenAPI YAML file."""
     with open(filepath, 'r') as f:
@@ -69,12 +75,15 @@ def extract_endpoints(spec: dict) -> list:
 
 
 def generate_mintlify_link(endpoint: dict) -> str:
-    """Generate Mintlify documentation link based on summary (slugified)."""
+    """Generate Mintlify documentation link based on summary"""
     tag = endpoint['tag'].lower().replace(' ', '-').replace('_', '-').replace('/', '-')
+    
+    # Apply tag slug mapping for Mintlify
+    tag = TAG_SLUG_MAP.get(tag, tag)
+    
     summary = endpoint.get('summary', '')
     
     if summary:
-        # Mintlify slugifies the summary for the URL
         slug = summary.lower()
         slug = re.sub(r'[^a-z0-9\s-]', '', slug)  
         slug = re.sub(r'\s+', '-', slug)          
@@ -205,4 +214,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    
