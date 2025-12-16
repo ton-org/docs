@@ -49,8 +49,10 @@ const remarkConfig = {
               ) {
                 const expr = attr.value;
 
-                // Skip single-line expressions
-                if (typeof expr.value === 'string' && !expr.value.includes('\n')) {
+                // Slighly trim single-line expressions
+                if (typeof expr.value === 'string' && !expr.value.trim().includes('\n')) {
+                  expr.value = expr.value.trim();
+                  delete expr.data.estree;
                   continue;
                 }
 
