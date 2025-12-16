@@ -1,0 +1,288 @@
+---
+title: "How to work with Jettons using WalletKit on the Web platform"
+sidebarTitle: "Work with Jettons"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+<Aside>
+  [Initialize the WalletKit](/ecosystem/ton-connect/walletkit/web/init), [set up at least one TON wallet](/ecosystem/ton-connect/walletkit/web/wallets), handle [connection requests](/ecosystem/ton-connect/walletkit/web/connections) and [transaction requests](/ecosystem/ton-connect/walletkit/web/events) before using examples on this page.
+</Aside>
+
+[Jettons](/standard/tokens/jettons/overview) are fungible tokens on TON, similar to ERC-20 tokens on Ethereum. Unlike Toncoin, which is a native TON currency utilized in all transfers, each Jetton type has a separate master (minter) contract and individual wallet contracts for each holder.
+
+For example, USDT on TON is implemented as a Jetton, and it's minter contract address is `EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs`. By giving such address and the recipient's TON wallet contract address, the target Jetton wallet contract is derived by the WalletKit.
+
+To work with Jettons, the wallet service needs to handle [Jetton balances](#balances) and perform transfers initiated [from dApps](#transfers-from-dapps) and [from within the wallet service itself](#transfers-in-the-wallet-service).
+
+<Aside
+  type="caution"
+  title="Decimals matter"
+>
+  Each Jetton stores a [`decimals`](/standard/tokens/metadata#decimals) parameter in its metadata. Transferring without accounting for `decimals` can result in sending drastically more tokens than expected — irreversible on mainnet.
+
+  Mitigation: Always retrieve and apply the correct `decimals` value. Test on testnet first.
+</Aside>
+
+## Balances
+
+Jetton balances are stored in individual Jetton wallet contracts, one per holder per Jetton kind.
+
+It is possible to obtain the current Jetton balance by providing the address of the Jetton master (minter) contract for a given Jetton, or by querying a TON wallet. The latter can be done either by the `getJettons()` method of wallet adapters or by calling `kit.jettons.getAddressJettons()` and passing it the TON wallet address.
+
+Similar to Toncoin balance checks, [discrete one-off checks](#on-demand-balance-check) have limited value on their own and [continuous monitoring](#continuous-balance-monitoring) should be used for UI display.
+
+### On-demand balance check
+
+Use the `getJettonBalance()` method to check a specific Jetton balance for a wallet managed by WalletKit. The balance is returned in the smallest Jetton unit, where `1` token equals 10<sup>decimals</sup> smallest units.
+
+<Aside
+  type="caution"
+>
+  Do not store the balance check results anywhere in the wallet service's state, as they become outdated very quickly. For UI purposes, do [continuous balance monitoring](#continuous-balance-monitoring).
+</Aside>
+
+```ts title="TypeScript"
+// Jetton master (minter) contract address
+// E.g., USDT on TON has the following address in mainnet:
+// EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs
+const JETTON_MASTER_ADDRESS = '<JETTON_MASTER_ADDRESS>';
+
+async function getJettonBalance(walletId: string): Promise<bigint | undefined> {
+  // Get TON wallet instance
+  const wallet = kit.getWallet(walletId);
+  if (!wallet) return;
+
+  // Query Jetton balance in smallest Jetton units
+  return await wallet.getJettonBalance(JETTON_MASTER_ADDRESS);
+}
+```
+
+The most practical use of one-off balance checks is right before approving a transaction request. At this point, the actual balance usually is not less than the checked amount, though it might be higher if new funds arrived right after the check.
+
+<Aside>
+  Despite this check, the transaction may still fail due to insufficient balance at the time of transfer.
+</Aside>
+
+```ts title="TypeScript"
+// An enumeration of various common error codes
+import { SEND_TRANSACTION_ERROR_CODES } from '@ton/walletkit';
+
+// Address of the Jetton master (minter) contract
+const JETTON_MASTER_ADDRESS = '<JETTON_MASTER_ADDRESS>';
+
+kit.onTransactionRequest(async (event) => {
+  const wallet = kit.getWallet(event.walletId ?? '');
+  if (!wallet) {
+    console.error('Wallet not found for a transaction request', event);
+    await kit.rejectTransactionRequest(event, {
+      code: SEND_TRANSACTION_ERROR_CODES.UNKNOWN_ERROR,
+      message: 'Wallet not found',
+    });
+    return;
+  }
+
+  // Check Jetton balance before proceeding
+  const jettonBalance = await wallet.getJettonBalance(JETTON_MASTER_ADDRESS);
+
+  // Calculate minimum needed from the transaction request:
+  // transfers include Toncoin for fees plus Jetton amounts
+  const minNeededJettons = calculateJettonAmount(event.request.messages);
+
+  // Reject early if Jetton balance is clearly insufficient
+  if (jettonBalance < minNeededJettons) {
+    await kit.rejectTransactionRequest(event, {
+      code: SEND_TRANSACTION_ERROR_CODES.BAD_REQUEST_ERROR,
+      message: 'Insufficient Jetton balance',
+    });
+    return;
+  }
+
+  // Proceed with the regular transaction flow
+  // ...
+});
+```
+
+### Continuous balance monitoring
+
+Poll the balance at regular intervals to keep the displayed value up to date. Use an appropriate interval based on UX requirements — shorter intervals provide fresher data but increase API usage.
+
+This example should be modified according to the wallet service's logic:
+
+```ts title="TypeScript" expandable
+// Configuration
+const POLLING_INTERVAL_MS = 10_000;
+
+/**
+ * Starts the monitoring of a given wallet's Jetton balance,
+ * calling `onBalanceUpdate()` each `intervalMs` milliseconds
+ *
+ * @returns a function to stop monitoring
+ */
+export function startJettonBalanceMonitoring(
+  walletId: string,
+  jettonMasterAddress: string,
+  onBalanceUpdate: (balance: string) => void,
+  intervalMs: number = POLLING_INTERVAL_MS,
+): () => void {
+  let isRunning = true;
+
+  const poll = async () => {
+    while (isRunning) {
+      const wallet = kit.getWallet(walletId);
+      if (wallet) {
+        const balance = await wallet.getJettonBalance(jettonMasterAddress);
+        onBalanceUpdate(balance);
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  };
+
+  // Start monitoring
+  poll();
+
+  // Return a cleanup function to stop monitoring
+  return () => {
+    isRunning = false;
+  };
+}
+
+// Usage
+const stopMonitoring = startJettonBalanceMonitoring(
+  walletId,
+  // USDT on TON in mainnet
+  'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs',
+  // The updateUI() function is exemplary and should be replaced by
+  // a wallet service function that refreshes the
+  // state of the balance displayed in the interface
+  (balance) => updateUI(balance),
+);
+
+// Stop monitoring once it is no longer needed
+stopMonitoring();
+```
+
+## Transfers from dApps
+
+When a connected dApp requests a Jetton transfer, the wallet service follows the same flow as [Toncoin transfers](/ecosystem/ton-connect/walletkit/web/toncoin#transfers-from-dapps): the dApp sends a transaction request through the bridge, WalletKit emulates it and presents a preview, the user approves or declines, and the result is returned to the dApp.
+
+```ts title="TypeScript"
+kit.onTransactionRequest(async (event) => {
+  if (!event.preview.data) {
+    console.warn('Transaction emulation skipped');
+  } else if (event.preview.data?.result === 'success') {
+    // Emulation succeeded — show the predicted money flow
+    const { ourTransfers } = event.preview.data.moneyFlow;
+
+    // This is an array of values,
+    // where positive amounts mean incoming funds
+    // and negative amounts — outgoing funds.
+    //
+    // For Jettons, the assetType field contains the Jetton symbol or address.
+    console.log('Predicted transfers:', ourTransfers);
+
+    // Filter Jetton transfers specifically
+    const jettonTransfers = ourTransfers.filter(
+      (transfer) => transfer.assetType !== 'TON',
+    );
+    console.log('Jetton transfers:', jettonTransfers);
+  } else {
+    // Emulation failed — warn the user but allow proceeding
+    console.warn('Transaction emulation failed:', event.preview);
+  }
+
+  // By knowing the Jetton master (minter) contract address,
+  // one can obtain and preview Jetton's name, symbol and image.
+  //
+  // Present the enriched preview to the user and await their decision.
+  // ...
+});
+```
+
+There is an additional consideration for Jetton transfers: they involve multiple internal messages between contracts. As such, Jetton transfers always take longer than regular Toncoin-only transfers.
+
+As with Toncoin transfers, the wallet service should not block the UI while waiting for confirmation. With [continuous wallet balance monitoring](#continuous-balance-monitoring) and subsequent transaction requests, users will receive the latest information either way. Confirmations are only needed to display a list of past transactions reliably.
+
+## Transfers in the wallet service
+
+Jetton transactions can be created directly from the wallet service (not from dApps) and fed into the regular approval flow via the `handleNewTransaction()` method of the WalletKit. It creates a new [transaction request event](/ecosystem/ton-connect/walletkit/web/events#handle-ontransactionrequest), enabling the same UI confirmation-to-transaction flow for both dApp-initiated and wallet-initiated transactions.
+
+<Aside
+  type="danger"
+  title="Funds at risk"
+>
+  Verify the `decimals` value from the Jetton metadata before calculating transfer amounts. Incorrect decimals can result in sending drastically more or fewer tokens than intended.
+
+  For USDTs, the correct decimals value is 6.
+</Aside>
+
+This example should be modified according to the wallet service's logic:
+
+```ts title="TypeScript"
+import { type JettonTransferParams } from '@ton/walletkit';
+
+async function sendJetton(
+  // Sender's TON `walletId` as a string
+  walletId: string,
+  // Jetton master (minter) contract address
+  jettonAddress: string,
+  // Recipient's TON wallet address as a string
+  recipientAddress: string,
+  // Amount in the smallest Jetton units (accounting for decimals)
+  jettonAmount: bigint,
+  // Optional comment string
+  comment?: string,
+) {
+  const fromWallet = kit.getWallet(walletId);
+  if (!fromWallet) {
+    console.error('No wallet contract found');
+    return;
+  }
+
+  const transferParams: JettonsTransferRequest = {
+    jettonAddress,
+    recipientAddress,
+    transferAmount: jettonAmount.toString(),
+    // Optional comment
+    ...(comment && { comment: comment }),
+  };
+
+  // Build transaction content
+  const tx = await fromWallet.createTransferJettonTransaction(transferParams);
+
+  // Route into the normal flow,
+  // triggering the onTransactionRequest() handler
+  await kit.handleNewTransaction(fromWallet, tx);
+}
+```
+
+<Aside
+  type="caution"
+>
+  To avoid triggering the `onTransactionRequest()` handler and send the transaction directly, use the `sendTransaction()` method of the wallet instead of the `handleNewTransaction()` method of the WalletKit, modifying the last part of the previous code snippet:
+
+  ```ts title="TypeScript"
+  // Instead of calling kit.handleNewTransaction(fromWallet, tx)
+  // one can avoid routing into the normal flow,
+  // skip the transaction requests handler,
+  // and make the transaction directly.
+  await fromWallet.sendTransaction(tx);
+  ```
+
+  Do not use this approach unless it is imperative to complete a transaction without the user's direct consent. Funds at risk: test this approach using testnet and proceed with utmost caution.
+</Aside>
+
+## See also
+
+Jettons:
+
+- [Jettons overview](/standard/tokens/jettons/overview)
+- [Jetton transfers](/standard/tokens/jettons/transfer)
+- [Token metadata and decimals](/standard/tokens/metadata#decimals)
+
+General:
+
+- [Handle transaction requests](/ecosystem/ton-connect/walletkit/web/events#handle-ontransactionrequest)
+- [Transaction fees](/foundations/fees)
+- [WalletKit overview](/ecosystem/ton-connect/walletkit)
+- [TON Connect overview](/ecosystem/ton-connect)
