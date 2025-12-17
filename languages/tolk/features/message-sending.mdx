@@ -18,26 +18,23 @@ reply.send(SEND_MODE_REGULAR);
 
 ## Union types in contracts interaction
 
-How can such a wide variety of options be expressed? With [union types](/languages/tolk/types/unions)!
-Such variability can be expressed using union types.
+When handling a message, some values can be represented in multiple valid forms. [Union types](/languages/tolk/types/unions) allow expressing these alternatives explicitly, so the same message-handling logic can accept and correctly process any of them.
 
-[union types](/languages/tolk/types/unions)
+### Message value
 
-## Extra currencies: union
-
-In most cases, the "message value" is just tonAmount:
+The message value consists of a Toncoin amount:
 
 ```tolk
 value: someTonAmount
 ```
 
-But when extra currencies are needed, attach tons AND a dict:
+When extra currencies are required, the message value includes both Toncoin and a dictionary:
 
 ```tolk
 value: (someTonAmount, extraDict)
 ```
 
-How does it work? Because the field `value` is a union:
+This is possible because the `value` field is defined as a union:
 
 ```tolk
 // how it is declared in stdlib
@@ -46,19 +43,18 @@ struct CreateMessageOptions<TBody> {
     value: coins | (coins, ExtraCurrenciesMap)
 }
 ```
+Then, the compiler selects the matching representation and serializes it accordingly.
 
-That's it! Just attach tons OR tons with extra, and the compiler takes care of composing this into a cell.
+### Message destination
 
-## Destination: union
-
-The same idea of union types spreads onto **destination** of a message.
+Message destinations are defined using the same union-based approach.
 
 ```tolk
 dest: someAddress,
 dest: (workchain, hash)
 ```
 
-It's either an address, OR (workchain + hash), OR ...:
+The destination field accepts multiple representations:
 
 ```tolk
 struct CreateMessageOptions<TBody> {
@@ -70,11 +66,11 @@ struct CreateMessageOptions<TBody> {
 }
 ```
 
-**That's indeed the TypeScript way** — but it works at compile-time.
+Each option represents a valid way to specify the message destination. The selected form is resolved at compile time.
 
-## Deployment, stateInit, and workchains
+## Deployment and `StateInit`
 
-Consider the following example. A contract "jetton minter" deploys a "jetton wallet". The wallet's code and initial data are known:
+Consider a contract that deploys another contract. For example, a jetton minter deploys a jetton wallet. The wallet code and its initial data are known:
 
 ```tolk
 val walletInitialState: ContractState = {
@@ -82,12 +78,8 @@ val walletInitialState: ContractState = {
     data: ...,   // initial wallet's storage
 };
 ```
+When sending a message to the wallet, it may not yet exist on-chain. In this case, the message must include the wallet's code and initial data. The message destination is therefore defined by the wallet's [StateInit](/foundations/messages/deploy#deploy-message).
 
-A minter needs to send a message to a wallet. But since it's unknown whether the wallet already exists on-chain, a message needs wallet's code+data attached. So, where should the message be sent? What is the destination? The answer is: **destination is the wallet's `StateInit`**.
-
-<Aside type="tip">
-  In TON, "the address of a contract" == "hash of its initial state".
-</Aside>
 
 ```tolk
 // address auto-calculated, code+data auto-attached
@@ -96,7 +88,7 @@ dest: {
 }
 ```
 
-To serve more complex tasks, configure additional fields:
+For more advanced scenarios, configure additional fields:
 
 ```tolk
 dest: {
@@ -106,25 +98,26 @@ dest: {
 }
 ```
 
-## Sharding: deploying "close to" another contract
+### Shard-based deployment
 
-The `createMessage` interface also supports initializing contracts in specific shards. For example, in sharded jettons, a jetton wallet must be deployed to the same shard as the owner's wallet.
+The `createMessage` interface supports deploying contracts into a specific shard. For example, in sharded jettons, a jetton wallet must be deployed into the same shard as the owner's wallet.
 
-In other words, the intention is:
 
-- a jetton wallet must be **close to** the owner's wallet
-- this _closeness_ is determined by a shard depth (syn. _fixed prefix length_, syn. _split depth_)
+This is expressed as follows:
 
-Let's illustrate it with numbers for `shard depth` = 8:
+- A jetton wallet is deployed close to the owner's wallet;
+- This closeness is defined by [`shard_prefix`](/foundations/shards#sharding-process).
 
-| Title                | Addr hash (256 bits) | Comment                              |
-| -------------------- | -------------------- | ------------------------------------ |
-| closeTo (owner addr) | `01010101...xxx`     | owner's wallet                       |
-| shardPrefix          | `01010101`           | first 8 bits of closeTo              |
-| stateInitHash        | `yyyyyyyy...yyy`     | calculated by code+data              |
-| result (JW addr)     | `01010101...yyy`     | jetton wallet in same shard as owner |
+The example below uses `shard_prefix` is 8:
 
-Here is how this is done:
+| Title                          | Address hash            | Comment                                  |
+|--------------------------------|-------------------------|------------------------------------------|
+| `closeTo` owner address        | `01010101...xxx`        | owner's wallet                           |
+| `shardPrefix`                  | `01010101`              | first 8 bits of `closeTo`                |
+| `stateInitHash`                | `yyyyyyyy...yyy`        | derived from code and data               |
+| `result` jetton wallet address | `01010101...yyy`        | jetton wallet in the same shard as owner |
+
+Deployment with shard targeting is configured as follows:
 
 ```tolk
 dest: {
@@ -136,17 +129,13 @@ dest: {
 }
 ```
 
-<Aside type="note">
-  Technically, shard depth must be a part of `StateInit` (besides code+data) — for correct initialization inside the blockchain. The compiler automatically embeds it.
+Shard prefix is part of `StateInit` together with code and data and is required for correct contract initialization in the blockchain. The compiler embeds it automatically. But semantically, on its own shard prefix is not meaningful. For this reason, shard prefix and `closeTo` are treated as a single entity.
 
-  But semantically, shard depth alone makes no sense. That's why **shard depth + closeTo** is a single entity.
-</Aside>
+## Message body
 
-## Body ref or not: compile-time calculation
+A [message](/foundations/messages/overview) is a cell. Its body can either be embedded into the same cell or placed into a separate cell and referenced.
 
-In TON Blockchain, according to the specification, a message is a cell (flags, dest address, stateInit, etc.), and its _body_ can be either inlined into the same cell or can be placed into its own cell (and be a ref).
-
-Fortunately, a developer shouldn't keep this in mind. Just pass `body`, and the compiler does all calculations:
+When creating a message, the `body` should be provided. The compiler determines how the body is stored.
 
 ```tolk
 createMessage({
@@ -155,12 +144,13 @@ createMessage({
 });
 ```
 
-The rules are the following:
+### Inline or referenced body
 
-1. if `body` is small, it's embedded directly into a message cell (cheaper, because creating cells is expensive)
-1. if `body` is large or unpredictable, it is wrapped into a ref
+- If `body` is small, it is embedded directly into the message cell.
+- If `body` is large or has unpredictable size, it is stored as a ref.
 
-Interestingly, the behavior is determined **at compile time** — no runtime checks are needed. How? Thanks to generics:
+The decision is made at compile time. No runtime checks are involved.
+This is implemented using [generics](/languages/tolk/types/generics):
 
 ```tolk
 fun createMessage<TBody>(
@@ -173,13 +163,13 @@ struct CreateMessageOptions<TBody> {
 }
 ```
 
-Hence, each `createMessage()` call has its own `TBody`, and the compiler estimates its size:
+Each `createMessage()` call has its own `TBody`, allowing the compiler to estimate the body size:
+- if the maximum size is less than 500 bits and 2 refs, the body is embedded;
+- if the size is 500 bits or more, or requires more than 2 refs, the body is stored as a ref;
+- if the body contains `builder` or `slice`, its size is considered unpredictable, and it is stored as a ref.
 
-- maximum size is less than 500 bits and 2 refs — small, "no ref"
-- size is potentially >= 500 bits or >= 2 refs — large, "ref"
-- contains `builder` or `slice` inside — unpredictable, "ref"
 
-**Even if body is large/unpredictable, it can be force-inlined** by wrapping into a special type:
+If the body is large or unpredictable, it can be force-inlined by wrapping it into a special type:
 
 ```tolk
 // maximum 620 bits (if all coins are billions of billions)
@@ -201,7 +191,7 @@ fun demo(contents: ProbablyLarge) {
 }
 ```
 
-If `body` is already a cell, it will be left as a ref, without any surprise:
+If `body` is already a cell, it is stored as a ref:
 
 ```tolk
 createMessage({
@@ -210,11 +200,11 @@ createMessage({
 });
 ```
 
-Therefore, do not pass `body: obj.toCell()`, pass just `body: obj`, let the compiler take care of everything.
+Therefore, do not pass `body: obj.toCell()`. Pass `body: obj`, and the compiler chooses the correct encoding.
 
-## Body is not restricted to structures
+### Non-struct body
 
-An interesting fact — this also works:
+`body` is not limited to structs. For example:
 
 ```tolk
 val excessesMsg = createMessage({
@@ -224,10 +214,9 @@ val excessesMsg = createMessage({
 excessesMsg.send(mode);
 ```
 
-It is inferred as `createMessage<(int32, uint64)>(...)` and encoded correctly.
-This simply illustrates the flexibility of the type system.
+The call is inferred as `createMessage<(int32, uint64)>(...)` and encoded accordingly.
 
-## Body can be empty
+### Empty body
 
 If no `body` is needed, it can be omitted entirely:
 
@@ -239,31 +228,17 @@ createMessage({
 });
 ```
 
-<Aside type="note">
-  A curious question: "what's the type of `body` here"? The answer is: `void`.
+In this example, the `body` type is `void`.
 
-  A struct is declared like this: <code>{'CreateMessageOptions<' + 'TBody = void' + '>'}</code>.
-  Hence, omitting `body` leads to `void`, and by convention, void fields may be omitted in object literals.
-</Aside>
+A struct is declared as `CreateMessageOptions<TBody = void>`. By convention, fields of type `void` may be omitted in object literals.
 
-## SendMode
+## Sending modes
 
-Typically, `createMessage()` is followed by `msg.send(mode)`.
+A message created with `createMessage()` is typically sent using [`msg.send(mode)`](/foundations/messages/modes#sending-modes).
 
-[Read about send modes](/foundations/messages/modes#sending-modes).
+## `ContractState` and `StateInit`
 
-## Low-level terminology: `StateInit` != `code+data`
-
-<Aside
-  type="caution"
->
-  This section is intended for experienced users; it discusses terminology.
-</Aside>
-
-It's incorrect to say that `StateInit = code+data`, because in TON, a full `StateInit` cell contents is richer (consider `block.tlb`):
-it also contains fixed\_prefix\_length (automatically set by the compiler if `toShard`), ticktock info, and a library cell.
-
-Therefore, the structure **code + data** is named `ContractState`:
+`StateInit` contains more fields than `code` and `data`. For this reason, the `code` and `data` pair is defined as `ContractState`:
 
 ```tolk
 // in stdlib
@@ -273,53 +248,12 @@ struct ContractState {
 }
 ```
 
-And that's why a field `stateInit: ContractState | cell` is named **stateInit**, emphasizing that `StateInit` can be initialized automatically from `ContractState` (or can be a well-formed rich cell).
+While a field `stateInit: ContractState | cell` is named stateInit, emphasizing that a full `StateInit` can be automatically initialized from `ContractState`.
 
-## Q: Why not send, but createMessage?
 
-Typically, yes — a message is sent immediately after being composed. However, certain scenarios require separating composition from sending:
+## `createExternalLogMessage`
 
-- not just send, but send and estimate fees,
-- or estimate fees without sending,
-- or get a message hash,
-- or save a message cell to storage for later sending,
-- or even push it to an action phase.
-
-So, composing a message cell and THEN doing some action with it is a more flexible pattern.
-
-Moreover, following this pattern requires to give **a name** to a variable. It is advisable not to name it "m" or "msg", but to give a descriptive name like "excessesMsg" or "transferMsg":
-
-```tolk
-val excessesMsg = createMessage({
-    // ...
-});
-excessesMsg.send(mode);
-// also possible
-excessesMsg.sendAndEstimateFee(mode);
-```
-
-This strategy makes the code **easier to read** later. While scanning the code, a reader sees: this is about excesses, this one is about burn notification, etc. As opposed to a potential `send(...)` function, hard to identify what _meaning_ is intended by the exact call.
-
-## Q: Why not provide a dedicated deploy function?
-
-In other words: why `stateInit` is a **destination**? Why not make a `deploy()` function that accepts code+data, and drop stateInit from a regular createMessage?
-
-The answer lies in terminology. Yes, **attaching stateInit** is often referred to as **deployment**, but it's an inaccurate term. **TON Blockchain doesn't have a dedicated deployment mechanism.** A message is sent to some _void_  — and if this _void_ doesn't exist, but a way to initialize it (code+data) is provided — it's initialized immediately and accepts the message.
-
-To emphasize deployment intent, give it _a name_:
-
-```tolk
-val deployMsg = createMessage({
-    ...
-});
-deployMsg.send(mode);
-```
-
-## Universal createExternalLogMessage
-
-The philosophy mirrors that of `createMessage`. But **external outs** don't have bounce, attached tons, etc. So, the options for creating are different.
-
-**Currently, external messages are used only for emitting logs** (for viewing them in indexers). But theoretically, they can be extended to send messages to off-chain.
+`createExternalLogMessage` follows the same general model as `createMessage`. [External outgoing messages](/foundations/messages/external-out) do not support bounce behavior, attached Toncoin, or related options, so the set of available fields is different. External messages are used only for emitting logs intended for indexers.
 
 Example:
 
@@ -331,12 +265,12 @@ val emitMsg = createExternalLogMessage({
 emitMsg.send(SEND_MODE_REGULAR);
 ```
 
-**Available options for external-out messages** are only `dest` and `body`, actually:
+Only `dest` and `body` are available for external outgoing messages:
 
 ```tolk
 struct CreateExternalLogMessageOptions<TBody = void> {
     /// destination is either an external address or a pattern to calculate it
-    dest: any_address |     // either some valid external/none address (not internal!)
+    dest: any_address |     // either some valid external/none address (not internal)
           builder |         // ... or a manually constructed builder with a valid external address
           ExtOutLogBucket;  // ... or encode topic/eventID in destination
 
@@ -345,9 +279,9 @@ struct CreateExternalLogMessageOptions<TBody = void> {
 }
 ```
 
-Similarly, the compiler automatically decides whether `body` it fits into the same cell or needs to be a ref. `UnsafeBodyNoRef` is also applicable.
+The compiler automatically determines whether `body` fits into the same cell or must be stored as a reference. `UnsafeBodyNoRef` is also supported.
 
-**Emitting external logs, example 1**:
+Example of emitting an external log:
 
 ```tolk
 struct DepositData {
@@ -362,7 +296,7 @@ val emitMsg = createExternalLogMessage({
 emitMsg.send(SEND_MODE_REGULAR);
 ```
 
-**Emitting external logs, example 2**:
+Example of emitting an external log:
 
 ```tolk
 struct (0x12345678) DepositEvent {
@@ -376,6 +310,5 @@ createExternalLogMessage({
 });
 ```
 
-`ExtOutLogBucket` is a variant of a custom external address for emitting logs **to the outer world.**
-It includes some **topic** (arbitrary number), that determines the format of the message body.
-In the example above, a deposit event is emitted (reserving topic `deposit = 123`), and the resulting logs will be indexed by destination address without requiring body parsing.
+`ExtOutLogBucket` represents a custom external address for emitting logs to the outer world. It includes a numeric topic that defines the message body format.
+In the example above, a deposit event is emitted using `topic: 123`. Such logs can be indexed by destination address without parsing the message body.
