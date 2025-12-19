@@ -1,0 +1,193 @@
+---
+title: "Mutability"
+---
+
+Tolk follows [value semantics](https://en.wikipedia.org/wiki/Evaluation_strategy#Call_by_value): function arguments are copied by value. There are no pointers or object references.
+
+The `mutate` keyword, used both at declaration and invocation, allows a function to modify the argument.
+
+## Value semantics
+
+Function arguments are copied by value: calls do not modify the original data.
+
+```tolk
+fun someFn(x: int) {
+    x += 1;
+}
+
+fun demo() {
+    var origX = 0;
+    someFn(origX);  // origX remains 0
+}
+```
+
+This also applies to slices, cells, and other types:
+
+```tolk
+fun readFlags(cs: slice) {
+    return cs.loadInt(32);
+}
+
+fun onInternalMessage(in: InMessage) {
+    var flags = readFlags(in.body);  // body is NOT modified
+    // `in.body.loadInt(32)` reads the same flags
+}
+```
+
+## `mutate` parameter
+
+The `mutate` keyword makes a parameter mutable. To prevent unintended modifications, `mutate` must also be specified at the call site.
+
+```tolk
+fun increment(mutate x: int) {
+    x += 1;
+}
+
+fun demo() {
+    // correct:
+    var origX = 0;
+    increment(mutate origX);  // origX becomes 1
+
+    // these are compiler errors
+    increment(origX);         // error, unexpected mutation
+    increment(10);            // error, not lvalue
+}
+```
+
+This also applies to slices and other types:
+
+```tolk
+fun readFlags(mutate cs: slice) {
+    return cs.loadInt(32);
+}
+
+fun onInternalMessage(in: InMessage) {
+    var flags = readFlags(mutate in.body);
+    // `in.body.loadInt(32)` reads the next integer
+}
+```
+
+A function can define multiple `mutate` parameters:
+
+```tolk
+fun incrementXY(mutate x: int, mutate y: int, delta: int) {
+    x += delta;
+    y += delta;
+}
+
+fun demo() {
+    var (a, b) = (5, 8);
+    incrementXY(mutate a, mutate b, 10);   // a = 15, b = 18
+}
+```
+
+This behavior is similar to passing by reference, but since `ref` is already used in TON for cells and slices, the keyword `mutate` is chosen.
+
+## `self` in methods
+
+Instance methods are declared as `fun <receiver>.f(self)`. By default, `self` is immutable:
+
+```tolk
+fun slice.readFlags(self) {
+    return self.loadInt(32);  // error, a mutating method
+}
+
+fun slice.preloadFlags(self) {
+    return self.preloadInt(32);  // ok, a read-only method
+}
+```
+
+## `mutate self`
+
+`mutate self` allows modifying the receiver:
+
+```tolk
+fun slice.readFlags(mutate self) {
+    return self.loadInt(32);
+}
+```
+
+Thus, when calling `someSlice.readFlags()`, the object is mutated.
+
+Methods for [structures](/languages/tolk/types/structures) are declared in the same way:
+
+```tolk
+struct Point {
+    x: int
+    y: int
+}
+
+fun Point.reset(mutate self) {
+    self.x = self.y = 0
+}
+```
+
+A mutating method can modify another variable:
+
+```tolk
+fun Point.resetAndRemember(mutate self, mutate sum: int) {
+    sum = self.x + self.y;
+    self.reset();
+}
+
+fun demo() {
+    var (p, sumBefore) = (Point { x: 10, y: 20 }, 0);
+    p.resetAndRemember(mutate sumBefore);
+    return (p, sumBefore);      // { 0, 0 } and 30
+}
+```
+
+## How does `mutate` work?
+
+Tolk code is executed by [TVM](/tvm/overview) – a stack-based virtual machine. Mutations work by implicitly returning new values through the stack.
+
+```tolk
+// transformed to: "returns (int, void)"
+fun increment(mutate x: int): void {
+    x += 1;
+    // a hidden "return x" is inserted
+}
+
+fun demo() {
+    var x = 5;
+    // transformed to: (newX, _) = increment(x); x = newX
+    increment(mutate x);
+}
+```
+
+Mutating methods work the same:
+
+```tolk
+// transformed to: (newS, flags) = loadInt(s, 32); s = newS
+flags = s.loadInt(32);
+```
+
+## `T.fromSlice(s)` does not modify `s`
+
+[Auto-serialization](/languages/tolk/features/auto-serialization) with `fromSlice` follows the same mutability rules. Passing an argument without `mutate` never modifies the original variable.
+
+In a call `f(anyVariable)`, the variable remains unchanged. If a function needs to modify its argument, the call must explicitly use `mutate`: `f(mutate anyVariable)`.
+
+The same rule applies to `AnyStruct.fromSlice(s)`. The slice is not mutated, and its internal pointer is not shifted. So, calling `s.assertEnd()` does not check "nothing is left after loading `AnyStruct`".
+
+```tolk
+struct Point {
+    x: int8
+    y: int8
+}
+
+fun demo(s: slice) {
+    // want to check that "0102" is ok, "0102FF" is wrong
+    // but this is NOT correct
+    var p = Point.fromSlice(s);
+    s.assertEnd(); // because s is not mutated
+}
+```
+
+To check that a slice does not contain excess data, no special actions are required, because `fromCell` and `fromSlice` automatically ensure the slice ends after reading. For input `0102FF`, an exception 9 is thrown. This behavior can be turned off with an option:
+
+```tolk
+Point.fromSlice(s, {
+    assertEndAfterReading: false    // true by default
+})
+```

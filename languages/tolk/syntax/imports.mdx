@@ -1,0 +1,99 @@
+---
+title: "Imports and name resolution"
+sidebarTitle: "Imports"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+In practice, contract code is split across multiple files. Projects with multiple contracts share a single codebase, including messages, storage layouts, and related logic. Symbols defined in one file can be used in another by importing that file. After an import, all its public symbols are available to the importing file.
+
+## Importing files
+
+Error codes are commonly placed in a separate file, for example `errors.tolk`:
+
+```tolk
+const ERR_ZERO_BALANCE = 123
+// ...
+```
+
+To use these constants in `parse.tolk`, the file must be imported explicitly:
+
+```tolk
+import "errors"
+
+fun validate(balance: coins) {
+    assert (balance > 0) throw ERR_ZERO_BALANCE;
+}
+```
+
+<Aside type="tip">
+  When selecting items from auto-completion, [IDE](/contract-dev/ide/overview) inserts imports automatically. This works in both JetBrains-based and VSCode-based IDEs.
+</Aside>
+
+## Name uniqueness
+
+All top-level symbols must have unique names.
+
+- There is no `export const ...` or `export fun ...` declarations needed.
+- All constants, functions, and other top-level declarations are visible by default.
+- No module‑private symbols exist.
+
+As a result, all top-level symbols across imported files must have unique names. Declaring `fun log()` in multiple files causes a duplicate declaration error when both files are imported.
+
+Techniques to avoid name collisions:
+
+1. Use long, descriptive names for top-level symbols, especially in multi‑contract projects.
+   - Good: `ReturnExcessesBack`, `WalletStorage`.
+   - Bad: `Excesses`, `Storage`.
+1. Group integer constants to enums.
+1. [Prefer methods to global-scope functions](/languages/tolk/idioms-conventions#prefer-methods-to-functions).
+
+## Repeated symbols across contracts
+
+When developing multiple contracts, each contract has its own file, compilation target. Contract files do not import one another; therefore, the following declarations do not conflict across different contracts:
+
+- `onInternalMessage` and `onExternalMessage`;
+- `get fun`;
+- other contract entrypoints.
+
+```tolk
+// file: a-contract.tolk
+import "storage"
+import "errors"
+
+fun onInternalMessage(in: InMessage) {
+    // ...
+}
+
+get fun name() {
+    return "a"
+}
+```
+
+```tolk
+// file: b-contract.tolk
+import "storage"
+import "errors"
+
+fun onInternalMessage(in: InMessage) {
+    // ...
+}
+
+get fun name() {
+    return "b"
+}
+```
+
+Get methods conceptually belong to the scope of a specific contract.
+
+In a multi-contract project, each contract file typically contains only:
+
+- its entrypoints,
+- optionally, a union of allowed messages,
+- and contract-specific logic.
+
+The remaining codebase is shared.
+
+For instance, a struct `SomeMessage` outgoing for one contract and incoming for another. When one contract deploys another, both must share the storage struct.
+
+As a guideline, group messages, errors, utils, etc. in shared files, and use only minimal declarations inside each `contract.tolk`.

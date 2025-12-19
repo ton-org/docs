@@ -1,0 +1,153 @@
+---
+title: "Forward payload in jettons"
+sidebarTitle: "Payload in jettons"
+---
+
+A jetton transfer may include a `forwardPayload` to provide custom data for the transaction recipient. This is a convention, not a language feature.
+
+## Jetton payload schema
+
+By definition, the TL-B format is `(Either Cell ^Cell)`: one bit plus the corresponding data depending on the bit:
+
+- bit 0 indicates inline payload: all subsequent bits and references;
+- bit 1 indicates ref payload: the next reference.
+
+When inline, the payload is positioned at the end of a message.
+
+Some existing jetton implementations do not follow the schema:
+
+- Some allow empty data, no bits at all, which is invalid because at least one bit must exist. An empty payload should be encoded as bit 0 – empty inline payload.
+- Some do not verify that no extra data remains after bit 1.
+- Error codes vary across implementations.
+
+## Canonical payload typing
+
+TL-B `(Either X Y)` is a union type `X | Y` in Tolk. This can be defined as:
+
+```tolk
+struct Transfer {
+    // ...
+    forwardPayload: RemainingBitsAndRefs | cell
+}
+```
+
+It is parsed and serialized according to the schema: either bit 0 + inline data, or bit 1 + ref.
+
+This approach can be used for assignment and client metadata. Trade-offs include:
+
+- consumes more gas due to runtime branching (`IF` bit 0);
+- does not verify that no extra data remains after bit 1.
+
+## Payload typing cases
+
+The approach to representing a jetton `forwardPayload` depends on the intended usage and validation requirements.
+
+### Proxy data without validation
+
+To proxy any data as-is, use `RemainingBitsAndRefs`:
+
+```tolk
+struct Transfer {
+    // ...
+    forwardPayload: RemainingBitsAndRefs
+}
+```
+
+### Canonical union with validation
+
+To validate a canonical union `RemainingBitsAndRefs | cell`, ensure that no extra data remains after a ref payload:
+
+```tolk
+struct Transfer {
+    // ...
+    forwardPayload: RemainingBitsAndRefs | cell
+    mustBeEmpty: RemainingBitsAndRefs
+}
+
+fun Transfer.validatePayload(self) {
+    // if extra data exists, throws 9
+    self.mustBeEmpty.assertEnd()
+    // if no bits at all, failed with 9 beforehand,
+    // because the union could not be loaded
+}
+```
+
+### Validation with slices
+
+If gas consumption is critical but validation is required, avoid allocating unions on the stack. Instead, validate a slice and keep it for further serialization:
+
+```tolk
+struct Transfer {
+    // ...
+    forwardPayload: ForwardPayload
+}
+
+type ForwardPayload = RemainingBitsAndRefs
+
+// validate TL/B `(Either Cell ^Cell)`
+fun ForwardPayload.checkIsCorrectTLBEither(self) {
+    var mutableCopy = self;
+    // throw 9 if no bits at all ("maybe ref" loads one bit)
+    if (mutableCopy.loadMaybeRef() != null) {
+        // if ^Cell, throw 9 if other data exists
+        mutableCopy.assertEnd()
+    }
+}
+```
+
+### Custom error codes
+
+To throw custom error codes instead of an error with [exit code 9](/tvm/exit-codes#9:-cell-underflow), calling `loadMaybeRef()` is discouraged.
+
+```tolk
+type ForwardPayload = RemainingBitsAndRefs
+
+struct (0b0) PayloadInline {
+    data: RemainingBitsAndRefs
+}
+
+struct (0b1) PayloadRef {
+    refData: cell
+    rest: RemainingBitsAndRefs
+}
+
+type PayloadInlineOrRef = PayloadInline | PayloadRef
+
+// validate TL/B `(Either Cell ^Cell)`
+fun ForwardPayload.checkIsCorrectTLBEither(self) {
+    val p = lazy PayloadInlineOrRef.fromSlice(self);
+    match (p) {
+        PayloadInline => {
+            // okay, valid
+        }
+        PayloadRef => {
+            // valid if nothing besides ref exists
+            assert (p.rest.isEmpty()) throw ERR_EXTRA_BITS
+        }
+        else => {
+            // both not bit '0' and not bit '1' — empty
+            throw ERR_EMPTY_PAYLOAD_FIELD
+        }
+    }
+}
+```
+
+### Dynamic assignment
+
+Keeping a remainder reduces gas usage and enables validation, but it is less convenient when a payload must be assigned dynamically. The remainder is a plain `slice` containing an encoded union. For example, creating a ref payload from a `cell` requires manual construction.
+
+```tolk
+fun createRefPayload(ref: cell) {
+    // not like this, mismatched types
+    val err1 = ref;
+    // not like this, incorrect logic
+    val err2 = ref.beginParse();
+
+    // but like this: '1' + ref
+    val payload = beginCell()
+            .storeBool(true).storeRef(ref)
+            .asSlice();
+}
+```
+
+Using `RemainingBitsAndRefs | cell` remains convenient for assignment but may incur additional gas costs.
