@@ -59,6 +59,7 @@ if (r.isFound) {
 Check `r.isFound`, not `r == null`. `map.get(key)` does not return `V?`, but a dedicated result type.
 
 Alternatively, use `m.mustGet(key)`, which returns `V` and throws if the key is missing:
+
 ```tolk
 m.mustGet(1);       // 10
 m.mustGet(100500);  // runtime error
@@ -263,7 +264,6 @@ type Set<T> = map<T, ()>
 
 Using `map<T, ()>` to emulate a set works, but it exposes the full `map` API, while a set has an API consisting of 4 functions. To avoid this, create a simple wrapper:
 
-
 ```tolk
 struct Set<T> {
     private m: map<T, ()>
@@ -275,14 +275,26 @@ fun Set<T>.add(self, value: T) { /* ... */ }
 
 ## `isFound` instead of optional values
 
-This design has reasons:
-1. Gas consumption.
-1. Support for nullable values, such as `map<int32, address?>` or `map<K, Point?>`. Returning `V?` makes it impossible to distinguish between "the key exists, but the value is null" and "the key does not exist".
+Maps support nullable value types, for example:
 
+```tolk
+map<int32, address?>
+map<K, Point?>
+```
 
-TVM dictionaries store binary data. For example, in `map<K, int32>`, calling `m.set(k, 10)` stores the value `10` as `0x0000000A`, automatically packed by the compiler. All TVM instructions for dictionary access return slices. At some point, these bits must be decoded back into typed values, `10`.
+With such maps, two different situations are possible:
 
-TVM instructions put two values onto the stack: `(slice -1)` or `(null 0)`. If `V?` is returned, the compiler needs to perform logic similar to:
+- the key exists, and the value is `null`;
+- the key does not exist.
+
+If a map lookup returned an optional value `V?`, these cases could not be distinguished, because both would result in `null`.
+
+This becomes visible at the TVM level. At the TVM level, a dictionary reads return binary data as slices. The stack contains either:
+
+- `(slice -1)` when the key is found;
+- `(null 0)` when the key is not found.
+
+Returning `V?` would require decoding the value and additional checks to determine whether the key existed:
 
 ```ansi
 IF stack[0] == -1:
@@ -293,7 +305,7 @@ ELSE:
     transform null to V?
 ```
 
-Then, at usage, it's compared null:
+Then, at usage, it's compared to `null`:
 
 ```tolk
 val v = m.get(k);   // internally, IF ELSE: for decoding
@@ -302,9 +314,7 @@ if (v != null) {    // one more IF: for checking
 }
 ```
 
-So, it results in two runtime checks and three TVM continuations.
-
-That's why instead of `V?`, a special struct is returned:
+So, a single map lookup results in multiple runtime checks. To avoid this, map lookup methods return a dedicated result type instead of `V?`:
 
 ```tolk
 fun map<K, V>.get(self, key: K): MapLookupResult<V>;
@@ -319,11 +329,18 @@ fun MapLookupResult<TValue>.loadValue(self): TValue {
 }
 ```
 
-This struct directly maps onto the TVM stack: `(slice -1)` or `(null 0)`.
-The condition `if (r.isFound)` naturally checks the top element (automatically popped).
-Followed by auto-deserialization at `r.loadValue()` when `rawSlice` is left on the top.
+Key existence is checked explicitly using `isFound`, and the value is decoded only when needed.
 
-Moreover, some other functions return the same struct. For example, `m.setAndGetPrevious`:
+Usage:
+
+```tolk
+val r = m.get(k);
+if (r.isFound) {
+    r.loadValue();
+}
+```
+
+The same result type is reused by other methods, for example:
 
 ```tolk
 val prev = m.setAndGetPrevious(1, 100500);
@@ -333,7 +350,7 @@ if (prev.isFound) {
 }
 ```
 
-Overall, this provides zero overhead compared to plain dictionaries.
+`MapLookupResult` directly corresponds to the `(slice -1)` or `(null 0)` values returned by TVM dictionary operations and avoids additional runtime checks required when returning `V?`.
 
 ## Stack layout and serialization
 
