@@ -14,7 +14,10 @@ Tolk allows declaring functions and methods:
 All features are identical except for the receiver.
 Most examples below use functions, but all concepts equally apply to methods.
 
-## Types for parameters are required
+## Function declaration
+### Parameter type
+
+Each function parameter must have an explicit type.
 
 ```tolk
 // invalid:
@@ -24,9 +27,9 @@ fun sum(a, b) {}
 fun sum(a: int, b: bool) {}
 ```
 
-## The return type is auto-inferred if omitted
+### Return type
 
-Either specify return type manually:
+A function may declare its return type explicitly:
 
 ```tolk
 fun demo(): int {
@@ -34,7 +37,7 @@ fun demo(): int {
 }
 ```
 
-or it is inferred from the `return` statements, similar to TypeScript:
+If the return type is omitted, the compiler infers it from `return` statements:
 
 ```tolk
 fun demo() {   // auto-infer `int`
@@ -43,11 +46,11 @@ fun demo() {   // auto-infer `int`
 }
 ```
 
-If various returns have different types, the compiler will fire an error instead of inferring a union type, because this typically indicates a bug.
+If different `return` statements produce different types, the compiler reports an error. Union types are not inferred, as this usually indicates a bug.
 
-## Default values for parameters
+### Default parameter value
 
-Default values are placed after the type, allowing constant expressions:
+Default values are placed after the type and must be constant expressions:
 
 ```tolk
 fun plus(value: int, delta: int = 1) {
@@ -59,11 +62,17 @@ fun demo() {
     plus(10, 5);  // 15
 }
 ```
+## Method declaration
 
-## Methods: for any type, including structures
+Methods are declared as extension functions with a receiver specified before the name:
 
-A method is declared as an extension function, similar to Kotlin.
-If the first parameter is `self`, it's an instance method. Otherwise, it's a static method.
+```tolk
+fun <receiver>.methodName(<params>)
+```
+
+### Instance and static methods
+
+If the first parameter is `self`, it is an instance method. Otherwise, it is a static method.
 
 ```tolk
 struct Point {
@@ -71,18 +80,19 @@ struct Point {
     y: int
 }
 
+// has `self` — instance method
+fun Point.sumCoords(self) {
+    return self.x + self.y
+}
+
 // no `self` — static method
 fun Point.createZero(): Point {
     return { x: 0, y: 0 }
 }
 
-// has `self` — instance method
-fun Point.sumCoords(self) {
-    return self.x + self.y
-}
 ```
 
-Instance methods are invoked via `obj.method()`, whereas static methods — on a type:
+Instance methods are invoked using `obj.method()`. Static methods are invoked on the receiver type.
 
 ```tolk
 fun demo() {
@@ -91,7 +101,10 @@ fun demo() {
 }
 ```
 
-Methods are not limited to structures. They may exist for any receiver, including unions, aliases, and primitives:
+
+### Methods for non-struct types
+
+Methods are not limited to structures. They may be declared for any receiver type, unions, aliases, and primitives:
 
 ```tolk
 fun int.one() {
@@ -107,22 +120,14 @@ fun demo() {
 }
 ```
 
-All standard methods are declared this way: `fun cell.hash(self)`, etc.
 
-The type of `self` is determined by the receiver.
-All parameters after should have their types set.
-The return type is inferred if omitted.
+All standard methods are declared this way: `fun cell.hash(self)`.
 
-```tolk
-fun Point.equalTo(self, r: Point) {   // auto-infer `bool`
-    return self.x == r.x && self.y == r.y
-}
-```
+## Immutability of `self`
 
-## `self` is immutable by default
+In instance methods, `self` is immutable by default.
 
-To allow modifications, declare `mutate self` explicitly.
-For details, see [mutability](/languages/tolk/syntax/mutability).
+To allow modifications, declare [`mutate self`](/languages/tolk/syntax/mutability) explicitly.
 
 ```tolk
 // mind `mutate` — to allow modifications
@@ -132,11 +137,11 @@ fun Point.reset(mutate self) {
 }
 ```
 
-## `return self` makes a chainable method
+### Returning `self` and method chaining
 
-To make a method chainable, declare it as `fun (...): self`.
-For instance, all methods for `builder` return `self`,
-which allows `b.storeXXX().storeXXX()`:
+Returning `self` makes a method chainable. To enable chaining, declare the `return` type as `self`.
+
+For example, all methods of `builder` return `self`, which allows consecutive calls like `b.storeXXX().storeXXX()`.
 
 ```tolk
 fun builder.myStoreInt32(mutate self, v: int): self {
@@ -151,6 +156,162 @@ fun demo() {
         .endCell();
 }
 ```
+
+## Generic functions
+
+A function declared with type parameters `T` is called a generic function.
+
+```tolk
+fun duplicate<T>(value: T): (T, T) {
+    var copy: T = value;
+    return (value, copy);
+}
+```
+### Type parameter inference
+When calling a generic function, the compiler automatically infers type arguments:
+
+```tolk
+fun demo() {
+    duplicate(1);         // duplicate<int>
+    duplicate(somePoint); // duplicate<Point>
+    duplicate((1, 2));    // duplicate<(int, int)>
+}
+```
+
+### Explicit type arguments
+Type arguments may be specified explicitly using `f<...>(args)`:
+
+```tolk
+fun demo() {
+    duplicate<int32>(1);
+    duplicate<Point?>(null);    // two nullable points
+}
+```
+
+### Multiple type parameters
+A generic function may declare multiple type parameters:
+
+```tolk
+// returns `(tensor.0 || defA, tensor.1 || defB)`
+fun replaceNulls<T1, T2>(tensor: (T1?, T2?), defA: T1, defB: T2): (T1, T2) {
+    var (a, b) = tensor;
+    return (a == null ? defA : a, b == null ? defB : b);
+}
+```
+
+### Default type parameters
+
+Generic functions may define default type parameters:
+
+```tolk
+fun f<T1, T2 = int>(value: T1): T2 {
+    // ...
+}
+```
+
+Default type parameters cannot reference other type parameters.
+Default type parameters cannot reference one another currently.
+
+### Generic functions as values
+Since Tolk supports first-class functions, various custom invokers for general-purpose frameworks can be expressed:
+Since Tolk supports first-class functions, generic functions can be passed as arguments and stored in variables.
+```tolk
+fun customInvoke<TArg, R>(f: TArg -> R, arg: TArg) {
+    return f(arg);
+}
+```
+
+
+Although type parameters are usually inferred from the arguments, there are edge cases where `T` cannot be inferred because it does not depend on them.
+For example, tuples. A tuple may have anything inside it, that's why invoking `tuple.get` lacks without `T`:
+
+```tolk
+// a method `tuple.get` is declared this way in stdlib:
+fun tuple.get<T>(self, index: int): T;
+
+fun demo(t: tuple) {
+    var mid = t.get(1);    // error, can not deduce T
+
+    // correct is:
+    var mid = t.get<int>(1);
+    // or
+    var mid: int = t.get(1);
+}
+```
+
+A generic function may be assigned to a variable, but `T` must be specified explicitly because this is not a call:
+
+```tolk
+fun genericFn<T>(v: T) {
+    // ...
+}
+
+fun demo() {
+    var callable = genericFn<builder>;
+    callable(beginCell());
+}
+```
+
+## Generic methods
+
+Declaring a method for a generic type does not differ from declaring any other method.
+The compiler treats unknown symbols as type parameters while parsing the receiver:
+
+```tolk
+struct Pair<T1, T2> {
+    first: T1
+    second: T2
+}
+
+// both <T1,T2>, <A,B>, etc. work: any unknown symbols
+fun Pair<A, B>.create(f: A, s: B): Pair<A, B> {
+    return {
+        first: f,
+        second: s,
+    }
+}
+
+// instance method with `self`
+fun Pair<A, B>.compareFirst(self, rhs: A) {
+    return self.first <=> rhs
+}
+```
+
+Generic methods can be also used as first-class functions:
+
+```tolk
+var callable = Pair<int, slice>.compareFirst;
+callable(somePair, 123);    // pass somePair as self
+```
+
+Methods for generic structures can themselves be generic:
+
+```tolk
+fun Pair<A, B>.createFrom<U, V>(f: U, s: V): Pair<A, B> {
+    return {
+        first: f as A,
+        second: s as B,
+    }
+}
+
+fun demo() {
+    return Pair<int?, int?>.createFrom(1, 2);
+}
+```
+
+----
+draft
+
+The type of `self` is determined by the receiver.
+All parameters after should have their types set.
+The return type is inferred if omitted.
+
+```tolk
+fun Point.equalTo(self, r: Point) {   // auto-infer `bool`
+    return self.x == r.x && self.y == r.y
+}
+```
+----
 
 ## Small functions are automatically inlined
 
@@ -236,132 +397,7 @@ fun demo() {
 
 See [callables](/languages/tolk/types/callables).
 
-## Generic functions
 
-A function declared as `fun f<T>(...)` is a generic one. `T` is called a "type parameter".
-
-```tolk
-fun duplicate<T>(value: T): (T, T) {
-    var copy: T = value;
-    return (value, copy);
-}
-```
-
-When calling a generic function, the compiler automatically infers type arguments:
-
-```tolk
-fun demo() {
-    duplicate(1);         // duplicate<int>
-    duplicate(somePoint); // duplicate<Point>
-    duplicate((1, 2));    // duplicate<(int, int)>
-}
-```
-
-Type arguments may also be specified explicitly using `f<...>(args)`:
-
-```tolk
-fun demo() {
-    duplicate<int32>(1);
-    duplicate<Point?>(null);    // two nullable points
-}
-```
-
-Functions may declare multiple type parameters:
-
-```tolk
-// returns `(tensor.0 || defA, tensor.1 || defB)`
-fun replaceNulls<T1, T2>(tensor: (T1?, T2?), defA: T1, defB: T2): (T1, T2) {
-    var (a, b) = tensor;
-    return (a == null ? defA : a, b == null ? defB : b);
-}
-```
-
-Since Tolk supports first-class functions, various custom invokers for general-purpose frameworks can be expressed:
-
-```tolk
-fun customInvoke<TArg, R>(f: TArg -> R, arg: TArg) {
-    return f(arg);
-}
-```
-
-Default type parameters are supported, like `fun f<T1, T2 = int>`, but they cannot reference one another currently.
-
-Although type parameters are usually inferred from the arguments, there are edge cases where `T` cannot be inferred because it does not depend on them.
-For example, tuples. A tuple may have anything inside it, that's why invoking `tuple.get` lacks without `T`:
-
-```tolk
-// a method `tuple.get` is declared this way in stdlib:
-fun tuple.get<T>(self, index: int): T;
-
-fun demo(t: tuple) {
-    var mid = t.get(1);    // error, can not deduce T
-
-    // correct is:
-    var mid = t.get<int>(1);
-    // or
-    var mid: int = t.get(1);
-}
-```
-
-A generic function may be assigned to a variable, but `T` must be specified explicitly because this is not a call:
-
-```tolk
-fun genericFn<T>(v: T) {
-    // ...
-}
-
-fun demo() {
-    var callable = genericFn<builder>;
-    callable(beginCell());
-}
-```
-
-## Generic methods
-
-Declaring a method for a generic type does not differ from declaring any other method.
-The compiler treats unknown symbols as type parameters while parsing the receiver:
-
-```tolk
-struct Pair<T1, T2> {
-    first: T1
-    second: T2
-}
-
-// both <T1,T2>, <A,B>, etc. work: any unknown symbols
-fun Pair<A, B>.create(f: A, s: B): Pair<A, B> {
-    return {
-        first: f,
-        second: s,
-    }
-}
-
-// instance method with `self`
-fun Pair<A, B>.compareFirst(self, rhs: A) {
-    return self.first <=> rhs
-}
-```
-
-Generic methods can be also used as first-class functions:
-
-```tolk
-var callable = Pair<int, slice>.compareFirst;
-callable(somePair, 123);    // pass somePair as self
-```
-
-Methods for generic structures can themselves be generic:
-
-```tolk
-fun Pair<A, B>.createFrom<U, V>(f: U, s: V): Pair<A, B> {
-    return {
-        first: f as A,
-        second: s as B,
-    }
-}
-
-fun demo() {
-    return Pair<int?, int?>.createFrom(1, 2);
-}
-```
 
 ## Methods for "any receiver"
 
