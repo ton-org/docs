@@ -1,0 +1,136 @@
+# Listens to new comments with /commands and acts accordingly
+name: 📡 Commander
+
+env:
+  HUSKY: 0
+  NODE_VERSION: 20
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-commander
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  fmt:
+    name: "Fix formatting"
+    runs-on: ubuntu-latest
+    if: |
+      (
+        github.event_name == 'pull_request_review_comment' ||
+        (
+          github.event_name == 'issue_comment' &&
+          github.event.issue.pull_request != null
+        )
+      ) &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+      (startsWith(github.event.comment.body, '/fmt ') || github.event.comment.body == '/fmt')
+    steps:
+      # This is done cautiously to confirm whether the comment comes from a PR that is a fork.
+      # If so, immediately skips all other steps and does NOT run anything locally there.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gather PR context in env variables
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FROM_PR: ${{ github.event.pull_request.number }}
+          FROM_ISSUE: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const fs = require('node:fs');
+            const prNumRaw = process.env.FROM_PR ?? process.env.FROM_ISSUE ?? '';
+            const prNum = Number(prNumRaw);
+            if (isNaN(prNum) || prNum <= 0 || prNum >= 1e20) {
+              console.error(`PR number was not provided or is invalid: ${prNumRaw}`);
+              process.exit(1);
+            }
+            core.exportVariable('PR_NUMBER', prNumRaw);
+            const repo = process.env.REPO ?? '';
+            if (repo === '') {
+              console.error(`No repository information found`);
+              process.exit(1);
+            }
+            const filepath = 'pr.json';
+            await exec.exec('gh', ['api', `repos/${repo}/pulls/${prNumRaw}`, `>${filepath}`]);
+            const file = JSON.parse(fs.readFileSync(filepath, 'utf8'));
+            await io.rmRF(filepath);
+            core.exportVariable('BASE_REF', file.base.ref);
+            core.exportVariable('HEAD_REF', file.head.ref);
+            const headRepo = file.head.repo?.full_name ?? '';
+            if (headRepo === '' && headRepo !== repo) {
+              core.exportVariable('IS_FORK', 'true');
+            } else {
+              core.exportVariable('IS_FORK', 'false');
+              core.notice('This job does not run in forks for a vast number of reasons. Please, apply the necessary fixes yourself.');
+            }
+
+      - name: Setup Node.js
+        if: env.IS_FORK != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        if: env.IS_FORK != 'true'
+        run: |
+          corepack enable
+          npm ci
+
+      - name: Get changed MDX and Markdown files
+        if: env.IS_FORK != 'true'
+        id: changed-files
+        uses: tj-actions/changed-files@24d32ffd492484c1d75e0c0b894501ddb9d30d62 # v47
+        with:
+          files: |
+            **.md
+            **.mdx
+          separator: " "
+
+      - name: Apply formatting
+        if: env.IS_FORK != 'true'
+        id: fix-fmt
+        env:
+          ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const files = (process.env.ALL_CHANGED_FILES ?? '')
+              .trim().split(' ').filter(Boolean).filter((it) => it.match(/\.mdx?$/) !== null);
+            if (files.length === 0) {
+              console.log('\nNo such files affected!');
+              process.exit(0);
+            }
+            try {
+              await exec.exec('npm', ['run', 'check:fmt:some', '--', ...files], {
+                silent: true, // >/dev/null 2>&1
+              });
+              console.log('\nNo issues');
+              core.setOutput('changes', 'false');
+            } catch (_) {
+              console.log('\nFound issues, fixing...');
+              await exec.exec('npm', ['run', 'fmt:some', '--', ...files], {
+                silent: true, // >/dev/null 2>&1
+              });
+              core.setOutput('changes', 'true');
+            }
+
+      - name: Commit changes, if any
+        if: env.IS_FORK != 'true' && steps.fix-fmt.outputs.changes == 'true'
+        uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3 # v7.0.0
+        with:
+          commit_message: "fix: formatting"
+
