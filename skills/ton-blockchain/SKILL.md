@@ -1,6 +1,6 @@
 ---
 name: ton-blockchain
-description: "Use when working with The Open Network (TON) blockchain, or when the user mentions TON-ecosystem terms the agent may not recognize—such as Tact, FunC, Tolk, Fift, TL-B, TVM, cells, BOC, Jettons, TEPs, TON Connect, workchains, shardchains, or liteservers. Provides a docs-first workflow for fetching and navigating TON documentation accurately, and covers smart contract development, transaction mechanics, wallet standards, token standards, Telegram Mini Apps, and infrastructure."
+description: "Use when working with The Open Network (TON) blockchain, or when the user mentions TON-ecosystem terms the agent may not recognize—such as Tact, FunC, Tolk, Fift, TL-B, TVM, cells, BoC, Jettons, TEPs, TON Connect, workchains, shardchains, or liteservers. Provides a docs-first workflow for fetching and navigating TON documentation accurately, and covers smart contract development, transaction mechanics, wallet standards, token standards, Telegram Mini Apps, and infrastructure."
 ---
 
 # TON Docs-first workflow
