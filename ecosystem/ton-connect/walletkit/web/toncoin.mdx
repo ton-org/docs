@@ -31,9 +31,9 @@ Use the `getBalance()` method to check the wallet contract balance in TON wallet
 </Aside>
 
 ```ts title="TypeScript"
-async function getBalance(address: string): Promise<bigint | undefined> {
+async function getBalance(walletId: string): Promise<bigint | undefined> {
   // Get TON wallet instance
-  const wallet = kit.getWallet(address);
+  const wallet = kit.getWallet(walletId);
   if (!wallet) return;
 
   // Query its balance in nanoToncoin
@@ -52,7 +52,7 @@ The most practical use of one-off balance checks is right before approving a tra
 import { SEND_TRANSACTION_ERROR_CODES } from '@ton/walletkit';
 
 kit.onTransactionRequest(async (event) => {
-  const wallet = kit.getWallet(event.walletAddress ?? '');
+  const wallet = kit.getWallet(event.walletId ?? '');
   if (!wallet) {
     console.error('Wallet not found for a transaction request', event);
     await kit.rejectTransactionRequest(event, {
@@ -94,13 +94,13 @@ This example should be modified according to the wallet service's logic:
 const POLLING_INTERVAL_MS = 10_000;
 
 /**
- * Starts the monitoring of a given wallet contract `address`,
+ * Starts the monitoring of a given wallet id,
  * calling `onBalanceUpdate()` each `intervalMs` milliseconds
  *
  * @returns a function to stop monitoring
  */
 export function startBalanceMonitoring(
-  address: string,
+  walletId: string,
   onBalanceUpdate: (balance: bigint) => void,
   intervalMs: number = POLLING_INTERVAL_MS,
 ): () => void {
@@ -108,7 +108,7 @@ export function startBalanceMonitoring(
 
   const poll = async () => {
     while (isRunning) {
-      const wallet = kit.getWallet(address);
+      const wallet = kit.getWallet(walletId);
       if (wallet) {
         const balance = await wallet.getBalance();
         onBalanceUpdate(balance);
@@ -128,7 +128,7 @@ export function startBalanceMonitoring(
 
 // Usage
 const stopMonitoring = startBalanceMonitoring(
-  walletAddress,
+  walletId,
   // The updateUI() function is exemplary and should be replaced by
   // a wallet service function that refreshes the
   // state of the balance displayed in the interface
@@ -172,9 +172,9 @@ WalletKit automatically emulates every incoming transaction request before prese
 
 ```ts title="TypeScript"
 kit.onTransactionRequest(async (event) => {
-  if (event.preview.result === 'success') {
+  if (event.preview.data.result === 'success') {
     // Emulation succeeded — show the predicted money flow
-    const { ourTransfers } = event.preview.moneyFlow;
+    const { ourTransfers } = event.preview.data.moneyFlow;
 
     // This is an array of values,
     // where positive amounts mean incoming funds
@@ -200,18 +200,18 @@ After showing the preview, handle the user's decision:
 
 ```ts title="TypeScript" expandable
 // An enumeration of various common error codes
-import { SEND_TRANSACTION_ERROR_CODES } from '@ton/walletkit';
+import { SEND_TRANSACTION_ERROR_CODES, type TransactionTraceMoneyFlowItem } from '@ton/walletkit';
 
 kit.onTransactionRequest(async (event) => {
   try {
     // Show the emulation preview to the wallet service user
     const preview = event.preview;
-    const isEmulationSuccessful = preview.result === 'success';
+    const isEmulationSuccessful = preview.data.result === 'success';
 
     // Build a confirmation message
     let confirmMessage = 'Confirm this transaction?';
     if (isEmulationSuccessful) {
-      const transfers = preview.moneyFlow.ourTransfers;
+      const transfers = event.preview.data.moneyFlow?.ourTransfers || [];
       confirmMessage = `Send ${formatTransfers(transfers)}?`;
     } else {
       confirmMessage = 'Emulation failed. Proceed anyway?';
@@ -239,14 +239,12 @@ kit.onTransactionRequest(async (event) => {
   }
 });
 
-function formatTransfers(
-  transfers: Array<{ amount: bigint; asset: string }>,
-): string {
-  const formatNano = (value: bigint, decimals: number = 9): string => {
-    const isNegative = value < 0n;
-    const str = (isNegative ? -value : value)
-      .toString()
-      .padStart(decimals + 1, '0');
+function formatTransfers(transfers: Array<TransactionTraceMoneyFlowItem>): string {
+  const formatNano = (value: string, decimals: number = 9): string => {
+    const bigintValue = BigInt(value)
+    const isNegative = bigintValue < 0n;
+    const absoluteValue = bigintValue < 0n ? -bigintValue : bigintValue;
+    const str = absoluteValue.toString().padStart(decimals + 1, '0');
 
     const intPart = str.slice(0, -decimals) || '0';
     const fracPart = str.slice(-decimals).replace(/0+$/, '');
@@ -255,9 +253,7 @@ function formatTransfers(
     return `${isNegative ? '-' : ''}${formatted}`;
   };
 
-  return transfers
-    .map((t) => `${formatNano(t.amount)} ${t.asset}`)
-    .join(', ');
+  return transfers.map((t) => `${formatNano(t.amount)} ${t.assetType}`).join(', ');
 }
 ```
 
@@ -278,11 +274,13 @@ Transactions can be created directly from the wallet service (not from dApps) an
 This example should be modified according to the wallet service's logic:
 
 ```ts title="TypeScript"
-import { type TonTransferParams } from '@ton/walletkit';
+import { type TONTransferRequest } from '@ton/walletkit';
 
 async function sendToncoin(
-  // Recipient's TON wallet contract address as a string
-  address: string,
+  // Sender's TON wallet id as a string
+  walletId: string,
+  // Recipient's TON wallet address as a string
+  recipientAddress: string,
   // Amount in nanoToncoins
   nanoAmount: BigInt,
   // Optional comment string
@@ -295,25 +293,27 @@ async function sendToncoin(
     return;
   }
 
-  const from = kit.getWallet(address);
-  if (!from) {
+  const fromWallet = kit.getWallet(walletId);
+  if (!fromWallet) {
     console.error('No wallet contract found');
     return;
   }
 
-  const transferParams: TonTransferParams = {
-    toAddress: address,
-    amount: nanoAmount.toString(),
+  const transferParams: TONTransferRequest = {
+    recipientAddress: recipientAddress,
+    transferAmount: nanoAmount.toString(),
     // Optional comment OR payload, not both
     ...(comment && { comment: comment }),
   }
 
   // Build transaction content
-  const tx = await from.createTransferTonTransaction(transferParams);
+  const tx = await fromWallet.createTransferTonTransaction(transferParams);
 
   // Route into the normal flow,
   // triggering the onTransactionRequest() handler
-  await kit.handleNewTransaction(from, tx);
+  await kit.handleNewTransaction(fromWallet, tx);
+  // or send transaction without triggering the onTransactionRequest() handler
+  await fromWallet.sendTransaction(tx);
 }
 ```
 
