@@ -18,7 +18,7 @@ Blockchain state changes constantly as new blocks are produced. This has implica
 - [Discrete one-off checks](#on-demand-balance-check) have almost no value on their own — the state might change immediately after the query completes, invalidating its results. Thus, such checks are only practical when handling `transaction` requests.
 - [Continuous monitoring](#continuous-balance-monitoring) is useful for UI display, showing the most recent balance to users, but should not be used for transaction confirmations.
 
-Notice that both cases require querying the blockchain data via the API client set during the [WalletKit initialization](/ecosystem/ton-connect/walletkit/web/init#param-api-client). Obtain and provide the key from the selected client to access higher requests-per-second limits.
+Notice that both cases require querying the blockchain data via the API client set during the [WalletKit initialization](/ecosystem/ton-connect/walletkit/web/init#param-networks). Obtain and provide the key from the selected client to access higher requests-per-second limits.
 
 ### On-demand balance check
 
@@ -94,7 +94,7 @@ This example should be modified according to the wallet service's logic:
 const POLLING_INTERVAL_MS = 10_000;
 
 /**
- * Starts the monitoring of a given wallet id,
+ * Starts the monitoring of a given `walletId`,
  * calling `onBalanceUpdate()` each `intervalMs` milliseconds
  *
  * @returns a function to stop monitoring
@@ -191,7 +191,7 @@ kit.onTransactionRequest(async (event) => {
 ```
 
 <Aside>
-  Emulation uses the API client configured during [WalletKit initialization](/ecosystem/ton-connect/walletkit/web/init#param-api-client). The default TON Center APIs provide rich emulation capabilities.
+  Emulation uses the API client configured during [WalletKit initialization](/ecosystem/ton-connect/walletkit/web/init#param-networks).
 </Aside>
 
 ### Approve or reject
@@ -199,8 +199,12 @@ kit.onTransactionRequest(async (event) => {
 After showing the preview, handle the user's decision:
 
 ```ts title="TypeScript" expandable
-// An enumeration of various common error codes
-import { SEND_TRANSACTION_ERROR_CODES, type TransactionTraceMoneyFlowItem } from '@ton/walletkit';
+import {
+  // An enumeration of various common error codes
+  SEND_TRANSACTION_ERROR_CODES,
+  // The transfer type
+  type TransactionTraceMoneyFlowItem,
+} from '@ton/walletkit';
 
 kit.onTransactionRequest(async (event) => {
   try {
@@ -241,7 +245,7 @@ kit.onTransactionRequest(async (event) => {
 
 function formatTransfers(transfers: Array<TransactionTraceMoneyFlowItem>): string {
   const formatNano = (value: string, decimals: number = 9): string => {
-    const bigintValue = BigInt(value)
+    const bigintValue = BigInt(value);
     const isNegative = bigintValue < 0n;
     const absoluteValue = bigintValue < 0n ? -bigintValue : bigintValue;
     const str = absoluteValue.toString().padStart(decimals + 1, '0');
@@ -277,7 +281,7 @@ This example should be modified according to the wallet service's logic:
 import { type TONTransferRequest } from '@ton/walletkit';
 
 async function sendToncoin(
-  // Sender's TON wallet id as a string
+  // Sender's TON `walletId` as a string
   walletId: string,
   // Recipient's TON wallet address as a string
   recipientAddress: string,
@@ -315,11 +319,23 @@ async function sendToncoin(
 }
 ```
 
-Alternatively, you can send the transaction directly without calling `handleNewTransaction()` and without triggering the `onTransactionRequest()` handler:
+<Aside
+  type="caution"
+>
+  To avoid triggering the `onTransactionRequest()` handler and send the transaction directly, use the `sendTransaction()` method of the wallet instead of the `handleNewTransaction()` method of the WalletKit:
 
-```ts title="TypeScript"
-await fromWallet.sendTransaction(tx);
-```
+  ```ts title="TypeScript"
+  const fromWallet = kit.getWallet(walletId);
+  if (fromWallet) {
+    // This will not route into the normal flow,
+    // and will not trigger the onTransactionRequest handler,
+    // making this transaction be made directly.
+    await fromWallet.sendTransaction(tx);
+  }
+  ```
+
+  Do not use this approach unless it's imperative to complete a transaction without the user's direct consent.
+</Aside>
 
 ## See also
 
