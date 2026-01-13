@@ -315,7 +315,40 @@ In the next section, we'll learn how to **deploy this contract to the TON blockc
 
 Ready to put your contract on-chain? 🚀
 
-To deploy, we first need a **wrapper class**. Wrappers implement the `Contract` interface and make it easy to interact with contracts from TypeScript.
+To deploy, we first need a **wrapper class**.
+
+### 5.1 Wrappers
+
+A wrapper is a TypeScript helper that represents a deployed contract instance (address + typed methods). It implements the `Contract` interface from [`@ton/core`](https://www.npmjs.com/package/@ton/core), builds message payloads (cells), and wraps get-method calls and response parsing.
+
+Wrappers keep off-chain code structured:
+
+- encode message bodies (opcodes + payload layout) consistently,
+- call get methods and parse the stack into typed values,
+- centralize serialization and parsing so tests and scripts share one interface,
+- keep deploy and address-derivation logic in one place,
+- avoid repeating low-level cell building in every script.
+
+Wrappers are off-chain only; they are not deployed to the blockchain. Keep the wrapper in sync with contract changes so scripts and tests keep working.
+
+This tutorial uses Tolk, so the wrapper is written manually. The minimal wrapper below keeps the focus on core concepts. For Tact contracts, the compiler can generate a single-file TypeScript wrapper automatically; use that when working in Tact. See [Tact features](/languages/tact#features) for the wrapper generation overview. Automatic wrapper generation for Tolk is not part of this tutorial; the Tolk docs note that ABI and TypeScript wrapper generation are planned. See [Tolk vs TL-B](/languages/tolk/from-func/tolk-vs-tlb#stop-thinking-in-tl-b-terms).
+
+For a deeper wrapper pattern and naming conventions, see [Wrappers in Blueprint](/contract-dev/blueprint/develop#wrappers).
+
+The wrapper file in this project is `./wrappers/FirstContract.ts`. Scripts import it and use it like this. The example below focuses on the wrapper call; the full runnable script appears in Step 6 and defines `run(provider)` where `provider` is a `NetworkProvider` from Blueprint.
+
+Not runnable
+
+```typescript title="./scripts/sendIncrease.ts"
+import { Address, toNano } from '@ton/core';
+import { FirstContract } from '../wrappers/FirstContract';
+
+const contractAddress = Address.parse('<CONTRACT_ADDRESS>');
+const firstContract = provider.open(new FirstContract(contractAddress));
+await firstContract.sendIncrease(provider.sender(), { value: toNano('0.05'), increaseBy: 42 });
+```
+
+`<CONTRACT_ADDRESS>` — address of the deployed contract on testnet.
 
 Create a file `./wrappers/FirstContract.ts` with the following code:
 
@@ -343,14 +376,14 @@ export class FirstContract implements Contract {
 }
 ```
 
-### 5.1 Understanding the wrapper class
+### 5.2 Understanding the wrapper class
 
 - We depend on [`@ton/core`](https://www.npmjs.com/package/@ton/core) — a library with base TON types.
 - The function `createFromConfig` constructs a wrapper using **code** (compiled bytecode) and **data** (the initial storage layout).
 - The contract [address](/foundations/addresses/overview) is derived deterministically from `code + data` using `contractAddress`. If two contracts have the same code and init data, the calculation of the address will result in the same value.
 - The method `sendDeploy` sends the first message with [`stateInit`](/foundations/messages/deploy), which triggers deployment. In practice, this can be an empty message with some TON coins attached.
 
-### 5.2 Choosing your network
+### 5.3 Choosing your network
 
 TON has two networks available for deployment:
 
@@ -359,7 +392,7 @@ TON has two networks available for deployment:
 
 For this tutorial, we'll use **testnet** since it's free and perfect for learning. You can always deploy to mainnet later once you're confident in your contract.
 
-### 5.3 Creating the deployment script
+### 5.4 Creating the deployment script
 
 Blueprint makes deployment simple. Create a new script `./scripts/deployFirstContract.ts`:
 
@@ -523,6 +556,10 @@ Do not forget to replace `<CONTRACT_ADDRESS>` with your actual contract address 
 
 To run this script:
 
+- After running the command, a TON Connect-compatible wallet opens (or a QR code appears) with a transaction confirmation.
+- Approve the transaction in the wallet (for example, [Tonkeeper](/ecosystem/wallet-apps/tonkeeper) on testnet). If the wallet is on mainnet, switch to testnet (Tonkeeper: [Switch to testnet](/ecosystem/wallet-apps/tonkeeper#switch-to-testnet)).
+- Optional verification: open the transaction in the wallet history and select <kbd>View on explorer</kbd>, or use the Tonviewer link printed by the script.
+
 ```bash
 npx blueprint run sendIncrease --testnet --tonconnect --tonviewer
 ```
@@ -569,6 +606,10 @@ export async function run(provider: NetworkProvider) {
 ```
 
 To run this script:
+
+- After running the command, a TON Connect-compatible wallet opens (or a QR code appears) with a transaction confirmation.
+- Approve the transaction in the wallet (for example, [Tonkeeper](/ecosystem/wallet-apps/tonkeeper) on testnet). If the wallet is on mainnet, switch to testnet (Tonkeeper: [Switch to testnet](/ecosystem/wallet-apps/tonkeeper#switch-to-testnet)).
+- Optional verification: open the transaction in the wallet history and select <kbd>View on explorer</kbd>, or use the Tonviewer link printed by the script.
 
 ```bash
 npx blueprint run sendReset --testnet --tonconnect --tonviewer
