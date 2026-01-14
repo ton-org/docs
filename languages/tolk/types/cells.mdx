@@ -4,22 +4,17 @@ title: "Cells, slices, builders"
 
 import { Aside } from '/snippets/aside.jsx';
 
-In TON, all data is stored in **cells**.
-Cells opened for reading are called **slices**.
-Cells being constructed are called **builders**.
-Having a builder, only writing is possible. Having a slice, only reading is possible.
+In TON, all data is stored in and represented as _cells_.
 
-Tolk provides low-level capabilities to construct and parse cells manually, as well as automatic packing structures to/from cells.
+Tolk provides low-level functions for constructing and parsing cells manually, as well as [automatic serialization](/languages/tolk/features/auto-serialization) of structures to and from cells.
 
 ## Cells
 
-A cell is the fundamental data structure in TON. It's a container that holds **up to 1023 bits** of data and **up to 4 references** to other cells.
+[Cells](/foundations/serialization/cells) are a data structure that can hold up to 1023 bits of data and up to 4 references to other cells. They are read-only and immutable once created.
 
-Everything in TON (contracts, messages, storage) is represented using cells.
-They are read-only and immutable once created.
-[Read more about cells](/foundations/serialization/cells).
+### Untyped cells
 
-In Tolk, the basic type `cell` describes "some cell".
+The basic type `cell` describes an untyped cell:
 
 ```tolk
 struct SomeMessage {
@@ -28,29 +23,25 @@ struct SomeMessage {
 }
 ```
 
-## Typed cells: `Cell<T>`
+### Typed cells
 
-Besides "some cell", Tolk has a "cell with known shape" `Cell<T>`.
-Since one cell can store only 1023 bits, when storage exceeds this limit, the solution is to split it
-into multiple cells, so they become referencing each other.
+`Cell<T>` represents a cell with known internal structure. Since a single cell stores at most 1023 bits, larger data is split across multiple cells that sequentially reference each other. Circular references are not allowed.
 
 ```tolk
 struct Demo {
-    ref1: cell          // untyped ref
-    ref2: Cell<Inner>   // typed ref
+    ref1: cell //          untyped reference
+    ref2: Cell<Inner> //   typed ref
     ref3: Cell<int256>? // maybe ref
 }
 ```
 
-<Aside type="tip">
-  Yes, `point.toCell()` really gives <code>{'Cell<' + 'Point' + '>'}</code>
-</Aside>
+The `toCell()` method on struct instances produces values of type `Cell<STRUCT_NAME>`. However, any typed cell can be assigned to an untyped `cell` directly.
 
-A typed cell can be assigned to `cell` implicitly.
+## Slices
 
-## Slices: cells opened for reading
+A cell opened for reading is called a _slice_. They allow loading data from cells.
 
-To manually read data from a cell, use `beginParse()` to get a slice:
+To read data from a cell manually, call `beginParse()` to get a slice:
 
 ```tolk
 var s = cell.beginParse();
@@ -68,119 +59,11 @@ if (s.remainingBitsCount()) {
 }
 ```
 
-An IDE will suggest applicable methods after a dot.
+### Prefer distinct slice types
 
-## Builders: cells at the moment of writing
+Builders and slices are low-level primitives for constructing and parsing cells. The values of `builder` and `slice` types contain raw binary data.
 
-To manually construct a cell, create a builder, write some data, and finalize this builder:
-
-```tolk
-var b = beginCell();
-b.storeUint(123, 8);
-b.storeAddress(dest);
-val c = b.endCell();
-```
-
-Since methods `storeXXX` return `self`, these calls can be chained:
-
-```tolk
-val c = beginCell()
-    .storeUint(123, 8)
-    .storeAddress(dest)
-    .endCell();
-```
-
-## How to read from a builder
-
-The only way to access already written bits is to convert a builder into a slice:
-
-```tolk
-var s = b.asSlice();
-// or (absolutely the same)
-var s = b.endCell().beginParse();
-```
-
-Constructing a cell is generally expensive in terms of gas, but `b.endCell().beginParse()` is optimized to a cheap asm instruction `BTOS` without intermediate cell creation.
-
-## Auto packing to/from cells
-
-Tolk type system is designed to avoid cumbersome manual work with slices and builders.
-Almost every practical use case can be represented with an auto-serializable structure.
-
-```tolk
-struct Something {
-    // ...
-}
-
-fun parseAndModify(c: cell): cell {
-    var smth = Something.fromCell(c);
-    // ...
-    return smth.toCell();
-}
-```
-
-Having `Cell<T>`, just call `load()` to get `T`:
-
-```tolk
-fun parsePoint(c: Cell<Point>) {
-    // same as `Point.fromCell(c)`
-    var p = c.load();
-}
-```
-
-Read a detailed article [automatic serialization](/languages/tolk/features/auto-serialization).
-
-Internally, `fromCell()` does `beginParse()` and reads data from a slice.
-
-## Auto packing to/from builders/slices
-
-A struct can be parsed not only from a cell but also from a slice:
-
-```tolk
-val smth = Something.fromSlice(s);
-```
-
-Auto-serialization works at low-level also: by analogy with `loadUint()` and others, there is a `loadAny<T>()` method:
-
-```tolk
-val smth = s.loadAny<Something>();
-// or even
-val smth: Something = s.loadAny();  // T=Something deduced
-```
-
-<Aside
-  type="caution"
-  title={"T.fromSlice(s) does not mutate the slice, but s.loadAny<T>() does"}
->
-  By analogy, a call `doSmth(s)`, does not change `s`, whereas `s.loadAddress()` shifts its internal pointer.
-  See [mutability](/languages/tolk/syntax/mutability).
-</Aside>
-
-Similarly, `storeAny<T>()` for a builder accepts any serializable value:
-
-```tolk
-beginCell()
-    .storeAddress(dest)
-    .storeAny(smth)         // T=Something deduced
-    .storeUint(123, 8);
-```
-
-Furthermore, it works not only with structures but also with arbitrary types.
-
-```tolk
-s.loadAny<int32>();           // same as loadInt(32)
-s.loadAny<(coins, bool?)>();  // read a pair (a tensor)
-
-b.storeAny(someAddress);      // same as storeAddress
-b.storeAny(0xFF as uint8);    // same as storeUint(0xFF, 8)
-```
-
-This approach allows both low-level and high-level intentions to be expressed uniformly.
-
-## Builders and slices can NOT be serialized
-
-Builders and slices are low-level primitives used for constructing and parsing cells. They contain raw binary data.
-For this reason, attempting to read an arbitrary slice from another slice is impossible: how many bits should be read?
+As such, reading an arbitrary `slice` or `builder` from another `slice` is impossible:
 
 ```tolk
 struct CantBeRead {
@@ -190,15 +73,13 @@ struct CantBeRead {
 }
 ```
 
-An attempt to call `CantBeRead.fromCell(c)` will fire an error _"Can not be deserialized, because `CantBeRead.s` is `slice`"_.
+An attempt to call `CantBeRead.fromCell(c)` fires an error: "Can not be deserialized, because `CantBeRead.s` is `slice`".
 
-Express shape of data using the type system to make serialization distinct. For example, `s: bits100` if it's exactly 100 bits.
+Express the shape of data using the type system and fixed-size slices to make serialization distinct. For example, use `s: bits100` to hold a slice containing at most 100 bits.
 
-## Type `bitsN`: fixed-size slices
+### Fixed-size slices
 
-By analogy: `int` can not be serialized, but `int32` and `int64` can.
-The same: `slice` can not be serialized, but `bits32` and `bytes8` can.
-At runtime, `bitsN` is a TVM `SLICE`, like `int32` is a TVM `INT`.
+The `slice` type cannot be serialized, but the `bitsN` types, such as `bits32` or `bytes8`, can. At runtime, `bitsN` is a regular slice, just how `int32` are regular TVM integers.
 
 ```tolk
 struct OkayToRead {
@@ -214,7 +95,9 @@ fun read(c: cell) {
 }
 ```
 
-**To cast `slice` to `bitsN`, use the unsafe `as` operator**. It's intentional, because slices may have refs, so explicit casting forces a programmer to think whether this transformation is valid. At runtime, it's no-op.
+To cast `slice` to `bitsN`, use the unsafe `as` operator. This is intentional: slices may have refs, so explicit casting forces consideration of whether the transformation is valid.
+
+At runtime, this is a no-op:
 
 ```tolk
 fun calcHash(raw: bits512) {
@@ -230,9 +113,131 @@ fun demo() {
 }
 ```
 
-## "The remaining" slice when reading
+### Embed constant slices into a contract
 
-A common pattern is to read a portion of data and then retrieve the remainder. With manual parsing, it happens naturally:
+<Aside type="note">
+  [TVM](/tvm/overview) does not have a dedicated string type: they are emulated using slices.
+</Aside>
+
+A [string](/languages/tolk/types/strings) literal is represented as a slice:
+
+```tolk
+// a slice with 4 bytes: 97,98,99,100 (0x61626364)
+const SLICE1 = "abcd"
+```
+
+Use `stringHexToSlice("...")` to embed hexadecimal binary data:
+
+```tolk
+// a slice with 2 bytes: 16,32 (0x1020)
+const SLICE2 = stringHexToSlice("1020")
+```
+
+## Builders
+
+A cell under construction is called a _builder_. They allow composing new cells.
+
+To construct a cell manually, create a builder, write data to it, then finalize:
+
+```tolk
+var b = beginCell();
+b.storeUint(123, 8);
+b.storeAddress(dest);
+val c = b.endCell();
+```
+
+Methods named `storeXYZ` return `self`, which is a builder, so calls can be chained:
+
+```tolk
+val c = beginCell()
+    .storeUint(123, 8)
+    .storeAddress(dest)
+    .endCell();
+```
+
+### Read from a builder
+
+The only way to access bits already written to a builder is to convert it into a slice:
+
+```tolk
+var s = b.asSlice();
+// or (exactly the same)
+var s = b.endCell().beginParse();
+```
+
+Constructing a cell is generally expensive in terms of gas, but `b.endCell().beginParse()` is optimized and does not create intermediate cells.
+
+## Automatic construction and parsing
+
+Structures are [auto-serializable](/languages/tolk/features/auto-serialization) to and from cells when their fields are well-typed. Prefer using structures over manual work with builders and slices.
+
+### Marshall to and from cells
+
+```tolk
+struct Something {
+    // ...
+}
+
+fun parseAndModify(c: cell): cell {
+    var smth = Something.fromCell(c)
+    // ...
+    return smth.toCell()
+}
+```
+
+For `Cell<T>`, call `load()` to get a value of type `T`:
+
+```tolk
+fun parsePoint(c: Cell<Point>) {
+    // same as `Point.fromCell(c)`
+    var p = c.load();
+}
+```
+
+Internally, `fromCell()` calls `beginParse()` and reads data from a slice.
+
+### Marshall to and from builders and slices
+
+A struct can be parsed not only from a cell but also from a slice:
+
+```tolk
+val smth = Something.fromSlice(s);
+```
+
+In addition to `loadUint()` and similar methods, there is `loadAny<T>()`:
+
+```tolk
+val smth = s.loadAny<Something>();
+// or
+val smth: Something = s.loadAny(); // with T deduced as Something
+```
+
+<Aside type="note">
+  Notice that `T.fromSlice(s)` does not mutate a slice `s`, while `s.loadAny<T>()` does. This is due to how Tolk handles [mutability](/languages/tolk/syntax/mutability): all `s.loadXYZ()` methods mutate a slice, but functions in the form `doSomething(s)` do not.
+</Aside>
+
+Similarly, `storeAny<T>()` for a builder accepts any serializable value:
+
+```tolk
+beginCell()
+    .storeAddress(dest)
+    .storeAny(smth)         // T=Something deduced
+    .storeUint(123, 8);
+```
+
+Both `loadAny<T>()` and `storeAny<T>()` work with arbitrary types, not only with structures:
+
+```tolk
+s.loadAny<int32>();           // same as loadInt(32)
+s.loadAny<(coins, bool?)>();  // read a pair (a tensor)
+
+b.storeAny(someAddress);      // same as storeAddress
+b.storeAny(0xFF as uint8);    // same as storeUint(0xFF, 8)
+```
+
+## Remaining slice when reading
+
+A common pattern is to read a portion of data and then retrieve the remainder. With manual parsing, this happens naturally:
 
 ```tolk
 val ownerId = s.loadUint(32);
@@ -241,7 +246,7 @@ val dest = s.loadAddress();
 val payload = s;
 ```
 
-To express the same with the type system use **a special type `RemainingBitsAndRefs`**:
+To express the same with structures, use the special type `RemainingBitsAndRefs`:
 
 ```tolk
 struct WithPayload {
@@ -251,38 +256,12 @@ struct WithPayload {
 }
 ```
 
-Then, `obj = WithPayload.fromSlice(s)` will return an object, where `obj.payload` contains "all bits/refs left".
-This is a special type:
+Then, `obj = WithPayload.fromSlice(s)` is a structure instance where `obj.payload` contains all bits and refs left as a `slice`.
 
-```tolk
-// declared in stdlib, handled specially by the compiler
-type RemainingBitsAndRefs = slice
-```
-
-Naturally, such a field must appear last in a struct: no more data exists after reading it.
-
-## Embedding constant slices into a contract
-
-A string literal is represented as a slice:
-
-```tolk
-// `slice` with 4 bytes: 97,98,99,100 (0x61626364)
-const SLICE1 = "abcd"
-```
-
-Also, use `stringHexToSlice("...")` to embed hexadecimal binary data:
-
-```tolk
-// `slice` with 2 bytes: 16,32 (0x1020)
-const SLICE2 = stringHexToSlice("1020")
-```
-
-TVM does not have string types; it operates solely on slices. [Read about emulating strings](/languages/tolk/types/strings).
+A field with this type must appear last in a struct: no more data exists after reading it.
 
 ## Stack layout and serialization
 
-Both `cell` and `Cell<T>` are backed by TVM `CELL`. Serialized as a reference; nullable are "maybe reference".
+Structure fields of `cell` and `Cell<T>` types which are [serialized](/languages/tolk/types/overall-serialization) as references to corresponding [TVM](/languages/tolk/types/overall-tvm-stack) cells, with nullable types `?` serialized as 0 when the value is `null` and 1, followed by the cell reference otherwise.
 
-The primitive types `builder` and `slice` cannot be serialized. Use `bitsN` and `RemainingBitsAndRefs`.
-
-For details, follow [TVM representation](/languages/tolk/types/overall-tvm-stack) and [Serialization](/languages/tolk/types/overall-serialization).
+The primitive types `builder` and `slice` cannot be serialized. Use `bitsN` and `RemainingBitsAndRefs` types instead.
