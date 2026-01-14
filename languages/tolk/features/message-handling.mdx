@@ -2,16 +2,11 @@
 title: "Handling messages"
 ---
 
-Each Tolk contract has specials **entrypoints** — reserved functions to handle various types of messages.
-From the language perspective, handling an incoming message is just ordinary code.
+Each Tolk contract has special entrypoints – reserved functions that handle different message types. Handling an incoming message uses ordinary language constructs.
 
-## onInternalMessage
+## `onInternalMessage`
 
-In 99% of cases, a contract handles **internal messages**.
-An end user does not interact with a contract directly; instead, interaction occurs through the user's wallet,
-which sends an internal message to the contract.
-
-The entrypoint is declared this way:
+Contracts primarily handle [internal messages](/foundations/messages/internal#internal-messages). Users interact with contracts through their wallets, which send internal messages to the contract. The entrypoint is declared as follows:
 
 ```tolk
 fun onInternalMessage(in: InMessage) {
@@ -19,11 +14,11 @@ fun onInternalMessage(in: InMessage) {
 }
 ```
 
-A basic guideline is the following:
+The basic guidelines are:
 
-- For each incoming message, declare a `struct` with a unique 32-bit prefix (opcode).
-- Declare a union type "all available messages".
-- Parse this union from `in.body` and `match` it over structures.
+- For each incoming message, declare a `struct` with a unique 32-bit prefix, opcode.
+- Declare a union type that represents all supported messages.
+- Parse this union from `in.body` and `match` over structures.
 
 ```tolk
 struct (0x12345678) CounterIncrement {
@@ -54,22 +49,21 @@ fun onInternalMessage(in: InMessage) {
 }
 ```
 
-### Brief explanation of the example
+### Example breakdown
 
-- `struct` declares any business data (particularly, messages and storage). It's like a TypeScript class. See [structures](/languages/tolk/types/structures).
-- `(0x12345678)` is called a "message opcode" (32 bit). Unique prefixes help routing `in.body` (binary data).
-- `AllowedMessage` is a type alias for a union type, similar to TypeScript (and in some way, to Rust's enums). See [union types](/languages/tolk/types/unions).
-- `in: InMessage` provides access to message properties: `in.body`, `in.senderAddress`, and so on.
-- `T.fromSlice` parses binary data to `T`. See [auto-serialization](/languages/tolk/features/auto-serialization). Combined with `lazy`, it's done on demand. See [lazy loading](/languages/tolk/features/lazy-loading).
-- `match` routes a union type. Inside each branch, type of `msg` is narrowed (called "smart cast"). See [pattern matching](/languages/tolk/syntax/pattern-matching).
-- `throw 0xFFFF` is a standard reaction on "unrecognized message". But typically, a contract should ignore empty messages: it's "just top-up balance" (send some Toncoin, body is empty). That's why `throw` is wrapped by `if` or `assert`. See [conditions and loops](/languages/tolk/syntax/conditions-loops).
+- [`struct`](/languages/tolk/types/structures) declares business data, including messages and storage.
+- `(0x12345678)` defines a message opcode, 32-bit. Unique prefixes are used to route binary data in `in.body`.
+- `AllowedMessage` is a type alias for a [union type](/languages/tolk/types/unions).
+- `in: InMessage` provides access to message properties such as `in.body` and `in.senderAddress`.
+- `T.fromSlice` [parses binary data into `T`](/languages/tolk/features/auto-serialization). When combined with [`lazy`](/languages/tolk/features/lazy-loading), parsing is performed on demand.
+- [`match`](/languages/tolk/syntax/pattern-matching) routes a union type. Within each branch, the type of `msg` is narrowed, smart cast.
+- `throw 0xFFFF` is a standard reaction to an unrecognized message. Contracts typically ignore empty messages, which represent balance top-ups with an empty body. For this reason, `throw` is guarded by [`if`](/languages/tolk/syntax/conditions-loops) or `assert`.
 
-Bounced messages do not enter `onInternalMessage`.
-Read `onBouncedMessage` below.
+Bounced messages are not handled by `onInternalMessage`.
 
-### How to define and modify contract's storage
+### Define and modify contract storage
 
-A storage is also a regular structure. It's convenient to add `load` and `store` methods accessing blockchain's persistent data:
+[Contract storage](/languages/tolk/features/contract-storage) is defined as a regular structure. Storage types commonly define `load` and `save` methods to access persistent contract data:
 
 ```tolk
 struct Storage {
@@ -98,13 +92,11 @@ match (msg) {
 }
 ```
 
-Alternatively, load the storage above `match` instead of doing it in every branch.
+Storage may also be loaded once before the `match` statement and reused across branches.
 
-For further reading, consider [contract's storage in details](/languages/tolk/features/contract-storage).
+### Legacy `onInternalMessage`
 
-### Old-fashioned `onInternalMessage`
-
-In old times, a handler was declared this way in FunC language:
+In FunC, a handler is declared as:
 
 ```func
 () recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
@@ -112,7 +104,7 @@ In old times, a handler was declared this way in FunC language:
 }
 ```
 
-Tolk also allows to use old-style declarations:
+Tolk continues to support this style of declaration. Code produced by a [converter](https://github.com/ton-blockchain/convert-func-to-tolk) results in:
 
 ```tolk
 fun onInternalMessage(myBalance: coins, msgValue: coins, msgFull: cell, msgBody: slice) {
@@ -120,21 +112,16 @@ fun onInternalMessage(myBalance: coins, msgValue: coins, msgFull: cell, msgBody:
 }
 ```
 
-For instance, after using [convert-func-to-tolk](https://github.com/ton-blockchain/convert-func-to-tolk),
-the result is exactly as above.
+The modern approach uses the `InMessage` type. It simplifies message handling and reduces gas consumption. Migrating from the legacy code is:
 
-Prefer using a modern solution with `InMessage`: it's not only easier, but also cheaper in gas terms.
-Transitioning after auto-conversion is trivial:
+- `myBalance` -> `contract.getOriginalBalance()`, contract state, not a message property
+- `msgValue` -> `in.valueCoins`
+- `msgFull` -> use `in.senderAddress` etc., without manual parsing
+- `msgBody` -> `in.body`
 
-- `myBalance` => `contract.getOriginalBalance()` (it's not a property of a message, it's a state of a contract)
-- `msgValue` => `in.valueCoins`
-- `msgFull` => use `in.senderAddress` etc., no need for manual parsing
-- `msgBody` => `in.body`
+## `onBouncedMessage`
 
-## onBouncedMessage
-
-A special entrypoint for handling **bounced messages** also exists.
-When a contract sends a message to another, but the another fails to handle it, a message is bounced back to the sender.
+`onBouncedMessage` is a special entrypoint for handling [bounced messages](/foundations/messages/internal#bounces).
 
 ```tolk
 fun onBouncedMessage(in: InMessageBounced) {
@@ -142,12 +129,11 @@ fun onBouncedMessage(in: InMessageBounced) {
 }
 ```
 
-`InMessageBounced` is very similar to `InMessage`.
-The only difference is that `in.bouncedBody` has a special shape depending on how a message was originally sent.
+`InMessageBounced` is similar to `InMessage`. The difference is that `in.bouncedBody` has a different layout, depending on how the original message is sent.
 
-### BounceMode in createMessage
+### `BounceMode` in `createMessage`
 
-When [sending a message](/languages/tolk/features/message-sending), it's required to specify `bounce` behavior:
+When [sending a message](/languages/tolk/features/message-sending) using `createMessage`, the `bounce` behavior must be specified:
 
 ```tolk
 val msg1 = createMessage({
@@ -165,18 +151,18 @@ val msg2 = createMessage({
 msg2.send(mode); // may be bounced
 ```
 
-`BounceMode` is an enum with these options available:
+`BounceMode` is an enum with the following options:
 
-- `BounceMode.NoBounce`
-- `BounceMode.Only256BitsOfBody` — `in.bouncedBody` will be "0xFFFFFFFF" + first 256 bits _(cheapest, and often sufficient)_
-- `BounceMode.RichBounce` — allows to access the entire `originalBody`; also, `gasUsed`, `exitCode`, and some other properties of a failed request are available _(most expensive)_
-- `BounceMode.RichBounceOnlyRootCell` — the same, but `originalBody` will contain only a root cell
+- `BounceMode.NoBounce`.
+- `BounceMode.Only256BitsOfBody` — `in.bouncedBody` contains `0xFFFFFFFF` followed by the first 256 bits; lowest gas cost, often sufficient.
+- `BounceMode.RichBounce` — provides access to the entire `originalBody`; `gasUsed`, `exitCode`, and other failure-related properties are also available; highest gas cost.
+- `BounceMode.RichBounceOnlyRootCell` — similar to `RichBounce`, but `originalBody` contains only the root cell.
 
-### How to handle `in.bouncedBody`
+### Handle `in.bouncedBody`
 
-Depending on `BounceMode`, `in.bouncedBody` will look differently.
+The structure of `in.bouncedBody` depends on the `BounceMode`.
 
-If all bounceable messages are sent with a cheap `Only256BitsOfBody`:
+When all bounceable messages are sent using `Only256BitsOfBody`:
 
 ```tolk
 fun onBouncedMessage(in: InMessageBounced) {
@@ -186,7 +172,7 @@ fun onBouncedMessage(in: InMessageBounced) {
 }
 ```
 
-If you use `RichBounce`, that's the way:
+When `RichBounce` is used:
 
 ```tolk
 fun onBouncedMessage(in: InMessageBounced) {
@@ -196,13 +182,10 @@ fun onBouncedMessage(in: InMessageBounced) {
 }
 ```
 
-Mixing different modes (sending some messages as cheap and others as rich) complicates handling and is discouraged.
+Mixing different modes, where some messages use a minimal body and others use a full body, complicates handling and is discouraged. The binary body of an outgoing message, such as `TransferMessage`, is returned either as `in.bouncedBody` with a 256-bit limit or as `rich.originalBody`, which contains the full slice. To handle this consistently:
 
-So, the binary body of an outgoing message (`TransferMessage` above) is either `in.bouncedBody` (256 bits) or `rich.originalBody` (the entire slice).
-To handle this correctly,
-
-- create a union "all messages theoretically bounceable"
-- handle it with `lazy` in `onBouncedMessage`
+- define a union type that includes all message types that may be bounced;
+- handle it using `lazy` in `onBouncedMessage`.
 
 ```tolk
 struct (0x98765432) TransferMessage {
@@ -227,10 +210,10 @@ fun onBouncedMessage(in: InMessageBounced) {
 }
 ```
 
-## onExternalMessage
+## `onExternalMessage`
 
-Besides internal messages, a contract may handle **external messages** that arrive from off-chain.
-For example, a [wallet contract](/standard/wallets/how-it-works) handles external messages, performing signature validation via a public key.
+In addition to internal messages, a contract can handle [external messages](/foundations/messages/external-in) originating off-chain.
+For example, [wallet contracts](/standard/wallets/how-it-works) process external messages and perform signature validation using a public key.
 
 ```tolk
 fun onExternalMessage(inMsg: slice) {
@@ -238,20 +221,17 @@ fun onExternalMessage(inMsg: slice) {
 }
 ```
 
-When a contract accepts an external message, it has a very limited gas amount for execution.
-Once a request is validated, remember to call `acceptExternalMessage()` to increase this limit.
-Also, `commitContractDataAndActions()` might be useful.
-Both are standard functions with detailed comments, an IDE provides them.
+When a contract accepts an external message, it has limited gas for execution. After validating the request, the contract must call `acceptExternalMessage()` to increase the available gas. The `commitContractDataAndActions()` function can also be used. Both functions are part of the standard library and are documented inline.
 
-## Other reserved entrypoints
+## Additional reserved entrypoints
 
-Besides the functions above, several predefined prototypes also exist:
+Tolk defines several reserved entrypoints:
 
-- `fun onTickTock` — triggers when tick and tock transactions occur
-- `fun onSplitPrepare` and `fun onSplitInstall` — prepared for split/install transactions, currently unavailable in the blockchain
-- `fun main` is often used for short snippets and demos
+- `fun onTickTock` is invoked on tick-tock transactions;
+- `fun onSplitPrepare` and `fun onSplitInstall` are reserved for split and install transactions; currently not used by the blockchain;
+- `fun main` is used for simple snippets and demos.
 
-This program is correct:
+The following program is valid:
 
 ```tolk
 fun main() {
@@ -259,4 +239,4 @@ fun main() {
 }
 ```
 
-It compiles, runs, and pushes 123 onto the stack. Its TVM _method\_id_ is 0.
+It compiles and runs, pushing value 123 onto the stack. The corresponding TVM `method_id` is `0`.
