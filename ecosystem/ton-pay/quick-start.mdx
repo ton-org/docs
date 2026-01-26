@@ -83,13 +83,13 @@ export default function PayButton() {
       {
         amount: 12.34,
         asset: "TON",
-        recipientAddr: "EQC...yourWalletAddress",
+        recipientAddr: "<WALLET_ADDRESS>",
         senderAddr,
-        commentToSender: "Order #123",
+        commentToSender: "<THE_ORDER>",
       },
       {
         chain: "testnet", // use "mainnet" for production
-        apiKey: "yourTonPayApiKey" // optional
+        apiKey: "<TONPAY_API_KEY>" // optional
       }
     );
     return { message, reference };
@@ -118,23 +118,24 @@ export default function PayButton() {
     import { TON } from "@ton-pay/api";
 
     app.post("/api/create-payment", async (req, res) => {
-    const { productId, senderAddr } = req.body;
+        const { productId, senderAddr } = req.body;
 
-    // Use your backend to create an order and calculate amount using productId price
-    const amount = 12.23; // order amount
-    const orderId = 1; // ID of a new order
+        // Use the backend to create an order and calculate the amount using productId price
+        const amount = 12.23; // order amount
+        const orderId = 1; // ID of a new order
 
-    // 1) Create transfer + get tracking identifiers
-    const { message, reference, bodyBase64Hash } = await createTonPayTransfer(
-    { amount, asset: TON, recipientAddr: "yourWalletAddress", senderAddr },
-    { chain: "testnet", apiKey: "yourTonPayApiKey" }
-    );
+        // 1) Create transfer + get tracking identifiers
+        const { message, reference, bodyBase64Hash } = await createTonPayTransfer(
+            { amount, asset: TON, recipientAddr: "<WALLET_ADDRESS>", senderAddr },
+            { chain: "testnet", apiKey: "<TONPAY_API_KEY>" }
+        );
 
-    // 2) Persist identifiers your DB (orderId, reference, bodyBase64Hash) immediately
+        // 2) Persist identifiers the DB (orderId, reference, bodyBase64Hash) immediately
 
-    // 3) Return only the message to the client
-    res.json({ message });
+        // 3) Return only the message to the client
+        res.json({ message });
     });
+
     ```
 
     ```tsx
@@ -142,23 +143,23 @@ export default function PayButton() {
     import { TonPayButton, useTonPay } from "@ton-pay/ui-react";
 
     export function PayOrder({ productId }: { productId: any }) {
-    const { pay } = useTonPay();
+        const { pay } = useTonPay();
 
-    return (
-    <TonPayButton
-    handlePay={async () => {
-    await pay(async (senderAddr: string) => {
-    const r = await fetch("/api/create-payment", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ productId, senderAddr }),
-    });
-    const { message } = await r.json();
-    return { message }; // useTonPay forwards this message to the wallet via TonConnect
-    });
-    }}
-    />
-    );
+        return (
+            <TonPayButton
+                handlePay={async () => {
+                    await pay(async (senderAddr: string) => {
+                        const r = await fetch("/api/create-payment", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ productId, senderAddr }),
+                        });
+                        const { message } = await r.json();
+                        return { message }; // useTonPay forwards this message to the wallet via TonConnect
+                    });
+                }}
+            />
+        );
     }
     ```
   </Accordion>
@@ -183,53 +184,53 @@ export default function PayButton() {
     import { createTonPayTransfer, getTonPayTransferByReference, type CompletedTonPayTransferInfo } from "@ton-pay/api";
 
     export default function Checkout() {
-    const { pay } = useTonPay();
-    const [loading, setLoading] = useState(false);
-    const [reference, setReference] = useState<string | null>(null);
-    const [result, setResult] = useState<CompletedTonPayTransferInfo | null>(null);
+        const { pay } = useTonPay();
+        const [loading, setLoading] = useState(false);
+        const [reference, setReference] = useState<string | null>(null);
+        const [result, setResult] = useState<CompletedTonPayTransferInfo | null>(null);
 
-    const options = { chain: "testnet", apiKey: "yourTonPayApiKey" } as const;
+        const options = { chain: "testnet", apiKey: "yourTonPayApiKey" } as const;
 
-    async function createMessage(senderAddr: string) {
-    const { message, reference } = await createTonPayTransfer(
-    { amount: 12.34, asset: "TON", recipientAddr: "EQC...yourWalletAddress", senderAddr },
-    options
-    );
-    setReference(reference);
-    return { message, reference };
-    }
+        async function createMessage(senderAddr: string) {
+          const { message, reference } = await createTonPayTransfer(
+            { amount: 12.34, asset: "TON", recipientAddr: "EQC...yourWalletAddress", senderAddr },
+            options
+          );
+          setReference(reference);
+          return { message, reference };
+        }
 
-    async function handlePay() {
-    setLoading(true);
-    try {
-    const { reference } = await pay(createMessage);
-    // Poll status until success
-    for (;;) {
-    try {
-    const t = await getTonPayTransferByReference(reference, options);
-    if (t.status === "success") {
-    setResult(t);
-    break;
-    }
-    } catch {}
-    await new Promise(r => setTimeout(r, 1000));
-    }
-    } finally {
-    setLoading(false);
-    }
-    }
+        async function handlePay() {
+          setLoading(true);
+          try {
+            const { reference } = await pay(createMessage);
+              // Poll status until success
+              for (;;) {
+                try {
+                  const t = await getTonPayTransferByReference(reference, options);
+                  if (t.status === "success") {
+                    setResult(t);
+                    break;
+                  }
+                } catch {}
+                await new Promise(r => setTimeout(r, 1000));
+              }
+          } finally {
+            setLoading(false);
+          }
+        }
 
-    return (
-    <>
-    <TonPayButton handlePay={handlePay} isLoading={loading} />
+        return (
+          <>
+            <TonPayButton handlePay={handlePay} isLoading={loading} />
 
-    {reference && !result && <div>Payment sent. Reference: {reference}</div>}
-    {result && <div>Payment successful! Tx hash: {result.txHash}</div>}
-    {/* If you have a transaction hash, render an explorer link:
-          <ExplorerLink txHash={result?.txHash!} />
-       */}
-    </>
-    );
+            {reference && !result && <div>Payment sent. Reference: {reference}</div>}
+            {result && <div>Payment successful! Tx hash: {result.txHash}</div>}
+            {/* If a transaction hash is available, render an explorer link:
+                  <ExplorerLink txHash={result?.txHash!} />
+             */}
+          </>
+        );
     }
     ```
 
@@ -238,22 +239,22 @@ export default function PayButton() {
     import { CHAIN } from "@tonconnect/ui";
 
     function ExplorerLink({ txHash }: { txHash: string }) {
-    const wallet = useTonWallet();
-    const isTestnet = wallet?.account?.chain === CHAIN.TESTNET;
-    const tonviewer = isTestnet
-      ? `https://testnet.tonviewer.com/transaction/${txHash}`
-      : `https://tonviewer.com/transaction/${txHash}`;
-    const tonscan = isTestnet
-      ? `https://testnet.tonscan.org/tx/${txHash}`
-      : `https://tonscan.org/tx/${txHash}`;
+        const wallet = useTonWallet();
+        const isTestnet = wallet?.account?.chain === CHAIN.TESTNET;
+        const tonviewer = isTestnet
+            ? `https://testnet.tonviewer.com/transaction/${txHash}`
+            : `https://tonviewer.com/transaction/${txHash}`;
+        const tonscan = isTestnet
+            ? `https://testnet.tonscan.org/tx/${txHash}`
+            : `https://tonscan.org/tx/${txHash}`;
 
-    return (
-      <div>
-        <a href={tonviewer} target="_blank" rel="noreferrer">TonViewer</a>
-        {" • "}
-        <a href={tonscan} target="_blank" rel="noreferrer">Tonscan</a>
-      </div>
-    );
+        return (
+            <div>
+                <a href={tonviewer} target="_blank" rel="noreferrer">TonViewer</a>
+                {" • "}
+                <a href={tonscan} target="_blank" rel="noreferrer">Tonscan</a>
+            </div>
+        );
     }
     ```
   </Accordion>
@@ -278,38 +279,38 @@ export default function PayButton() {
     import { createTonPayTransfer } from "@ton-pay/api";
 
     function AppContent() {
-    const { pay } = useTonPay();
+        const { pay } = useTonPay();
 
-    async function createMessage(senderAddr: string) {
-    const { message, reference } = await createTonPayTransfer(
-    {
-    amount: 12.34,
-    asset: "TON",
-    recipientAddr: "EQC...yourWalletAddress",
-    senderAddr,
-    commentToSender: "Order #123",
-    },
-    {
-    chain: "testnet",
-    apiKey: "yourTonPayApiKey"
-    }
-    );
-    return { message, reference };
-    }
+        async function createMessage(senderAddr: string) {
+            const { message, reference } = await createTonPayTransfer(
+                {
+                    amount: 12.34,
+                    asset: "TON",
+                    recipientAddr: "<WALLET_ADDRESS>",
+                    senderAddr,
+                    commentToSender: "Order #123",
+                },
+                {
+                    chain: "testnet",
+                    apiKey: "<TONPAY_API_KEY>"
+                }
+            );
+            return { message, reference };
+        }
 
-    return (
-    <TonPayButton handlePay={() => pay(createMessage)} />
-    );
+        return (
+            <TonPayButton handlePay={() => pay(createMessage)} />
+        );
     }
 
     export default function App() {
-    return (
-    <TonConnectUIProvider
-    manifestUrl="https://ton-connect.github.io/demo-dapp-with-wallet/tonconnect-manifest.json"
-    >
-    <AppContent />
-    </TonConnectUIProvider>
-    );
+        return (
+            <TonConnectUIProvider
+              manifestUrl="https://ton-connect.github.io/demo-dapp-with-wallet/tonconnect-manifest.json"
+            >
+              <AppContent />
+            </TonConnectUIProvider>
+        );
     }
     ```
   </Accordion>
