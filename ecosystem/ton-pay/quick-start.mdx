@@ -2,3 +2,322 @@
 title: "Quick start"
 sidebarTitle: "Quick start"
 ---
+
+import { Aside } from '/snippets/aside.jsx';
+
+## TON Connect manifest
+
+Before installing and setting up the TON Pay SDK, the application must provide a [TON Connect manifest](/ecosystem/ton-connect/manifest). Wallets use this manifest to discover and identify the application.
+
+## First payment
+
+### Install necessary libraries
+
+<Tabs>
+  <Tab
+    title="React"
+  >
+    ```bash
+    # API
+    npm i @ton-pay/api
+
+    # UI (install separately from API)
+    npm i @ton-pay/ui-react @tonconnect/ui-react
+    ```
+  </Tab>
+
+  <Tab
+    title="Vanilla JS"
+  >
+    ```bash
+    # API
+    npm i @ton-pay/api
+
+    # UI (install separately from API)
+    npm i @ton-pay/ui @tonconnect/ui
+    ```
+  </Tab>
+</Tabs>
+
+<Aside type="tip">
+  Install only `@ton-pay/api` when UI components are not required to avoid unnecessary UI dependencies and reduce bundle size.
+</Aside>
+
+### Add TON Connect provider
+
+TON Pay UI uses TON Connect UI for wallet communication.
+
+The application must be wrapped with `TonConnectUIProvider` and configured with an absolute URL to the TON Connect manifest. Add `TonConnectUIProvider` at the root of the application.
+
+```tsx
+import { TonConnectUIProvider } from '@tonconnect/ui-react';
+import AppContent from "./AppContent";
+
+export default function App() {
+  return (
+    <TonConnectUIProvider
+      manifestUrl="https://myapp.com/tonconnect-manifest.json">
+      <AppContent />
+    </TonConnectUIProvider>
+  );
+}
+```
+
+### Add a payment button
+
+Add a `TonPayButton` and define a handler. The handler uses `useTonPay` to connect a wallet, if not already connected, send a transaction through TON Connect, and track the transaction result.
+
+Keep the message factory simple and readable.
+
+```tsx
+import { TonPayButton, useTonPay } from "@ton-pay/ui-react";
+import { useTonConnectUI } from "@tonconnect/ui-react";
+import { createTonPayTransfer } from "@ton-pay/api";
+
+export default function PayButton() {
+  const { pay } = useTonPay();
+  const [tonConnectUI] = useTonConnectUI();
+
+  async function createMessage(senderAddr: string) {
+    const { message, reference } = await createTonPayTransfer(
+      {
+        amount: 12.34,
+        asset: "TON",
+        recipientAddr: "EQC...yourWalletAddress",
+        senderAddr,
+        commentToSender: "Order #123",
+      },
+      {
+        chain: "testnet", // use "mainnet" for production
+        apiKey: "yourTonPayApiKey" // optional
+      }
+    );
+    return { message, reference };
+  }
+
+  return (
+    <TonPayButton handlePay={() => pay(createMessage)} />
+  );
+}
+```
+
+<Aside
+  type="danger"
+  title="Client-only processing is fragile"
+>
+  Users can close the tab before transaction results are persisted, which breaks tracking and confirmation logic. Build messages and track transactions on the server side.
+</Aside>
+
+<AccordionGroup>
+  <Accordion
+    title="Minimal server‑side flow quick sample"
+  >
+    ```ts
+    // Backend: POST /api/create-payment
+    import { createTonPayTransfer } from "@ton-pay/api";
+    import { TON } from "@ton-pay/api";
+
+    app.post("/api/create-payment", async (req, res) => {
+    const { productId, senderAddr } = req.body;
+
+    // Use your backend to create an order and calculate amount using productId price
+    const amount = 12.23; // order amount
+    const orderId = 1; // ID of a new order
+
+    // 1) Create transfer + get tracking identifiers
+    const { message, reference, bodyBase64Hash } = await createTonPayTransfer(
+    { amount, asset: TON, recipientAddr: "yourWalletAddress", senderAddr },
+    { chain: "testnet", apiKey: "yourTonPayApiKey" }
+    );
+
+    // 2) Persist identifiers your DB (orderId, reference, bodyBase64Hash) immediately
+
+    // 3) Return only the message to the client
+    res.json({ message });
+    });
+    ```
+
+    ```tsx
+    // Frontend
+    import { TonPayButton, useTonPay } from "@ton-pay/ui-react";
+
+    export function PayOrder({ productId }: { productId: any }) {
+    const { pay } = useTonPay();
+
+    return (
+    <TonPayButton
+    handlePay={async () => {
+    await pay(async (senderAddr: string) => {
+    const r = await fetch("/api/create-payment", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ productId, senderAddr }),
+    });
+    const { message } = await r.json();
+    return { message }; // useTonPay forwards this message to the wallet via TonConnect
+    });
+    }}
+    />
+    );
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+<Aside>
+  If an API key is available from the dashboard, pass it to  `createTonPayTransfer` options to enable automatic tracking and webhook notifications.
+</Aside>
+
+- `TonPayButton` wraps wallet connect and disconnect UX and invokes the provided handler.
+- `useTonPay` automates wallet connection and transaction sending through TON Connect. Pass an async factory that receives `senderAddr` and returns `{ message }` along with any tracking fields to propagate back.
+
+<AccordionGroup>
+  <Accordion
+    title="Loading state and result handling"
+  >
+    This example shows a minimal loading state and how to surface the reference. If a transaction hash is available, an explorer link can be rendered.
+
+    ```tsx
+    import { useState } from "react";
+    import { TonPayButton, useTonPay } from "@ton-pay/ui-react";
+    import { createTonPayTransfer, getTonPayTransferByReference, type CompletedTonPayTransferInfo } from "@ton-pay/api";
+
+    export default function Checkout() {
+    const { pay } = useTonPay();
+    const [loading, setLoading] = useState(false);
+    const [reference, setReference] = useState<string | null>(null);
+    const [result, setResult] = useState<CompletedTonPayTransferInfo | null>(null);
+
+    const options = { chain: "testnet", apiKey: "yourTonPayApiKey" } as const;
+
+    async function createMessage(senderAddr: string) {
+    const { message, reference } = await createTonPayTransfer(
+    { amount: 12.34, asset: "TON", recipientAddr: "EQC...yourWalletAddress", senderAddr },
+    options
+    );
+    setReference(reference);
+    return { message, reference };
+    }
+
+    async function handlePay() {
+    setLoading(true);
+    try {
+    const { reference } = await pay(createMessage);
+    // Poll status until success
+    for (;;) {
+    try {
+    const t = await getTonPayTransferByReference(reference, options);
+    if (t.status === "success") {
+    setResult(t);
+    break;
+    }
+    } catch {}
+    await new Promise(r => setTimeout(r, 1000));
+    }
+    } finally {
+    setLoading(false);
+    }
+    }
+
+    return (
+    <>
+    <TonPayButton handlePay={handlePay} isLoading={loading} />
+
+    {reference && !result && <div>Payment sent. Reference: {reference}</div>}
+    {result && <div>Payment successful! Tx hash: {result.txHash}</div>}
+    {/* If you have a transaction hash, render an explorer link:
+          <ExplorerLink txHash={result?.txHash!} />
+       */}
+    </>
+    );
+    }
+    ```
+
+    ```tsx
+    import { useTonWallet } from "@tonconnect/ui-react";
+    import { CHAIN } from "@tonconnect/ui";
+
+    function ExplorerLink({ txHash }: { txHash: string }) {
+    const wallet = useTonWallet();
+    const isTestnet = wallet?.account?.chain === CHAIN.TESTNET;
+    const tonviewer = isTestnet
+      ? `https://testnet.tonviewer.com/transaction/${txHash}`
+      : `https://tonviewer.com/transaction/${txHash}`;
+    const tonscan = isTestnet
+      ? `https://testnet.tonscan.org/tx/${txHash}`
+      : `https://tonscan.org/tx/${txHash}`;
+
+    return (
+      <div>
+        <a href={tonviewer} target="_blank" rel="noreferrer">TonViewer</a>
+        {" • "}
+        <a href={tonscan} target="_blank" rel="noreferrer">Tonscan</a>
+      </div>
+    );
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+<AccordionGroup>
+  <Accordion
+    title="Full example: create React app (TypeScript)"
+  >
+    This minimal example scaffolds a React app, installs TON Pay dependencies, and renders a working button wired to TON Connect. Replace the manifest URL and `recipientAddr` with the necessary values.
+
+    ```bash
+    npx create-react-app my-app --template typescript
+    cd my-app
+    npm i @ton-pay/api @ton-pay/ui-react @tonconnect/ui-react
+    ```
+
+    ```tsx
+    // src/App.tsx
+    import { TonConnectUIProvider } from "@tonconnect/ui-react";
+    import { TonPayButton, useTonPay } from "@ton-pay/ui-react";
+    import { createTonPayTransfer } from "@ton-pay/api";
+
+    function AppContent() {
+    const { pay } = useTonPay();
+
+    async function createMessage(senderAddr: string) {
+    const { message, reference } = await createTonPayTransfer(
+    {
+    amount: 12.34,
+    asset: "TON",
+    recipientAddr: "EQC...yourWalletAddress",
+    senderAddr,
+    commentToSender: "Order #123",
+    },
+    {
+    chain: "testnet",
+    apiKey: "yourTonPayApiKey"
+    }
+    );
+    return { message, reference };
+    }
+
+    return (
+    <TonPayButton handlePay={() => pay(createMessage)} />
+    );
+    }
+
+    export default function App() {
+    return (
+    <TonConnectUIProvider
+    manifestUrl="https://ton-connect.github.io/demo-dapp-with-wallet/tonconnect-manifest.json"
+    >
+    <AppContent />
+    </TonConnectUIProvider>
+    );
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## See also
+
+- Build a transfer
+- Send payments using React
+- Webhooks
+- API reference
