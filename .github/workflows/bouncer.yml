@@ -59,15 +59,10 @@ jobs:
               pull_number: context.payload.pull_request.number,
               per_page: 100,
             });
-            const filtered = files.filter(
-              (f) =>
-                ![
-                  'package-lock.json',
-                  'ecosystem/api/toncenter/v2.json',
-                  'ecosystem/api/toncenter/v3.yaml',
-                  'ecosystem/api/toncenter/smc-index.json',
-                  'tvm/instructions.mdx',
-                ].includes(f.filename) && !f.filename.endsWith('.py') && !f.filename.startsWith('snippets'),
+            const filtered = files.filter((f) =>
+              f.match(/\.mdx?$/) !== null &&
+              !f.filename.startsWith('tvm/instructions.mdx') &&
+              !f.filename.startsWith('snippets'),
             );
             const additions = filtered.reduce((acc, it) => acc + it.additions, 0);
             if (additions > maxAdditions) {
@@ -155,17 +150,21 @@ jobs:
           script: |
             const maxIssuesAllowed = Number(process.env.MAX_ISSUES_PER_PR ?? '3');
             const body = context.payload.pull_request.body || '';
-            const closePatterns = /\b(?:close[sd]?|fixes|fixed|resolve[sd]?|towards)\s+(?:https?:\/\/github\.com\/|[a-z0-9\-\_\/]*#\d+)/gi;
+            const closePatterns = /\b(?:close[sd]?|fixes|fixed|fix|resolve[sd]?|towards):?\s+(?:https?:\/\/github\.com\/|[a-z0-9\-\_\/]*#\d+)/gi;
             const issueCount = [...body.matchAll(closePatterns)].length;
             if (issueCount > maxIssuesAllowed) {
               core.setFailed(`This pull request attempts to close ${issueCount} issues, while the maximum number allowed is ${maxIssuesAllowed}.`);
               process.exit(1);
             }
-            if (issueCount === 0) {
+            const changelogPattern = /\bchange\s*log:?\s+https?:\/\/.*?\.mdx?/gi;
+            const hasChangelog = body.match(changelogPattern) !== null;
+            if (issueCount === 0 && !hasChangelog) {
               core.setFailed([
                 'This pull request does not resolve any issues — no close patterns found in the description.',
                 'Please, specify an issue by writing `Closes #that-issue-number` in the description of this PR.',
                 'If there is no such issue, create a new one: https://github.com/ton-org/docs/issues/1366#issuecomment-3560650817',
+                '\nIf this PR updates descriptions in accordance with a new release of a tool,',
+                'provide a changelog by writing `Changelog https://....md` in the description of this PR.',
               ].join(' '));
               process.exit(1);
             }
