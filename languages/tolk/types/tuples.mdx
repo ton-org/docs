@@ -1,78 +1,128 @@
 ---
-title: "Tuples (not tensors!)"
+title: "Tuples"
 sidebarTitle: "Tuples"
 ---
 
 import { Aside } from '/snippets/aside.jsx';
 
-In TVM (the virtual machine), a **tuple** is a dynamic container that stores from 0 to 255 elements in a single stack slot.
-Tolk supports two tuple forms:
+In [TVM](/tvm/overview), a tuple in the form `[T1, T2, ..., T255]` is a dynamic container that stores from 0 to 255 elements in a [single stack slot](/languages/tolk/types/overall-tvm-stack). Tuples cannot be [serialized to cells](/languages/tolk/types/overall-serialization) and are only present on the stack during [the compute phase](/foundations/phases). Yet they may be returned from get methods because contract getters operate directly on the stack.
 
-- `tuple` — a dynamic tuple with unknown shape
-- `[T1, T2, ...]` — TVM tuple with known shape
+Tolk supports two tuple types:
+
+- `tuple` — an opaque dynamic tuple with unknown shape;
+- `[T1, T2, ...]` — a typed tuple with a known shape.
 
 <Aside
   type="caution"
 >
-  In most languages, `(v1, v2, ...)` denotes a tuple.
-  In TON, however, a "tuple" is a specific TVM primitive.
-  For this reason, `(v1, v2, ...)` in Tolk is called "a tensor".
-  [Read about tensors](/languages/tolk/types/tensors).
+  In many general-purpose languages, syntax `[A, B, C, ...]` is used for array or list literals, while syntax `(A, B, C, ...)` is used for tuples. However, in TON, there are no arrays or lists. Tuple literals use the `[A, B, C, ...]` syntax, while `(A, B, C, ...)` is used by [tensors](/languages/tolk/types/tensors): a distinct type that represents ordered collections of values that occupy multiple TVM stack entries.
+
+  For example, a tuple `[int, int, int]` is a single stack entry containing three integers. In contrast, a tensor `(int, int, int)` signifies three separate integers that occupy individual stack entries or are serialized sequentially.
 </Aside>
 
-## `tuple`: dynamic tuples
+## Dynamic tuples
 
-A TVM tuple allows storing from 0 to 255 elements in one stack slot. Push elements into a tuple:
+A `tuple` stores from 0 to 255 elements in one stack slot:
 
 ```tolk
-fun demo(): tuple {
-    var t = createEmptyTuple();
-    t.push(10);
-    t.push(beginCell());
-    t.push(null);
+var t: tuple = createEmptyTuple();
+t.push(10);
+t.push(beginCell());
+t.push(null);
 
-    t.size();     // 3
-    return t;
+t.size(); // 3
+```
+
+## Typed tuples
+
+Use `[T1, T2, ...]` to describe a tuple with a known shape, with non-primitive values not permitted:
+
+```tolk
+// The type is `[int, int, builder]`
+val t = [1, 2, beginCell()];
+
+// Read
+t.0; // 1
+
+// Write
+t.1 = 123;
+t.2.storeInt(t.0, 16);
+
+// t is now [1, 123, builder "0x0001"]
+t.100500 // compilation error!
+```
+
+A typed tuple may be destructured into multiple variables:
+
+```tolk
+fun sumFirstTwo(t: [int, int, builder]) {
+    val [first, second, _] = t;
+    return first + second;
 }
 ```
 
-When calling `t.get(idx)`, the type must be provided explicitly or inferred:
+## Component access
+
+The `get()` method accesses a value by an index. When calling it on opaque dynamic tuples, explicitly provide a type of the retrieved value or rely on the compiler's type inference:
 
 ```tolk
+// Explicit int type
 val first = t.get<int>(0);
-// or
-val first: int = t.get(0);   // T=int auto-inferred
+
+// Type inference based on desired variable type
+val first: int = t.get(0);
 ```
 
-The syntax `tupleVar.{i}` is also permitted when the type is evident:
+The syntax `tuple.{i}` is permitted when the type is evident:
 
 ```tolk
 val first: int = t.0;
 ```
 
-The method `set()` does not create new elements; it only updates existing ones.
-If `idx` is out of bounds in `get()` or `set()`, an exception is thrown.
+The `set()` method writes a new value at an index. It does not create new elements — instead, it overrides existing ones.
+
+```tolk
+val t = [1, 7];
+
+// t is now [42, 7]
+t.set(0, 42);
+```
+
+If index is out of bounds in `get()` or `set()`, an exception is thrown:
 
 ```tolk
 t.set(value, 100500);    // throws errCode=5
 t.100500 = value;        // throws errCode=5
 ```
 
-The following methods are available — `last()`, `set()`, `pop()`, etc. IDE will suggest them after a dot.
+<Aside type="note">
+  Accessing a tuple value takes a single TVM instruction, whereas accessing a [tensor](/languages/tolk/types/tensors) value requires stack shuffling.
+</Aside>
 
-## Only primitives can be placed into a tuple
+Additional methods such as `last()`, `pop()`, and others are [available in the standard library](/languages/tolk/features/standard-library#tuples).
 
-An attempt to call `t.push(somePoint)` will raise an error: only single‑slot values can be added and retrieved.
+## Allowed values
+
+Consider the following structure:
 
 ```tolk
-t.push(somePoint);    // error
-t.push(somePoint.x);  // ok (int)
+struct Point3d {
+    x: int
+    y: int
+    z: int
+}
 ```
 
-## Convert an object to a tuple and back
+An attempt to call `t.push(somePoint)` where `somePoint` is an instance of that structure raises an error — values that take more than one stack slot cannot be placed in a tuple. That is, only [primitive, atomic types](/languages/tolk/types/list-of-types) can be set:
 
-Tolk provides built-in generic methods `T.toTuple()` and `T.fromTuple()`.
-If a value occupies N stack slots, the resulting tuple has size N.
+```tolk
+t.push(somePoint.x);  // ok (int)
+t.push(somePoint);    // error
+```
+
+## Conversion to and from composites
+
+For composite types, there are generic built-in methods `T.toTuple()` and `T.fromTuple()` which convert composites to and from tuples. Length of the resulting tuple is equal to the number of stack slots occupies by a value of the converted type: if it occupies N stack slots, the resulting tuple has size N.
 
 ```tolk
 struct Point3d {
@@ -88,67 +138,14 @@ fun demo(p: Point3d) {
 }
 ```
 
-## Typed tuples `[T1, T2, ...]`
-
-Use this syntax to describe a tuple with a known shape:
-
-```tolk
-// its type is `[int, int, builder]`
-val t = [1, 2, beginCell()];
-
-// read
-t.0;    // 1
-
-// modify
-t.1 = 123;
-t.2.storeInt(t.0, 16);
-// t is now (1, 123, builder "0x0001")
-
-t.100500  // compilation error
-```
-
-This syntax is similar to a tensor `(T1, T2, ...)`, but all values are stored in a single stack slot.
-Non-primitive values are also not permitted.
-
-A typed tuple may be destructured into multiple variables:
-
-```tolk
-fun sumFirstTwo(t: [int, int, builder]) {
-    val [first, second, _] = t;
-    return first + second;
-}
-```
-
 ## Lisp-style lists
 
-Lisp-style lists are nested two-element tuples: `[1, [2, [3, null]]]` represents the list `[1, 2, 3]`.
-An empty list is conventionally represented as `null`.
-From the type‑system perspective, it's `tuple?` with dynamic contents, not a special type.
+Lisp-style lists in Tolk are nested two-element tuples. For instance, `[1, [2, [3, null]]]` represents the list `[1, 2, 3]`. An empty list is conventionally represented as `null`. From the type system perspective, a Lisp-style list is a `tuple?` with dynamic contents.
 
-It was a common pattern in old contracts, but now it's almost unused.
-Its primary remaining use case is to return more than 255 elements.
-
-Lisp‑style lists can be processed using the following stdlib module:
+Process such lists using the following standard library module:
 
 ```tolk
 import "@stdlib/lisp-lists"
 ```
 
-## Tuples vs tensors
-
-**A tensor** is `(T1, T2, ...)` — multiple values in parentheses.
-The primary distinction is the stack layout: a tuple is a single stack slot,
-whereas tensor components are placed one by one.
-
-For example, `(coins, builder, int?)` occupies 3 slots, but `[coins, builder, int?]` — only one.
-
-Accessing `tupleVar.{i}` produces TVM asm `{i} INDEX`, but `tensorVar.{i}` is just stack shuffling.
-
-[Read about tensors](/languages/tolk/types/tensors).
-
-## Stack layout and serialization
-
-Tuples are backed by TVM `TUPLE`.
-Serialization is not implemented, but tuples may be returned from get methods, because contract getters operate via the stack rather than serialization.
-
-For details, follow [TVM representation](/languages/tolk/types/overall-tvm-stack) and [Serialization](/languages/tolk/types/overall-serialization).
+Lisp-style lists allow storing and manipulating more than 255 elements, but they do not have fast element access. If there is a clear upper bound on the number of elements, use [maps](/languages/tolk/types/maps) instead. Otherwise, prefer [contract sharding](/contract-dev/contract-sharding).
