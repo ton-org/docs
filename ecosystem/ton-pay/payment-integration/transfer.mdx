@@ -2,3 +2,430 @@
 title: "How to build a transfer"
 sidebarTitle: "Build a transfer"
 ---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Use this server-side helper to generate a canonical TON message payload and a tracking reference.
+
+```ts
+import { createTonPayTransfer } from "@ton-pay/api";
+
+const { message, bodyBase64Hash, reference } = await createTonPayTransfer(
+  {
+    amount: 10.5,
+    asset: "TON",
+    recipientAddr: "<RECIPIENT_ADDRESS>",
+    senderAddr: "<SENDER_ADDRESS>",
+    commentToSender: "Payment for Order #1234",
+    commentToRecipient: "Order #1234",
+  },
+  {
+    chain: "testnet",
+    apiKey: "<TONPAY_API_KEY>",
+  }
+);
+```
+
+<Aside type="tip">
+  Providing an API key enables transaction visibility in [the TON Pay Merchant Dashboard](https://tonpay.tech/dashboard), webhook notifications, and wallet management features.
+</Aside>
+
+## Function signature
+
+```ts
+createTonPayTransfer(
+  params: CreateTonPayTransferParams,
+  options?: APIOptions
+): Promise<CreateTonPayTransferResponse>
+```
+
+### Transfer parameters
+
+```ts
+type CreateTonPayTransferParams = {
+  amount: number;
+  asset: string;
+  recipientAddr?: string;
+  senderAddr: string;
+  queryId?: number;
+  commentToSender?: string;
+  commentToRecipient?: string;
+};
+```
+
+### API options
+
+```ts
+type APIOptions = {
+  chain?: "mainnet" | "testnet";
+  apiKey?: string;
+};
+```
+
+<ParamField
+  body="chain"
+  type="string"
+  default="mainnet"
+>
+  Target blockchain network. Use `"mainnet"` for production or `"testnet"` for development and testing.
+</ParamField>
+
+<ParamField
+  body="apiKey"
+  type="string"
+>
+  The TON Pay API key from the Merchant Dashboard. When provided, it enables:
+
+  - Transaction visibility in the TON Pay Merchant Dashboard.
+  - Webhook notifications for completed transactions.
+  - Receiving wallet management from the admin panel.
+</ParamField>
+
+## Parameter details
+
+<ParamField
+  body="amount"
+  type="number"
+  required
+>
+  Human-readable payment amount. Decimals are allowed, for example 10.5 TON.
+</ParamField>
+
+<ParamField
+  body="asset"
+  type="string"
+  required
+>
+  Asset to transfer. Use "TON" for Toncoin or a jetton master address or constant, for example USDT.
+</ParamField>
+
+<ParamField
+  body="recipientAddr"
+  type="string"
+>
+  Payee wallet address. Optional if an API key is provided. Defaults to the merchant’s default wallet address configured in the admin panel.
+</ParamField>
+
+<ParamField
+  body="senderAddr"
+  type="string"
+>
+  Payer wallet address. Required for jetton transfers; optional for Toncoin. In UI flows, obtain it from TON Connect.
+</ParamField>
+
+<ParamField
+  body="queryId"
+  type="number"
+>
+  Jetton only. Numeric identifier embedded into the jetton payload for idempotency and tracking. Ignored for Toncoin payments.
+</ParamField>
+
+<ParamField
+  body="commentToSender"
+  type="string"
+>
+  Short note visible to the user in the wallet while signing.
+
+  <Aside>
+    Comments are on-chain and publicly visible in blockchain explorers. Do not include confidential data. Keep comments under 120 characters to avoid increased gas fees.
+  </Aside>
+</ParamField>
+
+<ParamField
+  body="commentToRecipient"
+  type="string"
+>
+  Note visible to the recipient after the transfer is received.
+
+  <Aside>
+    Comments are on-chain and publicly visible in blockchain explorers. Do not include confidential data. Keep comments under 120 characters to avoid increased gas fees.
+  </Aside>
+</ParamField>
+
+## Predefined assets (constants)
+
+Built-in constants can be used instead of raw addresses.
+
+```ts
+import { createTonPayTransfer, TON, USDT } from "@ton-pay/api";
+
+// Toncoin transfer
+await createTonPayTransfer(
+  {
+    amount: 1,
+    asset: TON, // same as "TON"
+    recipientAddr: "<RECIPIENT_ADDRESS>", // shortened example; replace with a full wallet address
+    senderAddr: "<SENDER_ADDRESS>",       // shortened example; replace with a full wallet address
+  },
+  {
+    chain: "mainnet",
+    apiKey: "<TONPAY_API_KEY>", // optional
+  }
+);
+
+// USDT jetton transfer
+await createTonPayTransfer(
+  {
+    amount: 25,
+    asset: USDT, // mainnet USDT jetton master address
+    recipientAddr: "<RECIPIENT_ADDRESS>", // shortened example; replace with a full wallet address
+    senderAddr: "<SENDER_ADDRESS>",       // shortened example; replace with a full wallet address
+  },
+  {
+    chain: "mainnet",
+    apiKey: "<TONPAY_API_KEY>",
+  }
+);
+```
+
+<Aside
+  type="danger"
+  title="Important"
+>
+  Token constants such as USDT contain mainnet jetton master addresses and are not  affected by the `chain` option. On testnet, always pass the jetton master address explicitly to avoid sending funds to mainnet.
+</Aside>
+
+Response:
+
+```ts
+type CreateTonPayTransferResponse = {
+  message: {
+    address: string;
+    amount: string;
+    payload: string;
+  };
+  bodyBase64Hash: string;
+  reference: string;
+};
+```
+
+## Response fields
+
+<ResponseField
+  name="message"
+  type="object"
+  required
+>
+  Prebuilt TON Connect transaction message. Intended to be passed to `sendTransaction` as `messages: [message]`.
+</ResponseField>
+
+<ResponseField
+  name="bodyBase64Hash"
+  type="string"
+  required
+>
+  Base64 hash of the signed message body content (payload). Used with `getTonPayTransferByBodyHash`.
+</ResponseField>
+
+<ResponseField
+  name="reference"
+  type="string"
+  required
+>
+  Tracking reference string. Used with `getTonPayTransferByReference`.
+</ResponseField>
+
+The SDK call returns a ready-to-send message along with identifiers for subsequent status lookups. Always persist tracking identifiers server-side before sending the transaction to the user.
+
+## API key configuration
+
+The TON Pay API key is optional in development and recommended for production. When configured, it enables transaction tracking, webhook notifications, and centralized wallet management in the TON Pay Merchant Dashboard.
+
+### Obtaining an API key
+
+<Steps>
+  <Step
+    title="Open the Merchant Dashboard"
+  >
+    Open the [TON Pay Merchant Dashboard](https://tonpay.tech/dashboard) and sign in to the merchant account.
+  </Step>
+
+  <Step
+    title="Open Developer settings"
+  >
+    Navigate to <kbd>Developer</kbd> → <kbd>API Keys</kbd> sections.
+  </Step>
+
+  <Step
+    title="Generate or copy an API key"
+  >
+    Generate a new API key or copy an existing one and store it securely.
+  </Step>
+</Steps>
+
+### Usage in code
+
+```typescript
+import { createTonPayTransfer } from "@ton-pay/api";
+
+const { message, reference, bodyBase64Hash } = await createTonPayTransfer(
+  {
+    amount: 10.5,
+    asset: "TON",
+    // recipientAddr is optional when API key is provided
+    // Will use merchant's default wallet from admin panel
+    senderAddr: userWalletAddress,
+  },
+  {
+    chain: "testnet",
+    apiKey: "<TONPAY_API_KEY>",
+  }
+);
+```
+
+### API key capabilities
+
+| Capability                            | With API key                                                                                               | Without API key                                                                       |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Transaction visibility and monitoring | Transfers appear in the TON Pay Merchant Dashboard with status tracking and full transaction history.      | Transfers are processed on-chain but are not visible in the merchant dashboard.       |
+| Webhook notifications                 | Real-time HTTP POST notifications are sent for completed and failed payments.                              | No webhook notifications; payment status must be obtained through the manual polling. |
+| Receiving wallet management           | Receiving wallets are managed from the TON Pay admin panel; addresses can be updated without code changes. | Receiving wallet addresses must be hard-coded in the application.                     |
+| `recipientAddr` handling              | Optional; when omitted, the merchant’s default wallet from the admin panel is used automatically.          | Required for every transfer.                                                          |
+
+With API key: `recipientAddr` is optional.
+
+```ts
+const result = await createTonPayTransfer(
+  {
+    amount: 10,
+    asset: "TON",
+    senderAddr: "<SENDER_ADDRESS>",
+  },
+  {
+    chain: "mainnet",
+    apiKey: "<TONPAY_API_KEY>",
+  }
+);
+```
+
+Without API key: `recipientAddr` is required.
+
+```ts
+// Works without API key - transaction processes normally
+const result = await createTonPayTransfer(
+{
+  amount: 10,
+  asset: "TON",
+  recipientAddr: "<RECIPIENT_ADDRESS>",
+  senderAddr: "<SENDER_ADDRESS>",
+},
+{ chain: "mainnet" } // No apiKey - transaction works but no dashboard features
+);
+```
+
+## Testnet configuration
+
+<Aside
+  type="danger"
+  title="Funds at risk"
+>
+  Running tests on mainnet can result in irreversible loss of real TON. Always use `chain: "testnet"` and testnet wallet addresses during development. Verify the network before switching to mainnet.
+</Aside>
+
+### Set up testnet
+
+<Steps>
+  <Step
+    title="Set chain to testnet"
+  >
+    Configure the `chain` option to `"testnet"` in the API calls:
+
+    ```typescript
+    const { message, reference, bodyBase64Hash } = await createTonPayTransfer(
+    {
+      amount: 5.0,
+      asset: "TON",
+      recipientAddr: "<RECIPIENT_ADDRESS>",
+      senderAddr: "<SENDER_ADDRESS>",
+    },
+    {
+      chain: "testnet", // Use testnet
+      apiKey: "<TONPAY_API_KEY>",
+    }
+    );
+    ```
+  </Step>
+
+  <Step
+    title="Use testnet wallet addresses"
+  >
+    Ensure all wallet addresses are valid [testnet addresses](/foundations/addresses/formats).
+  </Step>
+
+  <Step
+    title="Obtain testnet TON"
+  >
+    - Use testnet wallet account: [Tonkeeper](/ecosystem/wallet-apps/tonkeeper) or other TON wallets.
+    - [Get testnet TON](/ecosystem/wallet-apps/get-coins) from a faucet to test transactions.
+  </Step>
+
+  <Step
+    title="Configure testnet jettons"
+  >
+    If testing with jettons, use the correct testnet jetton master addresses; not mainnet addresses.
+
+    ```typescript
+    // Example: Testnet USDT (use actual testnet address)
+    await createTonPayTransfer(
+    {
+      amount: 10,
+      asset: "<TESTNET_USDT_MASTER_ADDRESS>", // Testnet jetton address
+      recipientAddr: "<RECIPIENT_ADDRESS>",
+      senderAddr: "<SENDER_ADDRESS>",
+    },
+    { chain: "testnet" }
+    );
+    ```
+  </Step>
+</Steps>
+
+### Configure environment
+
+Use environment variables to switch between mainnet and testnet:
+
+```typescript
+// .env.development
+TON_CHAIN=testnet
+MERCHANT_WALLET_ADDRESS=EQC...TESTNET_ADDRESS
+
+// .env.production
+TON_CHAIN=mainnet
+MERCHANT_WALLET_ADDRESS=EQC...MAINNET_ADDRESS
+```
+
+```typescript
+// In the application code
+const { message, reference, bodyBase64Hash } = await createTonPayTransfer(
+  {
+    amount: orderAmount,
+    asset: "TON",
+    recipientAddr: "<WALLET_ADDRESS>",
+    senderAddr: "<CUSTOMER_WALLET_ADDRESS>",
+  },
+  {
+    chain: "testnet",
+    apiKey: "<TONPAY_API_KEY>",
+  }
+);
+```
+
+### Verify testnet transactions
+
+Verify testnet transactions using testnet block [explorers](/ecosystem/explorers/overview):
+
+- [Testnet Tonviewer](https://testnet.tonviewer.com/)
+- [Testnet Tonscan](https://testnet.tonscan.org/)
+
+```typescript
+// Replace txHash with the actual transaction hash.
+// After transaction completes:
+console.log(`View on explorer: https://testnet.tonscan.org/tx/${txHash}`);
+```
+
+### Apply testing best practices
+
+- Test all payment outcomes on testnet, including success, failures, user rejections, and edge cases.
+- Verify webhook endpoint correctly processes testnet webhooks; payload structure matches mainnet.
+- Validate behavior across different amounts, including small, large, and fractional values.
+- Ensure `reference` and `bodyBase64Hash` are persisted and usable for status lookups.
+- Exercise error paths such as insufficient balance, invalid addresses, and network issues.
