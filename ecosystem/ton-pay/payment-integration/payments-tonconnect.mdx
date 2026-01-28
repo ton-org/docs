@@ -76,14 +76,14 @@ export function PaymentComponent({ orderId, amount }: { orderId: string; amount:
         {
           amount,
           asset: "TON",
-          recipientAddr: "EQ....yourWalletAddress",
+          recipientAddr: "<RECIPIENT_WALLET_ADDRESS>",
           senderAddr: address,
           commentToSender: `Payment for Order ${orderId}`,
           commentToRecipient: `Order ${orderId}`,
         },
         {
           chain: "testnet",
-          apiKey: "yourTonPayApiKey",
+          apiKey: "TONPAY_API_KEY",
         }
       );
 
@@ -201,14 +201,14 @@ app.post("/api/create-transaction", async (req, res) => {
       {
         amount: order.amount,
         asset: order.currency || "TON",
-        recipientAddr: "EQ....yourWalletAddress",
+        recipientAddr: "<RECIPIENT_WALLET_ADDRESS>",
         senderAddr,
         commentToSender: `Payment for Order ${order.id}`,
         commentToRecipient: `Order ${order.id} - ${order.description}`,
       },
       {
         chain: "testnet",
-        apiKey: "yourTonPayApiKey",
+        apiKey: "TONPAY_API_KEY",
       }
     );
 
@@ -324,7 +324,7 @@ async function sendPayment(amount, orderId) {
       {
         amount,
         asset: "TON",
-        recipientAddr: "EQC...RECIPIENT",
+        recipientAddr: "<RECIPIENT_WALLET_ADDRESS>",
         senderAddr: wallet.account.address,
         commentToSender: `Order ${orderId}`,
       },
@@ -367,14 +367,14 @@ tonConnectUI.onStatusChange((wallet) => {
 
 ### Message structure
 
-The message object passed to `sendTransaction` must include:
+The message object passed to `sendTransaction` must include these fields:
 
 <ResponseField name="address" type="string" required>
-  Recipient wallet address in user-friendly format (e.g., "EQC...").
+  Recipient wallet address in [user-friendly format](/foundations/addresses/formats).
 </ResponseField>
 
 <ResponseField name="amount" type="string" required>
-  Amount to send in nanotons. For TON payments, multiply the human-readable amount by 1e9.
+  Amount to send in nanotons.
 </ResponseField>
 
 <ResponseField name="payload" type="string" required>
@@ -384,7 +384,7 @@ The message object passed to `sendTransaction` must include:
 ### Transaction options
 
 <ResponseField name="validUntil" type="number" required>
-  Unix timestamp indicating when the transaction expires. Typically set to 5 minutes from now.
+  Unix timestamp indicating when the transaction expires. Typically is 5 minutes.
 
   ```typescript
   validUntil: Math.floor(Date.now() / 1000) + 300
@@ -396,7 +396,7 @@ The message object passed to `sendTransaction` must include:
 </ResponseField>
 
 <ResponseField name="network" type="string">
-  Network identifier. Usually omitted as it's inferred from the connected wallet.
+  Network identifier. Usually omitted as it is inferred from the connected wallet.
 </ResponseField>
 
 ## Error handling
@@ -446,8 +446,8 @@ async function handleTransaction() {
   const wallet = tonConnectUI.wallet;
 
   if (!wallet) {
-  // Show connect button
-  return;
+      // Show connect button
+      return;
   }
 
   // Proceed with transaction
@@ -479,107 +479,102 @@ async function handleTransaction() {
 
 - Implement connection state listeners to update the UI and handle wallet disconnections.
 
-```typescript
+  ```typescript
   useEffect(() => {
-  const unsubscribe = tonConnectUI.onStatusChange((wallet) => {
-  if (wallet) {
-  setConnectedWallet(wallet.account.address);
-} else {
-  setConnectedWallet(null);
-}
-});
+      const unsubscribe = tonConnectUI.onStatusChange((wallet) => {
+          if (wallet) {
+              setConnectedWallet(wallet.account.address);
+          } else {
+              setConnectedWallet(null);
+          }
+      });
 
-  return unsubscribe;
-}, [tonConnectUI]);
-```
+      return unsubscribe;
+  }, [tonConnectUI]);
+  ```
 
 - Handle transaction rejection explicitly. Treat user rejection as a normal cancellation, not as an error.
 
   ```typescript
   try {
-  await tonConnectUI.sendTransaction(...);
-  } catch (error) {
-  if (error.message?.includes("rejected")) {
-  // Don't show error - user intentionally cancelled
-  console.log("Transaction cancelled by user");
-  } else {
-  // Show error for unexpected failures
-  showErrorMessage("Transaction failed");
-  }
+    await tonConnectUI.sendTransaction(...);
+  } catch(error) {
+    if (error.message ? .includes("rejected")) {
+      // Don't show error - user intentionally cancelled
+      console.log("Transaction cancelled by user");
+    } else {
+      // Show error for unexpected failures
+      showErrorMessage("Transaction failed");
+    }
   }
   ```
 
 ## Troubleshooting
 
-- If transaction fails with `Wallet is not connected`, ensure the wallet is connected before calling `sendTransaction`:
-
+- If a transaction fails with `Wallet is not connected`, make sure the wallet is connected before calling `sendTransaction`.
   ```typescript
   if (!tonConnectUI.wallet) {
-  await tonConnectUI.connectWallet();
-  // Wait for connection before proceeding
+    await tonConnectUI.connectWallet();
+    // Wait for connection before proceeding
   }
   ```
 
-  Consider adding a connection state check:
+  Add a connection state check:
   ```typescript
   const isConnected = tonConnectUI.wallet !== null;
   ```
 
-
-- If `sendTransaction` throws `Invalid address format`, verify that:
-    - The `from` parameter matches the connected wallet address exactly
-    - The recipient address in the message is a valid TON address
-    - You're using the correct address format (user-friendly vs raw)
+- If `sendTransaction` throws `Invalid address format`:
+  1. Ensure the `from` address matches the connected wallet address.
+  1. Verify that the recipient address is [a valid TON address](/foundations/addresses/formats).
+  1. Use the wallet address provided by the SDK to avoid format mismatches:
 
     ```typescript
     const address = useTonAddress(true); // Ensure consistent format
     ```
 
 
-- If transaction expires before user signs. The `validUntil` timestamp is too short or the user is taking too long to sign. Increase the validity period:
-
+- If a transaction expires before the user signs it, the `validUntil` timestamp may be too short. Increase the validity period to give the user more time to confirm the transaction:
     ```typescript
     // Increase from 5 to 10 minutes if needed
     validUntil: Math.floor(Date.now() / 1000) + 600
     ```
 
 
-- If manifest URL errors:
-    Common manifest issues:
-    - URL is not publicly accessible
-    - CORS headers are not configured correctly
-    - Manifest JSON is malformed
-    - URL is not HTTPS (required in production)
+- If the manifest URL fails to load, check for the following common issues:
+  - The URL is not publicly accessible.
+  - [CORS](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS) headers are not configured correctly.
+  - The manifest JSON is malformed.
+  - The URL is not HTTPS; required in production.
 
-    Test your manifest URL directly in a browser to verify accessibility.
-
-
-- If `onStatusChange` not triggering, ensure you're properly subscribing to status changes and that the subscription persists:
-
-    ```typescript
-    useEffect(() => {
-    const unsubscribe = tonConnectUI.onStatusChange(handleWalletChange);
-    return () => unsubscribe(); // Clean up subscription
-  }, [tonConnectUI]);
-    ```
+  Open the manifest URL directly in a browser to verify that it is accessible.
 
 
-- If multiple wallet connection prompts. This can happen if you're calling `connectWallet()` multiple times. Implement connection state tracking:
+- If `onStatusChange` is not triggered, ensure that the status change subscription is created once and remains active for the lifetime of the component.
 
   ```typescript
-  const [isConnecting, setIsConnecting] = useState(false);
-
-  const connect = async () => {
-  if (isConnecting) return;
-  setIsConnecting(true);
-  try {
-  await tonConnectUI.connectWallet();
-  } finally {
-  setIsConnecting(false);
-  }
-  };
+  useEffect(() = >{
+    const unsubscribe = tonConnectUI.onStatusChange(handleWalletChange);
+    return () = >unsubscribe(); // Clean up subscription
+  },
+  [tonConnectUI]);
   ```
 
+- If multiple wallet connection prompts appear, `connectWallet()` may be called more than once. Track the connection state:
+
+  ```typescript
+  const[isConnecting, setIsConnecting] = useState(false);
+
+  const connect = async() = >{
+    if (isConnecting) return;
+    setIsConnecting(true);
+    try {
+      await tonConnectUI.connectWallet();
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+  ```
 
 ## API key configuration
 
@@ -596,12 +591,12 @@ app.post("/api/create-transaction", async (req, res) => {
     {
       amount: order.amount,
       asset: "TON",
-      recipientAddr: "EQ....yourWalletAddress",
-      senderAddr,
+      recipientAddr: "<RECIPIENT_WALLET_ADDRESS>",
+      senderAddr: "<SENDER_WALLET_ADDRESS>",
     },
     {
       chain: "testnet",
-      apiKey: "yourTonPayApiKey",
+      apiKey: "TONPAY_API_KEY",
     }
   );
 
@@ -628,7 +623,7 @@ Configure the environment to use testnet:
 ```bash
 # .env.development
 TON_CHAIN=testnet
-MERCHANT_WALLET_ADDRESS=EQC...TESTNET_ADDRESS
+MERCHANT_WALLET_ADDRESS=TESTNET_ADDRESS
 ```
 
 ```tsx
@@ -649,8 +644,8 @@ export function TestnetPayment({ amount }: { amount: number }) {
       {
         amount,
         asset: "TON",
-        recipientAddr: "EQ....yourWalletAddress",
-        senderAddr: address,
+        recipientAddr: "<RECIPIENT_WALLET_ADDRESS>",
+        senderAddr: "<SENDER_WALLET_ADDRESS>",
       },
       { chain: "testnet" } // Use testnet
     );
