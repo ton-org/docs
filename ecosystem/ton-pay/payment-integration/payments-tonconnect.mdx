@@ -5,36 +5,28 @@ sidebarTitle: "Send payments TON Connect"
 
 import { Aside } from '/snippets/aside.jsx';
 
-Use TonConnect's native `sendTransaction` method when you need full control over the wallet connection UI and transaction flow. This approach is ideal for applications that require custom UI/UX or need to integrate with existing TonConnect implementations.
+Use TON Connect native `sendTransaction` method when:
 
-## When to Use Direct TonConnect
+- The application manages wallet connection UI and transaction flow directly.
+- TON Connect is already used elsewhere in the application.
+- Access to TON Connect-specific APIs is required, such as status change listeners or custom wallet adapters.
 
-Choose direct TonConnect integration when you need:
+## Integration overview
 
-- **Custom UI Control**: Full control over wallet connection buttons, modals, and transaction flow presentation
-- **Existing TonConnect Setup**: Your application already uses TonConnect for other blockchain interactions
-- **Advanced Features**: Access to TonConnect's advanced features like status change listeners and custom wallet adapters
-- **Non-React Applications**: Integration with Vue, Angular, Svelte, or vanilla JavaScript
+Direct TON Connect integration follows these steps:
 
-<Info>
-  If you're building a React application without specific UI requirements, consider using the `useTonPay` hook for a simpler integration experience.
-</Info>
+1. Configure the TON Connect UI provider with the application manifest.
+2. Manage wallet connection state and provide UI for users to connect the wallets.
+3. Create a transaction message on the client or backend using `createTonPayTransfer`.
+4. Send the transaction using TON Connect's `sendTransaction` method.
+5. Observe connection state changes and transaction status updates.
 
-## Integration Overview
-
-Direct TonConnect integration follows this flow:
-
-1. Provider Setup: Configure the TonConnect UI provider with your application manifest.
-1. Connection Management: Handle wallet connection state and provide UI for users to connect their wallets.
-1. Message Creation: Build the transaction message using `createTonPayTransfer` on your server or client.
-1. Transaction Sending: Send the transaction through TonConnect's `sendTransaction` method.
-1. Status Monitoring: Listen for transaction status updates and connection state changes.
 
 ## React implementation
 
 ### Set up application
 
-Wrap your application with the TonConnect UI provider:
+Wrap the application with the TON Connect UI provider:
 
 ```tsx
 import { TonConnectUIProvider } from "@tonconnect/ui-react";
@@ -48,11 +40,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
 }
 ```
 
-<Warning>
-  The manifest URL must be publicly accessible and served over HTTPS in production. The manifest file contains your application's metadata and is required for wallet identification.
-</Warning>
+The manifest URL must be publicly accessible and served over HTTPS in production. [The manifest file](/ecosystem/ton-connect/manifest) provides application metadata required for wallet identification.
 
-### Payment Component
+
+### Payment component
 
 ```tsx expandable
 import {
@@ -130,9 +121,9 @@ export function PaymentComponent({ orderId, amount }: { orderId: string; amount:
 }
 ```
 
-### Connection State Management
+### Manage connection state
 
-Listen for wallet connection changes to update your UI:
+Listen for wallet connection status changes using the TON Connect UI API:
 
 ```tsx
 import { useEffect } from "react";
@@ -176,9 +167,9 @@ export function WalletStatus() {
 }
 ```
 
-## Server-Side message building
+## Server-side message building
 
-For production applications, build transaction messages on your server to centralize tracking and validation:
+For production applications, build transaction messages on the server to centralize tracking and validation.
 
 ### Backend endpoint
 
@@ -303,7 +294,7 @@ export function ServerManagedPayment({ orderId }: { orderId: string }) {
 
 ## Vanilla JavaScript implementation
 
-For non-React applications, use the TonConnect SDK directly:
+For non-React applications, use the TON Connect SDK directly:
 
 ```javascript expandable
 import TonConnectUI from "@tonconnect/ui";
@@ -372,9 +363,9 @@ tonConnectUI.onStatusChange((wallet) => {
 });
 ```
 
-## Transaction Parameters
+## Transaction parameters
 
-### Message Structure
+### Message structure
 
 The message object passed to `sendTransaction` must include:
 
@@ -390,7 +381,7 @@ The message object passed to `sendTransaction` must include:
   Base64-encoded message payload containing transfer details and tracking information.
 </ResponseField>
 
-### Transaction Options
+### Transaction options
 
 <ResponseField name="validUntil" type="number" required>
   Unix timestamp indicating when the transaction expires. Typically set to 5 minutes from now.
@@ -408,9 +399,7 @@ The message object passed to `sendTransaction` must include:
   Network identifier. Usually omitted as it's inferred from the connected wallet.
 </ResponseField>
 
-## Error Handling
-
-Handle common error scenarios appropriately:
+## Error handling
 
 ```typescript
 async function handleTransaction() {
@@ -449,58 +438,48 @@ async function handleTransaction() {
 }
 ```
 
-## Best Practices
+## Best practices
 
-<AccordionGroup>
-  <Accordion title="Always validate wallet connection">
-    Check wallet connection status before attempting to send transactions. Provide clear UI feedback for connection state.
+- Check wallet connection status before attempting to send transactions. Provide clear UI feedback for connection state.
 
-    ```typescript
-    const wallet = tonConnectUI.wallet;
+  ```typescript
+  const wallet = tonConnectUI.wallet;
 
-    if (!wallet) {
-    // Show connect button
-    return;
+  if (!wallet) {
+  // Show connect button
+  return;
   }
 
-    // Proceed with transaction
-    ```
-  </Accordion>
+  // Proceed with transaction
+  ```
 
-  <Accordion title="Set appropriate transaction expiry">
-    Use a reasonable `validUntil` value (typically 5 minutes) to ensure transactions don't become stale, but give users enough time to review and sign.
+- Use a reasonable `validUntil` value, typically 5 minutes, to prevent stale transactions while allowing enough time for user confirmation.
 
-    ```typescript
-    const validUntil = Math.floor(Date.now() / 1000) + 300; // 5 minutes
-    ```
-  </Accordion>
+  ```typescript
+  const validUntil = Math.floor(Date.now() / 1000) + 300; // 5 minutes
+  ```
 
-  <Accordion title="Verify address format matches">
-    Ensure the sender address from TonConnect matches the format expected by your backend. Use the user-friendly format consistently.
+- Ensure the sender address from TON Connect matches the format expected by the backend. Use the [user-friendly format](/foundations/addresses/formats) consistently.
 
-    ```typescript
-    const address = useTonAddress(true); // true = user-friendly format
-    ```
-  </Accordion>
+  ```typescript
+  const address = useTonAddress(true); // true = user-friendly format
+  ```
 
-  <Accordion title="Store tracking identifiers before transaction">
-    Always persist `reference` and `bodyBase64Hash` before sending the transaction. If the transaction succeeds but your code fails afterward, you'll still be able to reconcile the payment via webhooks.
+- Always persist `reference` and `bodyBase64Hash` before sending the transaction. This allows payment reconciliation through webhooks even if the client flow fails after submission.
 
-    ```typescript
-    // Good: Store first, then send
-    await storePaymentTracking(reference, bodyBase64Hash);
-    await tonConnectUI.sendTransaction(...);
+  ```typescript
+  // Good: Store first, then send
+  await storePaymentTracking(reference, bodyBase64Hash);
+  await tonConnectUI.sendTransaction(...);
 
-    // Bad: Send first, then store
-    await tonConnectUI.sendTransaction(...);
-    await storePaymentTracking(reference, bodyBase64Hash); // Might not execute
-    ```
-  </Accordion>
+  // Bad: Send first, then store
+  await tonConnectUI.sendTransaction(...);
+  await storePaymentTracking(reference, bodyBase64Hash); // Might not execute
+  ```
 
-  <Accordion title="Implement connection state listeners">
-    Monitor wallet connection changes to update your UI and handle disconnections gracefully.
+- Implement connection state listeners to update the UI and handle wallet disconnections.
 
-    ```typescript
+```typescript
     useEffect(() => {
     const unsubscribe = tonConnectUI.onStatusChange((wallet) => {
     if (wallet) {
@@ -512,49 +491,42 @@ async function handleTransaction() {
 
     return unsubscribe;
   }, [tonConnectUI]);
-    ```
-  </Accordion>
+  ```
 
-  <Accordion title="Handle transaction rejection gracefully">
-    Users may reject transactions in their wallet. Treat rejection as a normal cancellation, not an error.
+- Handle transaction rejection explicitly. Treat user rejection as a normal cancellation, not as an error.
 
-    ```typescript
-    try {
-    await tonConnectUI.sendTransaction(...);
+  ```ts
+  try {
+  await tonConnectUI.sendTransaction(...);
   } catch (error) {
-    if (error.message?.includes("rejected")) {
-    // Don't show error - user intentionally cancelled
-    console.log("Transaction cancelled by user");
+  if (error.message?.includes("rejected")) {
+  // Don't show error - user intentionally cancelled
+  console.log("Transaction cancelled by user");
   } else {
-    // Show error for unexpected failures
-    showErrorMessage("Transaction failed");
+  // Show error for unexpected failures
+  showErrorMessage("Transaction failed");
   }
   }
-    ```
-  </Accordion>
-</AccordionGroup>
+  ```
 
 ## Troubleshooting
 
-<AccordionGroup>
-  <Accordion title="Transaction fails with 'Wallet is not connected'">
-    Ensure the wallet is connected before calling `sendTransaction`:
+- If transaction fails with `Wallet is not connected`, ensure the wallet is connected before calling `sendTransaction`:
 
-    ```typescript
-    if (!tonConnectUI.wallet) {
-    await tonConnectUI.connectWallet();
-    // Wait for connection before proceeding
+  ```typescript
+  if (!tonConnectUI.wallet) {
+  await tonConnectUI.connectWallet();
+  // Wait for connection before proceeding
   }
-    ```
+  ```
 
-    Consider adding a connection state check:
-    ```typescript
-    const isConnected = tonConnectUI.wallet !== null;
-    ```
-  </Accordion>
+  Consider adding a connection state check:
+  ```typescript
+  const isConnected = tonConnectUI.wallet !== null;
+  ```
 
-  <Accordion title="sendTransaction throws 'Invalid address format'">
-    Verify that:
+
+- If `sendTransaction` throws `Invalid address format`, verify that:
     - The `from` parameter matches the connected wallet address exactly
     - The recipient address in the message is a valid TON address
     - You're using the correct address format (user-friendly vs raw)
@@ -562,18 +534,17 @@ async function handleTransaction() {
     ```typescript
     const address = useTonAddress(true); // Ensure consistent format
     ```
-  </Accordion>
 
-  <Accordion title="Transaction expires before user signs">
-    The `validUntil` timestamp is too short or the user is taking too long to sign. Increase the validity period:
+
+- If transaction expires before user signs. The `validUntil` timestamp is too short or the user is taking too long to sign. Increase the validity period:
 
     ```typescript
     // Increase from 5 to 10 minutes if needed
     validUntil: Math.floor(Date.now() / 1000) + 600
     ```
-  </Accordion>
 
-  <Accordion title="Manifest URL errors">
+
+- If manifest URL errors:
     Common manifest issues:
     - URL is not publicly accessible
     - CORS headers are not configured correctly
@@ -581,10 +552,9 @@ async function handleTransaction() {
     - URL is not HTTPS (required in production)
 
     Test your manifest URL directly in a browser to verify accessibility.
-  </Accordion>
 
-  <Accordion title="onStatusChange not triggering">
-    Ensure you're properly subscribing to status changes and that the subscription persists:
+
+- If `onStatusChange` not triggering, ensure you're properly subscribing to status changes and that the subscription persists:
 
     ```typescript
     useEffect(() => {
@@ -592,30 +562,28 @@ async function handleTransaction() {
     return () => unsubscribe(); // Clean up subscription
   }, [tonConnectUI]);
     ```
-  </Accordion>
 
-  <Accordion title="Multiple wallet connection prompts">
-    This can happen if you're calling `connectWallet()` multiple times. Implement connection state tracking:
 
-    ```typescript
-    const [isConnecting, setIsConnecting] = useState(false);
+- If multiple wallet connection prompts. This can happen if you're calling `connectWallet()` multiple times. Implement connection state tracking:
 
-    const connect = async () => {
-    if (isConnecting) return;
-    setIsConnecting(true);
-    try {
-    await tonConnectUI.connectWallet();
+  ```typescript
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  const connect = async () => {
+  if (isConnecting) return;
+  setIsConnecting(true);
+  try {
+  await tonConnectUI.connectWallet();
   } finally {
-    setIsConnecting(false);
+  setIsConnecting(false);
   }
   };
-    ```
-  </Accordion>
-</AccordionGroup>
+  ```
 
-## API Key Configuration
 
-When using TonConnect with server-side message building, include the API key in your backend:
+## API key configuration
+
+When using TON Connect with server-side message building, [the API key can be included](link-rot) in the backend:
 
 ```typescript
 import { createTonPayTransfer } from "@ton-pay/api";
@@ -642,7 +610,7 @@ app.post("/api/create-transaction", async (req, res) => {
 });
 ```
 
-## Testnet Configuration
+## Testnet configuration
 
 <Aside
   type="danger"
