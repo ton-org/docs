@@ -19,15 +19,15 @@ The [basic configuration earlier](/ecosystem/ton-connect/walletkit/web/init#init
 
    Adapter takes in a signer from the previous step and a number of options, namely:
 
-   - `network` — TON Blockchain network, either `CHAIN.MAINNET` or `CHAIN.TESTNET`.
-   - `client` — API client to communicate with TON Blockchain. In most cases, the client of the initialized kit via `kit.getApiClient()` would suffice.
+   - `network` — TON Blockchain network: `Network.mainnet()`, `Network.testnet()`, or `Network.custom(chainId)`.
+   - `client` — API client to communicate with TON Blockchain. Use `kit.getApiClient(network)` to get the client for the specified network from the `networks` configuration passed during [WalletKit initialization](/ecosystem/ton-connect/walletkit/web/init).
    - `walletId` — identifier of the new wallet, which is used to make its smart contract address unique.
    - `workchain` — either `0` for the basechain (default), or `-1` for the masterchain.
 
    ```ts title="TypeScript"
    import {
-     // Network constants (MAINNET/TESTNET)
-     CHAIN,
+     // Network object
+     Network,
      // Latest wallet version (recommended)
      WalletV5R1Adapter,
      defaultWalletIdV5R1,
@@ -37,8 +37,8 @@ The [basic configuration earlier](/ecosystem/ton-connect/walletkit/web/init#init
    } from '@ton/walletkit';
 
    const walletAdapter = await WalletV5R1Adapter.create(signer, {
-     network: CHAIN.TESTNET,
-     client: kit.getApiClient(),
+     network: Network.mainnet(),
+     client: kit.getApiClient(Network.mainnet()),
 
      // Either 0 for the basechain (default),
      // or -1 for the masterchain
@@ -63,6 +63,10 @@ The [basic configuration earlier](/ecosystem/ton-connect/walletkit/web/init#init
     const wallet = await kit.addWallet(walletAdapter);
     console.log('Wallet address:', wallet.getAddress());
    ```
+
+   <Aside>
+     Apart from adding a new wallet, an adapter is also helpful when [removing one](#remove-a-single-wallet) too.
+   </Aside>
 
 See the complete example for each signer kind:
 
@@ -104,8 +108,8 @@ import {
   Signer,
   // Latest wallet version (recommended)
   WalletV5R1Adapter,
-  // Network constants (MAINNET/TESTNET)
-  CHAIN,
+  // Network object
+  Network,
 } from '@ton/walletkit';
 
 // 1.
@@ -126,8 +130,8 @@ const signer = await Signer.fromMnemonic(
 
 // 2.
 const walletAdapter = await WalletV5R1Adapter.create(signer, {
-  network: CHAIN.TESTNET,
-  client: kit.getApiClient(),
+  network: Network.mainnet(),
+  client: kit.getApiClient(Network.mainnet()),
 });
 
 // 3.
@@ -171,8 +175,8 @@ import {
   WalletV5R1Adapter,
   // Conversion function
   MnemonicToKeyPair,
-  // Network constants (MAINNET/TESTNET)
-  CHAIN,
+  // Network object
+  Network,
 } from '@ton/walletkit';
 
 // 1.
@@ -185,8 +189,8 @@ const signer = await Signer.fromPrivateKey(
 
 // 2.
 const walletAdapter = await WalletV5R1Adapter.create(signer, {
-  network: CHAIN.TESTNET,
-  client: kit.getApiClient(),
+  network: Network.mainnet(),
+  client: kit.getApiClient(Network.mainnet()),
 });
 
 // 3.
@@ -215,8 +219,8 @@ A custom signer is useful to maintain complete control over the signing process,
 
 ```ts title="TypeScript" expandable
 import {
-  // Network constants (MAINNET/TESTNET)
-  CHAIN,
+  // Network object
+  Network,
   // Latest wallet version (recommended)
   WalletV5R1Adapter,
   // Conversion function
@@ -248,13 +252,13 @@ const signer: WalletSigner = {
   },
 
   // Public key as a Hex
-  publicKey: Uint8ArrayToHex(keyPair.publicKey),
+  publicKey: Uint8ArrayToHex(keyPair.publicKey) as Hex,
 };
 
 // 2.
 const walletAdapter = await WalletV5R1Adapter.create(signer, {
-  network: CHAIN.TESTNET,
-  client: kit.getApiClient(),
+  network: Network.mainnet(),
+  client: kit.getApiClient(Network.mainnet()),
 });
 
 // 3.
@@ -278,11 +282,21 @@ Providing the same wallet adapter to the kit multiple times will return the wall
 
 ### Get a single wallet
 
-To get a single wallet by its address, use the `getWallet()` method of the initialized kit.
+The `getWallet()` method expects a wallet identifier string. Note that the same wallet on different chains must have different identifiers. Compose it via the `createWalletId()` helper function:
 
 ```ts title="TypeScript"
-const wallet: IWallet = kit.getWallet(walletAdapter.getAddress());
-console.log('TON wallet address:', wallet.getAddress());
+import { createWalletId, Network, type Wallet } from '@ton/walletkit';
+
+// Using the helper function to create a wallet identifier.
+const walletId = createWalletId(
+  Network.mainnet(),
+  walletAdapter.getAddress(),
+);
+const wallet: Wallet | undefined = kit.getWallet(walletId);
+
+if (wallet) {
+  console.log('Wallet address: ', wallet.getAddress());
+}
 ```
 
 ### Get all wallets
@@ -290,16 +304,26 @@ console.log('TON wallet address:', wallet.getAddress());
 To obtain all added wallets, use the `getWallets()` method of the initialized kit.
 
 ```ts title="TypeScript"
-const wallets: IWallet[] = kit.getWallets();
+const wallets: Wallet[] = kit.getWallets();
 wallets.forEach(w => console.log('TON wallet address:', w.getAddress()));
 ```
 
 ### Remove a single wallet
 
-To remove a single wallet by its address, use the `removeWallet()` method of the initialized kit.
+The `kit.removeWallet()` method accepts either a `walletId` or the adapter instance itself. Compose the identifier via the `createWalletId()` helper function or pass the adapter used when adding the wallet:
 
 ```ts title="TypeScript"
-await kit.removeWallet(wallet.getAddress());
+import { createWalletId, Network } from '@ton/walletkit';
+
+// Using the helper function to create a wallet identifier.
+const walletId = createWalletId(
+  Network.mainnet(),
+  walletAdapter.getAddress(),
+);
+await kit.removeWallet(walletId);
+
+// Alternatively, pass the adapter directly.
+await kit.removeWallet(walletAdapter);
 ```
 
 ### Clear all wallets
@@ -309,6 +333,17 @@ To remove all previously added wallets from the kit, use the `clearWallets()` me
 ```ts title="TypeScript"
 await kit.clearWallets();
 ```
+
+## Next steps
+
+<Columns cols={2}>
+  <Card
+    title="Handle connections"
+    icon="plug"
+    horizontal="true"
+    href="/ecosystem/ton-connect/walletkit/web/connections"
+  />
+</Columns>
 
 ## See also
 
