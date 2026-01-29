@@ -1,0 +1,68 @@
+name: 🕘 Instructions update
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: 'Branch in ton-org/tvm-spec to fetch cp0.json from'
+        required: false
+        default: 'master'
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  fetch-and-release:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.repository == 'ton-org/docs' }}
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_BRANCH: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_branch || 'master' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for pushing later
+
+      - name: Set up Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Python dependencies
+        run: pip install mistletoe==1.5.0
+
+      - name: Clone ton-org/tvm-spec
+        run: git clone https://github.com/ton-org/tvm-spec && cd tvm-spec && git checkout $SOURCE_BRANCH
+
+      - name: Update instructions.mdx and cp0.json
+        # cp0.txt is a workaround: mintlify gives 404 for url /resources/tvm/cp0.json -_-
+        run: python3 .github/scripts/tvm-instruction-gen.py tvm-spec/cp0.json resources/tvm/cp0.txt tvm/instructions.mdx
+
+      - name: Check for changes
+        id: git-diff
+        run: |
+          git add resources/tvm/cp0.txt tvm/instructions.mdx
+          CHANGED_FILES=$(git diff --cached --name-only | tr '\n' ' ')
+          echo "changed=$CHANGED_FILES" >> $GITHUB_OUTPUT
+
+      - name: Create Pull Request if needed
+        if: ${{ steps.git-diff.outputs.changed != '' }}
+        id: cpr
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
+        with:
+          commit-message: "feat: update TVM instructions list"
+          title: "feat: update TVM instructions list"
+          branch: "update-spec"
+          add-paths: |
+            resources/tvm/cp0.txt
+            tvm/instructions.mdx
+          token: ${{ secrets.GITHUB_TOKEN }}

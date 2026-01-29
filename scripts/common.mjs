@@ -1,14 +1,9 @@
 // Node.js
-import { Dirent, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 // Remark
 import { remark } from 'remark';
-import remarkFrontmatter from 'remark-frontmatter';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import remarkMdx from 'remark-mdx';
-import unifiedConsistency from 'unified-consistency';
 import { visitParents } from 'unist-util-visit-parents';
 
 /**
@@ -127,26 +122,9 @@ export function prefixWithSlash(src) {
 /**
  * Creates the Remark parser with same settings as in `remarkConfig` inside `package.json`.
  */
-export function initMdxParser() {
-  return remark()
-    .use({
-      settings: {
-        bullet: '-',
-        emphasis: '_',
-        rule: '-',
-        incrementListMarker: false,
-        tightDefinitions: true,
-      },
-    })
-    .use(remarkFrontmatter)
-    .use(remarkMath)
-    .use(remarkGfm, {
-      singleTilde: false,
-    })
-    .use(remarkMdx, {
-      printWidth: 20,
-    })
-    .use(unifiedConsistency);
+export async function initMdxParser() {
+  const remarkConfig = (await import(join('..', '.remarkrc.mjs'))).default;
+  return remark().use(remarkConfig);
 }
 
 /**

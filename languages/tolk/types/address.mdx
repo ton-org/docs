@@ -1,0 +1,120 @@
+---
+title: "Address"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Every smart contract has an [address](/foundations/addresses/overview) used for all on-chain interactions.
+
+Tolk provides the following types for working with addresses:
+
+- `address` — a standard address; also called "internal address".
+- `address?` — nullable address, i.e., either a standard address or `null`; also called "internal or none".
+- `any_address` — any kind of address, including external addresses.
+
+## Components
+
+A standard, internal `address` consists of:
+
+- a `int8` workchain — currently, there are only two: masterchain (-1) and basechain (0);
+- a `uint256` hash — a 256-bit account ID.
+
+`address` has methods to retrieve these components:
+
+```tolk
+fun checkAddress(addr: address, expectHash: uint256) {
+    val (wc, hash) = addr.getWorkchainAndHash();
+    assert (wc == 0) throw 123;
+    assert (hash == expectHash) throw 456;
+}
+```
+
+When [serialized](/languages/tolk/types/overall-serialization), values of `address` type occupy 267 bits:
+
+- 3 bits for the standard address prefix — `0b100`
+- 8-bit workchain
+- 256-bit hash
+
+During deserialization from a cell, the values of type `address` are automatically validated at runtime: if parsing succeeds, the resulting address is guaranteed to be valid.
+
+## Comparison
+
+Compare addresses using `==` or `!=`. Internally, an [address is represented as a raw `slice` without references](/languages/tolk/types/overall-tvm-stack), so `==` and `!=` test for bits equality.
+
+```tolk
+struct Storage {
+    owner: address
+    // ...
+}
+
+fun onInternalMessage(in: InMessage) {
+    var st = Storage.load();
+    // process a message only from owner
+    if (in.senderAddress == st.owner) {
+        // ...
+    }
+}
+```
+
+## Embedding
+
+Embed a constant value of type `address` using the `address()` function:
+
+```tolk
+const REFUND_ADDR = address("EQCRDM9h4k3UJdOePPuyX40mCgA4vxge5Dc5vjBR8djbEKC5")
+```
+
+## Nullable address
+
+A nullable address often represents a potentially absent value:
+
+- There might be an `adminAddress` in the contract's storage, but it may be unset.
+- There might be an `sendExcessesTo` field in a message: if exists, send surplus there; if not, keep it.
+
+Thus, type `address?` represents a "none address": either an internal address or none. Check for `null` before usage:
+
+```tolk
+// May have no admin
+fun send(adminAddress: address?) {
+    if (adminAddress == null) {
+        return;
+    }
+    // send a message to adminAddress, it's not null
+}
+```
+
+When a value of type `address?` is serialized and is not `null`, it occupies 267 as the standard `address`. If it is `null`, then it occupies only 2 zero bits, a so-called `addr_none`.
+
+The "none" address can be created using `createAddressNone()`.
+
+## Any address
+
+All external messages from outside world to blockchain contracts, such as wallet contracts, come from external addresses.
+
+To represent internal and external addresses, as well as nullable addresses, use `any_address`:
+
+```tolk
+struct CrossBridgeMessage {
+    destination: any_address
+}
+```
+
+## Casts
+
+To manually operate on the bits of an `address`, cast it to a `slice`:
+
+```tolk
+val s = someAddr as slice;
+s.loadUint(3);     // 0b100 — internal address tag
+s.loadInt(8);      // workchain
+```
+
+Since an address is represented as a `slice` at the TVM level, such cast is permitted and is safe. Conversely, the cast in another direction is **unsafe**, because no validation is performed at runtime and any further use might fail:
+
+```tolk
+var b = beginCell()
+       .storeUint(0b01)   // addr_extern
+       ...;
+var s = b.endCell().beginParse();
+return s as any_address;
+```

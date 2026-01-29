@@ -1,0 +1,485 @@
+---
+title: "Standard library"
+sidebarTitle: "Standard library"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Tolk provides a standard library or stdlib that includes commonly used functions.
+
+<Aside type="tip">
+  IDEs provide auto-completion and navigation to definitions and inline documentation using <kbd>Cmd</kbd>+Click or <kbd>Ctrl</kbd>+Click.
+</Aside>
+
+## Compile-time calculations and embedding
+
+Constant values can be embedded into a contract using dedicated functions.
+
+### `address()`
+
+The `address()` function embeds a constant address:
+
+```tolk
+const REFUND_ADDR = address("EQCRDM9h4k3UJdOePPuyX40mCgA4vxge5Dc5vjBR8djbEKC5")
+```
+
+### String-based compile-time functions
+
+Several functions, such as `stringCrc32()`, operate on string literals. They require constant inputs and are evaluated to an `int` at compile time.
+
+```tolk
+// calculates crc32 of a string
+const crc32 = stringCrc32("some_str") // = 4013618352 = 0xEF3AF4B0
+
+// calculates crc16 (XMODEM) of a string
+const crc16 = stringCrc16("some_str") // = 53407 = 0xD09F
+
+// calculates sha256 of a string and returns 256-bit integer
+const hash = stringSha256("some_crypto_key")
+
+// calculates sha256 of a string and takes the first 32 bits
+const minihash = stringSha256_32("some_crypto_key")
+
+// interprets an N-chars ascii string as a number in base 256
+const base256 = stringToBase256("AB") // = 16706 (65*256 + 66)
+```
+
+### `ton()`
+
+Calculates nanotoncoins at compile time.
+
+```tolk
+const ONE_TON = ton("1");     // `coins`, value: 1000000000
+
+fun calcCost() {
+    val cost = ton("0.05");   // `coins`, value: 50000000
+    return ONE_TON + cost;
+}
+```
+
+## Common functions
+
+All functions in this section are available everywhere. They are defined in `@stdlib/common.tolk`, which is auto-imported.
+
+### Tuples
+
+Tuple-related functions allow interacting with [tuple types](/languages/tolk/types/tuples), which are dynamic containers of up to 255 elements.
+
+#### `createEmptyTuple`
+
+Creates a tuple with zero elements.
+
+#### `tuple.push`, `tuple.get`, etc.
+
+An IDE suggests available methods after a dot `.`:
+
+```tolk
+fun demo() {
+    var t = createEmptyTuple();
+    t.push(123);
+    return t.get<int>(0);       // 123
+}
+```
+
+#### `T.toTuple` and `T.fromTuple`
+
+Packs an object from the stack into a tuple and converts it back. If a value occupies N stack slots, the resulting tuple has size N.
+
+```tolk
+struct Point {
+    x: int
+    y: int
+}
+
+fun demo() {
+    var p: Point = { x: 1, y: 2 };
+    var t = p.toTuple();     // [ 1 2 ]
+    p = Point.fromTuple(t);  // restored
+    t.get<int>(0);           // 1
+}
+```
+
+### Mathematical primitives
+
+These functions accept and return integers unless stated otherwise. All [integers](/languages/tolk/types/numbers) are 257-bit.
+
+#### `min(x, y)`
+
+Returns the minimum of two integers.
+
+#### `max(x, y)`
+
+Returns the maximum of two integers.
+
+#### `minMax(x, y)`
+
+Returns `(int, int)` – a tensor `(smallest, largest)`.
+
+#### `abs(x)`
+
+Returns the absolute value of an integer.
+
+#### `sign(x)`
+
+Returns the sign of an integer value:
+
+- `-1` if x \< 0;
+- `0` if x == 0;
+- `1` if x > 0.
+
+#### `divMod(x, y)`
+
+Returns `(int, int)` — the quotient and remainder of `x / y`.
+
+Example: `divMod(112, 3)` = `(37, 1)`.
+
+#### `modDiv(x, y)`
+
+Returns `(int, int)` — the remainder and quotient of `x / y`.
+
+Example: `modDiv(112, 3)` = `(1, 37)`.
+
+#### `mulDivFloor(x, y, z)`
+
+Computes multiple-then-divide: `floor(x * y / z)`. The intermediate result is stored in a 513-bit integer to prevent precision loss.
+
+#### `mulDivRound(x, y, z)`
+
+Similar to `mulDivFloor`, but rounds the result: `round(x * y / z)`.
+
+#### `mulDivCeil(x, y, z)`
+
+Similar to `mulDivFloor`, but ceils the result: `ceil(x * y / z)`.
+
+#### `mulDivMod(x, y, z)`
+
+Returns `(int, int)` — the quotient and remainder of `(x * y / z)`.
+
+Example: `mulDivMod(112, 3, 10)` = `(33, 6)`.
+
+### Global getters and setters of current contract state
+
+All functions in this section are methods of the empty struct `contract`.
+
+#### `contract.getAddress`
+
+Returns `address` — the internal address of the current smart contract. It can be further parsed using `address.getWorkchain` and others.
+
+#### `contract.getOriginalBalance`
+
+Returns `coins` — the balance of the smart contract in nanotoncoins at the start of the [compute phase](/tvm/exit-codes#compute-phase).
+
+#### `contract.getOriginalBalanceWithExtraCurrencies`
+
+Returns `[coins, ExtraCurrenciesMap]` — similar to `contract.getOriginalBalance`, but also returns extra currencies.
+
+#### `contract.getData`
+
+Returns `cell` — the persistent contract storage cell. Typically, its result is used as [`Storage.fromCell()`](/languages/tolk/features/contract-storage).
+
+#### `contract.setData(cell)`
+
+Sets the persistent contract storage. Typically, the argument is [`storageObject.toCell()`](/languages/tolk/features/contract-storage).
+
+#### `contract.getCode`
+
+Returns `cell` — the smart contract code stored in TVM [register `c7`](/tvm/registers).
+
+#### `contract.setCodePostponed(newCodeCell)`
+
+Creates an output action that updates the smart contract code after successful termination of the current execution.
+
+### Global getters of the blockchain (environment) state
+
+Most functions in this section are methods of the empty struct `blockchain`.
+
+#### `blockchain.now`
+
+Returns `int` — the current Unix timestamp in seconds.
+
+#### `blockchain.logicalTime`
+
+Returns `int` — the logical time of the current transaction.
+
+#### `blockchain.currentBlockLogicalTime`
+
+Returns `int` — the starting logical time of the current block.
+
+#### `blockchain.configParam(i)`
+
+Returns `cell?` — the value of the global [configuration parameter](/foundations/config) with integer index `i`, or `null` if not exists.
+
+#### `commitContractDataAndActions`
+
+Commits the current state of TVM registers `c4` persistent data and `c5` actions, so the current execution is considered successful with these values even if an exception is thrown later during the compute phase.
+
+### Signature checks, hashing, cryptography
+
+Functions and methods for hashing, signature verification, and randomization.
+
+#### `cell.hash`
+
+Returns `uint256` — the representation hash of a cell. Useful for signing and checking signatures of arbitrary entities represented by a tree of cells.
+
+#### `slice.hash`
+
+Returns `uint256` — the hash of data in a slice. The same as `cell.hash` for a cell containing data and references from this slice.
+
+#### `builder.hash`
+
+Returns `uint256` — the hash of the data in a builder. Equivalent to converting the builder to a cell and hashing it, without creating a cell.
+
+#### `slice.bitsHash`
+
+Returns `uint256` — the SHA-256 hash of the data bits in a slice, excluding references. If the bit length is not divisible by eight, throws a cell underflow exception.
+
+#### `isSignatureValid(hash, signatureSlice, publicKey)`
+
+Verifies an Ed25519 signature. Checks `signatureSlice` against `hash` using `publicKey`, both of type `uint256`. The signature must contain at least 512 data bits; only the first 512 bits are used. Returns `bool`.
+
+#### `isSliceSignatureValid(dataSlice, signatureSlice, publicKey)`
+
+Similar to `isSignatureValid`, but accepts a `slice` instead of a precomputed hash. If the bit length of `data` is not divisible by eight, throws a cell underflow exception.
+
+#### `random.uint256`
+
+Returns `uint256` — a new pseudo-random value.
+
+Call `random.initialize` to make randomization unpredictable.
+
+#### `random.range(limit)`
+
+Returns `int` — a new pseudo-random integer z in the range `0..limit−1` or `limit..−1` if negative. More precisely, an unsigned random value `x` is generated, then `z := x * limit / 2^256` is computed.
+
+Call `random.initialize` to make randomization unpredictable.
+
+#### `random.getSeed`
+
+Returns `uint256` — the current random seed used to generate pseudo-random numbers.
+
+#### `random.setSeed(newSeed)`
+
+Sets the random seed to the provided value.
+
+#### `random.initializeBy(mixSeedWith)`
+
+Mixes the random seed with the provided value.
+
+#### `random.initialize`
+
+Initializes the seed with current time to make randomization unpredictable.
+
+Call this function once before using `random.uint256` or `random.range`.
+
+### Size computation primitives
+
+Can be useful for computing storage fees of user-provided data.
+
+#### `cell.calculateSize(maxCells)`
+
+Returns `(x, y, z, -1)` or `(null, null, null, 0)`. Recursively computes the count of distinct cells `x`, data bits `y`, and cell references `z` in a tree of cells. The total count of visited cells `x` cannot exceed non-negative `maxCells`; otherwise a zero flag is returned to indicate failure.
+
+#### `slice.calculateSize(maxCells)`
+
+Similar to `cell.calculateSize`, but accepting a slice instead of a cell. The returned value `x` includes the cell that contains the slice.
+
+#### `cell.calculateSizeStrict(maxCells)`
+
+A non-quiet version of `cell.calculateSize` that throws a cell overflow exception on failure.
+
+#### `slice.calculateSizeStrict(maxCells)`
+
+A non-quiet version of `slice.calculateSize` that throws a cell overflow exception on failure.
+
+#### `cell.depth`
+
+Returns `int` — the depth of a cell: `0` if no references, otherwise `1` + maximum of depths of all references.
+
+#### `slice.depth`
+
+Returns `int` — the depth of a slice, equivalent to `cell.depth`.
+
+#### `builder.depth`
+
+Returns `int` — the depth of a builder, equivalent to `cell.depth`.
+
+#### `sizeof<T>(anyVariable)`
+
+Returns `int` — the number of stack slots occupied by `anyVariable` occupies; works at compile-time.
+
+### Debug primitives
+
+Only work for local TVM execution with debug–level verbosity.
+
+#### `debug.print<T>(anyVariable)`
+
+Dumps a variable to the debug log.
+
+#### `debug.printString(str)`
+
+Dumps a string to the debug log.
+
+#### `debug.dumpStack`
+
+Dumps the stack, at most the top 255 values, and shows its depth.
+
+### Slice primitives: parsing cells
+
+`cell.beginParse()` converts a cell into a slice.
+
+`slice.loadAddress` and other `loadXXX` methods are suggested by the IDE after a dot.
+
+Prefer [automatic serialization](/languages/tolk/features/auto-serialization) over manual slice parsing.
+
+### Builder primitives: constructing cells
+
+`beginCell()` creates a builder.
+
+`builder.storeAddress` and other `storeXXX` methods are suggested by the IDE after a dot.
+
+`builder.endCell()` constructs a cell from the written data.
+
+Prefer [automatic serialization](/languages/tolk/features/auto-serialization)
+over manual builder construction.
+
+### Address manipulation primitives
+
+Methods for [`address` and `any_address`](/languages/tolk/types/address) are suggested by the IDE after a dot.
+
+#### `address.fromWorkchainAndHash(wc, hash)`
+
+A static method of `address` — constructs an internal address with a size of 267 bits from arguments.
+
+```tolk
+fun demo() {
+    val a = address.fromWorkchainAndHash(0, somehash);
+    a.getWorkchain() == BASECHAIN;   // true
+}
+```
+
+#### `address.getWorkchain`
+
+Returns `int8` — the workchain from an [internal address](/foundations/addresses/formats).
+
+#### `address.getWorkchainAndHash`
+
+Returns `(int8, uint256)` — the workchain and hash from an internal address.
+
+#### `address.calculateSameAddressInAnotherShard(options)`
+
+Given an internal address A="aaaa...a", returns "bbaa...a". The result consists of D bits from address B and 256-D bits from address A.
+
+#### `createAddressNone`
+
+Returns any\_address holding a slice `00`, which is two zero bits, at runtime. This value represents a none address.
+
+```tolk
+fun demo() {
+    val none = createAddressNone();  // it's `any_address`
+    none.isInternal();      // false
+    none.isNone();          // true
+}
+```
+
+This is a rarely used `any_address`, not `address`. Use it only in combination with external addresses. For example, pass a `none` to `createExternalLogMessage`, which accepts `any_address`.
+
+To represent [internal or none](/languages/tolk/types/address) , use `address?` and `null`.
+
+#### `any_address.isNone`, `any_address.isInternal`, `any_address.isExternal`
+
+Checks which specific blockchain address is contained in `any_address`.
+
+#### `any_address.castToInternal`
+
+Casts `any_address` to `address`, with a runtime check that the value is internal. To skip the check, use an [unsafe cast](/languages/tolk/types/type-checks-and-casts):
+`addr = myAny as address`.
+
+### Reserving Toncoins on the contract balance
+
+The standard library provides several `RESERVE_MODE_XXX` constants for [reserve modes](/foundations/actions/reserve), as well as the following functions.
+
+#### `reserveToncoinsOnBalance`
+
+Creates an output action that reserves Toncoins on the contract balance.
+
+#### `reserveExtraCurrenciesOnBalance`
+
+Similar to `reserveToncoinsOnBalance`, but also accepts a dictionary `extraAmount`.
+
+### Creating and sending messages
+
+Stdlib provides several `SEND_MODE_XXX` constants for [sending modes](/foundations/messages/modes).
+
+[Message cell composition](/languages/tolk/features/message-sending) is encapsulated by the `createMessage` function.
+
+A low-level function, `sendRawMessage`, is also available, but its use is not recommended.
+
+## Modules requiring explicit imports
+
+In addition to the always-available functions from `common.tolk`, Tolk provides several modules that must be explicitly imported before use.
+
+```tolk
+import "@stdlib/gas-payments"
+```
+
+Gas- and payment-related primitives. All functions are documented with detailed comments and can be explored in the IDE.
+
+- `getGasConsumedAtTheMoment`
+- `acceptExternalMessage`
+- `setGasLimitToMaximum`
+- `setGasLimit`
+- `calculateGasFee`
+- `calculateGasFeeWithoutFlatPrice`
+- `calculateStorageFee`
+- `calculateForwardFee`
+- `calculateForwardFeeWithoutLumpPrice`
+- `contract.getStorageDuePayment`
+- `contract.getStoragePaidPayment`
+
+```tolk
+import "@stdlib/exotic-cells"
+```
+
+Functions for loading and parsing [exotic cells](/foundations/serialization/cells), including library references.
+
+```tolk
+import "@stdlib/lisp-lists"
+```
+
+Lisp-style lists are represented as nested two-element tuples. For example, `[1, [2, [3, null]]]` represents the list `[1, 2, 3]`. They are rarely used in modern code.
+
+```tolk
+import "@stdlib/tvm-dicts"
+```
+
+Low-level API for working with TVM dictionaries. Their use is not recommended; prefer [built-in maps](/languages/tolk/types/maps).
+
+```tolk
+import "@stdlib/tvm-lowlevel"
+```
+
+Functions for working with TVM registers and the stack.
+
+## Why are some functions `builtin`?
+
+Many functions in `common.tolk` don't provide `asm` instructions:
+
+```tolk
+@pure
+fun slice.loadInt(mutate self, len: int): int
+    builtin
+```
+
+This is done for [optimization](/languages/tolk/features/compiler-optimizations) purposes. The compiler generates different assembler code depending on the arguments. For example, if `len` is a constant value such as `32`, `loadUint` is translated to `32 LDU`. If `len` is a variable, it is taken from the stack and the `LDUX` instruction is emitted.
+
+Another example, `builder.storeUint(1, 32).storeUint(2, 64)` is not translated into `32 STU` and `64 STU`. Instead, these calls are merged into a single `STSLICECONST`.
+
+## How does the embedded stdlib work?
+
+The stdlib is bundled with the compiler as the `tolk-stdlib/` directory and is discovered automatically. An import of the form `@stdlib/xxx` loads `{STDLIB_PATH}/xxx.tolk`.
+
+The stdlib directory is discovered as follows:
+
+1. The compiler searches predefined and relative paths. For example, when launched from a system-installed package such as `/usr/bin/tolk`, the stdlib is located at `/usr/share/ton/smartcont`. For custom installations, the `TOLK_STDLIB` environment variable can be set.
+1. The WASM wrapper [tolk-js](https://github.com/ton-blockchain/tolk-js) also includes the stdlib, so it is already available when using blueprint.
+1. IDE plugins automatically locate the stdlib to provide auto-completion. Blueprint installs `tolk-js`, creating the `node_modules/@ton/tolk-js/` folder in the project structure. It contains `common.tolk`, `tvm-dicts.tolk`, and other stdlib files.
