@@ -9,66 +9,33 @@ TON Pay uses webhooks to notify applications in real-time about transfer events.
 
 ## How webhooks work
 
-TON Pay sends an `HTTP POST` request to the configured webhook URL when a transfer is completed on-chain. The transfer can be successful or failed; check `status` in the payload.
-
-<Aside>
-  The webhook URL must be publicly accessible and accept `POST` requests from TON Pay backend.
-</Aside>
-
 1. A transfer is completed on-chain and indexed by TON Pay.
-1. TON Pay generates a webhook payload and signs it using [HMAC-SHA256](https://en.wikipedia.org/wiki/HMAC) with the API key.
+1. TON Pay generates a webhook payload and signs it using [HMAC-SHA256](https://en.wikipedia.org/wiki/HMAC) and the API key.
 1. TON Pay sends a `POST` request to the webhook URL with the signed payload. The request includes the `X-TonPay-Signature` header for verification.
-1. Verify the signature and process the event. Return a `2xx` status code to acknowledge receipt.
+1. Verify the signature and process the event payload. Return a `2xx` status code to acknowledge receipt.
 
+<Aside
+  type="note"
+  title="Important"
+>
+  The webhook URL must be publicly accessible and accept `POST` requests from the TON Pay backend.
+</Aside>
 
 ## Configure the webhook URL
 
 Configure the endpoint in TON Pay Merchant Dashboard.
 
 1. Open the [TON Pay Merchant Dashboard](https://tonpay.tech/dashboard) and sign in to the merchant account.
-1. Navigate to <kbd>Developer</kbd> → <kbd>Webhooks</kbd> sections.
-1. Enter the webhook endpoint URL (must be HTTPS in production). Replace `<WEBHOOK_URL>` with the HTTPS endpoint that receives TON Pay webhooks.
-
-    ```text
-    <WEBHOOK_URL>
-    ```
-    `<WEBHOOK_URL>` — HTTPS endpoint that receives TON Pay webhooks.
-
+1. Navigate to the <kbd>Developer</kbd> → <kbd>Webhooks</kbd> sections.
+1. Enter the webhook URL. In production, the endpoint must use HTTPS. For example, `https://thedomain.com/webhooks/tonpay`
 1. Save the configuration and use the test feature to verify delivery.
 
-
-<Tip>
-  Use the built-in test feature in the dashboard to send sample webhooks before going live.
-</Tip>
-
-## Verify webhook signatures
-
-Every webhook request includes an `X-TonPay-Signature` header containing an HMAC-SHA256 signature. **Verify this signature** to ensure the request comes from TON Pay.
-
-<Warning>
-  Do not skip signature verification in production. Unverified webhooks can be forged.
-</Warning>
-
-```ts
-import { verifySignature, type WebhookPayload } from "@ton-pay/api";
-
-app.post("/webhook", (req, res) => {
-  const signature = req.headers["x-tonpay-signature"];
-
-  if (!verifySignature(req.body, signature, process.env.TONPAY_API_SECRET)) {
-    return res.status(401).json({ error: "Invalid signature" });
-  }
-
-  const webhookData: WebhookPayload = req.body;
-
-  // Process the webhook in application-specific logic.
-  res.status(200).json({ received: true });
-});
-```
-
-<Info>
-  The webhook API secret is available in the Merchant Dashboard at <kbd>Developer</kbd> > <kbd>Webhooks</kbd> (not the API tab). Keep it secure and server-side.
-</Info>
+<Aside
+  type="note"
+  title="Built-in test feature"
+>
+  Use a built-in test feature in the dashboard to send sample webhooks before going live.
+</Aside>
 
 ## Webhook payload
 
@@ -91,7 +58,7 @@ type WebhookPayload =
   | TransferRefundedWebhookPayload; // Coming soon
 ```
 
-### transfer.completed event
+### `transfer.completed`
 
 ```ts
 interface TransferCompletedWebhookPayload {
@@ -101,14 +68,16 @@ interface TransferCompletedWebhookPayload {
 }
 ```
 
-<Info>
-  Webhook types are exported from `@ton-pay/api`. Use `WebhookPayload` for type safety in webhook handlers.
-  See [API reference](/ecosystem/ton-pay/api-reference).
-</Info>
+<Aside
+  type="tip"
+  title="Type safety"
+>
+  Webhook types are exported from [`@ton-pay/api`](link-rot). Use `WebhookPayload` for type safety in webhook handlers.
+</Aside>
 
 ### Example payloads
 
-#### Successful transfer
+Successful transfer:
 
 ```json
 {
@@ -126,14 +95,14 @@ interface TransferCompletedWebhookPayload {
     "bodyBase64Hash": "<BODY_BASE64_HASH>",
     "txHash": "<TX_HASH>",
     "traceId": "<TRACE_ID>",
-    "commentToSender": "Thank you for your purchase",
+    "commentToSender": "Thanks for the purchase",
     "commentToRecipient": "Payment for order #1234",
     "date": "2024-01-15T14:30:00.000Z"
   }
 }
 ```
 
-#### Failed transfer
+Failed transfer:
 
 ```json
 {
@@ -176,11 +145,7 @@ Placeholders:
   type="string"
   required
 >
-  Event type. Currently only `transfer.completed` is supported. `transfer.completed` means processing is finished, but the transfer can be successful or failed. Check `status` in `data`.
-
-  <Info>
-    An additional event, `transfer.refunded`, is planned for a future update.
-  </Info>
+  Event type. `transfer.completed` indicates that on-chain processing is finished. The transfer may be successful or failed; check `data.status` for the result.
 </ResponseField>
 
 <ResponseField
@@ -188,7 +153,7 @@ Placeholders:
   type="string"
   required
 >
-  ISO 8601 timestamp when the event occurred.
+  [ISO 8601](https://en.wikipedia.org/wiki/ISO_8601) timestamp indicating when the event occurred.
 </ResponseField>
 
 <ResponseField
@@ -196,23 +161,17 @@ Placeholders:
   type="object"
   required
 >
-  Transfer details including amount, addresses, and transaction hash.
+  Transfer details such as amount, addresses, and the transaction hash.
 
   <Expandable
-    title="Data properties"
+    title="data properties"
   >
     <ResponseField
       name="amount"
       type="string"
       required
     >
-      Human-readable payment amount with decimals (for example, "10.5").
-
-      <Warning
-
-      >
-        Verify the amount matches the expected payment amount.
-      </Warning>
+      Human-readable payment amount with decimals. For example, 10.5.
     </ResponseField>
 
     <ResponseField
@@ -220,7 +179,7 @@ Placeholders:
       type="string"
       required
     >
-      Amount in base units (nanotons for TON, smallest unit for jettons).
+      Amount in base units; nanotons for TON.
     </ResponseField>
 
     <ResponseField
@@ -229,10 +188,6 @@ Placeholders:
       required
     >
       Sender wallet address on TON blockchain.
-
-      <Info>
-        Compare with the expected sender address if payer identity is tracked.
-      </Info>
     </ResponseField>
 
     <ResponseField
@@ -249,19 +204,13 @@ Placeholders:
       required
     >
       Asset identifier. Use "TON" for TON coin or a jetton master address for tokens.
-
-      <Warning
-
-      >
-        Verify this matches the expected payment currency. Don’t accept USDT if you expected TON!
-      </Warning>
     </ResponseField>
 
     <ResponseField
       name="assetTicker"
       type="string"
     >
-      Human-readable asset ticker (for example, "TON", "USDT").
+      Human-readable asset ticker. For example, TON or USDT.
     </ResponseField>
 
     <ResponseField
@@ -269,11 +218,7 @@ Placeholders:
       type="string"
       required
     >
-      Transfer status: "success" or "failed".
-
-      <Info>
-        Process only `success` status. Log `failed` status for investigation.
-      </Info>
+      Transfer status: `success` or `failed`. Process only `success` status. Log `failed` status for investigation.
     </ResponseField>
 
     <ResponseField
@@ -282,12 +227,6 @@ Placeholders:
       required
     >
       Unique transfer reference. Use this to match the webhook with the internal order or transaction.
-
-      <Warning
-
-      >
-        Verify this reference matches the original transfer creation.
-      </Warning>
     </ResponseField>
 
     <ResponseField
@@ -352,112 +291,114 @@ Placeholders:
   </Expandable>
 </ResponseField>
 
+## Verify webhook signatures
+
+Every webhook request includes an `X-TonPay-Signature` header containing an HMAC-SHA256 signature. Verify this signature to ensure the request comes from TON Pay.
+
+<Aside
+  type="danger"
+  title="Security requirement"
+>
+  In production, webhook requests must be verified using the signature. Without verification, requests can be forged.
+</Aside>
+
+```ts
+import { verifySignature, type WebhookPayload } from "@ton-pay/api";
+
+app.post("/webhook", (req, res) => {
+  const signature = req.headers["x-tonpay-signature"];
+
+  if (!verifySignature(req.body, signature, process.env.TONPAY_API_SECRET)) {
+    return res.status(401).json({ error: "Invalid signature" });
+  }
+
+  const webhookData: WebhookPayload = req.body;
+
+  // Process the webhook in application-specific logic.
+  res.status(200).json({ received: true });
+});
+```
+
+<Aside
+  type="note"
+  title="Important"
+>
+  The webhook API secret is available in the Merchant Dashboard under <kbd>Developer</kbd> → <kbd>Webhooks</kbd>. Store it securely and use it only on the server.
+</Aside>
+
 ## Validate webhook requests
 
 Validate fields against the expected transaction data before marking an order as paid.
 
-<Warning>
-  For authentication failures or malformed requests, return a non-`2xx` status so TON Pay retries or surfaces the error. For business validation failures that are intentionally rejected (for example, mismatched amount or unknown reference), return `200 OK` after logging the failure to prevent retries.
-</Warning>
+<Aside type="note">
+  Return a `2xx` response for validation failures, such as an amount mismatch or an unknown order, to prevent retries. Log these issues for further investigation.
+</Aside>
 
-Return a `2xx` response only after successful authentication and for validation failures that are intentionally rejected. Use non-`2xx` responses for requests that fail authentication or are malformed.
+1. Verify the `X-TonPay-Signature` header and reject invalid requests.
 
-<Steps>
-  <Step
-    title="Verify signature"
-  >
-    Verify the `X-TonPay-Signature` header and reject invalid requests.
+   ```ts
+   if (!verifySignature(payload, signature, apiKey)) {
+     return res.status(401).json({ error: "Invalid signature" });
+   }
+   ```
 
-    ```ts
-    if (!verifySignature(payload, signature, apiKey)) {
-      return res.status(401).json({ error: "Invalid signature" });
-    }
-    ```
-  </Step>
+1. Verify the event type.
+   ```ts
+   if (webhookData.event !== "transfer.completed") {
+     return res.status(400).json({ error: "Unexpected event type" });
+   }
+   ```
 
-  <Step
-    title="Check event type"
-  >
-    Verify the event type.
+1. Check that the reference matches a transaction created earlier.
 
-    ```ts
-    if (webhookData.event !== "transfer.completed") {
-      return res.status(400).json({ error: "Unexpected event type" });
-    }
-    ```
-  </Step>
+   ```ts
+   const order = await db.getOrderByReference(webhookData.data.reference);
+   if (!order) {
+     console.error("Order not found:", webhookData.data.reference);
+     return res.status(200).json({ received: true }); // Acknowledge to prevent retry
+   }
+   ```
 
-  <Step
-    title="Verify reference"
-  >
-    Check that the reference matches a transaction created earlier.
+1. Verify the amount matches the expected payment amount.
 
-    ```ts
-    const order = await db.getOrderByReference(webhookData.data.reference);
-    if (!order) {
-      console.error("Order not found:", webhookData.data.reference);
-      return res.status(200).json({ received: true }); // Acknowledge to prevent retry
-    }
-    ```
-  </Step>
+   ```ts
+   if (parseFloat(webhookData.data.amount) !== order.expectedAmount) {
+     console.error("Amount mismatch:", {
+       expected: order.expectedAmount,
+       received: webhookData.data.amount,
+     });
+     return res.status(200).json({ received: true }); // Acknowledge to prevent retry
+   }
+   ```
 
-  <Step
-    title="Validate amount"
-  >
-    Verify the amount matches the expected payment amount.
+1. Verify the payment currency or token.
 
-    ```ts
-    if (parseFloat(webhookData.data.amount) !== order.expectedAmount) {
-      console.error("Amount mismatch:", {
-        expected: order.expectedAmount,
-        received: webhookData.data.amount,
-      });
-      return res.status(200).json({ received: true }); // Acknowledge to prevent retry
-    }
-    ```
-  </Step>
+   ```ts
+   if (webhookData.data.asset !== order.expectedAsset) {
+     console.error("Asset mismatch:", {
+       expected: order.expectedAsset,
+       received: webhookData.data.asset,
+     });
+     return res.status(200).json({ received: true }); // Acknowledge to prevent retry
+   }
+   ```
 
-  <Step
-    title="Validate asset"
-  >
-    Verify the payment currency or token.
+1. Check status and process only successful transfers.
 
-    ```ts
-    if (webhookData.data.asset !== order.expectedAsset) {
-      console.error("Asset mismatch:", {
-        expected: order.expectedAsset,
-        received: webhookData.data.asset,
-      });
-      return res.status(200).json({ received: true }); // Acknowledge to prevent retry
-    }
-    ```
-  </Step>
+   ```ts
+   if (webhookData.data.status !== "success") {
+     await db.markOrderAsFailed(order.id, webhookData.data.txHash);
+     return res.status(200).json({ received: true }); // Acknowledge to prevent retry
+   }
+   ```
 
-  <Step
-    title="Check status"
-  >
-    Process only successful transfers.
+1. Prevent duplicate processing using the reference.
 
-    ```ts
-    if (webhookData.data.status !== "success") {
-      await db.markOrderAsFailed(order.id, webhookData.data.txHash);
-      return res.status(200).json({ received: true }); // Acknowledge to prevent retry
-    }
-    ```
-  </Step>
-
-  <Step
-    title="Check for duplicates"
-  >
-    Prevent duplicate processing using the reference.
-
-    ```ts
-    if (order.status === "completed") {
-      return res.status(200).json({ received: true, duplicate: true });
-    }
-    ```
-  </Step>
-</Steps>
+   ```ts
+   if (order.status === "completed") {
+     return res.status(200).json({ received: true, duplicate: true });
+   }
+   ```
 
 ### Complete validation example
 
@@ -558,206 +499,152 @@ TON Pay retries failed webhook deliveries.
     title="Retry delays"
     icon="clock"
   >
-    1 second -> 5 seconds -> 15 seconds.
+    1s → 5s → 15s
   </Card>
 </CardGroup>
 
 ### Delivery outcomes
 
 - Success (`2xx`): no retry, webhook marked as delivered.
-- All other responses (4xx, 5xx, network errors): automatic retry with exponential backoff.
+- All other responses (`4xx`, `5xx`, network errors): automatic retry with exponential backoff.
 
-<Warning>
-  Return a `2xx` status code only after successfully processing the webhook. Returning success prematurely may result in missed events.
-</Warning>
+<Aside type="note">
+  Return a `2xx` status code only after the webhook is processed successfully. Returning success prematurely can result in missed events.
+</Aside>
 
 ## Best practices
 
-<AccordionGroup>
-  <Accordion
-    title="Validate critical fields"
-  >
-    Verify signature, reference, amount, asset, recipient address, and status before marking an order as paid.
+- Validate the following fields before marking an order as paid:
 
-    - Signature (authentication)
-    - Reference (transaction exists in your system)
-    - Amount (matches expected payment)
-    - Asset (correct currency/token)
-    - Wallet ID (correct receiving wallet)
-    - Status (transaction succeeded)
+  - Signature: authentication;
+  - Reference: the transaction exists in the system;
+  - Amount: the expected payment is matched;
+  - Asset: correct currency or token;
+  - Wallet ID: correct receiving wallet;
+  - Status: the transaction succeeded.
 
-    ```ts
-    // Avoid: trust without verification
-    await markOrderAsPaid(webhook.data.reference);
+  ```ts
+  // Avoid: trust without verification
+  await markOrderAsPaid(webhook.data.reference);
 
-    // Prefer: validate and then process
-    if (isValidWebhook(webhook, order)) {
-      await markOrderAsPaid(order.id);
+  // Prefer: validate and then process
+  if (isValidWebhook(webhook, order)) {
+    await markOrderAsPaid(order.id);
+  }
+  ```
+
+- Return `2xx` only after successful validation, then process the webhook to avoid timeouts.
+
+  ```ts
+  app.post('/webhook', async (req, res) => {
+  // Validate signature first
+  if (!verifyWebhookSignature(...)) {
+    return res.status(401).json({ error: 'Invalid signature' });
+  }
+
+  // Quick validations
+  if (!isValidWebhook(req.body)) {
+    return res.status(400).json({ error: 'Invalid webhook data' });
+  }
+
+  // Acknowledge after validation
+  res.status(200).json({ received: true });
+
+  // Process in background
+  processWebhookAsync(req.body).catch(console.error);
+  });
+  ```
+
+- Implement idempotency. Webhooks may be delivered more than once. Use the `reference` field to prevent duplicate processing.
+
+  ```ts
+  async function processWebhook(payload: WebhookPayload) {
+    const order = await db.getOrder(payload.reference);
+
+    // Check if already processed
+    if (order.status === 'completed') {
+        console.log('Order already completed:', payload.reference);
+        return; // Skip processing
     }
-    ```
-  </Accordion>
 
-  <Accordion
-    title="Return `2xx` after validation and process asynchronously"
-  >
-    Acknowledge receipt after validation, then process in the background to avoid timeouts.
-
-    ```ts
-    app.post('/webhook', async (req, res) => {
-    // Validate signature first
-    if (!verifyWebhookSignature(...)) {
-      return res.status(401).json({ error: 'Invalid signature' });
-    }
-
-    // Quick validations
-    if (!isValidWebhook(req.body)) {
-      return res.status(400).json({ error: 'Invalid webhook data' });
-    }
-
-    // Acknowledge after validation
-    res.status(200).json({ received: true });
-
-    // Process in background
-    processWebhookAsync(req.body).catch(console.error);
+    // Process and update status atomically
+    await db.transaction(async (tx) => {
+        await tx.updateOrder(order.id, { status: 'completed' });
+        await tx.createPaymentRecord(payload);
     });
-    ```
-  </Accordion>
+  }
+  ```
 
-  <Accordion
-    title="Implement idempotency"
-  >
-    Webhooks may be delivered more than once. Use the `reference` field to prevent duplicate processing.
+- Log all webhook attempts. Log each request for debugging and security auditing.
 
-    ```ts
-    async function processWebhook(payload: WebhookPayload) {
-      const order = await db.getOrder(payload.reference);
+  ```ts
+  await logger.info("Webhook received", {
+    timestamp: new Date(),
+    signature: req.headers["x-tonpay-signature"],
+    reference: payload.data.reference,
+    event: payload.event,
+    amount: payload.data.amount,
+    asset: payload.data.asset,
+    status: payload.data.status,
+    validationResult: validationResult,
+  });
+  ```
 
-      // Check if already processed
-      if (order.status === 'completed') {
-          console.log('Order already completed:', payload.reference);
-          return; // Skip processing
-      }
+- Use HTTPS endpoints for webhooks in production. TON Pay may reject HTTP endpoints for security.
 
-      // Process and update status atomically
-      await db.transaction(async (tx) => {
-          await tx.updateOrder(order.id, { status: 'completed' });
-          await tx.createPaymentRecord(payload);
-      });
-    }
-    ```
-  </Accordion>
+- Monitor delivery failures. Set up alerts and review webhook delivery logs in the Merchant Dashboard
 
-  <Accordion
-    title="Log all webhook attempts"
-  >
-    Log each request for debugging and security auditing.
+- Store transaction hashes. Save `txHash` to support on-chain verification for disputes.
 
-    ```ts
-    await logger.info("Webhook received", {
-      timestamp: new Date(),
-      signature: req.headers["x-tonpay-signature"],
-      reference: payload.data.reference,
-      event: payload.event,
-      amount: payload.data.amount,
-      asset: payload.data.asset,
-      status: payload.data.status,
-      validationResult: validationResult,
-    });
-    ```
-  </Accordion>
-
-  <Accordion
-    title="Use HTTPS in production"
-  >
-    Use HTTPS endpoints in production. TON Pay may reject HTTP endpoints.
-  </Accordion>
-
-  <Accordion
-    title="Monitor delivery failures"
-  >
-    Set up alerts for webhook failures and review delivery logs in the Merchant Dashboard.
-  </Accordion>
-
-  <Accordion
-    title="Store transaction hashes"
-  >
-    Save `txHash` to support on-chain verification for disputes.
-
-    ```ts
-    await db.updateOrder(order.id, {
-      status: "completed",
-      txHash: webhookData.data.txHash,
-      senderAddr: webhookData.data.senderAddr,
-      completedAt: webhookData.timestamp,
-    });
-    ```
-  </Accordion>
-</AccordionGroup>
+  ```ts
+  await db.updateOrder(order.id, {
+    status: "completed",
+    txHash: webhookData.data.txHash,
+    senderAddr: webhookData.data.senderAddr,
+    completedAt: webhookData.timestamp,
+  });
+  ```
 
 ## Troubleshooting
 
-<AccordionGroup>
-  <Accordion
-    title="Webhooks not received"
-  >
-    - Check that the **webhook URL** in the Merchant Dashboard is correct and accessible.
-    - Confirm the **endpoint** is publicly reachable and not blocked by a firewall.
-    - Use the **dashboard test feature** to send a sample webhook.
-    - Review **webhook attempt logs** in the Merchant Dashboard.
-    - Return a **`2xx` status code** for valid requests.
-    - Respond within **10 seconds** to avoid timeouts.
-  </Accordion>
+- If webhooks are not received:
+  1. Verify the webhook URL configured in the Merchant Dashboard.
+  1. Ensure the endpoint is publicly reachable and not blocked by a firewall.
+  1. Use the dashboard test feature to send a sample webhook.
+  1. Review webhook attempt logs in the Merchant Dashboard.
+  1. Ensure your endpoint returns a `2xx` status code for valid requests.
+  1. Ensure the endpoint responds within 10 seconds to avoid timeouts.
 
-  <Accordion
-    title="Signature verification fails"
-  >
-    - Use the API key from the Merchant Dashboard at <kbd>Developer</kbd> > <kbd>API</kbd>.
-    - Compute the HMAC on the raw JSON string.
-    - Do not modify the request body before verification.
-    - Check the header name is `x-tonpay-signature` (lowercase).
-    - Use the SHA-256 HMAC algorithm.
-    - Check the signature format starts with `sha256=`.
-  </Accordion>
+- If signature verification fails:
+  1. Use the API key from the Merchant Dashboard at <kbd>Developer</kbd> → <kbd>API</kbd>.
+  1. Compute the HMAC over the raw JSON string.
+  1. Do not modify the request body before verification.
+  1. Verify the header name is `x-tonpay-signature` in lowercase.
+  1. Use the **HMAC-SHA256** algorithm.
+  1. Ensure the signature value starts with `sha256=`.
 
-  <Accordion
-    title="Amount or asset mismatch"
-  >
-    Possible causes:
+- If amount or asset mismatch, possible causes include:
+  1. Wrong order lookup or reference mapping.
+  1. Price changed after order creation.
+  1. Currency mismatch between order and transfer.
+  1. Potential attack or spoofed request.
 
-    - Wrong order lookup or reference mapping.
-    - Price changed after order creation.
-    - Currency mismatch between order and transfer.
-    - Potential attack or spoofed request.
+- If duplicate webhook processing:
 
-    <Warning>
-      Do not fulfill orders with mismatched amounts or assets.
-    </Warning>
-  </Accordion>
+  1. Implement idempotency using the `reference` field.
+  1. Use database transactions to prevent race conditions.
+  1. Check order status before processing.
 
-  <Accordion
-    title="Duplicate webhook processing"
-  >
-    - **Webhooks** can be delivered more than once.
-    - **Implement idempotency** using the `reference` field.
-    - **Use database transactions** to prevent race conditions.
-    - **Check order status** before processing.
+  ```ts
+  if (order.status === "completed") {
+    return; // Already processed
+  }
+  ```
 
-    ```ts
-    if (order.status === "completed") {
-      return; // Already processed
-    }
-    ```
-  </Accordion>
-
-  <Accordion
-    title="Timeout errors"
-  >
-    - **Respond within 10 seconds** to avoid timeouts.
-    - **Process webhooks asynchronously** after quick validation.
-    - **Return `2xx`** after validation passes.
-    - **Use background jobs** for long-running work.
-  </Accordion>
-</AccordionGroup>
+- If timeout errors occur:
+  1. Respond within 10 seconds.
+  1. Process webhooks asynchronously after quick validation.
+  1. Return `2xx` after validation passes.
 
 ## Next steps
 
