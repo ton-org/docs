@@ -33,25 +33,44 @@ Alternatively, explore the complete demo wallet with WalletKit integration:
 
 ## Initialization
 
-The basic kit initialization consists of creating a corresponding object by passing it a minimal set of necessary arguments. One needs to pick a TON network to operate on, provide the necessary device and wallet manifest configurations.
+The basic kit initialization consists of creating a corresponding object by passing it a minimal set of necessary arguments: TON networks to operate on.
+
+Yet, it's often useful to configure optional parameters right away — the following example also specifies core wallet information, TON Connect manifest, and bridge settings.
 
 ```ts
 import {
   // Main class
   TonWalletKit,
-  // Network constants (MAINNET/TESTNET)
-  CHAIN,
+  // Network object
+  Network,
   // Helper functions
   createDeviceInfo,
   createWalletManifest,
 } from '@ton/walletkit';
 
-// 0. Create a kit object
+// 0. Create a kit object.
 const kit = new TonWalletKit({
-  // 1. Pick a network — prefer CHAIN.TESTNET during development,
-  //    and only switch to CHAIN.MAINNET and production deployments
-  //    after rigorous testing.
-  network: CHAIN.TESTNET,
+  // 1. Configure networks.
+  networks: {
+    // Production network. All contracts and funds are real.
+    [Network.mainnet().chainId]: {
+      apiClient: {
+        // Most commonly used, official API provider.
+        url: 'https://toncenter.com',
+
+        // A key to access higher RPS limits.
+        // Get it from https://t.me/toncenter
+        key: '<MAINNET_API_KEY>',
+      },
+    },
+    // Testing network. For experiments, beta tests, and feature previews.
+    [Network.testnet().chainId]: {
+      apiClient: {
+        url: 'https://testnet.toncenter.com',
+        key: '<TESTNET_API_KEY>',
+      },
+    },
+  },
 
   // 2. Specify core information and constraints of the given wallet.
   deviceInfo: createDeviceInfo({
@@ -70,9 +89,18 @@ const kit = new TonWalletKit({
   //    but you may want to specify some custom values,
   //    such as the human-readable name of your wallet or its icon image url.
   walletManifest: createWalletManifest(),
+
+  // 4. Specify the TON Connect's bridge settings
+  bridge: {
+    // The main TON Connect bridge for dApp communication.
+    // It is capable to withstand significant load.
+    //
+    // To self-host, see https://github.com/ton-connect/bridge
+    bridgeUrl: 'https://connect.ton.org/bridge',
+  },
 });
 
-// 4. Finally, wait for the initialization to complete
+// 5. Finally, wait for the initialization to complete
 await kit.waitForReady();
 ```
 
@@ -100,29 +128,67 @@ See also: [TON Connect's wallet manifest](/ecosystem/ton-connect/manifest#wallet
 ### Required
 
 <ParamField
-  path="network"
-  type="CHAIN.TESTNET | CHAIN.MAINNET"
+  path="networks"
+  type="Record<CHAIN, NetworkConfig>"
   required
 >
-  The TON network to use.
+  For one or more TON networks, configure their respective API or RPC providers to interact with.
 
   ```ts
-  import { CHAIN } from '@ton/walletkit';
+  import { Network } from '@ton/walletkit';
 
-  // Testing network of TON Blockchain. For experiments, beta tests, and feature previews.
-  CHAIN.TESTNET; // "-3"
+  new TonWalletKit({
+    networks: {
+      // Production network. All contracts and funds are real.
+      [Network.mainnet().chainId]: { // "-239"
+        apiClient: {
+          // Most commonly used, official API provider.
+          //
+          // To self-host, see:
+          // * Real-time API: https://github.com/toncenter/ton-http-api-cpp
+          // * Indexer: https://github.com/toncenter/ton-indexer
+          // It is important to put real-time API under `/api/v2` route and indexer API under `/api/v3` route.
+          url: 'https://toncenter.com',
 
-  // Production network of TON Blockchain. All contracts and funds are real.
-  CHAIN.MAINNET; // "-239"
+          // Optional key to access higher RPS limits.
+          key: '<MAINNET_API_KEY>',
+        },
+      },
+      // Testing network. For experiments, beta tests, and feature previews.
+      [Network.testnet().chainId]: { // "-3"
+        apiClient: {
+          url: 'https://testnet.toncenter.com',
+          key: '<TESTNET_API_KEY>',
+        },
+      },
+    },
+    // ...later fields...
+  });
+  ```
+
+  It is also possible to provide an entirely custom provider with its own `ApiClient` interface implementation.
+
+  ```ts
+  import { Network } from '@ton/walletkit';
+
+  new TonWalletKit({
+    networks: {
+      [Network.testnet().chainId]: { // "-3"
+        apiClient: /*  A complete ApiClient interface implementation */,
+      },
+    },
+    // ...later fields...
+  });
   ```
 </ParamField>
+
+### Optional
 
 <ParamField
   path="deviceInfo"
   type="DeviceInfo"
-  required
 >
-  Core information and constraints of the given wallet.
+  Core information and constraints of the given wallet. If not provided, defaults will be used.
 
   ```ts
   interface DeviceInfo {
@@ -184,9 +250,8 @@ See also: [TON Connect's wallet manifest](/ecosystem/ton-connect/manifest#wallet
 <ParamField
   path="walletManifest"
   type="WalletInfo"
-  required
 >
-  How your wallet interacts with the TON Connect. This field is closely related to the [corresponding JSON manifest file](/ecosystem/ton-connect/manifest#wallet-manifest).
+  How your wallet interacts with the TON Connect. If not provided, defaults will be used. This field is closely related to the [corresponding JSON manifest file](/ecosystem/ton-connect/manifest#wallet-manifest).
 
   ```ts expandable
   interface WalletInfo {
@@ -260,27 +325,6 @@ See also: [TON Connect's wallet manifest](/ecosystem/ton-connect/manifest#wallet
   ```
 </ParamField>
 
-### Optional
-
-<ParamField
-  path="apiClient"
-  type="object | ApiClient"
->
-  Which API or RPC provider to use to interact with TON Blockchain.
-
-  ```ts
-  // Either a small object:
-  const _: {
-    // Defaults to "https://toncenter.com".
-    url?: string;
-
-    // A key to access higher RPS limits.
-    key?: string;
-  }
-  // Or a complete ApiClient interface implementation.
-  ```
-</ParamField>
-
 <ParamField
   path="bridge"
   type="BridgeConfig"
@@ -325,8 +369,8 @@ See also: [TON Connect's wallet manifest](/ecosystem/ton-connect/manifest#wallet
   // Either a small object:
   interface StorageConfig {
     prefix?: string;
-    cacheTimeout?: number;
-    maxCacheSize?: number;
+    maxRetries?: number;
+    retryDelay?: number;
     allowMemory?: boolean;
   }
 
@@ -349,6 +393,10 @@ See also: [TON Connect's wallet manifest](/ecosystem/ton-connect/manifest#wallet
   ```ts
   interface EventProcessorConfig {
     disableEvents?: boolean;
+
+    // If true, transaction events will not be emulated,
+    // and their `preview` field will be undefined.
+    disableTransactionEmulation?: boolean;
   }
   ```
 </ParamField>
@@ -384,6 +432,13 @@ See also: [TON Connect's wallet manifest](/ecosystem/ton-connect/manifest#wallet
     icon="wallet"
     horizontal="true"
     href="/ecosystem/ton-connect/walletkit/web/wallets"
+  />
+
+  <Card
+    title="Handle connections"
+    icon="plug"
+    horizontal="true"
+    href="/ecosystem/ton-connect/walletkit/web/connections"
   />
 </Columns>
 
