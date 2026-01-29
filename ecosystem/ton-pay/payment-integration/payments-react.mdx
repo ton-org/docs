@@ -1,4 +1,522 @@
 ---
-title: "How to send payments using React"
+title: "How to send payments using TON Pay React hook"
 sidebarTitle: "Send payments React"
 ---
+
+import { Aside } from '/snippets/aside.jsx';
+
+The `useTonPay` hook provides a React interface for creating TON Pay transfers. It integrates with [TON Connect](/ecosystem/ton-connect/overview) to connect a wallet, sign transactions, and surface transfer errors through the hook state.
+
+## How `useTonPay` works
+
+The `useTonPay` hook manages the client-side flow for sending a TON Pay transfer. It performs the following steps:
+
+1. Checks whether a wallet is connected and, if not, opens the TON Connect modal and waits for a successful connection.
+1. Calls an application-provided factory function that builds the transaction message, either in the client-side or by requesting it from a backend service.
+1. Sends the transaction message to the connected wallet for user approval and signing.
+1. Returns the transaction result along with tracking identifiers that can be used for reconciliation.
+
+## Integration approaches
+
+`useTonPay` can be integrated in two ways, depending on where the transaction message is created.
+
+### Client-side message building
+
+- Message construction happens in the browser.
+- All transaction fields are provided by the client.
+
+### Server-side message building
+
+- Message construction happens on the backend.
+- Tracking identifiers are stored on the server before the message is returned to the client for signing.
+
+## Client-side implementation
+
+### Prerequisites
+
+The application must be wrapped with the TON Connect UI provider:
+
+```tsx
+import { TonConnectUIProvider } from "@tonconnect/ui-react";
+
+export function App() {
+  return (
+    <TonConnectUIProvider manifestUrl="/tonconnect-manifest.json">
+      {/* Application components */}
+    </TonConnectUIProvider>
+  );
+}
+```
+
+[The TON Connect manifest](/ecosystem/ton-connect/manifest) file must be publicly accessible and include valid application metadata.
+
+### Basic implementation
+
+```tsx expandable
+import { useTonPay } from "@ton-pay/ui-react";
+import { createTonPayTransfer } from "@ton-pay/api";
+
+export function PaymentButton() {
+  const { pay } = useTonPay();
+
+  const handlePayment = async () => {
+    try {
+      const { txResult, message, reference, bodyBase64Hash } = await pay(
+        async (senderAddr: string) => {
+          const result = await createTonPayTransfer(
+            {
+              amount: 3.5,
+              asset: "TON",
+              recipientAddr: "<RECIPIENT_WALLET_ADDRESS>",
+              senderAddr,
+              commentToSender: "Payment for Order #8451",
+            },
+            {
+              chain: "mainnet",
+              apiKey: "yourTonPayApiKey",
+            }
+          );
+
+          return {
+            message: result.message,
+            reference: result.reference,
+            bodyBase64Hash: result.bodyBase64Hash,
+          };
+        }
+      );
+
+      console.log("Transaction completed:", txResult.boc);
+      console.log("Reference for tracking:", reference);
+      console.log("Body hash:", bodyBase64Hash);
+
+      // Store tracking identifiers in the database
+      await savePaymentRecord({
+        reference,
+        bodyBase64Hash,
+        amount: 3.5,
+        asset: "TON",
+      });
+    } catch (error) {
+      console.error("Payment failed:", error);
+      // Handle error appropriately
+    }
+  };
+
+  return <button onClick={handlePayment}>Pay 3.5 TON</button>;
+}
+```
+
+### Response fields
+
+The `pay` function returns the following fields:
+
+<ResponseField
+  name="txResult"
+  type="SendTransactionResponse"
+  required
+>
+  Transaction result returned by TON Connect. It contains the signed transaction [bag of cells](/foundations/serialization/boc) and additional transaction details.
+</ResponseField>
+
+<ResponseField
+  name="message"
+  type="TonPayMessage"
+  required
+>
+  The transaction message that was sent, including the recipient address, amount, and payload.
+</ResponseField>
+
+<ResponseField
+  name="reference"
+  type="string"
+>
+  Unique tracking identifier for this transaction. Use it to correlate webhook notifications with orders.
+
+  <Aside
+    type="caution"
+  >
+    Store the reference after creation. It is required to match incoming webhook notifications to specific orders.
+  </Aside>
+</ResponseField>
+
+<ResponseField
+  name="bodyBase64Hash"
+  type="string"
+>
+  Base64-encoded hash of the transaction body. Can be used for advanced transaction verification.
+</ResponseField>
+
+## Server-side implementation
+
+### Backend endpoint
+
+Create an API endpoint that builds the transaction message and stores tracking data:
+
+```typescript expandable
+import { createTonPayTransfer } from "@ton-pay/api";
+
+app.post("/api/create-payment", async (req, res) => {
+  const { amount, senderAddr, orderId } = req.body;
+
+  try {
+    const { message, reference, bodyBase64Hash } = await createTonPayTransfer(
+      {
+        amount,
+        asset: "TON",
+        recipientAddr: "<MERCHANT_WALLET_ADDRESS>",
+        senderAddr,
+        commentToSender: `Payment for Order ${orderId}`,
+        commentToRecipient: `Order ${orderId}`,
+      },
+      {
+        chain: "testnet",
+        apiKey: "yourTonPayApiKey",
+      }
+    );
+
+    // Store tracking identifiers in your database
+    await db.createPayment({
+      orderId,
+      reference,
+      bodyBase64Hash,
+      amount,
+      asset: "TON",
+      status: "pending",
+      senderAddr,
+    });
+
+    // Return only the message to the client
+    res.json({ message });
+  } catch (error) {
+    console.error("Failed to create payment:", error);
+    res.status(500).json({ error: "Failed to create payment" });
+  }
+});
+```
+
+<Aside
+  type="caution"
+  title="Persist tracking identifiers before responding"
+>
+  Always persist tracking identifiers such as `reference` and `bodyBase64Hash` in the database before returning the message to the client. If the client loses connection or closes the browser, these identifiers are still required to process incoming webhooks.
+</Aside>
+
+### Frontend implementation
+
+```tsx expandable
+import { useTonPay } from "@ton-pay/ui-react";
+
+export function ServerPaymentButton({
+  orderId,
+  amount,
+}: {
+  orderId: string;
+  amount: number;
+}) {
+  const { pay } = useTonPay();
+
+  const handlePayment = async () => {
+    try {
+      const { txResult } = await pay(async (senderAddr: string) => {
+        const response = await fetch("/api/create-payment", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ amount, senderAddr, orderId }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to create payment");
+        }
+
+        const { message } = await response.json();
+        return { message };
+      });
+
+      console.log("Transaction sent:", txResult.boc);
+
+      // Optionally redirect or show success message
+      window.location.href = `/orders/${orderId}/success`;
+    } catch (error) {
+      console.error("Payment failed:", error);
+      alert("Payment failed. Please try again.");
+    }
+  };
+
+  return <button onClick={handlePayment}>Pay {amount} TON</button>;
+}
+```
+
+## Error handling
+
+The `useTonPay` hook throws errors in the following scenarios:
+
+### Wallet connection errors
+
+```typescript
+const { pay } = useTonPay();
+
+try {
+  await pay(getMessage);
+} catch (error) {
+  if (error.message === "Wallet connection modal closed") {
+    // User closed the connection modal without connecting
+    console.log("User cancelled wallet connection");
+  } else if (error.message === "Wallet connection timeout") {
+    // Connection attempt exceeded 5-minute timeout
+    console.log("Connection timeout - please try again");
+  }
+}
+```
+
+### Transaction errors
+
+```typescript
+try {
+  await pay(getMessage);
+} catch (error) {
+  // User rejected the transaction in their wallet
+  if (error.message?.includes("rejected")) {
+    console.log("User rejected the transaction");
+  }
+
+  // Network or API errors
+  else if (error.message?.includes("Failed to create TON Pay transfer")) {
+    console.log("API error - check your configuration");
+  }
+
+  // Other unexpected errors
+  else {
+    console.error("Unexpected error:", error);
+  }
+}
+```
+
+## Best practices
+
+- Persist tracking identifiers immediately.
+
+  ```typescript
+  // Good: Store before transaction
+  const { message, reference } = await createTonPayTransfer(...);
+  await db.createPayment({ reference, status: "pending" });
+  return { message };
+
+  // Bad: Only storing after successful transaction
+  const { txResult, reference } = await pay(...);
+  await db.createPayment({ reference }); // Too late if network fails
+  ```
+
+- Always validate or generate amounts server-side to prevent manipulation. Never trust amount values sent from the client.
+
+  ```typescript
+  // Server-side endpoint
+  app.post('/api/create-payment', async (req, res) => {
+      const { orderId, senderAddr } = req.body;
+
+      // Fetch the actual amount from your database
+      const order = await db.getOrder(orderId);
+
+      // Use the verified amount, not req.body.amount
+      const { message } = await createTonPayTransfer({
+          amount: order.amount,
+          asset: order.currency,
+          recipientAddr: '<RECIPIENT_WALLET_ADDRESS>',
+          senderAddr,
+      });
+
+      res.json({ message });
+  });
+  ```
+
+- Wrap the payment components with React error boundaries to handle failures.
+
+  ```tsx
+  class PaymentErrorBoundary extends React.Component {
+      componentDidCatch(error: Error) {
+          console.error('Payment component error:', error);
+          // Log to the error tracking service
+      }
+
+      render() {
+          return this.props.children;
+      }
+  }
+  ```
+
+- Payment processing can take several seconds. Provide clear feedback to users during wallet connection and transaction signing.
+
+  ```tsx
+  const [loading, setLoading] = useState(false);
+
+  const handlePayment = async () => {
+      setLoading(true);
+      try {
+          await pay(getMessage);
+      } finally {
+          setLoading(false);
+      }
+  };
+
+  return (
+      <button onClick={handlePayment} disabled={loading}>
+          {loading ? 'Processing...' : 'Pay Now'}
+      </button>
+  );
+  ```
+
+- Use environment variables for sensitive data and chain configuration.
+
+  ```typescript
+  const { message } = await createTonPayTransfer(params, {
+    chain: process.env.NEXT_PUBLIC_TON_CHAIN as 'mainnet' | 'testnet',
+    apiKey: process.env.TONPAY_API_KEY,
+  });
+  ```
+
+## Troubleshooting
+
+- If the hook throws `TonConnect provider not found`, wrap the application with `TonConnectUIProvider`.
+
+  ```tsx
+  import { TonConnectUIProvider } from "@tonconnect/ui-react";
+
+  function App() {
+    return (
+      <TonConnectUIProvider manifestUrl="/tonconnect-manifest.json">
+        <YourComponents />
+      </TonConnectUIProvider>
+    );
+  }
+  ```
+
+- If the wallet connection modal does not open:
+  1. Verify that the TON Connect manifest URL is accessible and valid.
+  1. Check the browser console for TON Connect initialization errors.
+  1. Ensure the manifest file is served with correct [CORS](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS) headers.
+  1. Open the manifest URL directly in the browser to verify it loads.
+
+- If the transaction fails with `Invalid recipient address`:
+  1. Verify that the recipient address is [a valid TON address](/foundations/addresses/formats).
+  1. Ensure the address format matches the selected chain; mainnet or testnet.
+  1. Verify that the address includes the full base64 representation with workchain.
+
+- If the factory function throws `Failed to create TON Pay transfer`:
+
+  1. Check whether the API key is missing or invalid for endpoints that require authentication.
+  1. Verify network connectivity.
+  1. Validate parameter values. For example, non-negative amounts and valid addresses.
+  1. Confirm the correct chain configuration; mainnet or testnet.
+
+  To inspect the underlying API error:
+
+  ```ts
+  try {
+    await createTonPayTransfer(...);
+  } catch (error) {
+    console.error("API Error:", error.cause); // HTTP status text
+  }
+  ```
+
+- If the user rejects the transaction and no error is reported:
+
+  1. Note that TON Connect may not emit an explicit error on rejection.
+  1. Add timeout handling:
+
+  ```ts
+  const paymentPromise = pay(getMessage);
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("Transaction timeout")), 60000)
+  );
+
+  await Promise.race([paymentPromise, timeoutPromise]);
+  ```
+
+## API key configuration
+
+When using `useTonPay` with server-side message building, the API key can be included (link-rot) in the backend endpoint:
+
+```typescript
+// Backend endpoint
+app.post("/api/create-payment", async (req, res) => {
+  const { amount, senderAddr, orderId } = req.body;
+
+  const { message, reference, bodyBase64Hash } = await createTonPayTransfer(
+    {
+      amount,
+      asset: "TON",
+      recipientAddr: process.env.MERCHANT_WALLET_ADDRESS!,
+      senderAddr,
+    },
+    {
+      chain: "mainnet",
+      apiKey: process.env.TONPAY_API_KEY, // Enables dashboard features
+    }
+  );
+
+  await db.createPayment({ orderId, reference, bodyBase64Hash });
+  res.json({ message });
+});
+```
+
+## Testnet configuration
+
+<Aside
+  type="danger"
+  title="Funds at risk"
+>
+  Running tests on mainnet can result in irreversible loss of real TON. Always use `chain: "testnet"` and testnet wallet addresses during development. Verify the network before switching to mainnet.
+</Aside>
+
+A complete description of testnet configuration, including obtaining testnet TON, testing jetton transfers, verifying transactions, and preparing for mainnet deployment, is available in the [Testnet configuration](/ecosystem/ton-pay/payment-integration/\<TESTNET_CONFIGURATION_DOC>) section.
+
+### Set up testnet
+
+Configure the environment to use testnet:
+
+```bash
+# .env.development
+NEXT_PUBLIC_TON_CHAIN=testnet
+NEXT_PUBLIC_RECIPIENT_ADDRESS=<TESTNET_RECIPIENT_ADDRESS>
+```
+
+```tsx
+const { txResult, reference } = await pay(async (senderAddr: string) => {
+  const result = await createTonPayTransfer(
+    {
+      amount: 1.0,
+      asset: "TON",
+      recipientAddr: process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS!,
+      senderAddr,
+    },
+    {
+      chain: process.env.TON_CHAIN as "mainnet" | "testnet", // Use testnet for testing
+    }
+  );
+
+  return {
+    message: result.message,
+    reference: result.reference,
+    bodyBase64Hash: result.bodyBase64Hash,
+  };
+});
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Webhook integration"
+    icon="webhook"
+    href="link"
+  >
+    Receive real-time notifications when payments complete.
+  </Card>
+
+  <Card
+    title="Transaction status"
+    icon="magnifying-glass"
+    href="link"
+  >
+    Query payment status using reference or body hash.
+  </Card>
+</CardGroup>
