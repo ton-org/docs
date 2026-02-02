@@ -46,12 +46,12 @@ async function getNfts(walletId: string): Promise<NftItem[] | undefined> {
   const wallet = kit.getWallet(walletId);
   if (!wallet) return;
 
-  // Query all NFTs owned by this wallet
-  const allNfts = await wallet.getNfts();
+  // Query 100 NFTs owned by this wallet
+  const ownedNfts = await wallet.getNfts({ pagination: { limit: 100 } });
 
   // Optionally filter by a specific collection address
-  const collectionNfts = allNfts.filter(
-    (nft) => nft.collectionAddress === '<NFT_COLLECTION_ADDRESS>',
+  const collectionNfts = ownedNfts.nfts.filter(
+    (nft) => nft.collection?.address === '<NFT_COLLECTION_ADDRESS>',
   );
 
   return collectionNfts;
@@ -60,11 +60,16 @@ async function getNfts(walletId: string): Promise<NftItem[] | undefined> {
 
 The most practical use of one-off ownership checks is right before approving an NFT transfer request. At this point, verify that the wallet actually owns the NFT being transferred.
 
-Despite this check, the transaction may still fail if the NFT is transferred by another means before the transaction is processed.
+<Aside type="note">
+  Despite this check, the transaction may still fail if the NFT is not owned or unaccessible at the time of transfer.
+</Aside>
 
 ```ts title="TypeScript"
 // An enumeration of various common error codes
 import { SEND_TRANSACTION_ERROR_CODES } from '@ton/walletkit';
+
+// Address of the NFT item contract
+const NFT_ITEM_ADDRESS = '<NFT_ITEM_ADDRESS>';
 
 kit.onTransactionRequest(async (event) => {
   const wallet = kit.getWallet(event.walletId ?? '');
@@ -77,16 +82,8 @@ kit.onTransactionRequest(async (event) => {
     return;
   }
 
-  // Check NFT ownership before proceeding
-  const ownedNfts = await wallet.getNfts();
-
-  // Extract the NFT address from the transaction request
-  const nftAddressToTransfer = extractNftAddress(event.request.messages);
-
   // Verify ownership
-  const ownsNft = ownedNfts.some(
-    (nft) => nft.address === nftAddressToTransfer,
-  );
+  const ownsNft = await wallet.getNft(NFT_ITEM_ADDRESS);
 
   // Reject early if NFT is not owned
   if (!ownsNft) {
@@ -183,9 +180,6 @@ kit.onTransactionRequest(async (event) => {
     // This is an array of values,
     // where positive amounts mean incoming assets
     // and negative amounts — outgoing assets.
-    //
-    // For NFTs, the assetType field contains 'NFT' and
-    // additional NFT metadata is available.
     console.log('Predicted transfers:', ourTransfers);
 
     // Filter NFT transfers specifically
@@ -245,8 +239,7 @@ async function sendNft(
   }
 
   // Verify ownership before creating the transfer
-  const ownedNfts = await fromWallet.getNfts();
-  const ownsNft = ownedNfts.nfts.some((nft) => nft.address === nftAddress);
+  const ownsNft = await fromWallet.getNft(nftAddress);
   if (!ownsNft) {
     console.error('NFT not owned by this wallet');
     return;
