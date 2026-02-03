@@ -3,36 +3,26 @@ title: "Forward payload in jettons"
 sidebarTitle: "Payload in jettons"
 ---
 
-import { Aside } from '/snippets/aside.jsx';
+A jetton transfer may include a `forwardPayload` to provide custom data for the transaction recipient. This is a convention, not a language feature.
 
-By convention, a jetton transfer may have some `forwardPayload` attached — to provide custom data for a transaction's recipient.
-Below are several approaches to represent a "payload" depending on particular needs.
-
-<Aside type="note">
-  It's not a "language feature", actually.
-  But developers ask so many questions about this topic that a dedicated page is provided.
-</Aside>
-
-## The schema of a jetton payload
+## Jetton payload schema
 
 By definition, the TL-B format is `(Either Cell ^Cell)`: one bit plus the corresponding data depending on the bit:
 
-- bit '0' means: payload = "all the next bits/refs" (_inline payload_)
-- bit '1' means: payload = "the next ref" (_ref payload_)
+- bit 0 indicates inline payload: all subsequent bits and references;
+- bit 1 indicates ref payload: the next reference.
 
-Since it may be inline, it's always positioned in the end of a message.
+When inline, the payload is positioned at the end of a message.
 
-However, many **existing jetton implementations do not follow the schema**.
+Some existing jetton implementations do not follow the schema:
 
-- Some implementations allow empty data to be passed (no bits at all).
-  It is invalid, because at least one bit must exist.
-  An empty payload should actually be encoded as bit '0': empty inline payload.
-- Some implementations do not check that no extra data is left after bit '1'.
-- Error codes differ between various implementations.
+- Some allow empty data, no bits at all, which is invalid because at least one bit must exist. An empty payload should be encoded as bit 0 – empty inline payload.
+- Some do not verify that no extra data remains after bit 1.
+- Error codes vary across implementations.
 
-## Canonical typing of the payload
+## Canonical payload typing
 
-TL-B `(Either X Y)` is essentially a union type `X | Y` in Tolk. Hence, this will work:
+TL-B `(Either X Y)` is a union type `X | Y` in Tolk. This can be defined as:
 
 ```tolk
 struct Transfer {
@@ -41,24 +31,20 @@ struct Transfer {
 }
 ```
 
-It will be parsed/serialized exactly as it should: either bit '0' + inline data or bit '1' + ref.
+It is parsed and serialized according to the schema: either bit 0 + inline data, or bit 1 + ref.
 
-It is convenient for assignment and client metadata, but **has some disadvantages**:
+This approach can be used for assignment and client metadata. Trade-offs include:
 
-- if you trust the input and need just to proxy data as-is, this approach consumes more gas due to runtime branching (IF bit '0', etc.)
-- it does not check, that no extra data is left after bit '1'
+- consumes more gas due to runtime branching (`IF` bit 0);
+- does not verify that no extra data remains after bit 1.
 
-## Questions to ask yourself
+## Payload typing cases
 
-To choose the correct typing, **answer the following questions**:
+The approach to representing a jetton `forwardPayload` depends on the intended usage and validation requirements.
 
-- Do you need validation or just proxy any data as-is?
-- Do you need custom error codes while validating?
-- Do you need to assign it dynamically or just to carry it forward?
+### Proxy data without validation
 
-## Various approaches depending on answers
-
-To proxy any data **without validation**, shape the "payload" as "all the rest":
+To proxy any data as-is, use `RemainingBitsAndRefs`:
 
 ```tolk
 struct Transfer {
@@ -67,7 +53,9 @@ struct Transfer {
 }
 ```
 
-To add **validation of a canonical union** `RemainingBitsAndRefs | cell`, check that no extra data exists after a _ref payload_:
+### Canonical union with validation
+
+To validate a canonical union `RemainingBitsAndRefs | cell`, ensure that no extra data remains after a ref payload:
 
 ```tolk
 struct Transfer {
@@ -84,8 +72,9 @@ fun Transfer.validatePayload(self) {
 }
 ```
 
-If **gas consumption is critical**, but validation is required — it's cheaper not to allocate unions on the stack,
-but to load a slice, validate it, and keep a slice for further serialization:
+### Validation with slices
+
+If gas consumption is critical but validation is required, avoid allocating unions on the stack. Instead, validate a slice and keep it for further serialization:
 
 ```tolk
 struct Transfer {
@@ -106,8 +95,9 @@ fun ForwardPayload.checkIsCorrectTLBEither(self) {
 }
 ```
 
-To throw **custom error codes** (not errCode 9 "cell underflow"), even calling `loadMaybeRef()` like above is discouraged.
-The solution can be:
+### Custom error codes
+
+To throw custom error codes instead of an error with [exit code 9](/tvm/exit-codes#9:-cell-underflow), calling `loadMaybeRef()` is discouraged.
 
 ```tolk
 type ForwardPayload = RemainingBitsAndRefs
@@ -142,9 +132,9 @@ fun ForwardPayload.checkIsCorrectTLBEither(self) {
 }
 ```
 
-Keeping a "remainder" is cheaper and allows graceful validation, but it's not convenient
-if you need to **assign a payload dynamically**. It's a plain `slice`, holding an encoded union.
-For example, creating a _ref payload_ from code having a `cell` requires manual work:
+### Dynamic assignment
+
+Keeping a remainder reduces gas usage and enables validation, but it is less convenient when a payload must be assigned dynamically. The remainder is a plain `slice` containing an encoded union. For example, creating a ref payload from a `cell` requires manual construction.
 
 ```tolk
 fun createRefPayload(ref: cell) {
@@ -160,13 +150,4 @@ fun createRefPayload(ref: cell) {
 }
 ```
 
-Of course, `RemainingBitsAndRefs | cell` is **much more convenient for assignment**, but as shown above,
-has its own disadvantages.
-
-<Aside
-  type="caution"
-  title={"Conclusion: no universal solution exists"}
->
-  Payloads are cumbersome, and the solution **depends on particular requirements**.
-  The topic is hard, and this article may require a second read to be fully understood.
-</Aside>
+Using `RemainingBitsAndRefs | cell` remains convenient for assignment but may incur additional gas costs.

@@ -2,10 +2,7 @@
 title: "Contract getters"
 ---
 
-import { Aside } from '/snippets/aside.jsx';
-
-Contract getters (or "get methods") are declared using `get fun xxx()`.
-They typically return data extracted from [storage](/languages/tolk/features/contract-storage).
+Contract getters or [get methods](/tvm/get-method) are declared using `get fun xxx()`. They typically return data extracted from [storage](/languages/tolk/features/contract-storage):
 
 ```tolk
 get fun currentOwner() {
@@ -14,11 +11,9 @@ get fun currentOwner() {
 }
 ```
 
-## The return type is inferred if omitted
+## Return type
 
-Get methods follow the same behavior as [functions and methods](/languages/tolk/syntax/functions-methods).
-
-However, specifying the type explicitly is considered good practice:
+The return type is inferred when omitted. Get methods follow the same behavior as [functions and methods](/languages/tolk/syntax/functions-methods). Specifying the return type explicitly is recommended:
 
 ```tolk
 get fun currentOwner(): address {
@@ -26,22 +21,20 @@ get fun currentOwner(): address {
 }
 ```
 
-## Prefer camelCase for custom names
+## Custom name
 
-- `get fun currentOwner()` — recommended
-- `get fun get_current_owner()` — not recommended
+Use camelCase for naming.
 
-**Unless it's required to match standard TEPs.**
-For example, a jetton wallet, by convention, should expose a method `get_wallet_data`
-(because it was named so in early implementations).
+- Recommended: `get fun currentOwner()`
+- Not recommended: `get fun get_current_owner()`
 
-In such cases, `get fun get_wallet_data` is appropriate, even though it may not look very nice.
+This convention may be overridden when matching standard TEPs. For example, a jetton wallet should expose a method `get_wallet_data`, as it was named in implementations.
+In such cases, using `get fun get_wallet_data` is appropriate, even if it does not follow the camelCase convention.
 
-## Use structures for complex replies
+## Structures
 
-When a getter returns several values — introduce a structure and return it.
-It's perfectly fine if a structure is used only once.
-Field names provide clear metadata for client wrappers and human readers.
+When a getter returns multiple values, define a [structure](/languages/tolk/types/structures) and return it.
+Using a structure is acceptable even for a single return. Field names provide explicit metadata for client wrappers, making the structure self-descriptive.
 
 ```tolk
 struct JettonWalletDataReply {
@@ -63,16 +56,13 @@ get fun get_wallet_data(): JettonWalletDataReply {
 }
 ```
 
-## Use `lazy` for storage loading
+## `lazy` loading
 
-Prefer `lazy loadStorage()` over `loadStorage()`.
-Unreferenced fields are automatically skipped, resulting in smaller bytecode.
+Use [`lazy` loading](/languages/tolk/features/lazy-loading) for [contract storage](/languages/tolk/features/contract-storage). Prefer `lazy loadStorage()` instead of `loadStorage()`. Unreferenced fields are skipped automatically.
 
-See [lazy loading](/languages/tolk/features/lazy-loading).
+## Parameters
 
-## Get methods may accept parameters
-
-The parameter syntax is identical to that of regular functions:
+Get methods can accept parameters. Parameters use the same syntax as regular functions:
 
 ```tolk
 get fun get_wallet_address(ownerAddress: address): address {
@@ -80,34 +70,10 @@ get fun get_wallet_address(ownerAddress: address): address {
 }
 ```
 
-## Get methods are called off-chain
+## Stack-based execution
 
-<Aside
-  type="caution"
-  title="Unlike Ethereum, getters are off-chain"
->
-  TON is an asynchronous blockchain, and contracts communicate exclusively via messages.
+Any function in TVM takes its arguments from the stack and pushes return values onto it; get methods differ only in that they can be invoked [off-chain](/from-ethereum#on-chain-get-methods). When called off-chain, a get method does not persist state changes.
 
-  There is no mechanism for contract A to invoke a getter of contract B.
-  It cannot synchronously retrieve data from B during a transaction.
-</Aside>
+A getter can return `int`, which is not serializable unlike `intN`. Returning a structure pushes each field onto the stack as a separate value. Client libraries such as [Blueprint](/contract-dev/blueprint/overview) parse get method responses using a tuple reader.
 
-Read the [Coming from Ethereum](/from-ethereum) guide.
-
-Get methods are evaluated off‑chain by external tooling such as:
-
-- APIs
-- explorers
-- lite servers
-
-## Get methods operate via the stack, not serialization
-
-Get methods accept parameters and return values via the TVM stack, since they are called off-chain.
-
-This is why **a getter can return `int`** (although it's not serializable, unlike `intN`, see [numbers](/languages/tolk/types/numbers)).
-Returning a structure pushes its fields onto the stack as N separate values.
-Client libraries such as Blueprint parse get‑method responses using a tuple reader.
-
-Get methods do not store their names. They are identified by a _method\_id_ = `crc16(name) | 0x10000` — to avoid storing extra strings on-chain.
-
-For low-level details, see [get methods in TVM](/tvm/get-method).
+Get methods do not store their names. They are identified by a `method_id = crc16(name) | 0x10000`, avoiding the need to store additional strings on-chain.

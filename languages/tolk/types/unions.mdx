@@ -2,10 +2,9 @@
 title: "Union types"
 ---
 
-Tolk supports union types `T1 | T2 | ...` similar to TypeScript.
-They allow a value to belong to one of several possible types.
-Pattern matching over unions is essential for message handling.
-A special case `T | null` is written as `T?` and called "[nullable](/languages/tolk/types/nullable)".
+Tolk supports union types such as `T1 | T2 | T3`.
+
+A union type represents a value that can be one of several types. [Pattern matching](/languages/tolk/syntax/pattern-matching) is used to distinguish union variants. A special case `T | null` is written as `T?` and referred to as a [nullable type](/languages/tolk/types/nullable).
 
 ```tolk
 struct (0x12345678) Increment { /* ... */ }
@@ -21,14 +20,14 @@ fun handle(m: IncomingMsg) {
 }
 ```
 
-## Not only structures: arbitrary types
+## Arbitrary union types
 
-All these types are valid:
+Union types are not limited to structures. Any types can be combined into a union. The following union types are valid:
 
-- `int | slice`
-- `address | Point | null`
-- `Increment | Reset | coins`
-- `int8 | int16 | int32 | int64`
+- `int | slice`;
+- `address | Point | null`;
+- `Increment | Reset | coins`;
+- `int8 | int16 | int32 | int64`.
 
 Union types are automatically flattened:
 
@@ -41,7 +40,7 @@ struct Demo {
 }
 ```
 
-Union types support assignment based on subtype relations. For instance, `B | C` can be passed/assigned to `A | B | C | D`:
+Union types support assignment based on subtype relations. For example, a value of type `B | C` can be passed to or assigned to `A | B | C | D`:
 
 ```tolk
 fun take(v: bits2 | bits4 | bits8 | bits16) {}
@@ -52,9 +51,9 @@ fun demo() {
 }
 ```
 
-## `match` must cover all cases
+## Exhaustive pattern matching
 
-In other words, it must be **exhaustive**.
+A `match` expression must cover all possible cases. It must be exhaustive.
 
 ```tolk
 fun errDemo(v: int | slice | Point) {
@@ -66,7 +65,7 @@ fun errDemo(v: int | slice | Point) {
 }
 ```
 
-`match` can be used for nullable types, since `T?` is `T | null`. It may also be used as an expression:
+`match` can be used with nullable types, since `T?` is equivalent to `T | null`. It can also be used as an expression:
 
 ```tolk
 fun replaceNullWith0(maybeInt: int?): int {
@@ -77,11 +76,9 @@ fun replaceNullWith0(maybeInt: int?): int {
 }
 ```
 
-See [pattern matching](/languages/tolk/syntax/pattern-matching) for syntax details.
+## Union type inference errors
 
-## Auto-inference of a union results in an error
-
-What if match arms result in different types, what is the resulting type?
+Auto-inference of a union type results in an error. If `match` arms produce values of different types, the inferred result is a union, which is typically not intended:
 
 ```tolk
 var a = match (...) {
@@ -90,15 +87,16 @@ var a = match (...) {
 };
 ```
 
-Formally, the type of `a` is inferred as `builder | int`, but this is most likely not what is intended and typically indicates an error in the code.
-In such situations, the compiler emits a message:
+The type of `a` is inferred as `builder | int`. In most cases, this indicates an error in the code. In such cases, the compiler emits the following message:
 
 ```ansi
 error: type of `match` was inferred as `builder | int`; probably, it's not what you expected
 assign it to a variable `var a: <type> = match (...) { ... }` manually
 ```
 
-So, either explicitly declare `a` as a union, or fix contract's code if it's a misprint. The same applies to other situations:
+To resolve this, either explicitly declare `a` as a union type or fix the code if the union is unintended.
+
+The same rule applies to other cases, such as return type inference:
 
 ```tolk
 fun f() {
@@ -107,8 +105,7 @@ fun f() {
 }
 ```
 
-The result is inferred as `int32 | int64`, which is valid, but in most cases a single integer type is expected.
-The compiler shows an error, just explicitly declare a return type:
+The result is inferred as `int32 | int64`. While it is valid, a single integer type is usually expected. The compiler reports an error. To fix it, explicitly declare the return type:
 
 ```tolk
 fun f(): int {
@@ -117,11 +114,11 @@ fun f(): int {
 }
 ```
 
-Anyway, declaring return types is good practice, and following it resolves any ambiguity.
+Declaring return types is recommended practice.
 
-## Operators `is` and `!is`
+## `is` and `!is` operators
 
-Besides `match`, unions can also be tested using `is`:
+Union types can be tested using the `is` operator:
 
 ```tolk
 fun demo(v: A | B) {
@@ -133,9 +130,9 @@ fun demo(v: A | B) {
 }
 ```
 
-## Lazy match for unions
+## `lazy` matching for unions
 
-In all examples of message handling, unions are parsed with `lazy`:
+In [message-handling](/languages/tolk/features/message-handling), union values are commonly parsed using `lazy`:
 
 ```tolk
 fun onInternalMessage(in: InMessage) {
@@ -146,22 +143,18 @@ fun onInternalMessage(in: InMessage) {
 }
 ```
 
-This pattern is called "lazy match":
+This pattern is referred to as [`lazy` match](/languages/tolk/features/lazy-loading):
 
 1. No union is allocated on the stack upfront; loading is deferred until needed.
-1. `match` operates by inspecting the slice prefix (opcode), not by _typeid_ on the stack.
+1. `match` operates by inspecting the slice prefix (opcode), instead of checking a type identifier on the stack.
 
-This approach is significantly more efficient, although unions continue to function correctly without `lazy` and comply with all type-system rules.
-
-Read about [lazy loading](/languages/tolk/features/lazy-loading).
+Union types continue to work correctly without `lazy` and follow the same type-system rules.
 
 ## Stack layout and serialization
 
-Unions have a complex stack layout, commonly named as "tagged unions". Enums in Rust work the same way.
+Union types have a complex [stack layout](/languages/tolk/types/overall-tvm-stack), commonly referred to as tagged unions.
 
-Serialization depends on whether the it's a union of structures with manual serialization prefixes:
+[Serialization](/languages/tolk/types/overall-serialization) depends on whether the union consists of structures with manual serialization prefixes:
 
-- if yes (`struct (0x1234) A`), those prefixes are used
-- if no, the compiler auto-generates a prefix tree; for instance, `T1 | T2` is called "Either": '0'+T1 or '1'+T2
-
-For details, follow [TVM representation](/languages/tolk/types/overall-tvm-stack) and [Serialization](/languages/tolk/types/overall-serialization).
+- if yes; for example, `struct (0x1234) A`, those prefixes are used;
+- if no, the compiler automatically generates a prefix tree; for example, `T1 | T2` is called `Either` type: `0` + `T1` or `1` + `T2`.
