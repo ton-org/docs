@@ -44,22 +44,14 @@ import {
  * @return {CheckResult}
  */
 const checkUnique = (config) => {
-  const allowedDuplicates = new Set([
-    '/ecosystem/api/toncenter/rate-limit',
-    '/ecosystem/api/toncenter/get-api-key',
-  ]);
-
   const navLinksSet = getNavLinksSet(config);
   const navLinks = getNavLinks(config);
   if (navLinks.length != navLinksSet.size) {
-    const duplicates = navLinks.filter((val, idx) => navLinks.indexOf(val) !== idx && navLinks.indexOf(val, idx + 1) === -1)
-      .filter((val) => !allowedDuplicates.has(val));
-    if (duplicates.length === 0) return { ok: true };
     return {
       ok: false,
       error: composeErrorList(
         'Found duplicate navigation paths:',
-        duplicates,
+        navLinks.filter((val, idx) => navLinks.indexOf(val) !== idx && navLinks.indexOf(val, idx + 1) === -1),
         'Navigation paths in docs.json must be unique!',
       ),
     };
