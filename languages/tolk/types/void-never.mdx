@@ -1,0 +1,112 @@
+---
+title: "Void and never types"
+sidebarTitle: "Void and never"
+---
+
+Tolk provides the types `void` and `never`, which both describe the absence of a value, but with different semantics.
+
+## `void`
+
+A function that returns nothing is `void`. Both functions below return `void`:
+
+```tolk
+fun demo1() {
+    debug.print(globalVar);
+}
+
+fun demo2() {
+    if (random.uint256() == 0) {
+        return;
+    }
+    globalVar = 123;
+}
+```
+
+When a function return type is not specified, it is inferred from the return statements. A `return` without a value indicates a `void` return type.
+
+Explicitly specifying `fun(...): void` behaves identically:
+
+```tolk
+fun demo1(): void {
+    // ...
+}
+```
+
+### `void`-typed fields
+
+A structure field with type `void` is treated as non-existent. This pattern is used with generics such as `<T = void>` to model optional fields in structure types.
+
+```tolk
+struct WithOptionalField<T> {
+    a: int
+    b: T
+    c: slice
+}
+
+type OnlyAC = WithOptionalField<void>
+
+fun demo() {
+    // field `b` may be omitted
+    val v: OnlyAC = { a: 10, c: "" };
+}
+```
+
+## `never`
+
+A function that never returns is `never`. A function whose execution always terminates by throwing an error has return type `never`:
+
+```tolk
+fun accessDenied(): never {
+    throw 403
+}
+
+fun validate(userId: int) {
+    if (userId > 0) {
+        return userId;
+    }
+    accessDenied();
+    // no `return` statement is needed
+}
+```
+
+In a `match` expression, branches that do not return are inferred as `never`:
+
+```tolk
+val result = match (ownerKey) {
+    ADMIN_KEY => true,     // `bool`
+    else => throw 403,     // `never`
+};
+// result is `bool`
+```
+
+### Implicit `never` in unreachable branches
+
+The type `never` represents values that cannot exist. It occurs implicitly in branches that the type system can prove to be unreachable.
+
+Here, the condition cannot be satisfied:
+
+```tolk
+fun demo(v: int | slice) {
+    if (v is builder) {
+        // v is `never`
+    }
+}
+```
+
+Another case arises when a non-nullable type is checked against `null`:
+
+```tolk
+fun demo(v: int) {
+    if (v == null) {
+        // v is `never`
+        v + 10;   // error, can not apply `+` `never` and `int`
+    }
+    // v is `int` again
+}
+```
+
+Encountering `never` in a compilation error typically indicates an issue in the preceding code.
+
+## Stack layout and serialization
+
+Both `void` and `never` represent the absence of a value. At the TVM level, neither type produces a value on the stack and occupies zero stack slots and zero bits. For example, a function with return type `void` does not place any value onto the [stack](/languages/tolk/types/overall-tvm-stack).

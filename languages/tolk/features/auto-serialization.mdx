@@ -1,0 +1,390 @@
+---
+title: "Automatic serialization"
+---
+
+All data in TON, such as messages, storage, etc., is represented as [cells](/foundations/serialization/cells). The Tolk type system is designed to express cell contents, enabling auto-serialization through `fromCell` and `toCell`:
+
+```tolk
+struct Point {
+    x: int8
+    y: int8
+}
+
+fun demo() {
+    var value: Point = { x: 10, y: 20 };
+
+    // makes a cell containing "0A14" (hex)
+    var c = value.toCell();
+    // back to { x: 10, y: 20 }
+    var p = Point.fromCell(c);
+}
+```
+
+## Type serialization
+
+A `struct` can define [a serialization](/languages/tolk/types/overall-serialization) prefix. 32-bit prefixes are commonly used as opcodes for incoming and outgoing messages:
+
+```tolk
+struct (0x7362d09c) TransferNotification {
+    queryId: uint64
+    // ...
+}
+```
+
+A prefix is not required to be 32 bits: `0x000F` is a 16-bit prefix, and `0b010` is a 3-bit one.
+
+## Cell references and its types
+
+Fields of a struct are serialized one by one. The compiler does not reorder fields or insert implicit references. When data should be stored in a ref, it is done explicitly. A developer controls exactly when each ref is loaded.
+
+There are two types of references – typed and untyped:
+
+- `Cell<T>` – typed reference; the cell has a known internal structure;
+- `cell` – untyped reference; the cell content is not described.
+
+```tolk
+struct NftStorage {
+    ownerAddress: address
+    nextItemIndex: uint64
+    content: cell                  // untyped ref
+    royalty: Cell<RoyaltyParams>   // typed ref
+}
+
+struct RoyaltyParams {
+    numerator: uint16
+    // ...
+}
+```
+
+A call `NftCollectionStorage.fromCell()` is processed as follows:
+
+1. read `address`;
+1. read `uint64`;
+1. read two refs without unpacking them – only their pointers are loaded.
+
+### `Cell<T>`
+
+`Cell<T>` must be loaded to get `T`.
+
+Consider the `royalty` field:
+
+```tolk
+struct NftStorage {
+    // ...
+    royalty: Cell<RoyaltyParams>
+}
+```
+
+Since it is a cell, `storage.royalty.numerator` is not valid:
+
+```ansi
+// error: `Cell<RoyaltyParams>` has no field `numerator`
+storage.royalty.numerator;
+                ^^^^^^^^^
+```
+
+To access `numerator` and other fields, load the reference:
+
+```tolk
+val royalty = storage.royalty.load();   // Cell<T> to T
+// or, alternatively
+val royalty = RoyaltyParams.fromCell(storage.royalty);
+
+// works
+royalty.numerator;
+```
+
+When composing an instance, assign a cell, not an object:
+
+```tolk
+val storage: NftStorage = {
+    // error
+    royalty: RoyaltyParams{ ... }
+    // correct
+    royalty: RoyaltyParams{ ... }.toCell()
+}
+```
+
+Summary:
+
+```tolk
+pCell = point.toCell();  // `Point` to `Cell<Point>`
+point = pCell.load();    // `Cell<Point>` to `Point`
+```
+
+`Cell<address>` or `Cell<int32 | int64>` is supported, `T` is not restricted to structures.
+
+## Custom serializers for custom types
+
+Type aliases allow overriding serialization behavior when the required encoding cannot be represented using existing types:
+
+```tolk
+type MyString = slice
+
+fun MyString.packToBuilder(self, mutate b: builder) {
+    // custom logic
+}
+
+fun MyString.unpackFromSlice(mutate s: slice) {
+    // custom logic
+}
+```
+
+This mechanism applies only to [type aliases](/languages/tolk/types/overall-serialization#type-aliases). It does not work for structures, enums, etc.
+
+## Behavior with corrupted input
+
+`Point.fromCell(c)` throws an exception if the cell does not contain the required data. The function expects at least 16 bits.
+
+```tolk
+struct Point {
+    x: int8
+    y: int8
+}
+
+fun demo() {
+    Point.fromCell(createEmptyCell());
+}
+```
+
+Typical failure cases include:
+
+- not enough bits or refs, unless `lazy fromCell` is used;
+- extra data after the expected fields; can be enabled;
+- `address` has an invalid format;
+- `enum` has an invalid value;
+- a mismatched struct prefix;
+- other format inconsistencies.
+
+Common exception codes:
+
+- [9 – cell underflow](/tvm/exit-codes#9%3A-cell-underflow);
+- [5 – out of range](/tvm/exit-codes#5%3A-integer-out-of-expected-range).
+
+Some behaviors are configurable. For example, to allow extra data:
+
+```tolk
+MyMsg.fromSlice(s, {
+    assertEndAfterReading: false
+})
+```
+
+## Cell packing and unpacking options
+
+Behavior of `fromCell` and `toCell` can be controlled by an option object:
+
+```tolk
+MyMsg.fromCell(c, {
+    // options object
+})
+```
+
+For deserialization, there are two options:
+
+```tolk
+MyMsg.fromCell(c, {
+    // call `assertEnd` to ensure no remaining data left;
+    // (in other words, the struct describes all data)
+    assertEndAfterReading: true,        // default: true
+
+    // this errCode is thrown if opcode doesn't match,
+    // e.g. for `struct (0x01) A` given input "88...",
+    // or for a union type, none of the prefixes match
+    throwIfOpcodeDoesNotMatch: 63,      // default: 63
+})
+```
+
+For serialization, there is one option:
+
+```tolk
+obj.toCell({
+    // for `bits128` and similar (a slice under the hood),
+    // insert the checks (bits == 128 and refs == 0);
+    // turn off to save gas if you guarantee input is valid;
+    // `intN` are always validated, it's only for `bitsN`
+    skipBitsNValidation: false,         // default: false
+});
+```
+
+### Functions
+
+Functions such as `fromCell()`, `fromSlice()`, etc., are designed to integrate with low-level features.
+
+For deserialization, each of the functions can be controlled by `UnpackOptions`:
+
+1. `T.fromCell(c)` parses a cell using `c.beginParse() + fromSlice`:
+
+   ```tolk
+   var storage = NftStorage.fromCell(contract.getData());
+   ```
+
+1. `T.fromSlice(s)` parses a slice; the slice is not mutated:
+
+   ```tolk
+   var msg = CounterIncrement.fromSlice(s);
+   ```
+
+1. `slice.loadAny<T>()` mutates the slice:
+
+   ```tolk
+   var storage = s.loadAny<NftStorage>();
+   var nextNum = s.loadAny<int32>();    // also ok
+   ```
+
+   `options.assertEndAfterReading` is ignored because the function reads from the middle of the slice.
+
+1. `slice.skipAny<T>()`, such as `skipBits()` and similar:
+
+   ```tolk
+   s.skipAny<Point>();    // skips 16 bits
+   ```
+
+For serialization, each of the functions can be controlled by `PackOptions`.
+
+1. `T.toCell()` works as `beginCell() + serialize + endCell()`:
+
+   ```tolk
+   contract.setData(storage.toCell());
+   ```
+
+1. `builder.storeAny<T>(v)`, such as `storeUint()` and similar:
+
+   ```tolk
+   var b = beginCell()
+          .storeUint(32)
+          .storeAny(msgBody)  // T=MyMsg here
+          .endCell();
+   ```
+
+## `RemainingBitsAndRefs`
+
+`RemainingBitsAndRefs` is a built-in type to get remaining part of a slice when reading. Example:
+
+```tolk
+struct JettonMessage {
+     // ... some fields
+     forwardPayload: RemainingBitsAndRefs
+}
+```
+
+After `JettonMessage.fromCell`, `forwardPayload` contains everything left in the slice after reading the preceding fields. It is an alias for a slice that the compiler treats specially:
+
+```tolk
+type RemainingBitsAndRefs = slice
+```
+
+## What if data exceeds 1023 bits?
+
+The Tolk compiler issues a warning if a serializable struct may exceed 1023 bits. This can happen because many types have variable size. For example, `int8?` can be 1 or 9 bits, `coins` can range from 4 to 124 bits, etc. Consider a struct:
+
+```tolk
+struct MoneyInfo {
+    fixed: bits800
+    wallet1: coins
+    wallet2: coins
+}
+```
+
+Serializing this struct produces a compiler error:
+
+```ansi wrap
+struct `MoneyInfo` can exceed 1023 bits in serialization (estimated size: 808..1048 bits)
+... (and some instructions)
+```
+
+Consider one of the following actions:
+
+1. Suppress the error.
+
+   If `coins` values are expected to be relatively small and the struct will fit in practice, suppress the error using an annotation:
+
+   ```tolk
+   @overflow1023_policy("suppress")
+   struct MoneyInfo {
+       ...
+   }
+   ```
+
+1. Reorganize the struct by splitting into multiple cells.
+
+   If `coins` values are expected to be relatively large and the data may exceed 1023 bits, extract some fields into a separate cell. For example, store 800 bits as a ref or extract the other two fields:
+
+   ```tolk
+   // extract the first field
+   struct MoneyInfo {
+       fixed: Cell<bits800>
+       wallet1: coins
+       wallet2: coins
+   }
+
+   // or extract the other two fields
+   struct WalletsBalances {
+       wallet1: coins
+       wallet2: coins
+   }
+   struct MoneyInfo {
+       fixed: bits800
+       balances: Cell<WalletsBalances>
+   }
+   ```
+
+Frequently used fields should remain in the struct; less-frequent fields can be moved to a nested ref.
+
+## What if serialization is unavailable?
+
+A common mistake is using `int`. [It cannot be serialized](/languages/tolk/types/numbers#stack-layout-and-serialization); instead, use `int32`, `uint64`, etc.
+
+```tolk
+struct Storage {
+    owner: address
+    lastTime: int     // mistake is here
+}
+
+fun errDemo() {
+    Storage.fromSlice("");
+}
+```
+
+The compiler reports:
+
+```ansi
+auto-serialization via fromSlice() is not available for type `Storage`
+because field `Storage.lastTime` of type `int` can't be serialized
+because type `int` is not serializable, it doesn't define binary width
+hint: replace `int` with `int32` / `uint64` / `coins` / etc.
+```
+
+## Integration with message sending
+
+Auto-serialization can be applied when [sending messages](/languages/tolk/features/message-sending) to other contracts:
+
+```tolk
+val reply = createMessage({
+    // ...
+    body: RequestedInfo {     // auto-serialized
+        // ...
+    }
+});
+reply.send(SEND_MODE_REGULAR);
+```
+
+## `lazy` for deserialization
+
+Tolk provides a special keyword [`lazy`](/languages/tolk/features/lazy-loading) for use with auto-deserialization.
+The compiler loads only the requested fields, rather than the entire struct.
+
+```tolk
+struct Storage {
+    isSignatureAllowed: bool
+    seqno: uint32
+    subwalletId: uint32
+    publicKey: uint256
+    extensions: cell?
+}
+
+get fun publicKey() {
+    val st = lazy Storage.fromCell(contract.getData());
+    // <-- here "skip 65 bits, preload uint256" is inserted
+    return st.publicKey
+}
+```

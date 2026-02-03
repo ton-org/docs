@@ -1,0 +1,173 @@
+---
+title: "Contract storage"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Contract storage is a [`struct`](/languages/tolk/types/structures), serialized into persistent blockchain data. Tolk does not enforce any specific storage layout.
+
+<Aside type="tip">
+  For convenience, place the storage struct and its methods in a separate file, e.g., `storage.tolk`.
+</Aside>
+
+## Common pattern
+
+Add `load` and `store` methods to `struct Storage`:
+
+```tolk
+struct Storage {
+    counterValue: int64
+}
+
+fun Storage.load() {
+    return Storage.fromCell(contract.getData())
+}
+
+fun Storage.save(self) {
+    contract.setData(self.toCell())
+}
+```
+
+The storage can be accessed:
+
+```tolk
+get fun currentCounter() {
+    var storage = lazy Storage.load();
+    return storage.counterValue;
+}
+
+fun demoModify() {
+    var storage = lazy Storage.load();
+    storage.counterValue += 100;
+    storage.save();
+}
+```
+
+- `fun Storage.f(self)` defines an instance [method](/languages/tolk/syntax/functions-methods).
+- `T.fromCell()` deserializes a cell into `T`, and [`obj.toCell()`](/languages/tolk/features/auto-serialization#unpackoptions-and-packoptions) packs it back into a cell.
+- The [`lazy`](/languages/tolk/features/lazy-loading) operator does the parsing on demand.
+- [`contract.getData()`](/languages/tolk/features/standard-library) fetches persistent data.
+
+## Default values
+
+In TON, a contract’s address depends on its initial storage when it is [created on-chain](/foundations/addresses/derive#on-chain-—-simple). Assign default values to fields that must be defined at deployment:
+
+```tolk
+struct WalletStorage {
+    // these fields must have these values when deploying
+    // to make the contact's address predictable
+    jettonBalance: coins = 0
+    isFrozen: bool = false
+
+    // these fields must be manually assigned for deployment
+    ownerAddress: address
+    minterAddress: address
+}
+```
+
+To calculate the contract’s initial address, these two fields are required.
+
+## Multiple contracts
+
+When developing multiple contracts in one project simultaneously, for example, a jetton minter and a jetton wallet, each contract has its own storage shape described by a `struct`.
+
+Name these structures descriptively, for example, `MinterStorage` and `WalletStorage`. Place these structures in a single file `storage.tolk` along with their methods.
+
+Contracts may deploy other contracts, requiring initial storage to be provided at deployment. For example, a minter deploys a wallet, so `WalletStorage` becomes accessible through an `import`:
+
+```tolk
+// all symbols from imported files become visible
+import "storage"
+
+fun deploy(ownerAddress: address, minterAddress: address) {
+    val emptyWalletStorage: WalletStorage = {
+        ownerAddress,
+        minterAddress,
+        // the other two use their defaults
+    };
+    // ...
+}
+```
+
+## Changing storage shape
+
+Contracts may start with a storage layout and extend it after deployment. For example:
+
+- At deployment, storage contains only `a`, `b`, `c`.
+- Followed by a message supplying  `d` and `e`, storage becomes `a`, `b`, `c`, `d`, `e`.
+
+This behavior is not related to [nullable types](/languages/tolk/types/nullable). Nullable values such as `int8?` or `cell?` serialize with an explicit null marker 0 bit. In this case, fields are absent entirely, and no extra bits appear in serialization.
+
+This pattern is common in NFT contracts. Initially, an NFT contains only `itemIndex` and `collectionAddress`. After initialization, `ownerAddress` and `content` are added to the storage.
+
+Since arbitrary imperative code is allowed, the approach is:
+
+- Define two structures: initialized and uninitialized storages.
+- Start loading using `contract.getData()`.
+- Determine whether the storage is initialized based on its bits and refs counts.
+- Parse into the corresponding struct.
+
+Example:
+
+```tolk expandable
+// two structures representing different storage states
+
+struct NftItemStorage {
+    itemIndex: uint64
+    collectionAddress: address
+    ownerAddress: address
+    content: cell
+}
+
+struct NftItemStorageNotInitialized {
+    itemIndex: uint64
+    collectionAddress: address
+}
+
+// instead of the usual `load()` method — `startLoading()`
+
+fun NftItemStorage.startLoading() {
+    return NftItemStorageLoader.fromCell(contract.getData())
+}
+
+fun NftItemStorage.save(self) {
+    contract.setData(self.toCell())
+}
+
+// this helper detects shape of a storage
+struct NftItemStorageLoader {
+    itemIndex: uint64
+    collectionAddress: address
+    private rest: RemainingBitsAndRefs
+}
+
+// when `rest` is empty, `collectionAddress` is the last field
+fun NftItemStorageLoader.isNotInitialized(self) {
+    return self.rest.isEmpty()
+}
+
+// `endLoading` continues loading when `rest` is not empty
+fun NftItemStorageLoader.endLoading(mutate self): NftItemStorage {
+    return {
+        itemIndex: self.itemIndex,
+        collectionAddress: self.collectionAddress,
+        ownerAddress: self.rest.loadAny(),
+        content: self.rest.loadAny(),
+    }
+}
+```
+
+Usage in `onInternalMessage`:
+
+```tolk
+var loadingStorage = NftItemStorage.startLoading();
+if (loadingStorage.isNotInitialized()) {
+    // ... probably, initialize and save
+    return;
+}
+
+var storage = loadingStorage.endLoading();
+// and the remaining logic: lazy match, etc.
+```
+
+Different shapes with missing fields can also be expressed using [generics](/languages/tolk/types/generics) and the [void type](/languages/tolk/types/void-never).

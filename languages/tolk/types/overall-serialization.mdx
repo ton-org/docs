@@ -1,0 +1,365 @@
+---
+title: "Serialization"
+sidebarTitle: "Serialization"
+---
+
+This page assumes prior knowledge of the [TL-B](/languages/tl-b/overview) and [TVM](/tvm/overview). It serves as a concise low-level reference.
+
+A consolidated summary of how Tolk types are serialized into TL-B–compatible binary data.
+
+## `int`
+
+- Not serializable. Use `intN` or other numeric types.
+
+## `intN`
+
+- Fixed N-bit signed integer
+- TL-B: `intN`
+- Stored using `{N} STI`
+- Loaded using `{N} LDI`
+
+## `uintN`
+
+- Fixed N-bit unsigned integer
+- TL-B: `uintN`
+- Stored using `{N} STU`
+- Loaded using `{N} LDU`
+
+## `coins`
+
+- Alias to `varuint16`
+- TL-B: `VarUInteger 16`
+- Stored using `STGRAMS`
+- Loaded using `LDGRAMS`
+
+## `varintN` (N = 16 or 32)
+
+- Variable-length signed integer: 4 or 5 bits for `length + 8 * len` bit number
+- TL-B: `VarInteger {N}`
+- Stored using `STVARINT{N}`
+- Loaded using `LDVARINT{N}`
+
+## `varuintN` (N = 16 or 32)
+
+- Variable-length unsigned integer: 4 or 5 bits for `length + 8 * len` bit number
+- TL-B: `VarUInteger {N}`
+- Stored using `STVARUINT{N}`
+- Loaded using `LDVARUINT{N}`
+
+## `bool`
+
+- One bit: `0` or `1`
+- TL-B: `Bool`
+- Stored using `1 STI`
+- Loaded using `1 LDI` resulting in `0` or `-1`
+
+## `address`
+
+- Standard internal address (267 bits): `0b100 + workchain + hash`
+- TL-B: `addr_std`
+- Stored using `STSTDADDR`
+- Loaded using `LDSTDADDR`
+
+## `address?` (nullable)
+
+- Internal address or none (2 or 267 bits): `00` for null, otherwise an address
+- TL-B: `addr_none` or `addr_std`
+- Stored using `STOPTSTDADDR`
+- Loaded using `LDOPTSTDADDR`
+
+## `any_address`
+
+- Any valid TL-B address, from 2 to 523 bits
+- TL-B: `MsgAddress`
+- Stored using `STSLICE`
+- Loaded using `LDMSGADDR`
+
+## `cell`, `Cell<T>`
+
+- A reference
+- TL-B: `^Cell` / `^T`
+- Stored using `STREF`
+- Loaded using `LDREF`
+
+## `cell?`, `Cell<T>?` (nullable)
+
+- Maybe reference (`0` or `1+ref`)
+- TL-B: `Maybe ^Cell` / `Maybe ^T`
+- Stored using `STOPTREF`
+- Loaded using `LDOPTREF`
+
+## `bitsN`
+
+- N bits
+- TL-B: `bitsN`
+- Stored using `STSLICE`, preceded by a runtime check that the slice contains exactly N bits and zero references; the check can be turned off using `skipBitsNValidation = false`.
+- Loaded using `LDSLICE` / `LDSLICEX` for N > 256
+
+## `RemainingBitsAndRefs`
+
+- Represents the remainder of a slice when reading, and a raw slice when writing.
+- TL-B: `Cell`
+- Stored using `STSLICE`
+- Loaded by copying the current slice and resetting the reader to an empty slice.
+
+## `builder`, `slice`
+
+- Can be used for writing, but not for reading.
+- Not recommended, as they do not reveal internal structure and have unpredictable size.
+- Auto-generated TypeScript wrappers cannot parse them.
+
+## `struct`
+
+If a struct has a prefix, it is written first. The fields are then serialized sequentially.
+
+```tolk
+struct (0x12345678) A {
+    a: int8
+    b: cell?
+}
+
+fun demo() {
+    val a: A = {
+        a: 123,
+        b: createEmptyCell(),
+    };
+    // 41 bits and 1 ref: opcode + int8 + '1' + empty ref
+    a.toCell()
+}
+```
+
+### 32-bit prefixes (opcodes)
+
+By convention, all incoming and outgoing messages use 32-bit prefixes:
+
+```tolk
+struct (0x7362d09c) TransferNotification {
+    queryId: uint64
+    // ...
+}
+```
+
+### Not only 32-bit prefixes
+
+Declaring messages with opcodes does not differ from declaring ordinary structs. A prefix can have any bit width:
+
+- `0x000F` — 16-bit prefix
+- `0x0F` — 8-bit prefix
+- `0b010` — 3-bit prefix
+- `0b00001111` — 8-bit prefix
+
+Consider the TL-B scheme:
+
+```tl-b
+asset_simple$001 workchain:int8 ptr:bits32 = Asset;
+asset_booking$1000 order_id:uint64 = Asset;
+// ...
+```
+
+In Tolk, use structures and union types:
+
+```tolk
+struct (0b001) AssetSimple {
+    workchain: int8
+    ptr: bits32
+}
+
+struct (0b1000) AssetBooking {
+    orderId: uint64
+}
+
+type Asset = AssetSimple | AssetBooking // | ...
+```
+
+During deserialization, `Asset` is matched using the explicitly declared prefixes.
+
+If a `struct` has a prefix, it is applied consistently in all contexts, both standalone and as part of a union:
+
+```tolk
+AssetBooking.fromSlice(s)   // expecting '1000...' (binary)
+AssetBooking{...}.toCell()  // '1000...'
+```
+
+## Type aliases
+
+A type alias is identical to its underlying type, unless a custom serializer is defined.
+
+To implement a "variadic string" encoded as `len + data`:
+
+```
+len: (## 8)        // 8 bits of len
+data: (bits len)   // 0..255 bits of data
+```
+
+To express this, define a type and provide a custom serializer:
+
+```tolk
+type ShortString = slice
+
+fun ShortString.packToBuilder(self, mutate b: builder) {
+    val nBits = self.remainingBitsCount();
+    b.storeUint(nBits, 8);
+    b.storeSlice(self);
+}
+
+fun ShortString.unpackFromSlice(mutate s: slice) {
+    val nBits = s.loadUint(8);
+    return s.loadBits(nBits);
+}
+```
+
+`ShortString` can then be used as a regular type everywhere:
+
+```tolk
+tokenName: ShortString
+fullDomain: Cell<ShortString>
+```
+
+The method names `packToBuilder` and `unpackFromSlice` are reserved for this purpose. Their signatures must match exactly as shown.
+
+## `enum`
+
+The serialization type can be specified manually:
+
+```tolk
+// `Role` will be (un)packed as `int8`
+enum Role: int8 {
+    Admin,
+    User,
+    Guest,
+}
+
+struct ChangeRoleMsg {
+    ownerAddress: address
+    newRole: Role    // int8: -128 <= V <= 127
+}
+```
+
+Otherwise, it is calculated automatically. For `Role` above, `uint2` is sufficient to fit values `0, 1, 2`:
+
+```tolk
+// `Role` will (un)packed as `uint2`
+enum Role {
+	  Admin,
+	  User,
+	  Guest,
+}
+```
+
+Input values are validated during deserialization. For `enum Role: int8`, any input value outside the range of defined enum variants, e.g., \< 0 or > 2, triggers [exception 5](/tvm/exit-codes).
+
+Values not explicitly listed in the enum definition are also rejected:
+
+```tolk
+enum OwnerHashes: uint256 {
+    id1 = 0x1234,
+    id2 = 0x2345,
+    ...
+}
+
+// on serialization, just "store uint256"
+// on deserialization, "load uint256" + throw 5 if v not in [0x1234, 0x2345, ...]
+```
+
+## Nullable types `T?` (except `address?`)
+
+- Often called `Maybe`; `0` or `1+T`
+- TL-B: `(Maybe T)`
+- Stored using `1 STI` + `IF` ...
+- Loaded using `1 LDI` + `IF` ...
+
+Exception: `address?` is serialized as internal or none (2 or 267 bits):
+
+- `00` – null;
+- otherwise – a standard internal address.
+
+## Union types `T1 | T2 | ...`
+
+- `T | null` is serialized as TL-B `Maybe T`.
+- If all `T_i` have prefixes `struct (0x1234) A`, those prefixes are used.
+- Otherwise, the compiler generates a prefix tree automatically.
+
+### Manual serialization prefixes
+
+If all `T_i` have manual prefixes, they are used:
+
+```tolk
+struct (0b001)  AssetSimple   { /* body1 */ }
+struct (0b1000) AssetBooking  { /* body2 */ }
+struct (0b01)   AssetNothing  {}
+
+struct Demo {
+    // '001'+body1 OR '1000'+body2
+    e: AssetSimple | AssetBooking
+    // '001'+body1 OR '1000'+body2 OR '01'
+    f: AssetSimple | AssetBooking | AssetNothing
+}
+```
+
+If a prefix exists for `A` but not for `B`, the union `A | B` cannot be serialized.
+
+### Auto-generated prefix tree
+
+If `T_i` do not have manual prefixes, the compiler generates a prefix tree.
+
+- A two-component union `T1 | T2` is serialized as TL-B `Either` using prefixes 0 and 1. Example: `int32 | int64` → `0 + int32` or `1 + int64`.
+
+- For unions with more components, longer prefixes are generated. Example: `int32 | int64 | int128 | int256` → `00 / 01 / 10 / 11`
+
+General rules:
+
+- If `null` is present, it is assigned prefix 0, and all other variants use `1 + tree`:
+  - `A|B|C|D|null` → `0 | 100+A | 101+B | 110+C | 111+D`.
+- If `null` is not present, variants are assigned sequentially:
+  - `A|B|C` → `00+A | 01+B | 10+C`.
+
+```tolk
+struct WithUnion {
+    f: int8 | int16 | int32
+}
+```
+
+Field f is serialized as:
+
+- `00 + int8`
+- `01 + int16`
+- `10 + int32`
+
+On deserialization, the same prefixes are expected; an unmatched prefix (e.g., 11) triggers an exception.
+
+The same applies to structs without manual prefixes:
+
+```tolk
+struct A { ... }    // 0x... prefixes not specified
+struct B { ... }
+struct C { ... }
+
+struct WithUnion {
+    // auto-generated prefix tree: 00/01/10
+    f: A | B | C
+    // with null, like Maybe<A|B>: 0/10/11
+    g: A | B | null
+    // even this works; when '11', a ref exists
+    h: A | int32 | C | cell
+}
+```
+
+## Tensors `(T1, T2, ...)`
+
+Tensor components are serialized sequentially, in the same manner as `struct` fields.
+
+## `tuple` and typed tuples
+
+Tuples are not serializable. However, tuples can be returned from [get methods](/tvm/get-method#get-methods), since contract getters operate on the TVM stack rather than using serialization.
+
+## `map<K, V>`
+
+- Maybe reference: `0` for empty or `1+ref` for dictionary contents
+- TL-B: [`HashmapE n X`](/languages/tl-b/complex-and-non-trivial-examples#hashmap)
+- Stored using `STDICT`
+- Loaded using `LDDICT`
+
+## Callables `(...ArgsT) -> ResultT`
+
+- Callables cannot be serialized.
+- Lambdas can be used within contract logic but cannot be serialized for off‑chain responses.
