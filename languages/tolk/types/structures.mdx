@@ -1,0 +1,141 @@
+---
+title: "Structures"
+---
+
+Tolk supports structures.
+
+```tolk
+struct Point {
+    x: int
+    y: int
+}
+
+fun calcMaxCoord(p: Point) {
+    return p.x > p.y ? p.x : p.y
+}
+
+fun demo() {
+    // declared using object-literal syntax
+    var p: Point = { x: 10, y: 20 };
+    calcMaxCoord(p);
+
+    // constructed using object-literal syntax
+    calcMaxCoord({ x: 10, y: 20 });
+}
+```
+
+## Distinct structure types
+
+Structures with identical fields are not assignable to each other:
+
+```tolk
+struct SomeA { v: int }
+struct SomeB { v: int }
+
+fun acceptA(a: SomeA) {}
+
+fun demo(a: SomeA, b: SomeB) {
+    b = a;      // error, can not assign `SomeA` to `SomeB`
+    acceptA(b); // error, can not pass `SomeB` to `SomeA`
+}
+```
+
+Even though `SomeA` and `SomeB` have identical layouts, they represent distinct types.
+
+## Contextual type inference
+
+The compiler infers types from context. In the example below, the compiler determines that `{ ... }` has type `StoredInfo` based on the parameter type:
+
+```tolk
+fun store(info: StoredInfo) {
+    // ...
+}
+
+fun demo() {
+    store({
+        counterValue: ...,
+        ownerAddress: ...,
+    });
+}
+```
+
+The same applies to return values and assignments:
+
+```tolk
+fun loadData(): StoredInfo {
+    return {
+        counterValue: ...,
+        ownerAddress: ...,
+    }
+}
+
+fun demo() {
+    var s: StoredInfo = { counterValue, ... };
+    var s: (int, StoredInfo) = (0, { counterValue, ... });
+}
+```
+
+## Explicit type hints
+
+Explicit type hints are available. In addition to the plain `{ ... }` syntax, the form `StructName { ... }` can be used. The snippet below is equivalent to the previous example:
+
+```tolk
+fun loadData() {
+    return StoredInfo {
+        counterValue: ...,
+        ownerAddress: ...,
+    }
+}
+
+fun demo() {
+    var s = StoredInfo { counterValue, ... };
+    var s = (0, StoredInfo { counterValue, ... });
+}
+```
+
+When neither contextual information nor an explicit type hint is available, the type cannot be inferred and an error is produced.
+
+```tolk
+val o = { x: 10, y: 20 };    // error, what type is it?
+```
+
+## Methods
+
+Methods are declared as extension functions:
+
+```tolk
+fun Point.calcSquare(self) {
+    return self.x * self.y
+}
+```
+
+Without `self` parameter, a [method](/languages/tolk/syntax/functions-methods) will be static. By default, `self` is immutable. The form `mutate self` enables mutation.
+
+## Serialization prefixes
+
+Serialization prefixes do not affect typing or layout. The syntax `struct (PREFIX) Name { ... }` specifies a serialization prefix. The prefix affects only the binary representation; all other aspects remain unchanged.
+
+```tolk
+struct (0x12345678) CounterIncrement {
+    byValue: uint32
+}
+
+fun demo(inc: CounterIncrement) {
+    // `inc` has one field; the prefix is not a property
+    inc.byValue
+    // `inc` is still one TVM `INT` on the stack
+}
+```
+
+## Structure syntax
+
+[Structure syntax](/languages/tolk/syntax/structures-fields) includes:
+
+- shorthand field syntax `{ x, y }`;
+- default field values (`a: int32 = 10`);
+- `private` and `readonly` fields;
+- serialization prefixes (opcodes).
+
+## Stack layout and serialization
+
+Fields are placed on the [stack](/languages/tolk/types/overall-tvm-stack) sequentially and [are serialized](/languages/tolk/types/overall-serialization) in the same order. If a struct has a prefix, it is written first.
