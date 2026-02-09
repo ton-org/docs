@@ -4,11 +4,11 @@ title: "Type checks and casts"
 
 import { Aside } from '/snippets/aside.jsx';
 
-Different types may be converted to one another — either automatically or using the unsafe `as` operator.
+Tolk supports type conversions: either automatic or explicit via the `as` operator.
 
-## Non-assignable types give a compilation error
+## Automatic conversions
 
-Assignable types may be passed as arguments, assigned to fields, etc. This behavior follows conventional type-system rules.
+Assignable types can be provided explicitly:
 
 ```tolk
 fun takeOptInt(v: int?) {}
@@ -19,85 +19,35 @@ fun main() {
 }
 ```
 
-Some conversions are performed automatically: `int` to `intN`, `AliasForT` and `T`, `Cell<T>` to `cell`.
+Certain conversions are automatic:
+
+- `int` to `intN`.
+- `AliasForT` and `T` (bidirectional).
+- `Cell<T>` to `cell`.
 
 ```tolk
-fun demo() {
+fun autocast() {
     var number: int32 = 100;   // auto cast `int` to `int32`
 }
 ```
 
-Non-assignable types give a type checker error:
+Non-assignable types cause a compilation error:
 
 ```tolk
 fun main() {
     var number: int = true;
 }
-```
-
-```ansi
-file.tolk:2:23: error: can not assign `bool` to variable of type `int`
-           hint: use `as` operator for UNSAFE casting: `<some_expr> as int`
-
-    // in function `main`
-   2 |     var number: int = true;
-     |                       ^^^^
-```
-
-In cases where non-trivial type transformations are disallowed, the unsafe operator `as` may be used to override the restriction.
-
-## Unsafe operator `as`
-
-For example, `bool` is not assignable to `int`, but a boolean is backed by TVM `INT` (-1 or 0), making the cast valid:
-
-```tolk
-var number: int = true as int;    // -1
-```
-
-Similarly, operator `as` can be used to convert types that have equal TVM representation.
-Using `as` explicitly forces a developer to verify that the transformation is correct.
-No additional runtime instructions are inserted — it is purely a type cast.
-
-Some examples:
-
-- `address` is TVM `SLICE`, so `someAddr as slice` is valid
-- conversely, `someSlice as address`
-- `bits123` is TVM `SLICE`, so `someSlice as bits123` is valid
-- `intN` is TVM `INT`, so `someInt64 as int32` is valid
-- `bool` is TVM `INT`, so `someBool as int` and `someBool as int32` are valid, resulting in -1 or 0
-- an enum is TVM `INT`, so `someColor as int` is valid
-- and similar conversions apply.
-
-When a cast using `as` is appropriate, the compiler indicates this in diagnostic messages, as shown above.
-Not all transformations are possible.
-For example, `someInt as cell` is invalid.
-
-<Aside
-  type="danger"
-  title={"Operator `as` is unsafe"}
->
-  The `as` operator locally skips typechecking and does no validation at runtime.
-  For example, `someSlice as address` — if `someSlice` holds invalid address,
-  the program execution may become undefined.
-</Aside>
-
-## Operator `!` (non-null assertion)
-
-The `!` operator is similar to `!` in TypeScript and `!!` in Kotlin. It allows bypassing the compiler's nullability check:
-
-```tolk
-fun doSmth(c: cell) {}
-
-fun analyzeStorage(nCells: int, lastCell: cell?) {
-    if (nCells) {           // then lastCell 100% not null
-        doSmth(lastCell!);  // use ! for this fact
-    }
-}
+/// file.tolk:2:23: error: can not assign `bool` to variable of type `int`
+///            hint: use `as` operator for UNSAFE casting: `<some_expr> as int`
+///
+///     // in function `main`
+///    2 |     var number: int = true;
+///      |                       ^^^^
 ```
 
 ## Smart casts
 
-Once a variable is checked, the compiler automatically narrows its type.
+Once a variable is checked, the compiler narrows its type. For instance, if a variable [could be `null`](/languages/tolk/types/nullable) before the check, and the condition is confirmed to be true, the variable's type will not allow `null` in the true block anymore.
 
 ```tolk
 if (lastCell != null) {
@@ -105,12 +55,9 @@ if (lastCell != null) {
 }
 ```
 
-Smart casts operate similarly to those in TypeScript and Kotlin.
-They are described in [nullables and null safety](/languages/tolk/types/nullable).
-
 ## Operator `is` for union types
 
-Given a union type `T1 | T2 | ...`, the operator `is` performs a runtime type test.
+Given a [union type](/languages/tolk/types/unions) `T1 | T2 | ...`, the `is` operator performs a runtime type test, narrowing the type.
 
 ```tolk
 fun demo(v: int | Point | cell) {
@@ -121,6 +68,52 @@ fun demo(v: int | Point | cell) {
 }
 ```
 
-The `as` operator does not apply to unions: `v as Point` is incorrect. Use `is` and smart casts.
+## Non-null assertion with operator `!`
 
-Operators `is`, `!is`, and `match` are described in [union types](/languages/tolk/types/unions).
+The `!` operator bypasses the compiler's nullability check. It is similar to `!` in TypeScript and `!!` in Kotlin.
+
+```tolk
+fun doSmth(c: cell) {}
+
+fun analyzeStorage(nCells: int, lastCell: cell?) {
+    // Say, according to the logic of this program,
+    // having non-zero number of `nCells` must mean
+    // that the `lastCell` is not `null`
+    if (nCells) {
+        // Therefore, one can explicitly instruct
+        // the compiler to recognize that fact
+        doSmth(lastCell!);
+    }
+}
+```
+
+## Unsafe cast with operator `as`
+
+When non-trivial type transformations are required, the `as` operator overrides the restrictions by performing an unsafe type cast.
+
+For instance, `bool` cannot be assigned directly to `int`. However, a direct cast using the `as` operator is valid since booleans are represented as [TVM](/tvm/overview) integers: `true` is -1, and `false` is 0.
+
+```tolk
+var number: int = true as int; // -1
+```
+
+<Aside
+  type="caution"
+>
+  The `as` operator skips type checking and performs no validation at runtime — it is purely a compile-time type cast.
+
+  This can lead to sudden errors and hidden bugs. For example, if one cast a slice as `address` and that slice did not hold a valid address, subsequent program becomes undefined and may error whenever that new "address" is used.
+</Aside>
+
+Not all transformations are possible. For example, `42 as cell` is invalid. When a cast is inappropriate, the compiler indicates this in diagnostic messages.
+
+The `as` operator converts types that share the same TVM representation:
+
+- `address` is a TVM slice, so `someAddr as slice` is valid.
+  - Conversely, `someSlice as address` is valid.
+- `bitsN`, where `N` is between 1 and 1023, is a TVM slice, so `someSlice as bitsN` is valid.
+- `intN`, where `N` is between 1 and 257, is a TVM integer, so `someInt64 as int32` is valid.
+- `bool` is as TVM integer, so `someBool as int` and `someBool as int32` result in -1 or 0.
+- Enums are TVM integers, so `someColor as int` is valid.
+
+Finally, the `as` operator cannot be applied to unions: `v as Point` is incorrect. Use the `is` operator and smart casts.
