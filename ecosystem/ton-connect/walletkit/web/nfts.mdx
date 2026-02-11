@@ -1,0 +1,287 @@
+---
+title: "How to work with NFTs using WalletKit on the Web platform"
+sidebarTitle: "Work with NFTs"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+<Aside>
+  [Initialize the WalletKit](/ecosystem/ton-connect/walletkit/web/init), [set up at least one TON wallet](/ecosystem/ton-connect/walletkit/web/wallets), handle [connection requests](/ecosystem/ton-connect/walletkit/web/connections) and [transaction requests](/ecosystem/ton-connect/walletkit/web/events) before using examples on this page.
+</Aside>
+
+[NFTs](/standard/tokens/nft/overview) (Non-Fungible Tokens) are unique digital assets on TON, similar to ERC-721 tokens on Ethereum. Unlike Jettons, which are fungible and interchangeable, each NFT is unique and represents ownership of a specific item. NFTs consist of a collection contract and individual NFT item contracts for each token.
+
+To work with NFTs, the wallet service needs to handle [NFT ownership queries](#ownership) and perform transfers initiated [from dApps](#transfers-from-dapps) and [from within the wallet service itself](#transfers-in-the-wallet-service).
+
+<Aside
+  type="caution"
+  title="Verify NFT authenticity"
+>
+  Before displaying or transferring NFTs, verify they belong to legitimate collections. Scammers may create fake NFTs mimicking popular collections.
+
+  Mitigation: Always verify the collection address matches the official one. Check NFT metadata for suspicious content. Test on testnet first.
+</Aside>
+
+## Ownership
+
+NFT ownership is tracked through individual NFT item contracts. Unlike Jettons, which have a balance, one either owns a specific NFT item or does not.
+
+To obtain a list of NFTs owned by a user, query their TON wallet by either the `getNfts()` method of wallet adapters or by calling `kit.nfts.getAddressNfts()` and passing it the TON wallet address.
+
+Similar to other asset queries, [discrete one-off checks](#on-demand-ownership-check) have limited value on their own and [continuous monitoring](#continuous-ownership-monitoring) should be used for UI display.
+
+### On-demand ownership check
+
+Use the `getNfts()` method to check which NFTs are owned by a wallet managed by WalletKit. The method returns an array of NFT items with their addresses, collection info, and metadata.
+
+<Aside
+  type="caution"
+>
+  Do not store the ownership check results anywhere in the wallet service's state, as they become outdated very quickly. For UI purposes, do [continuous ownership monitoring](#continuous-ownership-monitoring).
+</Aside>
+
+```ts title="TypeScript"
+async function getNfts(walletId: string): Promise<NftItem[] | undefined> {
+  // Get TON wallet instance
+  const wallet = kit.getWallet(walletId);
+  if (!wallet) return;
+
+  // Query 100 NFTs owned by this wallet
+  const ownedNfts = await wallet.getNfts({ pagination: { limit: 100 } });
+
+  // Optionally filter by a specific collection address
+  const collectionNfts = ownedNfts.nfts.filter(
+    (nft) => nft.collection?.address === '<NFT_COLLECTION_ADDRESS>',
+  );
+
+  return collectionNfts;
+}
+```
+
+The most practical use of one-off ownership checks is right before approving an NFT transfer request. At this point, verify that the wallet actually owns the NFT being transferred.
+
+<Aside type="note">
+  Despite this check, the transaction may still fail if the NFT is not owned or unaccessible at the time of transfer.
+</Aside>
+
+```ts title="TypeScript"
+// An enumeration of various common error codes
+import { SEND_TRANSACTION_ERROR_CODES } from '@ton/walletkit';
+
+// Address of the NFT item contract
+const NFT_ITEM_ADDRESS = '<NFT_ITEM_ADDRESS>';
+
+kit.onTransactionRequest(async (event) => {
+  const wallet = kit.getWallet(event.walletId ?? '');
+  if (!wallet) {
+    console.error('Wallet not found for a transaction request', event);
+    await kit.rejectTransactionRequest(event, {
+      code: SEND_TRANSACTION_ERROR_CODES.UNKNOWN_ERROR,
+      message: 'Wallet not found',
+    });
+    return;
+  }
+
+  // Verify ownership
+  const ownsNft = await wallet.getNft(NFT_ITEM_ADDRESS);
+
+  // Reject early if NFT is not owned
+  if (!ownsNft) {
+    await kit.rejectTransactionRequest(event, {
+      code: SEND_TRANSACTION_ERROR_CODES.BAD_REQUEST_ERROR,
+      message: 'NFT not owned by this wallet',
+    });
+    return;
+  }
+
+  // Proceed with the regular transaction flow
+  // ...
+});
+```
+
+### Continuous ownership monitoring
+
+Poll the NFT ownership at regular intervals to keep the displayed information up to date. Use an appropriate interval based on UX requirements — shorter intervals provide fresher data but increase API usage.
+
+This example should be modified according to the wallet service's logic:
+
+```ts title="TypeScript" expandable
+import { type NFT } from '@ton/walletkit';
+
+// Configuration
+const POLLING_INTERVAL_MS = 15_000;
+
+/**
+ * Starts the monitoring of a given wallet's NFT ownership,
+ * calling `onNftsUpdate()` every `intervalMs` milliseconds
+ *
+ * @returns a function to stop monitoring
+ */
+export function startNftOwnershipMonitoring(
+  walletId: string,
+  onNftsUpdate: (nfts: NFT[]) => void,
+  intervalMs: number = POLLING_INTERVAL_MS,
+): () => void {
+  let isRunning = true;
+
+  const poll = async () => {
+    while (isRunning) {
+      const wallet = kit.getWallet(walletId);
+      if (wallet) {
+        // Only looks for up to 100 NFTs.
+        // To get more, call the `getNfts()` function
+        // multiple times with increasing offsets
+        const { nfts } = await wallet.getNfts({ pagination: { limit: 100 } });
+        onNftsUpdate(nfts);
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  };
+
+  // Start monitoring
+  poll();
+
+  // Return a cleanup function to stop monitoring
+  return () => {
+    isRunning = false;
+  };
+}
+
+// Usage
+const stopMonitoring = startNftOwnershipMonitoring(
+  walletId,
+  // The updateNftGallery() function is exemplary and should be replaced by
+  // a wallet service function that refreshes the
+  // NFT gallery displayed in the interface
+  (nfts) => updateNftGallery(nfts),
+);
+
+// Stop monitoring once it is no longer needed
+stopMonitoring();
+```
+
+## Transfers from dApps
+
+When a connected dApp requests an NFT transfer, the wallet service follows the same flow as [Toncoin transfers](/ecosystem/ton-connect/walletkit/web/toncoin#transfers-from-dapps): the dApp sends a transaction request through the bridge, WalletKit emulates it and presents a preview, the user approves or declines, and the result is returned to the dApp.
+
+```ts title="TypeScript"
+kit.onTransactionRequest(async (event) => {
+  if (!event.preview.data) {
+    console.warn('Transaction emulation skipped');
+  } else if (event.preview.data?.result === 'success') {
+    // Emulation succeeded — show the predicted asset flow
+    const { ourTransfers } = event.preview.data.moneyFlow;
+
+    // This is an array of values,
+    // where positive amounts mean incoming assets
+    // and negative amounts — outgoing assets.
+    console.log('Predicted transfers:', ourTransfers);
+
+    // Filter NFT transfers specifically
+    const nftTransfers = ourTransfers.filter(
+      (transfer) => transfer.assetType === 'nft',
+    );
+    console.log('NFT transfers:', nftTransfers);
+  } else {
+    // Emulation failed — warn the user but allow proceeding
+    console.warn('Transaction emulation failed:', event.preview);
+  }
+
+  // By knowing the NFT item contract address,
+  // one can obtain and preview NFT's name, description, image, and attributes.
+  //
+  // Present the enriched preview to the user and await their decision.
+  // ...
+});
+```
+
+There is an additional consideration for NFT transfers: they involve multiple internal messages between contracts. As such, NFT transfers always take longer than regular Toncoin-only transfers.
+
+As with Toncoin transfers, the wallet service should not block the UI while waiting for confirmation. With [continuous NFT ownership monitoring](#continuous-ownership-monitoring) and subsequent transaction requests, users will receive the latest information either way. Confirmations are only needed to display a list of past transactions reliably.
+
+## Transfers in the wallet service
+
+NFT transactions can be created directly from the wallet service (not from dApps) and fed into the regular approval flow via the `handleNewTransaction()` method of the WalletKit. It creates a new [transaction request event](/ecosystem/ton-connect/walletkit/web/events#handle-ontransactionrequest), enabling the same UI confirmation-to-transaction flow for both dApp-initiated and wallet-initiated transactions.
+
+<Aside
+  type="danger"
+  title="Assets at risk"
+>
+  Verify the NFT address before initiating a transfer. Transferring an NFT is irreversible — once sent, only the new owner can transfer it back.
+
+  Double-check the recipient address to avoid permanent loss of valuable NFTs.
+</Aside>
+
+This example should be modified according to the wallet service's logic:
+
+```ts title="TypeScript"
+import { type NFTTransferRequest } from '@ton/walletkit';
+
+async function sendNft(
+  // Sender's TON `walletId` as a string
+  walletId: string,
+  // NFT item contract address
+  nftAddress: string,
+  // Recipient's TON wallet address as a string
+  recipientAddress: string,
+  // Optional comment string
+  comment?: string,
+) {
+  const fromWallet = kit.getWallet(walletId);
+  if (!fromWallet) {
+    console.error('No wallet contract found');
+    return;
+  }
+
+  // Verify ownership before creating the transfer
+  const ownsNft = await fromWallet.getNft(nftAddress);
+  if (!ownsNft) {
+    console.error('NFT not owned by this wallet');
+    return;
+  }
+
+  const transferParams: NFTTransferRequest = {
+    nftAddress,
+    recipientAddress,
+    // Optional comment
+    ...(comment && { comment }),
+  };
+
+  // Build transaction content
+  const tx = await fromWallet.createTransferNftTransaction(transferParams);
+
+  // Route into the normal flow,
+  // triggering the onTransactionRequest() handler
+  await kit.handleNewTransaction(fromWallet, tx);
+}
+```
+
+<Aside
+  type="caution"
+>
+  To avoid triggering the `onTransactionRequest()` handler and send the transaction directly, use the `sendTransaction()` method of the wallet instead of the `handleNewTransaction()` method of the WalletKit, modifying the last part of the previous code snippet:
+
+  ```ts title="TypeScript"
+  // Instead of calling kit.handleNewTransaction(fromWallet, tx)
+  // one can avoid routing into the normal flow,
+  // skip the transaction requests handler,
+  // and make the transaction directly.
+  await fromWallet.sendTransaction(tx);
+  ```
+
+  Do not use this approach unless it is imperative to complete a transaction without the user's direct consent. Assets at risk: test this approach using testnet and proceed with utmost caution.
+</Aside>
+
+## See also
+
+NFTs:
+
+- [NFT overview](/standard/tokens/nft/overview)
+- [NFT metadata](/standard/tokens/nft/metadata)
+
+General:
+
+- [Handle transaction requests](/ecosystem/ton-connect/walletkit/web/events#handle-ontransactionrequest)
+- [Transaction fees](/foundations/fees)
+- [WalletKit overview](/ecosystem/ton-connect/walletkit)
+- [TON Connect overview](/ecosystem/ton-connect)
