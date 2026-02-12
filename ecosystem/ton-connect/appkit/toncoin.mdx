@@ -8,3 +8,235 @@ import { Aside } from '/snippets/aside.jsx';
 <Aside>
   [Initialize the AppKit](/ecosystem/ton-connect/appkit/init) before using examples on this page.
 </Aside>
+
+## Balance
+
+Blockchain state changes constantly as new blocks are produced. This has implications for when and how to check TON wallet contract balances:
+
+- [Discrete one-off checks](#on-demand-balance-check) have almost no value on their own — the state might change immediately after the query completes, invalidating its results. Thus, such checks are only practical when making outgoing transfers.
+- [Continuous monitoring](#continuous-balance-monitoring) is useful for UI display, showing the most recent balance to users, but should not be used for transaction confirmations.
+
+Notice that both cases require querying the blockchain data via the API client set during the [AppKit initialization](/ecosystem/ton-connect/appkit/init). Obtain and provide the key from the selected client to access higher requests-per-second limits.
+
+### On-demand balance check
+
+Toncoin balances are returned in nanoToncoin units, with 1 Toncoin equal to 10<sup>9</sup> nanoToncoin.
+
+<Aside
+  type="caution"
+>
+  Do not store the balance check results anywhere in the wallet service's state, as they become outdated very quickly. For UI purposes, do [continuous balance monitoring](#continuous-balance-monitoring).
+</Aside>
+
+<CodeGroup>
+  ```tsx title="React" icon="react"
+  import { useBalance } from '@ton/appkit-react';
+
+  export const BalanceCard = () => {
+    const { data: nanoToncoin } = useBalance();
+
+    return (
+      <p>TON wallet balance: {nanoToncoin ?? '0'}</p>
+    );
+  };
+  ```
+
+  ```ts title="TypeScript"
+  import { getBalance } from '@ton/appkit';
+
+  const nanoToncoin = await getBalance(kit);
+  if (nanoToncoin) {
+    console.log('TON wallet balance in nanoToncoin: ', nanoToncoin);
+  }
+  ```
+</CodeGroup>
+
+### Continuous balance monitoring
+
+Poll the balance at regular intervals to keep the displayed value up to date. Use an appropriate interval based on UX requirements — shorter intervals provide fresher data but increase API usage.
+
+Modify the following examples according to the application logic:
+
+<CodeGroup>
+  ```tsx title="React" icon="react"
+  import { useBalance } from '@ton/appkit-react';
+
+  export const BalanceCard = () => {
+    const {
+      data: nanoToncoin,
+      isLoading: isBalanceLoading,
+      isError: isBalanceError,
+      refetch: onRefresh,
+      // Refresh balance data every 10 seconds
+    } = useBalance({ query: { refetchInterval: 10000 } });
+
+    if (isBalanceError) {
+      return (
+        <div>
+          <p>Error retrieving balance</p>
+          <button onClick={() => onRefresh()}>Try again</button>
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        {isBalanceLoading ? (
+          <p>Loading the balance...</p>
+        ) : (
+          <p>TON wallet balance: {nanoToncoin ?? '0'}</p>
+        )}
+      </div>
+    );
+  };
+  ```
+
+  ```ts title="TypeScript" expandable
+  import { type AppKit, getBalance } from '@ton/appkit';
+
+  /**
+   * Starts the monitoring of the currently connected wallet,
+   * calling `onBalanceUpdate()` every `intervalMs` milliseconds
+   *
+   * @returns a function to stop monitoring
+   */
+  export function startBalanceMonitoring(
+    kit: AppKit,
+    onBalanceUpdate: (balance: string) => void,
+    intervalMs: number = 10_000,
+  ): () => void {
+    let isRunning = true;
+
+    const poll = async () => {
+      while (isRunning) {
+        const balance = await getBalance(kit);
+        if (balance) {
+          onBalanceUpdate(balance);
+        }
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+    };
+
+    // Start monitoring
+    poll();
+
+    // Return a cleanup function to stop monitoring
+    return () => {
+      isRunning = false;
+    };
+  }
+
+  // Usage
+  const stopMonitoring = startBalanceMonitoring(
+    // The updateUI() function is exemplary and should be replaced by
+    // an app function that refreshes the state of the balance displayed
+    // in the interface
+    (balance) => updateUI(balance),
+  );
+
+  // Stop monitoring once it is no longer needed
+  stopMonitoring();
+  ```
+</CodeGroup>
+
+## Transfers
+
+Modify the following examples according to the application logic:
+
+<CodeGroup>
+  ```ts title="React" icon="react"
+  // Pre-built UI component for sending transactions by clicking a button.
+  // It handles success and error states while being customizable.
+  import { Transaction } from '@ton/appkit-react';
+
+  export const SendToncoinButton = () => {
+    // For example: 'UQ...'
+    const recipientAddress = '<TON_WALLET_ADDRESS>';
+    // For example, 0.1 Toncoin becomes 100000000 nanoToncoin
+    const nanoToncoin = '<NANOTONCOIN_AMOUNT>';
+
+    return (
+      <Transaction
+        // How to perform the Toncoin transaction
+        getTransactionRequest={async () => ({
+          validUntil: Math.floor(Date.now() / 1000) + 600,
+          messages: [{
+            address: recipientAddress,
+            amount: nanoToncoin,
+          }],
+        })}
+
+        // (optional) Add custom button text
+        text="Send TON"
+
+        // (optional) Handle successes
+        onSuccess={(result) => {
+          console.log('Transaction sent:', result);
+        }}
+
+        // (optional) Handle errors
+        onError={(error) => {
+          console.log('Transaction failed:', error);
+        }}
+
+        // (optional) Add custom CSS classes
+        className=''
+
+        // (optional) When set to `true`, the button is disabled
+        disabled={false}
+      />
+    )
+  };
+  ```
+
+  ```ts title="TypeScript"
+  import {
+    type AppKit,
+    // Single-call transfer
+    transferTon,
+    // Two-step transfer: create a transaction object separately from sending it
+    createTransferTonTransaction,
+    sendTransaction,
+  } from '@ton/appkit';
+
+  async function sendToncoin(
+    // Initialized AppKit instance
+    kit: AppKit,
+    // Recipient's TON wallet address as a string
+    recipientAddress: string,
+    // Amount in nanoToncoins
+    nanoAmount: BigInt,
+    // Optional comment string
+    comment?: string,
+    // Optional payload body as a BoC in Base64-encoded string
+    payload?: Base64String,
+  ) {
+    // Sign and send via TON Connect
+    const result = await transferTon(kit, {
+      recipientAddress,
+      transferAmount: nanoAmount.toString(),
+      // Optional comment OR payload, not both
+      ...(comment && { comment }),
+      ...(payload && { payload }),
+    });
+    console.log('Transaction sent:', result.boc);
+
+    // Alternatively, build the transaction first with createTransferTonTransaction,
+    // then pass the resulting object to the sendTransaction function.
+  }
+  ```
+</CodeGroup>
+
+## Confirm transaction delivery
+
+TON achieves transaction [finality](https://en.wikipedia.org/wiki/Blockchain#Finality) after a single masterchain block confirmation, where new blocks are produced approximately every 3 seconds. Once a transaction appears in a masterchain block, it becomes irreversible.
+
+Therefore, to reliably confirm the transaction delivery and status, one needs to check whether a transaction has achieved masterchain finality using the selected API client. Applications should not block the UI while waiting for such confirmation. With [continuous balance monitoring](#continuous-balance-monitoring) and subsequent transaction requests, users will receive the latest information either way.
+
+Confirmations are only needed to reliably display a list of past transactions, including the most recent ones. For detailed transaction tracking and message lookups, the [message lookup guide](/ecosystem/ton-connect/message-lookup) covers finding transactions by external message hash, waiting for confirmations, and applying message normalization.
+
+## See also
+
+- [Transaction fees](/foundations/fees)
+- [AppKit overview](/ecosystem/ton-connect/appkit/overview)
+- [TON Connect overview](/ecosystem/ton-connect)
