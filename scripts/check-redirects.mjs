@@ -115,6 +115,7 @@ const checkExist = (config) => {
     olderDocs: false,
     otherGithubLinks: false,
     wikiLinks: false,
+    eolWildcards: false,
     otherExternalLinks: false,
   };
 
@@ -141,6 +142,11 @@ const checkExist = (config) => {
     // TODOs
     if (path.startsWith('TODO')) {
       specialDestinationsExist.todos = true;
+      return true;
+    }
+    // End-of-line wildcard redirects
+    if (path.endsWith('/:slug*')) {
+      specialDestinationsExist.eolWildcards = true;
       return true;
     }
     // Otherwise
@@ -217,7 +223,7 @@ const checkExist = (config) => {
         trace: trace.concat(`No file nor a deeper redirect found for this destination: ${path}`),
       };
     }
-    // Otherwise, perform a next iteration with the new destination path.
+    // Otherwise, perform the next iteration with the new destination path.
     return pathFindWithTrace(redirectSource.destination, attemptsLeft - 1, trace.concat(path));
   };
 
@@ -390,8 +396,12 @@ const checkUpstream = async (localConfig) => {
   }
 
   const redirectSources = getRedirects(localConfig).map((it) => it.source);
+  const eolWildcards = redirectSources.filter((it) => it.endsWith('/:slug*')).map((it) => it.replace(/\/:slug\*$/, ''));
   const missingSources = upstreamOnlyLinks.filter(
-    (it) => !redirectSources.includes(it) && !redirectSources.includes(it.replace(/\/index$/, '')),
+    (it) =>
+      !redirectSources.includes(it) &&
+      !redirectSources.includes(it.replace(/\/index$/, '')) &&
+      !eolWildcards.some((w) => it.startsWith(w)),
   );
   if (missingSources.length !== 0) {
     return {

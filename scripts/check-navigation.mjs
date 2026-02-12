@@ -47,11 +47,14 @@ const checkUnique = (config) => {
   const navLinksSet = getNavLinksSet(config);
   const navLinks = getNavLinks(config);
   if (navLinks.length != navLinksSet.size) {
+    const duplicates = navLinks.filter(
+      (val, idx) => navLinks.indexOf(val) !== idx && navLinks.indexOf(val, idx + 1) === -1
+    );
     return {
       ok: false,
       error: composeErrorList(
         'Found duplicate navigation paths:',
-        navLinks.filter((val, idx) => navLinks.indexOf(val) !== idx && navLinks.indexOf(val, idx + 1) === -1),
+        duplicates,
         'Navigation paths in docs.json must be unique!',
       ),
     };
@@ -59,7 +62,6 @@ const checkUnique = (config) => {
   // Otherwise
   return { ok: true };
 };
-
 /**
  * Check that all navigation .mdx pages exist.
  *
