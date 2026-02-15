@@ -1,0 +1,728 @@
+---
+title: "How to send payments using TON Connect"
+sidebarTitle: "Send payments TON Connect"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Use TON Connect native `sendTransaction` method when:
+
+- The application manages wallet connection UI and transaction flow directly.
+- TON Connect is already used elsewhere in the application.
+- Access to TON Connect-specific APIs is required, such as status change listeners or custom wallet adapters.
+
+## Integration overview
+
+Direct TON Connect integration follows these steps:
+
+1. Configure the TON Connect UI provider with the application manifest.
+1. Manage wallet connection state and provide UI for users to connect the wallets.
+1. Create a transaction message on the client or backend using `createTonPayTransfer`.
+1. Send the transaction using TON Connect's `sendTransaction` method.
+1. Observe connection state changes and transaction status updates.
+
+## React implementation
+
+### Set up application
+
+Wrap the application with the TON Connect UI provider:
+
+```tsx
+import { TonConnectUIProvider } from "@tonconnect/ui-react";
+
+export function Providers({ children }: { children: React.ReactNode }) {
+  return (
+    <TonConnectUIProvider manifestUrl="/tonconnect-manifest.json">
+      {children}
+    </TonConnectUIProvider>
+  );
+}
+```
+
+The manifest URL must be publicly accessible and served over HTTPS in production. [The manifest file](/ecosystem/ton-connect/manifest) provides application metadata required for wallet identification.
+
+### Payment component
+
+```tsx expandable
+import {
+  useTonAddress,
+  useTonConnectModal,
+  useTonConnectUI,
+} from "@tonconnect/ui-react";
+import { createTonPayTransfer } from "@ton-pay/api";
+import { useState } from "react";
+
+export function PaymentComponent({ orderId, amount }: { orderId: string; amount: number }) {
+  const address = useTonAddress(true); // Get user-friendly address format
+  const { open } = useTonConnectModal();
+  const [tonConnectUI] = useTonConnectUI();
+  const [loading, setLoading] = useState(false);
+
+  const handlePayment = async () => {
+    // Check if wallet is connected
+    if (!address) {
+      open();
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      // Create the transaction message
+      // Note: For production, consider moving this to a server endpoint
+      const { message, reference, bodyBase64Hash } = await createTonPayTransfer(
+        {
+          amount,
+          asset: "TON",
+          recipientAddr: "<RECIPIENT_WALLET_ADDRESS>",
+          senderAddr: address,
+          commentToSender: `Payment for Order ${orderId}`,
+          commentToRecipient: `Order ${orderId}`,
+        },
+        {
+          chain: "testnet",
+          // API key can be used client-side
+          apiKey: "<TONPAY_API_KEY>",
+        }
+      );
+
+      // Store tracking identifiers
+      await fetch("/api/store-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reference, bodyBase64Hash, orderId, amount }),
+      });
+
+      // Send transaction through TonConnect
+      const result = await tonConnectUI.sendTransaction({
+        messages: [message],
+        validUntil: Math.floor(Date.now() / 1000) + 300, // 5 minutes
+        from: address,
+      });
+
+      console.log("Transaction sent:", result.boc);
+
+      // Handle success
+      window.location.href = `/orders/${orderId}/success`;
+    } catch (error) {
+      console.error("Payment failed:", error);
+      alert("Payment failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <button onClick={handlePayment} disabled={loading}>
+      {loading ? "Processing..." : address ? `Pay ${amount} TON` : "Connect Wallet"}
+    </button>
+  );
+}
+```
+
+### Manage connection state
+
+Listen for wallet connection status changes using the TON Connect UI API:
+
+```tsx
+import { useEffect } from "react";
+import { useTonConnectUI } from "@tonconnect/ui-react";
+
+export function WalletStatus() {
+  const [tonConnectUI] = useTonConnectUI();
+  const [walletInfo, setWalletInfo] = useState(null);
+
+  useEffect(() => {
+    // Listen for connection status changes
+    const unsubscribe = tonConnectUI.onStatusChange((wallet) => {
+      if (wallet) {
+        console.log("Wallet connected:", wallet.account.address);
+        setWalletInfo({
+          address: wallet.account.address,
+          chain: wallet.account.chain,
+          walletName: wallet.device.appName,
+        });
+      } else {
+        console.log("Wallet disconnected");
+        setWalletInfo(null);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [tonConnectUI]);
+
+  if (!walletInfo) {
+    return <div>No wallet connected</div>;
+  }
+
+  return (
+    <div>
+      <p>Connected: {walletInfo.walletName}</p>
+      <p>Address: {walletInfo.address}</p>
+    </div>
+  );
+}
+```
+
+## Server-side message building
+
+For production applications, build transaction messages on the server to centralize tracking and validation.
+
+### Backend endpoint
+
+```typescript expandable
+import { createTonPayTransfer } from "@ton-pay/api";
+import { validateWalletAddress } from "./utils/validation";
+
+app.post("/api/create-transaction", async (req, res) => {
+  const { orderId, senderAddr } = req.body;
+
+  try {
+    // Validate inputs
+    if (!validateWalletAddress(senderAddr)) {
+      return res.status(400).json({ error: "Invalid wallet address" });
+    }
+
+    // Fetch order details from database
+    const order = await db.orders.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    if (order.status !== "pending") {
+      return res.status(400).json({ error: "Order already processed" });
+    }
+
+    // Create transaction message
+    const { message, reference, bodyBase64Hash } = await createTonPayTransfer(
+      {
+        amount: order.amount,
+        asset: order.currency || "TON",
+        recipientAddr: "<RECIPIENT_WALLET_ADDRESS>",
+        senderAddr,
+        commentToSender: `Payment for Order ${order.id}`,
+        commentToRecipient: `Order ${order.id} - ${order.description}`,
+      },
+      {
+        chain: "testnet",
+        apiKey: "TONPAY_API_KEY",
+      }
+    );
+
+    // Store tracking identifiers
+    await db.payments.create({
+      orderId: order.id,
+      reference,
+      bodyBase64Hash,
+      amount: order.amount,
+      asset: order.currency || "TON",
+      senderAddr,
+      status: "pending",
+      createdAt: new Date(),
+    });
+
+    // Return message to client
+    res.json({ message });
+  } catch (error) {
+    console.error("Failed to create transaction:", error);
+    res.status(500).json({ error: "Failed to create transaction" });
+  }
+});
+```
+
+### Frontend implementation
+
+```tsx expandable
+export function ServerManagedPayment({ orderId }: { orderId: string }) {
+  const address = useTonAddress(true);
+  const { open } = useTonConnectModal();
+  const [tonConnectUI] = useTonConnectUI();
+  const [loading, setLoading] = useState(false);
+
+  const handlePayment = async () => {
+    if (!address) {
+      open();
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      // Request transaction message from server
+      const response = await fetch("/api/create-transaction", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId, senderAddr: address }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to create transaction");
+      }
+
+      const { message } = await response.json();
+
+      // Send transaction
+      const result = await tonConnectUI.sendTransaction({
+        messages: [message],
+        validUntil: Math.floor(Date.now() / 1000) + 300,
+        from: address,
+      });
+
+      console.log("Transaction completed:", result.boc);
+
+      // Navigate to success page
+      window.location.href = `/orders/${orderId}/success`;
+    } catch (error) {
+      console.error("Payment error:", error);
+      alert(error.message || "Payment failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <button onClick={handlePayment} disabled={loading}>
+      {loading ? "Processing..." : "Complete Payment"}
+    </button>
+  );
+}
+```
+
+## Vanilla JavaScript implementation
+
+For non-React applications, use the TON Connect SDK directly:
+
+```javascript expandable
+import TonConnectUI from "@tonconnect/ui";
+import { createTonPayTransfer } from "@ton-pay/api";
+
+const tonConnectUI = new TonConnectUI({
+  manifestUrl: "https://yourdomain.com/tonconnect-manifest.json",
+});
+
+// Connect wallet
+async function connectWallet() {
+  await tonConnectUI.connectWallet();
+}
+
+// Send payment
+async function sendPayment(amount, orderId) {
+  const wallet = tonConnectUI.wallet;
+
+  if (!wallet) {
+    await connectWallet();
+    return;
+  }
+
+  try {
+    // Create transaction message
+    const { message, reference, bodyBase64Hash } = await createTonPayTransfer(
+      {
+        amount,
+        asset: "TON",
+        recipientAddr: "<RECIPIENT_WALLET_ADDRESS>",
+        senderAddr: wallet.account.address,
+        commentToSender: `Order ${orderId}`,
+      },
+      { chain: "testnet" }
+    );
+
+    // Store tracking data
+    await fetch("/api/store-payment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reference, bodyBase64Hash, orderId }),
+    });
+
+    // Send transaction
+    const result = await tonConnectUI.sendTransaction({
+      messages: [message],
+      validUntil: Math.floor(Date.now() / 1000) + 300,
+      from: wallet.account.address,
+    });
+
+    console.log("Payment successful:", result.boc);
+  } catch (error) {
+    console.error("Payment failed:", error);
+  }
+}
+
+// Listen for connection changes
+tonConnectUI.onStatusChange((wallet) => {
+  if (wallet) {
+    console.log("Wallet connected:", wallet.account.address);
+    document.getElementById("wallet-address").textContent = wallet.account.address;
+  } else {
+    console.log("Wallet disconnected");
+    document.getElementById("wallet-address").textContent = "Not connected";
+  }
+});
+```
+
+## Transaction parameters
+
+### Message structure
+
+The message object passed to `sendTransaction` must include these fields:
+
+<ResponseField
+  name="address"
+  type="string"
+  required
+>
+  Recipient wallet address in [user-friendly format](/foundations/addresses/formats).
+</ResponseField>
+
+<ResponseField
+  name="amount"
+  type="string"
+  required
+>
+  Amount to send in nanotons.
+</ResponseField>
+
+<ResponseField
+  name="payload"
+  type="string"
+  required
+>
+  Base64-encoded message payload containing transfer details and tracking information.
+</ResponseField>
+
+### Transaction options
+
+<ResponseField
+  name="validUntil"
+  type="number"
+  required
+>
+  Unix timestamp indicating when the transaction expires. Typically is 5 minutes.
+
+  ```typescript
+  validUntil: Math.floor(Date.now() / 1000) + 300
+  ```
+</ResponseField>
+
+<ResponseField
+  name="from"
+  type="string"
+  required
+>
+  Sender's wallet address. Must match the connected wallet address.
+</ResponseField>
+
+<ResponseField
+  name="network"
+  type="string"
+>
+  Network identifier. Usually omitted as it is inferred from the connected wallet.
+</ResponseField>
+
+## Error handling
+
+```typescript
+async function handleTransaction() {
+  try {
+    const result = await tonConnectUI.sendTransaction({
+      messages: [message],
+      validUntil: Math.floor(Date.now() / 1000) + 300,
+      from: address,
+    });
+
+    return result;
+  } catch (error) {
+    // User rejected the transaction
+    if (error.message?.includes("rejected")) {
+      console.log("User cancelled the transaction");
+      return null;
+    }
+
+    // Wallet not connected
+    if (error.message?.includes("Wallet is not connected")) {
+      console.log("Connect the wallet first");
+      tonConnectUI.connectWallet();
+      return null;
+    }
+
+    // Transaction expired
+    if (error.message?.includes("expired")) {
+      console.log("Transaction expired, please try again");
+      return null;
+    }
+
+    // Network or other errors
+    console.error("Transaction failed:", error);
+    throw error;
+  }
+}
+```
+
+## Best practices
+
+- Check wallet connection status before attempting to send transactions. Provide clear UI feedback for connection state.
+
+  ```typescript
+  const wallet = tonConnectUI.wallet;
+
+  if (!wallet) {
+      // Show connect button
+      return;
+  }
+
+  // Proceed with transaction
+  ```
+
+- Use a reasonable `validUntil` value, typically 5 minutes, to prevent stale transactions while allowing enough time for user confirmation.
+
+  ```typescript
+  const validUntil = Math.floor(Date.now() / 1000) + 300; // 5 minutes
+  ```
+
+- Ensure the sender address from TON Connect matches the format expected by the backend. Use the [user-friendly format](/foundations/addresses/formats) consistently.
+
+  ```typescript
+  const address = useTonAddress(true); // true = user-friendly format
+  ```
+
+- Always persist `reference` and `bodyBase64Hash` before sending the transaction. This allows payment reconciliation through webhooks even if the client flow fails after submission.
+
+  ```typescript
+  // Good: Store first, then send
+  await storePaymentTracking(reference, bodyBase64Hash);
+  await tonConnectUI.sendTransaction(...);
+
+  // Bad: Send first, then store
+  await tonConnectUI.sendTransaction(...);
+  await storePaymentTracking(reference, bodyBase64Hash); // Might not execute
+  ```
+
+- Implement connection state listeners to update the UI and handle wallet disconnections.
+
+  ```typescript
+  useEffect(() => {
+      const unsubscribe = tonConnectUI.onStatusChange((wallet) => {
+          if (wallet) {
+              setConnectedWallet(wallet.account.address);
+          } else {
+              setConnectedWallet(null);
+          }
+      });
+
+      return unsubscribe;
+  }, [tonConnectUI]);
+  ```
+
+- Handle transaction rejection explicitly. Treat user rejection as a normal cancellation, not as an error.
+
+  ```typescript
+  try {
+    await tonConnectUI.sendTransaction(transaction);
+  } catch (error) {
+    if (error.message?.includes("rejected")) {
+      // Don't show error - user intentionally cancelled
+      console.log("Transaction cancelled by user");
+    } else {
+      // Show error for unexpected failures
+      showErrorMessage("Transaction failed");
+    }
+  }
+  ```
+
+## Troubleshooting
+
+<Accordion
+  title="If a transaction fails with Wallet is not connected"
+>
+  Ensure the wallet is connected before calling `sendTransaction`:
+
+  ```typescript
+  if (!tonConnectUI.wallet) {
+    await tonConnectUI.connectWallet();
+    // Wait for connection before proceeding
+  }
+  ```
+
+  Add a connection state check:
+
+  ```typescript
+  const isConnected = tonConnectUI.wallet !== null;
+  ```
+</Accordion>
+
+<Accordion
+  title="If sendTransaction throws Invalid address format"
+>
+  1. Ensure the `from` address matches the connected wallet address.
+  1. Verify that the recipient address is [a valid TON address](/foundations/addresses/formats).
+  1. Use the wallet address provided by the SDK to avoid format mismatches:
+
+  ```typescript
+  const address = useTonAddress(true); // Ensure consistent format
+  ```
+</Accordion>
+
+<Accordion
+  title="If a transaction expires before the user signs it"
+>
+  The `validUntil` timestamp may be too short. Increase the validity period to give the user more time to confirm the transaction:
+
+  ```typescript
+  // Increase from 5 to 10 minutes if needed
+  validUntil: Math.floor(Date.now() / 1000) + 600
+  ```
+</Accordion>
+
+<Accordion
+  title="If the manifest URL fails to load"
+>
+  Check for the following common issues:
+
+  - The URL is not publicly accessible.
+  - [CORS](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS) headers are not configured correctly.
+  - The manifest JSON is malformed.
+  - The URL is not HTTPS; required in production.
+
+  Open the manifest URL directly in a browser to verify that it is accessible.
+</Accordion>
+
+<Accordion
+  title="If onStatusChange is not triggered"
+>
+  Ensure that the status change subscription is created once and remains active for the lifetime of the component.
+
+  ```typescript
+  useEffect(() = >{
+    const unsubscribe = tonConnectUI.onStatusChange(handleWalletChange);
+    return () = >unsubscribe(); // Clean up subscription
+  },
+  [tonConnectUI]);
+  ```
+</Accordion>
+
+<Accordion
+  title="If multiple wallet connection prompts appear"
+>
+  `connectWallet()` may be called more than once. Track the connection state:
+
+  ```typescript
+  const[isConnecting, setIsConnecting] = useState(false);
+
+  const connect = async() = >{
+    if (isConnecting) return;
+    setIsConnecting(true);
+    try {
+      await tonConnectUI.connectWallet();
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+  ```
+</Accordion>
+
+## API key configuration
+
+When using TON Connect with server-side message building, [the API key can be included](/ecosystem/ton-pay/payment-integration/payments-tonconnect#api-key-configuration) in the backend:
+
+```typescript
+import { createTonPayTransfer } from "@ton-pay/api";
+
+app.post("/api/create-transaction", async (req, res) => {
+  const { orderId, senderAddr } = req.body;
+  const order = await db.orders.findById(orderId);
+
+  const { message, reference, bodyBase64Hash } = await createTonPayTransfer(
+    {
+      amount: order.amount,
+      asset: "TON",
+      recipientAddr: "<RECIPIENT_WALLET_ADDRESS>",
+      senderAddr: "<SENDER_WALLET_ADDRESS>",
+    },
+    {
+      chain: "testnet",
+      apiKey: "TONPAY_API_KEY",
+    }
+  );
+
+  await db.payments.create({ orderId, reference, bodyBase64Hash });
+  res.json({ message });
+});
+```
+
+## Testnet configuration
+
+<Aside
+  type="danger"
+  title="Funds at risk"
+>
+  Running tests on mainnet can result in irreversible loss of real TON. Always use `chain: "testnet"` and testnet wallet addresses during development. Verify the network before switching to mainnet.
+</Aside>
+
+### Set up testnet
+
+Configure the environment to use testnet:
+
+```bash
+# .env.development
+TON_CHAIN=testnet
+MERCHANT_WALLET_ADDRESS=TESTNET_ADDRESS
+```
+
+```tsx
+import { useTonAddress, useTonConnectUI } from "@tonconnect/ui-react";
+import { createTonPayTransfer } from "@ton-pay/api";
+
+export function TestnetPayment({ amount }: { amount: number }) {
+  const address = useTonAddress(true);
+  const [tonConnectUI] = useTonConnectUI();
+
+  const handlePayment = async () => {
+    if (!address) {
+      tonConnectUI.connectWallet();
+      return;
+    }
+
+    const { message } = await createTonPayTransfer(
+      {
+        amount,
+        asset: "TON",
+        recipientAddr: "<RECIPIENT_WALLET_ADDRESS>",
+        senderAddr: "<SENDER_WALLET_ADDRESS>",
+      },
+      { chain: "testnet" } // Use testnet
+    );
+
+    const result = await tonConnectUI.sendTransaction({
+      messages: [message],
+      validUntil: Math.floor(Date.now() / 1000) + 300,
+      from: address,
+    });
+
+    console.log("Testnet transaction:", result.boc);
+  };
+
+  return <button onClick={handlePayment}>Test Payment</button>;
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Webhook integration"
+    icon="webhook"
+    href="/ecosystem/ton-pay/payment-integration/transfer"
+  >
+    Receive real-time notifications when payments complete.
+  </Card>
+
+  <Card
+    title="Transaction status"
+    icon="magnifying-glass"
+    href="/ecosystem/ton-pay/payment-integration/status-info"
+  >
+    Query payment status using reference or body hash.
+  </Card>
+</CardGroup>

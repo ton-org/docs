@@ -1,65 +1,79 @@
 ---
-title: "Strings (actually, slices)"
+title: "Strings as slices"
 sidebarTitle: "Strings"
 ---
 
-The TVM (virtual machine) has only `SLICE` (binary data).
-**There are no usual "strings"** (likewise, no floating-point numbers).
-However, several techniques exist to store and return string-like data on-chain.
-
-## Embedding addresses as strings
-
-Use `address("...")` to insert a constant standard address:
-
-```tolk
-const REFUND_ADDR = address("EQCRDM9h4k3UJdOePPuyX40mCgA4vxge5Dc5vjBR8djbEKC5")
-```
-
-Its type is `address`, it has workchain and hash, but internally it's a TVM `SLICE`, with 267 bits and 0 refs.
-
-To return a human‑readable address, just `address`.
-Client‑side libraries reconstruct and display addresses according to their own formatting rules.
+[TVM](/tvm/overview) does not have a dedicated string type. Instead, [slices](/languages/tolk/types/cells#slices) are used to encode string-like data.
 
 ## Raw string literals
 
-The syntax `val s = "abcd"` is valid, but it does not produce a string; it produces a binary slice: each character is encoded with its _ASCII char no_.
+String literals produce a binary slice where each character is encoded with its [ASCII](https://en.wikipedia.org/wiki/ASCII) character number:
 
 ```tolk
 // `slice` with 4 bytes: 97,98,99,100 (0x61626364)
 const SLICE1 = "abcd"
 ```
 
-Literals cannot exceed 127 ASCII characters, because a cell can contain up to 1023 bits.
+Literals cannot exceed 127 ASCII characters because a cell can contain up to 1023 bits.
 
-## Hex string literals
+## Compile-time functions
 
-Use `stringHexToSlice("...")` to embed hexadecimal binary data:
+[Several functions](/languages/tolk/features/standard-library#compile-time-calculations-and-embedding) operate on constant strings and string literals at compile time. The produced values are embedded in the contract as constants.
+
+```tolk
+// `int` with a CRC32 checksum
+stringCrc32("some_str") // 4013618352 = 0xEF3AF4B0
+
+// `int` with a CRC16 checksum
+stringCrc16("some_str") // 53407 = 0xD09F
+
+// `int` with a full SHA256 checksum
+stringSha256("some_crypto_key")
+
+// `int` with first 32 bits of a SHA256 checksum
+stringSha256_32("some_crypto_key")
+
+// `int` with N-chars ASCII in base 256
+stringToBase256("AB") // 16706 (65*256 + 66)
+```
+
+### Embed hexadecimal data
+
+To embed hexadecimal binary data, use `stringHexToSlice("...")`:
 
 ```tolk
 // `slice` with 2 bytes: 16,32 (0x1020)
 const SLICE2 = stringHexToSlice("1020")
 ```
 
-## Concatenating string literals
+### Embed human-readable address strings
 
-An example for `"ab"` and `"cd"`. Because they are slices, concatenation is performed by via a builder:
+The `address("...")` function inserts a constant slice containing a standard internal contract address:
 
 ```tolk
-val concat = beginCell()
-            .storeSlice("ab")
-            .storeSlice("cd")
-            .asSlice();         // builder-to-slice
+const REFUND_ADDR = address("EQCRDM9h4k3UJdOePPuyX40mCgA4vxge5Dc5vjBR8djbEKC5")
 ```
 
-## How to return a string from a contract
+Such slices hold 267 bits of data and have no refs.
 
-A plain `slice` cannot be deserialized directly.
-Like `int` — use `int32` / `coins` / etc. to specify encoding.
-Similarly, string‑like data must use an explicit encoding to be stored on‑chain.
+## Concatenate string literals
 
-### Way #1: fixed-size strings via `bitsN`
+There are no compile-time means to concatenate string literals. Instead, concatenation can be performed at runtime via a [builder](/languages/tolk/types/cells#builders):
 
-If a response always contains 4 bytes of text, fixed‑size encodings may be used: `bits32` or `bytes4`.
+```tolk
+val concat: slice = beginCell()
+    .storeSlice("ab")
+    .storeSlice("cd")
+    .asSlice();
+```
+
+## Serialization
+
+Plain slices cannot be serialized directly: they require a fixed-width type or custom serialization rules. Similarly, string-like data must use an explicit encoding to be stored on-chain or returned from contracts.
+
+### Fixed-size strings via `bitsN`
+
+If a string size is fixed and does not exceed 1023 bits, use fixed-size encodings: `bitsN` or `bytesN`, where `N` cannot go beyond 1023 or 127, respectively.
 
 ```tolk
 struct Response1 {
@@ -75,19 +89,23 @@ fun generateResponse(): Response1 {
 }
 ```
 
-### Way #2: "snake string", or "tail string"
+### Snake strings
 
-"Snake strings" (also called "tail strings") are a standard encoding for arbitrary‑length strings, including those exceeding 127 characters.
+For arbitrary strings, the so-called _snake string_ or tail string encoding is often used.
 
-Snake encoding is: **store portion of data → store rest in a ref cell**. Here is a string `xxxxyyyyzzzz` split into 3 parts:
+Snake encoding works by storing a portion of data in the current cell and storing the rest in the first ref cell, recursively. The process repeats until all the data is stored in a chain of cells.
+
+For instance, a string `xxxxyyyyzzzz` can be split into three parts and stored as a snake string:
 
 ```tolk
 "xxxx".ref("yyyy".ref("zzzz"))
 ```
 
-Such a chaining can easily be implemented:
+Such chaining can be implemented as follows:
 
 ```tolk
+type MyTailString = RemainingBitsAndRefs
+
 struct Response2 {
     someData: int8
     str: MyTailString
@@ -95,7 +113,9 @@ struct Response2 {
 
 fun slice.ref(self, other: slice): slice {
     return beginCell()
-          .storeSlice(self).storeSlice(other).asSlice();
+        .storeSlice(self)
+        .storeSlice(other)
+        .asSlice();
 }
 
 fun generateResponse(): Response2 {
@@ -106,25 +126,13 @@ fun generateResponse(): Response2 {
 }
 ```
 
-Then a cell will be `"FFxxxx".ref(...)`. So, it's named "a tail string" because it goes after existing data up to the end.
+There, `MyTailString` is a type alias to `RemainingBitsAndRefs`, which is a slice that holds the [remainder of the data when read](/languages/tolk/types/cells#remaining-slice-when-reading). On-chain decoding of such strings does not require iteration over nested references.
 
-`MyTailString` can be described in the simplest form as the remainder of a slice — `RemainingBitsAndRefs` (mentioned [in an article about cells](/languages/tolk/types/cells#%E2%80%9Dthe-remaining%E2%80%9D-slice-when-reading)).
+### Variable-length encoding
 
-```tolk
-type MyTailString = RemainingBitsAndRefs
-```
+Encoding of variable-length strings can also be implemented manually using a type alias over `slice` and its custom serializers.
 
-When decoding on‑chain, no reference iteration is required.
-Client‑side tooling can reconstruct and display the full string.
-
-### Way #3: variable-length encoding
-
-Variable‑length encodings may also be implemented manually. For example, short strings like "abcd" can be stored like
-
-- 8 bits for N = string length
-- N bits of data
-
-This can be implemented using custom serializers:
+For example, short strings like `"abcd"` can be stored as 8 bits for `N`, where `N` is the string length, followed by `N` bits of data:
 
 ```tolk
 type ShortString = slice
@@ -141,7 +149,7 @@ fun ShortString.unpackFromSlice(mutate s: slice) {
 }
 ```
 
-Then use it like a regular type:
+Then, `ShortString` can be used as a regular type and enjoy auto-serialization:
 
 ```tolk
 struct Response3 {
@@ -156,15 +164,3 @@ fun generateResponse(): Response3 {
     }
 }
 ```
-
-## Calculate hex / crc32 / etc. at compile-time
-
-There are several functions operating on strings:
-
-- `stringCrc32("some_str")`
-- `stringCrc16("some_str")`
-- `stringSha256("some_crypto_key")`
-- `stringSha256_32("some_crypto_key")`
-- `stringToBase256("AB")`
-
-For examples, see [standard library](/languages/tolk/features/standard-library), they are at the top.

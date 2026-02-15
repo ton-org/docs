@@ -1,0 +1,580 @@
+---
+title: "How to add a TON Pay button using React"
+sidebarTitle: "Add TON Pay button React"
+---
+
+import { Aside } from "/snippets/aside.jsx";
+
+`TonPayButton` is a ready-to-use React component that handles wallet connection and payment flow with configurable styling for TON payments.
+
+## Install packages
+
+<Steps>
+  <Step
+    title="Install necessary libraries"
+  >
+    ```bash
+    npm install @ton-pay/ui-react @ton-pay/api @tonconnect/ui-react
+    ```
+  </Step>
+
+  <Step
+    title="Create a TON Connect manifest"
+  >
+    Create [`tonconnect-manifest.json`](/ecosystem/ton-connect/manifest) in the app public directory:
+
+    ```json
+    {
+      "url": "<APP_URL>",
+      "name": "<APP_NAME>",
+      "iconUrl": "<APP_ICON_URL>"
+    }
+    ```
+  </Step>
+
+  <Step
+    title="Wrap the app with the provider"
+  >
+    Wrap the root component with `TonConnectUIProvider`.
+
+    ```tsx
+    import { TonConnectUIProvider } from "@tonconnect/ui-react";
+
+    function App() {
+      return (
+        <TonConnectUIProvider manifestUrl="/tonconnect-manifest.json">
+          <AppRoutes />
+        </TonConnectUIProvider>
+      );
+    }
+    ```
+  </Step>
+</Steps>
+
+<Aside
+  type="note"
+  title="HTTPS required"
+>
+  To receive webhooks in production, ensure corresponding endpoints use HTTPS. Regular HTTP endpoints would be ignored by TON Pay.
+</Aside>
+
+## Option 1: use useTonPay hook
+
+The `useTonPay` hook simplifies wallet connection and transaction handling. Use it for a direct integration path.
+
+<Steps>
+  <Step
+    title="Import required dependencies"
+  >
+    ```tsx
+    import { TonPayButton } from "@ton-pay/ui-react";
+    import { useTonPay } from "@ton-pay/ui-react";
+    import { createTonPayTransfer } from "@ton-pay/api";
+    import { useState } from "react";
+    ```
+  </Step>
+
+  <Step
+    title="Set up the component"
+  >
+    ```tsx
+    function PaymentComponent() {
+      const { pay } = useTonPay();
+      const [isLoading, setIsLoading] = useState(false);
+    ```
+  </Step>
+
+  <Step
+    title="Create the payment handler"
+  >
+    ```tsx
+      const handlePayment = async () => {
+        setIsLoading(true);
+        try {
+          const { txResult, reference, bodyBase64Hash } = await pay(
+            async (senderAddr: string) => {
+              // Build the payment message
+              const { message, reference, bodyBase64Hash } =
+                await createTonPayTransfer(
+                  {
+                    amount: 3.5,
+                    asset: "TON",
+                    recipientAddr: "<RECIPIENT_ADDRESS>",
+                    senderAddr,
+                    commentToSender: "Order #12345",
+                  },
+                  { chain: "testnet" } // change to "mainnet" only after full validation
+                );
+              return { message, reference, bodyBase64Hash };
+            }
+          );
+
+          console.log("Payment sent:", txResult);
+          console.log("Tracking:", reference, bodyBase64Hash);
+        } catch (error) {
+          console.error("Payment failed:", error);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+    ```
+
+    <Aside
+      type="note"
+    >
+      The `useTonPay` hook automatically checks wallet connection. If the user is not connected, it opens the TON Connect modal first.
+    </Aside>
+  </Step>
+
+  <Step
+    title="Render the button"
+  >
+    ```tsx
+      return (
+        <TonPayButton
+          handlePay={handlePayment}
+          isLoading={isLoading}
+          loadingText="Processing payment..."
+        />
+      );
+    }
+    ```
+  </Step>
+</Steps>
+
+## Option 2: use TON Connect directly
+
+Use TON Connect hooks directly when full control over the connection flow is required.
+
+<Steps>
+  <Step
+    title="Import TON Connect hooks"
+  >
+    ```tsx
+    import { TonPayButton } from "@ton-pay/ui-react";
+    import {
+      useTonAddress,
+      useTonConnectModal,
+      useTonConnectUI,
+    } from "@tonconnect/ui-react";
+    import { createTonPayTransfer } from "@ton-pay/api";
+    import { useState } from "react";
+    ```
+  </Step>
+
+  <Step
+    title="Set up hooks and state"
+  >
+    ```tsx
+    function DirectPaymentComponent() {
+      const address = useTonAddress(true);
+      const modal = useTonConnectModal();
+      const [tonConnectUI] = useTonConnectUI();
+      const [isLoading, setIsLoading] = useState(false);
+    ```
+  </Step>
+
+  <Step
+    title="Create the payment handler"
+  >
+    ```tsx
+      const handlePay = async () => {
+        // Check if wallet is connected
+        if (!address) {
+          modal.open();
+          return;
+        }
+
+        setIsLoading(true);
+        try {
+          // Create the payment message
+          const { message } = await createTonPayTransfer(
+            {
+              amount: 1.2,
+              asset: "TON",
+              recipientAddr: "<RECIPIENT_ADDRESS>",
+              senderAddr: "<SENDER_ADDRESS>",
+              commentToSender: "Invoice #5012",
+            },
+            { chain: "mainnet" } // can be changed to testnet
+          );
+
+          // Send the transaction
+          await tonConnectUI.sendTransaction({
+            messages: [message],
+            validUntil: Math.floor(Date.now() / 1000) + 5 * 60,
+            from: address,
+          });
+
+          console.log("Payment completed!");
+        } catch (error) {
+          console.error("Payment failed:", error);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+    ```
+  </Step>
+
+  <Step
+    title="Render the button"
+  >
+    ```tsx
+      return <TonPayButton handlePay={handlePay} isLoading={isLoading} />;
+    }
+    ```
+  </Step>
+</Steps>
+
+## TonPayButton props
+
+All props are optional except `handlePay`.
+
+|           Prop          |             Type            |      Default      |                                                   Description                                                   |
+| :---------------------: | :-------------------------: | :---------------: | :-------------------------------------------------------------------------------------------------------------: |
+|       `handlePay`       |    `() => Promise<void>`    |      required     |                               Payment handler called when the button is selected.                               |
+|       `isLoading`       |          `boolean`          |      `false`      |                                 Shows a loading spinner and disables the button.                                |
+|        `variant`        |    `"long"` \| `"short"`    |      `"long"`     |                       Button text variant: "Pay with TON Pay" (long) or "TON Pay" (short).                      |
+|         `preset`        | `"default"` \| `"gradient"` |         -         |                          Predefined theme preset; overrides `bgColor` and `textColor`.                          |
+|        `onError`        |  `(error: unknown) => void` |         -         | Called when `handlePay` throws. A built-in error popup is also shown unless `showErrorNotification` is `false`. |
+| `showErrorNotification` |          `boolean`          |       `true`      |                              Shows the built-in error notification popup on error.                              |
+|        `bgColor`        |           `string`          |    `"#0098EA"`    |                                     Background color (hex) or CSS gradient.                                     |
+|       `textColor`       |           `string`          |    `"#FFFFFF"`    |                                            Text and icon color (hex).                                           |
+|      `borderRadius`     |     `number` \| `string`    |        `8`        |                                      Border radius in pixels or CSS value.                                      |
+|       `fontFamily`      |           `string`          |    `"inherit"`    |                                           Font family for button text.                                          |
+|         `width`         |     `number` \| `string`    |       `300`       |                                       Button width in pixels or CSS value.                                      |
+|         `height`        |     `number` \| `string`    |        `44`       |                                      Button height in pixels or CSS value.                                      |
+|      `loadingText`      |           `string`          | `"Processing..."` |                                         Text shown during loading state.                                        |
+|        `showMenu`       |          `boolean`          |       `true`      |                                   Shows the dropdown menu with wallet actions.                                  |
+|        `disabled`       |          `boolean`          |      `false`      |                                               Disables the button.                                              |
+|         `style`         |    `Record<string, any>`    |         -         |                                            Additional inline styles.                                            |
+|       `className`       |           `string`          |         -         |                                            Additional CSS class name.                                           |
+
+## Customization
+
+### Button variants
+
+[Use `useTonPay`](/ecosystem/ton-pay/ui-integration/button-react#option-1:-using-usetonpay-hook-recommended) for a complete example.
+
+<CodeGroup>
+  ```tsx Long variant (default)
+  <TonPayButton
+    variant="long"
+    handlePay={handlePay}
+  />
+  // Displays: "Pay with [TON icon] Pay"
+  ```
+
+  ```tsx Short variant
+  <TonPayButton
+    variant="short"
+    handlePay={handlePay}
+  />
+  // Displays: "[TON icon] Pay"
+  ```
+</CodeGroup>
+
+### Presets
+
+[Use `useTonPay`](/ecosystem/ton-pay/ui-integration/button-react#option-1:-using-usetonpay-hook-recommended) for a complete example.
+
+<CodeGroup>
+  ```tsx Default preset
+  <TonPayButton
+    preset="default"
+    handlePay={handlePay}
+  />
+  // Blue theme: #0098EA
+  ```
+
+  ```tsx Gradient preset
+  <TonPayButton
+    preset="gradient"
+    handlePay={handlePay}
+  />
+  // Gradient: #2A82EB to #0355CF
+  ```
+</CodeGroup>
+
+### Custom styling
+
+[Use `useTonPay`](/ecosystem/ton-pay/ui-integration/button-react#option-1:-using-usetonpay-hook-recommended) for a complete example.
+
+```tsx
+<TonPayButton
+  bgColor="#7C3AED"
+  textColor="#FFFFFF"
+  borderRadius={12}
+  width={400}
+  height={56}
+  fontFamily="'Inter', sans-serif"
+  handlePay={handlePay}
+/>
+```
+
+CSS gradients can be used in `bgColor`. For example: `"linear-gradient(135deg, #667eea 0%, #764ba2 100%)"`.
+
+### Button states
+
+[Use `useTonPay`](/ecosystem/ton-pay/ui-integration/button-react#option-1:-using-usetonpay-hook-recommended) for a complete example.
+
+```tsx
+<TonPayButton
+  handlePay={handlePay}
+  isLoading={isLoading}
+  loadingText="Processing payment..."
+  disabled={cartTotal === 0}
+  showMenu={false}
+/>
+```
+
+## Advanced patterns
+
+### Error handling
+
+```tsx
+import { TonPayButton, useTonPay } from "@ton-pay/ui-react";
+import { createTonPayTransfer } from "@ton-pay/api";
+import { useState } from "react";
+
+function PaymentWithErrors() {
+  const { pay } = useTonPay();
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handlePayment = async () => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      await pay(async (senderAddr: string) => {
+        const { message, reference, bodyBase64Hash } =
+          await createTonPayTransfer(
+            {
+              amount: 5.0,
+              asset: "TON",
+              recipientAddr: "<RECIPIENT_ADDR>",
+              senderAddr,
+            },
+            { chain: "testnet" }
+          );
+        return { message, reference, bodyBase64Hash };
+      });
+      // Show success message...
+    } catch (err: any) {
+      setError(err.message || "Payment failed. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <TonPayButton handlePay={handlePayment} isLoading={isLoading} />
+      {error && <div style={{ color: "red" }}>{error}</div>}
+    </div>
+  );
+}
+```
+
+#### Built-in error notification
+
+`TonPayButton` catches errors thrown from `handlePay` and shows a notification pop-up with the error message.
+
+If a custom error UI is also rendered, both messages appear. Use either the built-in pop-up or a custom UI, but not both.
+
+#### Add a custom error handler
+
+Use `onError` for logging or custom notifications. Set `showErrorNotification={false}` to disable the built-in pop-up.
+
+```tsx
+import { TonPayButton, useTonPay } from "@ton-pay/ui-react";
+import { createTonPayTransfer } from "@ton-pay/api";
+import { useState } from "react";
+
+function PaymentWithCustomHandler() {
+  const { pay } = useTonPay();
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handlePayment = async () => {
+    setIsLoading(true);
+    try {
+      await pay(async (senderAddr: string) => {
+        const { message } = await createTonPayTransfer(
+          {
+            amount: 3,
+            asset: "TON",
+            recipientAddr: "<RECIPIENT_ADDR>",
+            senderAddr,
+          },
+          { chain: "testnet" }
+        );
+        return { message };
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <TonPayButton
+      handlePay={handlePayment}
+      isLoading={isLoading}
+      onError={(error) => {
+        analytics.track("payment_error", {
+          message: (error as any)?.message ?? String(error),
+        });
+        // The toast/notification can go here
+      }}
+      showErrorNotification={false}
+    />
+  );
+}
+```
+
+Replace the pop-up with a custom UI. Catch errors inside `handlePay` and do not rethrow. When `handlePay` resolves, the button does not show the default pop-up.
+
+```tsx
+import { TonPayButton, useTonPay } from "@ton-pay/ui-react";
+import { createTonPayTransfer } from "@ton-pay/api";
+import { useState } from "react";
+
+function PaymentWithOwnUI() {
+  const { pay } = useTonPay();
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handlePayment = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      await pay(async (senderAddr: string) => {
+        const { message } = await createTonPayTransfer(
+          {
+            amount: 2.5,
+            asset: "TON",
+            recipientAddr: "<RECIPIENT_ADDR>",
+            senderAddr,
+          },
+          { chain: "testnet" }
+        );
+        return { message };
+      });
+    } catch (e: any) {
+      // Handle the error here and DO NOT rethrow
+      setError(e?.message ?? "Payment failed. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <TonPayButton handlePay={handlePayment} isLoading={isLoading} />
+      {error && <div style={{ color: "red" }}>{error}</div>}
+    </div>
+  );
+}
+```
+
+## Server-side payment creation
+
+Create the payment message on a backend to store tracking identifiers and validate parameters before sending.
+
+<Steps>
+  <Step
+    title="Create a backend endpoint"
+  >
+    Build an endpoint that returns the message for `TonPayButton`.
+
+    ```ts
+    // /api/create-payment
+    app.post("/api/create-payment", async (req, res) => {
+      const { amount, senderAddr, orderId } = req.body;
+
+      const { message, reference, bodyBase64Hash } = await createTonPayTransfer(
+        {
+          amount,
+          asset: "TON",
+          recipientAddr: "<RECIPIENT_ADDR>",
+          senderAddr,
+          commentToSender: `Order ${orderId}`,
+        },
+        { chain: "testnet" }
+      );
+
+      // Store reference and bodyBase64Hash in the database
+      await db.savePayment({ orderId, reference, bodyBase64Hash });
+
+      res.json({ message });
+    });
+    ```
+  </Step>
+
+  <Step
+    title="Call the endpoint from the frontend"
+  >
+    ```tsx
+    import { TonPayButton, useTonPay } from "@ton-pay/ui-react";
+    import { useState } from "react";
+
+    function ServerSidePayment() {
+      const { pay } = useTonPay();
+      const [isLoading, setIsLoading] = useState(false);
+
+      const handlePayment = async () => {
+        setIsLoading(true);
+        try {
+          await pay(async (senderAddr: string) => {
+            const response = await fetch("/api/create-payment", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                amount: 10.5,
+                senderAddr,
+                orderId: "<ORDER_ID>",
+              }),
+            });
+            const data = await response.json();
+            return { message: data.message };
+          });
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
+      return <TonPayButton handlePay={handlePayment} isLoading={isLoading} />;
+    }
+    ```
+  </Step>
+</Steps>
+
+<Aside type="tip">
+  Creating payments server-side allows storing tracking identifiers and validating payment parameters before sending.
+</Aside>
+
+## Test the integration
+
+Run the interactive button showcase to test variants and styling.
+
+```bash
+npm run test:button-react
+# or
+bun test:button-react
+```
+
+<Aside
+  type="danger"
+  title="Funds at risk"
+>
+  Running tests on mainnet can result in irreversible loss of real TON. Always use `chain: "testnet"` and testnet wallet addresses during development. Verify the network before switching to mainnet.
+</Aside>
+
+## Best practices
+
+- Wrap payment calls in try-catch blocks and display user-friendly error messages. Network issues and cancellations are common.
+- Set `isLoading={true}` during payment processing to prevent double submissions and provide visual feedback.
+- Verify cart totals, user input, and business rules before calling the payment handler.
+- Use `chain: "testnet"` during development. Switch to `"mainnet"` only after validation.
+- Save `reference` and `bodyBase64Hash` to track payment status using [webhooks](/ecosystem/ton-pay/webhooks).
+- After successful payment, show a confirmation message, redirect to a success page, or update the UI.
