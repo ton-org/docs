@@ -1,0 +1,90 @@
+---
+title: "On-ramp in TON Pay SDK"
+sidebarTitle: "On-ramp"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+The TON Pay SDK includes a built-in fiat-to-crypto on-ramp powered by MoonPay. It allows users to top up their wallets with a bank card directly from the payment modal.
+
+## How the on-ramp works
+
+When a user opens the payment modal and their wallet balance is insufficient, the SDK offers a "Top up by card" option. The flow proceeds as follows:
+
+1. **Balance check** — The SDK verifies whether the connected wallet has sufficient funds.
+2. **Geographic and limit check** — The SDK verifies that card purchases are available in the user's region and retrieves minimum/maximum purchase amounts from the provider.
+3. **Amount calculation** — The SDK calculates the required top-up amount, clamped to the provider's minimum.
+4. **Widget rendering** — A MoonPay purchase widget loads inside an iframe. Funds are sent to the **user's own wallet**.
+5. **Balance polling** — Once the provider reports a completed transaction, the SDK polls the user's wallet balance every 5 seconds.
+6. **Auto-pay** — When the balance becomes sufficient, the SDK displays a modal to execute the payment to the merchant.
+
+Funds are always deposited to the user's wallet first; the user then pays the merchant in a subsequent step.
+
+## Enable the on-ramp
+
+The `TonPayButton` React component enables the on-ramp by default. To disable it, set `isOnRampAvailable` to `false`:
+
+```tsx
+<TonPayButton
+  isOnRampAvailable={false}
+  // ... other props
+/>
+```
+
+When `isOnRampAvailable` is `false`, the "Top up by card" option is hidden. Users can only pay using their existing wallet balance.
+
+For integration details, see the [TonPay Button React guide](/ecosystem/ton-pay/ui-integration/button-react).
+
+## Supported assets
+
+The SDK supports the following assets for on-ramp top-ups:
+
+| Token | Master address |
+| :--- | :--- |
+| **TON** | (Native) |
+| **USDT** | `EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs` |
+| **DOGS** | `EQCvxJy4eG8hyHBFsZ7eePxrRsUQSFE_jpptRAYBmcG_DOGS` |
+| **NOTCOIN** | `EQAvlWFDxGF2lXm67y4yzC17wYKD9A0guwPkMs1gOsM__NOT` |
+| **HAMSTER KOMBAT** | `EQAJ8uWd7EBqsmpSWaRdf_I-8R8-XHwh3gsNKhy-UrdrPcUo` |
+| **Catizen** | `EQD-cvR0Nz6XAyRBvbhz-abTrRC6sI5tvHvvpeQraV9UAAD7` |
+
+## Geographic restrictions
+
+Before displaying the card top-up option, the SDK checks the user's geographic eligibility via the MoonPay provider. If card purchases are prohibited in the user's country, the option does not appear.
+
+This check relies on the user's IP address. If your infrastructure proxies requests (hiding the real client IP), you must pass the user's IP explicitly via the `userIp` prop.
+
+## Purchase limits
+
+The SDK retrieves minimum and maximum purchase limits from MoonPay for the target asset. These limits are enforced automatically:
+
+- If the calculated top-up amount is below the minimum, the SDK increases it to `minAmount * 1.05`.
+- The provider determines the maximum purchase amount; this cannot be overridden.
+
+Limits use the quote currency returned by the provider (e.g., USD) and vary by region and payment method.
+
+## Props reference
+
+| Prop | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `isOnRampAvailable` | `boolean` | `true` | Show or hide the card top-up option. |
+| `userIp` | `string` | — | User's IP address for the geographic check (optional). |
+
+## Iframe events
+
+The on-ramp widget communicates via `postMessage`. The SDK handles the following events internally:
+
+| Event | Meaning |
+| :--- | :--- |
+| `TONPAY_IFRAME_LOADED` | The on-ramp widget loaded successfully. |
+| `TONPAY_MOONPAY_EVENT` (`onTransactionCompleted`) | The user completed the purchase via MoonPay; balance polling begins. |
+| `TONPAY_MOONPAY_EVENT` (`onTransactionFailed`) | The MoonPay purchase failed; the user can retry. |
+| `TONPAY_PAYMENT_ERROR` | On-ramp widget initialization error (e.g., the link expired). |
+
+Merchants using `TonPayButton` do not need to handle these events manually.
+
+<Aside type="note" title="Processing times and fees">
+  MoonPay purchases are not instantaneous. On-chain finalization takes time, which the SDK handles via automatic polling.
+  
+  The SDK adds a 5% buffer to top-up amounts to account for MoonPay fees and price fluctuations.
+</Aside>
