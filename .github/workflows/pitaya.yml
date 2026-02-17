@@ -344,9 +344,67 @@ jobs:
           echo "GitHub API HTTP: ${HTTP_CODE:-<none>}"
           if ! [[ "$HTTP_CODE" =~ ^[0-9]{3}$ ]] || [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
             echo "Response body:"; cat response.json || true; echo
-            echo "Falling back to timeline comment to ensure visibility."
+
+            # Attempt to submit inline comments individually so good ones still land.
+            COMMENT_API_INLINE="https://api.github.com/repos/${{ github.repository }}/pulls/${PR_NUMBER}/comments"
+            BODY_TEXT=$(jq -r '.body // ""' review_payload.json)
+            COMMIT_FOR_COMMENTS=$(jq -r '.commit_id // ""' review_payload.json)
+            GOOD=0; BAD=0
+            BAD_SUMMARY_FILE=$(mktemp)
+            : > "$BAD_SUMMARY_FILE"
+
+            while IFS= read -r c; do
+              TMP=$(mktemp)
+              echo "$c" | jq --arg commit "$COMMIT_FOR_COMMENTS" '{
+                body: .body,
+                commit_id: ($commit // .commit_id // ""),
+                path: .path
+              } + (if has("line") then {line:.line, side:(.side//"RIGHT")} else {} end)
+                + (if has("start_line") then {start_line:.start_line, start_side:(.start_side//"RIGHT")} else {} end)' > "$TMP"
+
+              HTTP_COMMENT=$(curl -sS -o response_comment.json -w "%{http_code}" -X POST "$COMMENT_API_INLINE" \
+                -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                -H "Content-Type: application/json" \
+                -d @"$TMP" || true)
+
+              if [[ "$HTTP_COMMENT" =~ ^2[0-9][0-9]$ ]]; then
+                GOOD=$((GOOD+1))
+              else
+                BAD=$((BAD+1))
+                PATH_LINE=$(echo "$c" | jq -r '"\(.path):L\(.start_line // .line // "?")-L\(.line // .start_line // "?")"')
+                BODY_SNIP=$(echo "$c" | jq -r '.body')
+                BODY_SNIP_FIRST6=$(printf "%s" "$BODY_SNIP" | head -n 6)
+                BODY_SNIP_LINECOUNT=$(printf "%s\n" "$BODY_SNIP" | wc -l)
+                {
+                  echo "- ${PATH_LINE}"
+                  printf "%s" "$BODY_SNIP_FIRST6" | sed 's/^/  /'
+                  if [ "$BODY_SNIP_LINECOUNT" -gt 6 ]; then
+                    echo "  …(truncated)"
+                  fi
+                  echo
+                } >> "$BAD_SUMMARY_FILE"
+              fi
+              rm -f "$TMP" response_comment.json
+            done < <(jq -c '.comments[]' review_payload.json)
+
+            # Build fallback timeline comment containing intro + failed inline text (if any)
             COMMENT_API="https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments"
-            jq -n --arg body "$(jq -r '.body' review_payload.json)" '{body:$body}' > payload.json
+            FALLBACK_FILE=$(mktemp)
+            {
+              echo "$BODY_TEXT"
+              echo
+              echo "---"
+              echo "Per-comment submission: ${GOOD} posted, ${BAD} failed."
+              if [ "$BAD" -gt 0 ]; then
+                echo
+                echo "Unposted inline comments (raw text):"
+                cat "$BAD_SUMMARY_FILE"
+              fi
+            } > "$FALLBACK_FILE"
+
+            jq -n --arg body "$(cat "$FALLBACK_FILE")" '{body:$body}' > payload.json
             HTTP_CODE2=$(curl -sS -o response2.json -w "%{http_code}" -X POST "$COMMENT_API" \
               -H "Authorization: Bearer ${GITHUB_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
@@ -354,10 +412,11 @@ jobs:
               -H "Content-Type: application/json" \
               -d @payload.json || true)
             echo "Fallback GitHub API HTTP: $HTTP_CODE2"; cat response2.json || true; echo
-            if [ "$HTTP_CODE2" -lt 200 ] || [ "$HTTP_CODE2" -ge 300 ]; then
-              echo "::error::Failed to submit both PR review and fallback comment." >&2
+            if ! [[ "$HTTP_CODE2" =~ ^[0-9]{3}$ ]] || [ "$HTTP_CODE2" -lt 200 ] || [ "$HTTP_CODE2" -ge 300 ]; then
+              echo "::error::Failed to submit PR review, per-comment comments, and fallback comment." >&2
               exit 1
             fi
+            rm -f "$BAD_SUMMARY_FILE" "$FALLBACK_FILE"
           fi
 
       - name: Summary

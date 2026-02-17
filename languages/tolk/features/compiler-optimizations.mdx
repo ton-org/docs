@@ -4,15 +4,7 @@ title: "Compiler optimizations"
 
 import { Aside } from '/snippets/aside.jsx';
 
-Tolk compiler is smart enough to generate optimal bytecode from a clear, idiomatic code.
-The ideal target is "zero overhead": extracting variables and simple methods should not increase gas consumption.
-
-<Aside
-  type="caution"
->
-  This page summarizes optimizations that affect gas usage.
-  It is fairly low-level and not required for using Tolk in production.
-</Aside>
+The Tolk compiler generates bitcode from clear, idiomatic code. Extracting variables or simple methods should not increase gas consumption.
 
 ## Constant folding
 
@@ -26,15 +18,16 @@ fun calcSecondsInAYear() {
 }
 ```
 
-All these computations are done statically, resulting in
+All these computations are done statically, resulting in:
 
 ```fift
 31536000 PUSHINT
 ```
 
 It works for conditions as well.
-For example, when `if`'s condition is guaranteed to be false, only `else` body is left.
-If an `assert` is proven statically, only the corresponding `throw` remains.
+
+- If an `if` condition is statically known to be `false`, only the `else` body remains.
+- If an `assert` is statically proven to fail, the corresponding `throw` remains.
 
 ```tolk
 fun demo(s: slice) {
@@ -46,23 +39,22 @@ fun demo(s: slice) {
 }
 ```
 
-The compiler drops `IF` at all (both body and condition evaluation), because it can never be reached.
+The compiler removes the entire `IF` construct — both the condition evaluation and its bodies — when the branch is provably unreachable.
 
-While calculating compile-time values, all mathematical operators are emulated as they would have run at runtime.
-Additional flags like "this value is even / non-positive" are also tracked, leading to more aggressive code elimination.
-It works not only for plain variables, but also for struct fields, tensor items, across inlining, etc.
-(because it happens after transforming a high-level syntax tree to low-level intermediate representation).
+During compile-time evaluation, arithmetic operations are emulated as they would be at runtime. The compiler also tracks flags such as "this value is even or non-positive", which allows it to remove unreachable code.
 
-## Merge constant builder.storeInt
+This applies not only to plain variables but also to struct fields, tensor items, and across inlining. It runs after the high-level syntax tree is transformed to a low-level intermediate representation.
 
-When building cells manually, there is no need to group constant `storeUint` into a single number.
+## Merging constant `builder.storeInt`
+
+When building cells manually, there is no need to group the constant `storeUint` into a single number.
 
 ```tolk
 // no need for manual grouping anymore
 b.storeUint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1);
 ```
 
-Successive `builder.storeInt` are merged automatically:
+`builder.storeInt` are merged automatically:
 
 ```tolk
 b.storeUint(0, 1)  // prefix
@@ -72,13 +64,13 @@ b.storeUint(0, 1)  // prefix
  .storeUint(0, 2)  // addr_none
 ```
 
-is translated to just
+Compiles to:
 
 ```fift
 b{011000} STSLICECONST
 ```
 
-It works together with constant folding — even with variables and conditions, when they turn out to be constant:
+It works together with constant folding — with variables and conditions  —  when they turn out to be constant:
 
 ```tolk
 fun demo() {
@@ -94,14 +86,14 @@ fun demo() {
 }
 ```
 
-is translated to just
+Compiles to:
 
 ```fift
 NEWC
 x{01a} STSLICECONST
 ```
 
-It works even for structures — including their fields:
+The same applies to structures and their fields:
 
 ```tolk
 struct Point {
@@ -115,7 +107,7 @@ fun demo() {
 }
 ```
 
-becomes
+Compiles to:
 
 ```fift
 NEWC
@@ -123,12 +115,7 @@ x{0000000a00000014} STSLICECONST
 ENDC
 ```
 
-_(in the future, Tolk will be able to emit a constant cell here)_
-
-That's the reason why [createMessage](/languages/tolk/features/message-sending) for unions is so lightweight.
-The compiler really generates all IF-ELSE and STU, but in a later analysis,
-they become constant (since types are compile-time known),
-and everything flattens into simple PUSHINT / STSLICECONST.
+For unions, [createMessage](/languages/tolk/features/message-sending) is lightweight. The compiler generates all `IF-ELSE` and `STU`, but during compile-time analysis, these instructions resolve to constants because all types are known at compile time. The resulting code flattens into `PUSHINT` and `STSLICECONST`.
 
 ## Auto-inline functions
 
@@ -153,7 +140,7 @@ fun main() {
 }
 ```
 
-is compiled just to
+Compiles to:
 
 ```fift
 main PROC:<{
@@ -161,39 +148,38 @@ main PROC:<{
 }>
 ```
 
-The compiler **automatically determines which functions to inline** and also gives manual control.
+The compiler automatically determines which functions to inline and also provides manual control.
 
 ### How does auto-inline work?
 
-- simple, small functions are always inlined
-- functions called only once are always inlined
+- Simple, small functions are always inlined.
+- Functions called only once are always inlined.
 
-For every function, the compiler calculates some "weight" and the usages count.
+For every function, the compiler calculates a "weight" and the number of usages:
 
-- if `weight < THRESHOLD`, the function is always inlined
-- if `usages == 1`, the function is always inlined
-- otherwise, an empirical formula determines inlining
+- if `weight < THRESHOLD`, the function is always inlined.
+- if `usages == 1`, the function is always inlined.
+- otherwise, an empirical formula determines inlining.
 
-Inlining is efficient in terms of stack manipulations.
-It works with arguments of any stack width, any functions and methods, except recursive or having "return" in the middle.
+Inlining works with stack operations and supports arguments of any width. It applies to functions and methods, except recursive functions or functions with `return` in the middle.
 
-As a conclusion, create utility methods without worrying about gas consumption, they are absolutely zero-cost.
+Utility methods can be created without affecting gas consumption, they are zero-cost.
 
 ### How to control inlining manually?
 
-- `@inline` forces inlining even for large functions
-- `@noinline` prevents from being inlined
-- `@inline_ref` preserves an inline reference, suitable for rarely executed paths
+- `@inline` forces inlining for large functions.
+- `@noinline` prevents inlining.
+- `@inline_ref` preserves an inline reference, suitable for rarely executed paths.
 
-### What can NOT be auto-inlined?
+### What cannot be auto-inlined?
 
 A function is NOT inlined, even if marked with `@inline`, if:
 
-- contains `return` in the middle; multiple return points are unsupported
-- participates in a recursive call chain `f -> g -> f`
-- is used as a non-call; e.g., as a reference `val callback = f`
+- contains `return` in the middle; multiple return points are unsupported;
+- participates in a recursive call chain, e.g., `f -> g -> f`;
+- is used as a non-call; e.g., as a reference `val callback = f`.
 
-For example, this function cannot be inlined due to `return` in the middle:
+Example of function that cannot be inlined due to `return` in the middle:
 
 ```tolk
 fun executeForPositive(userId: int) {
@@ -204,30 +190,28 @@ fun executeForPositive(userId: int) {
 }
 ```
 
-The advice is to check pre-conditions out of the function and keep body linear.
+Check preconditions out of the function and keep body linear.
 
 ## Peephole and stack optimizations
 
-After the code has been analyzed and transformed to IR, the compiler repeatedly replaces some assembler combinations to equal ones, but cheaper.
-Some examples are:
+After the code is analyzed and transformed into [IR](https://en.wikipedia.org/wiki/Intermediate_representation), the compiler repeatedly replaces some assembler combinations with equivalent, cheaper ones. Examples include:
 
-- stack permutations: DUP + DUP => 2DUP, SWAP + OVER => TUCK, etc.
-- N LDU + NIP => N PLDU
-- SWAP + N STU => N STUR, SWAP + STSLICE => STSLICER, etc.
-- SWAP + EQUAL => EQUAL and other symmetric like MUL, OR, etc.
-- 0 EQINT + N THROWIF => N THROWIFNOT and vice versa
-- N EQINT + NOT => N NEQINT and other xxx + NOT
-- ...
+- stack permutations: `DUP + DUP` -> `2DUP`, `SWAP + OVER` -> `TUCK`;
+- `N LDU + NIP` -> `N PLDU`;
+- `SWAP + N STU` -> `N STUR`, `SWAP + STSLICE` -> `STSLICER`;
+- `SWAP + EQUAL` -> `EQUAL` and other symmetric like `MUL`, `OR`;
+- `0 EQINT + N THROWIF` -> `N THROWIFNOT` and vice versa;
+- `N EQINT + NOT` -> `N NEQINT` and other `xxx + NOT`.
 
-Some others are done semantically in advance when it's safe:
+Other transformations occur semantically in advance when safe:
 
-- replace a ternary operator to `CONDSEL`
-- evaluate arguments of `asm` functions in a desired stack order
-- evaluate struct fields of a shuffled object literal to fit stack order
+- replace a ternary operator to `CONDSEL`;
+- evaluate arguments of `asm` functions in the desired stack order;
+- evaluate struct fields of a shuffled object literal to fit stack order.
 
-## Lazy loading
+## `lazy` loading
 
-The magic `lazy` keyword loads only required fields from a cell/slice:
+The [`lazy` keyword](/languages/tolk/features/lazy-loading) loads only the required fields from a cell or slice:
 
 ```tolk
 struct Storage {
@@ -236,22 +220,20 @@ struct Storage {
 
 get fun publicKey() {
     val st = lazy Storage.load();
-    // <-- fields before are skipped, publicKey preloaded
+    // fields before are skipped; publicKey preloaded
     return st.publicKey
 }
 ```
 
-The compiler tracks exactly which fields are accessed, and unpacks only those fields, skipping the rest.
+The compiler tracks exactly which fields are accessed and unpacks only those fields, skipping the rest.
 
-Read [lazy loading](/languages/tolk/features/lazy-loading).
+## Manual optimizations
 
-## Suggestions for manual optimizations
+The compiler does substantial work automatically, but the gas usage can be reduced.
 
-Although the compiler performs substantial work in the background, there are still cases when a developer can gain a few gas units.
+To do it, change the evaluation order to minimize stack manipulations. The compiler does not reorder code blocks unless they're constant expressions or pure calls.
 
-The primary aspect is **changing evaluation order** to target fewer stack manipulations.
-The compiler does not reorder blocks of code unless they are constant expressions or pure calls.
-But a developer knows the context better. Generally, it looks like this:
+Example:
 
 ```tolk
 fun demo() {
@@ -267,37 +249,24 @@ fun demo() {
 }
 ```
 
-After the first block, the stack is `(v1 v2 v3)`.
-But v1 is used at first, so the stack must be shuffled with `SWAP` / `ROT` / `XCPU` / etc.
-If to rearrange assignments or usages — say, move `assert(v3)` upper — it will naturally pop the topmost element.
-Of course, automatic reordering is unsafe and prohibited, but in exact cases business logic might be still valid.
+After the first block, the stack is `(v1 v2 v3)`. Since `v1` is used first, the stack must be rearranged with `SWAP`, `ROT`, `XCPU`, etc. Reordering assignments or usages—for example, moving `assert(v3)` upper—will pop the topmost element. Automatic reordering is unsafe and prohibited, but in some cases business logic might be still valid.
 
-Another option is **using bitwise `& |` instead of logical `&& ||`**.
-Logical operators are short-circuit: the right operand is evaluated only if required to.
-It's implemented via conditional branches at runtime.
-But in some cases, evaluating both operands is less expensive than a dynamic `IF`.
+Another option is using bitwise `&` and `|` instead of logical `&&` and `||`. Logical operators are short-circuit: the right operand is evaluated only if required. They are implemented using runtime conditional branches. In some cases, evaluating both operands directly uses fewer runtime instructions than a dynamic `IF`.
 
-The last possibility is **using low-level Fift code** for certain independent tasks that cannot be expressed imperatively.
-Usage of exotic TVM instructions like `NULLROTRIFNOT` / `IFBITJMP` / etc.
-Overriding how top-level Fift dictionary works for routing method\_id. And similar.
-Old residents call it "deep fifting".
-Anyway, it's applicable only to a very limited set of goals, mostly as exercises, not as real-world usage.
+The last option is using low-level Fift code for certain independent tasks that cannot be expressed imperatively. This includes using TVM instructions such as `NULLROTRIFNOT` or `IFBITJMP`, and overriding the top-level Fift dictionary for `method_id` routing. These techniques are applicable only in a limited set of scenarios, primarily for specialized exercises rather than for real-world use.
 
-<Aside type="tip">
-  Do not micro-optimize. Lots of sleepless nights will result in 2-3% gas reducing at best,
-  producing unreadable code. Just use Tolk as intended.
+<Aside
+  type="caution"
+>
+  Avoid micro-optimizations. Small manual attempts to reduce gas typically yield minimal gains and can reduce code readability. Use Tolk as intended.
 </Aside>
 
-## How to explore Fift assembler
+## Fift assembler
 
-Tolk compiler outputs Fift assembler. The bytecode (bag of cells) is generated by Fift, actually.
-Projects built on blueprint rely on `tolk-js` under the hood, which invokes Tolk and then Fift.
+The Tolk compiler outputs the Fift assembler. Fift generates the bitcode. Projects built on [Blueprint](/contract-dev/blueprint/overview) use `tolk-js`, which invokes Tolk and then Fift.
 
-As a result:
+- For command-line users, the Fift assembler is the compiler output.
+- For Blueprint users, it is an intermediate result that can be accessed in the build directory.
 
-- for command-line users, fift assembler is the compiler's output
-- for blueprint users, it's an intermediate result, but can easily be found
-
-**To view Fift assembler in blueprint**, run `npm build` or `blueprint build` in a project.
-After successful compilation, a directory `build/` is created, and a folder `build/ContractName/`
-contains a `.fif` file.
+  To view Fift assembler in Blueprint, run `npx blueprint build` in the project.
+  After compilation, the `build/` directory is created, containing a folder `build/ContractName/` with a `.fif` file.

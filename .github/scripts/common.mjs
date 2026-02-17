@@ -72,6 +72,7 @@ export async function createComment({
       body: body,
     })
   );
+  await exec.exec('sleep 0.2s');
 }
 
 /** @param fn {() => Promise<any>} */
