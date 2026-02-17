@@ -4,3 +4,394 @@ sidebarTitle: "Initialize the kit"
 ---
 
 import { Aside } from '/snippets/aside.jsx';
+
+Before initializing the TON Connect's AppKit, install it in the web project:
+
+<CodeGroup>
+  ```shell title="React" icon="react"
+  npm i @ton/appkit-react
+  ```
+
+  ```shell title="TypeScript"
+  npm i @ton/appkit
+  ```
+</CodeGroup>
+
+To also access asset swaps via [Omniston](https://ston.fi/omniston), install the corresponding library:
+
+```shell
+npm i @ston-fi/omniston-sdk
+```
+
+<Aside type="tip">
+  If there is an existing TON dApp that uses TON Connect's React library, [migrate that dApp from `@tonconnect/ui-react` to AppKit](#migration-from-ton-connect-ui-react).
+</Aside>
+
+## Initialization
+
+The basic kit initialization consists of creating a corresponding object by passing it a minimal set of necessary arguments: TON networks to operate on. This allows for direct API requests but is insufficient for connecting TON wallets via the TON Connect protocol. For that, configure a connector and host a public [app manifest file](/ecosystem/ton-connect/manifest#app-manifest).
+
+<CodeGroup>
+  ```tsx title="React" icon="react" expandable
+  // Wrap application in `AppKitProvider` and pass the `AppKit` instance.
+  import {
+    AppKit,
+    Network,
+    TonConnectConnector,
+    AppKitProvider,
+  } from '@ton/appkit-react';
+  // Optional swap provider
+  import { OmnistonSwapProvider } from '@ston-fi/omniston-sdk';
+
+  // Import styles
+  import '@ton/appkit-react/styles.css';
+
+  // Initialize AppKit
+  const kit = new AppKit({
+    // 1. Configure networks.
+    networks: {
+      // Production network. All contracts and funds are real.
+      [Network.mainnet().chainId]: {
+        apiClient: {
+          // Most commonly used, official API provider.
+          url: 'https://toncenter.com',
+
+          // A key to access higher RPS limits.
+          // Get it from https://t.me/toncenter
+          key: '<MAINNET_API_KEY>',
+        },
+      },
+      // Testing network. For experiments, beta tests, and feature previews.
+      [Network.testnet().chainId]: {
+        apiClient: {
+          url: 'https://testnet.toncenter.com',
+          key: '<TESTNET_API_KEY>',
+        },
+      },
+    },
+    // 2. Configure TON Connect.
+    connectors: [
+      new TonConnectConnector({
+        // Public link to the application manifest JSON file.
+        tonConnectOptions: { manifestUrl: '<APP_MANIFEST_URL>' },
+      }),
+    ],
+    // 3. Optionally, set up a swap provider.
+    providers: [
+      new OmnistonSwapProvider({
+        // Default API endpoint
+        apiUrl: 'https://api.ston.fi',
+
+        // 1% slippage
+        defaultSlippageBps: 100,
+      }),
+    ],
+  });
+
+  // Note that both connectors and providers can be added dynamically
+  // via corresponding addConnector() and addProvider() methods of the initialized kit.
+
+  export function App() {
+    return <AppKitProvider appKit={kit}>{/* ...app... */}</AppKitProvider>;
+  };
+  ```
+
+  ```ts title="TypeScript" expandable
+  import {
+    AppKit,
+    Network,
+    TonConnectConnector,
+  } from '@ton/appkit';
+  // Optional swap provider
+  import { OmnistonSwapProvider } from '@ston-fi/omniston-sdk';
+
+  // Initialize AppKit
+  const kit = new AppKit({
+    // 1. Configure networks.
+    networks: {
+      // Production network. All contracts and funds are real.
+      [Network.mainnet().chainId]: {
+        apiClient: {
+          // Most commonly used, official API provider.
+          url: 'https://toncenter.com',
+
+          // A key to access higher RPS limits.
+          // Get it from https://t.me/toncenter
+          key: '<MAINNET_API_KEY>',
+        },
+      },
+      // Testing network. For experiments, beta tests, and feature previews.
+      [Network.testnet().chainId]: {
+        apiClient: {
+          url: 'https://testnet.toncenter.com',
+          key: '<TESTNET_API_KEY>',
+        },
+      },
+    },
+    // 2. Configure TON Connect.
+    connectors: [
+      new TonConnectConnector({
+        // Public link to the application manifest JSON file.
+        tonConnectOptions: { manifestUrl: '<APP_MANIFEST_URL>' },
+      }),
+    ],
+    // 3. Optionally, set up a swap provider.
+    providers: [
+      new OmnistonSwapProvider({
+        // Default API endpoint
+        apiUrl: 'https://api.ston.fi',
+
+        // 1% slippage
+        defaultSlippageBps: 100,
+      }),
+    ],
+  });
+
+  // Note that both connectors and providers can be added dynamically
+  // via corresponding addConnector() and addProvider() methods of the initialized kit.
+  ```
+</CodeGroup>
+
+### TanStack Query
+
+[TanStack Query](https://tanstack.com/query/latest) is an opinionated library that simplifies fetching, caching, synchronizing and updating server state in web applications.
+
+To also setup the [TanStack Query for React](https://tanstack.com/query/latest/docs/framework/react/overview), wrap the application in `QueryClientProvider` from `@tanstack/react-query` inside `AppKitProvider`.
+
+```tsx
+// Additional imports
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+// ...AppKit initialization as shown above...
+
+// Modified entrypoint
+export function App() {
+  return (
+    <AppKitProvider appKit={kit}>
+      <QueryClientProvider client={queryClient}>
+        {/* ... */}
+      </QueryClientProvider>
+    </AppKitProvider>
+  );
+}
+```
+
+### Queries and mutations
+
+AppKit provides a separate entry point `@ton/appkit/queries` that contains standardized options for the TanStack Query (v5). It is not included automatically, keeping an application lightweight if unused.
+
+These options are framework-agnostic and allow integrating AppKit with TanStack Query in any environment, such as React, Vue, Svelte, Solid, etc. Queries handle caching, background refetching, and state management for blockchain data.
+
+Import query and mutation options directly from the queries entry point:
+
+```ts
+import TanstackQuery from '@tanstack/query-core';
+import { getBalanceByAddressQueryOptions } from '@ton/appkit/queries';
+```
+
+Since these are standard TanStack Query options, use them with any adapter. For example, in React:
+
+```shell
+# Install the main library to access query options
+npm i @ton/appkit
+```
+
+```tsx
+import { type AppKit } from '@ton/appkit-react';
+import { useQuery } from '@tanstack/react-query';
+import { getBalanceByAddressQueryOptions } from '@ton/appkit/queries';
+
+function example(kit: AppKit) => {
+  const { data } = useQuery(getBalanceByAddressQueryOptions(kit, {
+    address: '<TON_WALLET_ADDRESS>',
+  }));
+  // ...use data
+};
+```
+
+## Configuration parameters
+
+### Required
+
+<ParamField
+  path="networks"
+  type="Record<CHAIN, NetworkConfig>"
+  required
+>
+  For one or more TON networks, configure their respective API or RPC providers to interact with.
+
+  ```ts title="TypeScript"
+  // Or @ton/appkit-react for React
+  import { Network } from '@ton/appkit';
+
+  new AppKit({
+    networks: {
+      // Production network. All contracts and funds are real.
+      [Network.mainnet().chainId]: { // "-239"
+        apiClient: {
+          // Most commonly used, official API provider.
+          //
+          // To self-host, see:
+          // * Real-time API: https://github.com/toncenter/ton-http-api-cpp
+          // * Indexer: https://github.com/toncenter/ton-indexer
+          // It is important to put real-time API under `/api/v2` route and indexer API under `/api/v3` route.
+          url: 'https://toncenter.com',
+
+          // Optional key to access higher RPS limits.
+          key: '<MAINNET_API_KEY>',
+        },
+      },
+      // Testing network. For experiments, beta tests, and feature previews.
+      [Network.testnet().chainId]: { // "-3"
+        apiClient: {
+          url: 'https://testnet.toncenter.com',
+          key: '<TESTNET_API_KEY>',
+        },
+      },
+    },
+    // ...later fields...
+  });
+  ```
+
+  It is also possible to provide an entirely custom provider with its own `ApiClient` interface implementation.
+
+  ```ts title="TypeScript"
+  // Or @ton/appkit-react for React
+  import { Network } from '@ton/appkit';
+
+  new AppKit({
+    networks: {
+      [Network.testnet().chainId]: { // "-3"
+        apiClient: /*  A complete ApiClient interface implementation */,
+      },
+    },
+    // ...later fields...
+  });
+  ```
+</ParamField>
+
+### Optional
+
+<ParamField
+  path="connectors"
+  type="Connector[] | undefined"
+>
+  Array of connectors that enable wallet connections. The primary connector is `TonConnectConnector`.
+
+  Each connector must expose the following methods:
+
+  - `initialize()` — creates the connector, restores connections, sets up event listeners.
+  - `destroy()` — cleans up connector resources.
+  - `connectWallet()` — connects a wallet through the UI.
+  - `disconnectWallet()` — disconnects a wallet.
+  - `getConnectedWallet()` — lists connected wallets.
+
+  Additionally, each connector has metadata that can be displayed in the UI:
+
+  ```ts
+  interface ConnectorMetadata {
+    /**
+     * Connector name
+     */
+    name: string;
+    /**
+     * Connector icon URL
+     */
+    iconUrl?: string;
+  }
+  ```
+</ParamField>
+
+<ParamField
+  path="providers"
+  type="Providers[] | undefined"
+>
+  Array of DeFi providers that enable additional functionality, such as asset swaps via [Omniston](https://ston.fi/omniston).
+</ParamField>
+
+## Migration from TON Connect UI React
+
+<Steps>
+  <Step
+    title="Install dependencies"
+  >
+    ```shell
+    npm i @ton/appkit-react @tanstack/react-query
+    ```
+  </Step>
+
+  <Step
+    title="Create the AppKit instance"
+  >
+    ```tsx
+    import { TonConnectConnector, AppKit } from '@ton/appkit-react';
+
+    const appKit = new AppKit({
+      connectors: [
+        new TonConnectConnector({
+          tonConnectOptions: {
+            manifestUrl: '<APP_MANIFEST_URL>',
+          },
+        }),
+      ],
+    });
+    ```
+  </Step>
+
+  <Step
+    title="Replace providers"
+  >
+    ```tsx
+    // Replaces <TonConnectUIProvider>
+    import { AppKitProvider } from '@ton/appkit-react';
+    // Optional, to use Tanstack Query
+    import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+    // Import styles
+    import '@ton/appkit-react/styles.css';
+
+    // Setup query options
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          // Retry every 10 seconds
+          refetchInterval: 10_000,
+        }
+      }
+    });
+
+    function App() {
+      return (
+        <AppKitProvider appKit={appKit}>
+          <QueryClientProvider client={queryClient}>
+            {/* ...rest of the app... */}
+          </QueryClientProvider>
+        </AppKitProvider>
+      );
+    }
+    ```
+  </Step>
+
+  <Step
+    title="Prior hooks do not need any modifications"
+  >
+    Existing `@tonconnect/ui-react` hooks, such as `useTonAddress`, `useTonWallet`, and others, will continue to work inside the `AppKitProvider` automatically, because it bridges to TON Connect under the hood.
+  </Step>
+</Steps>
+
+## Next steps
+
+<Columns cols={2}>
+  <Card
+    title="Work with Toncoin"
+    icon="gem"
+    horizontal="true"
+    href="/ecosystem/ton-connect/appkit/toncoin"
+  />
+</Columns>
+
+## See also
+
+- [AppKit overview](/ecosystem/ton-connect/appkit/overview)
+- [TON Connect's app manifest](/ecosystem/ton-connect/manifest#app-manifest)
+- [TON Connect overview](/ecosystem/ton-connect/overview)
