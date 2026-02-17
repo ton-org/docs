@@ -1,0 +1,100 @@
+---
+title: "Architecture reference"
+sidebarTitle: "Architecture"
+description: "Resource model, storage layout, bootstrap flow, and command resolution for the TON Rust Node Helm chart."
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+## Overview
+
+TON Rust Node Helm chart deploys the following Kubernetes resources:
+
+- A `StatefulSet` named after the release, with `podManagementPolicy: Parallel` and `fsGroup: 1000`.
+- One `LoadBalancer` `Service` per replica, with `externalTrafficPolicy: Local` and optional static IPs.
+- An init container (`alpine:3.23`, pinned by digest) that seeds configs from mounted volumes into the main persistent volume claim (PVC).
+- `PersistentVolumeClaim` (PVC) resources: `main`, `db`, `keys`, and optionally `logs` (controlled by `storage.logs.enabled`).
+- `ConfigMap` resources for global config, logs config, and optional bootstrap files: `basestate` (base state, `basestate.boc`) and `zerostate` (zero state, `zerostate.boc`).
+- A `Secret` for per-node JSON configs.
+
+All resource names are prefixed with the release name, so multiple installations can run in one namespace.
+
+## Volumes and mounts
+
+The node uses persistent volumes:
+
+| Volume | Mount path | Purpose                                                                                                       | Optional                     |
+| ------ | ---------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `main` | `/main`    | Working directory: node config, global config, logs config, static files (`basestate` and `zerostate` hashes) | No                           |
+| `db`   | `/db`      | Blockchain database (largest volume, grows over time)                                                         | No                           |
+| `logs` | `/logs`    | Rolling log files (`output.log`, rotated by `logsConfig`)                                                     | Yes (`storage.logs.enabled`) |
+| `keys` | `/keys`    | Node keys and vault                                                                                           | No                           |
+
+## Storage recommendations
+
+<Aside
+  type="caution"
+  title="Important"
+>
+  Disk performance is critical for correct node operation.
+  The `db` volume requires storage that can sustain up to **64,000 input/output operations per second (IOPS)**.
+  Insufficient disk performance causes sync delays, missed validations, and degraded node behavior.
+  Use NVMe or high-performance SSD with a local volume provisioner.
+</Aside>
+
+The `db` and `logs` volumes are performance-critical because they handle continuous heavy I/O from blockchain database operations and log writes.
+The chart recommends local storage with direct disk access (`local-path`, OpenEBS with Linux Logical Volume Manager (`LVM`) support, or similar local volume provisioners).
+Network-attached storage (Network File System (`NFS`), Ceph Reliable Autonomic Distributed Object Store (`RADOS`) block device (`RBD`), Amazon Elastic Block Store (`EBS`), and similar systems) adds latency and can significantly affect node performance and sync speed under high I/O workloads.
+
+The `main` and `keys` volumes have minimal I/O load, so standard storage classes are usually sufficient.
+The chart recommends Longhorn v1 with replica count `3` for data safety.
+Longhorn v2 is currently not recommended for TON Rust Node workloads in the chart maintainers' current test scope.
+
+{/* Best version: add test period metadata for the Longhorn v1/v2 recommendation (for example, validation date and tested versions). */}
+
+| Volume | Default size | Notes                                                                                                                                                                                                    |
+| ------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `db`   | `1Ti`        | Going below `500Gi` is not recommended. Size grows as blockchain state accumulates.                                                                                                                      |
+| `logs` | `150Gi`      | Default log rotation is 25 GB per file with 4 rotations (`logsConfig`). Volume size can be reduced if rolling file limits are adjusted accordingly. See `/ecosystem/nodes/rust/logs-config` for details. |
+| `main` | `1Gi`        | Stores configs and static files. Default is sufficient.                                                                                                                                                  |
+| `keys` | `1Gi`        | Stores node keys and vault. Default is sufficient.                                                                                                                                                       |
+
+## Init container bootstrap flow
+
+Before the node starts, the init container (`alpine:3.23`, pinned by digest) prepares the `/main` volume:
+
+1. Copies `global.config.json` and `logs.config.yml` from seed `ConfigMap` volumes into `/main`.
+1. If `basestate` and `zerostate` files are provided, computes SHA-256 hashes and writes files as `/main/static/{hash}.boc`.
+1. Resolves pod index from pod name (for example, `my-node-2` -> `2`) and copies `node-2.json` from the node-config `Secret` to `/main/config.json`.
+1. Sets ownership to UID `1000` (non-root app user).
+
+Seed volumes (`ConfigMap` and `Secret`) are mounted read-only under `/seed/`:
+
+| Seed volume     | Mount path            | Source                                      |
+| --------------- | --------------------- | ------------------------------------------- |
+| `global-config` | `/seed/global-config` | `ConfigMap` with `global.config.json`       |
+| `logs-config`   | `/seed/logs-config`   | `ConfigMap` with `logs.config.yml`          |
+| `node-configs`  | `/seed/node-configs`  | `Secret` with `node-{i}.json` per replica   |
+| `basestate`     | `/seed/basestate`     | `ConfigMap` with `basestate.boc` (optional) |
+| `zerostate`     | `/seed/zerostate`     | `ConfigMap` with `zerostate.boc` (optional) |
+
+## Container command resolution
+
+The main container command is selected automatically:
+
+| Order | Condition                                     | Command                         |
+| ----- | --------------------------------------------- | ------------------------------- |
+| 1     | `debug.sleep: true`                           | `sleep infinity`                |
+| 2     | `command` is set                              | custom command from `command`   |
+| 3     | both `basestate` and `zerostate` are provided | `node -c /main -z /main/static` |
+| 4     | otherwise                                     | `node -c /main`                 |
+
+Conditions are evaluated in this order, and the first matching condition is used.
+When `command` is set, the chart runs exactly the command configured in `command`.
+
+For `debug.sleep: true`, the chart uses a `busybox` image.
+
+## Config change detection
+
+The pod annotation `rsquad.io/config-checksum` stores a SHA-256 checksum of all inline configs.
+Any config change triggers a pod restart.
