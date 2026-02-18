@@ -1,0 +1,361 @@
+---
+title: "TonLib type identifiers"
+description: "Reference for the @type discriminator values returned by TON Center API v2."
+---
+
+## Overview
+
+Every object returned by API v2 includes an `@type` field that identifies the object's structure. These values originate from two sources:
+
+- **TonLib types** (e.g. `raw.fullAccountState`, `tvm.cell`) come from the [TonLib TL schema](https://github.com/ton-blockchain/ton/blob/master/tl/generate/scheme/tonlib_api.tl), the type definition language used by the C++ library powering this API.
+- **Extended types** (prefixed with `ext.`) are added by TON Center to provide parsed, developer-friendly representations not available in the base TonLib schema.
+
+The `@type` field acts as a **discriminator**: when a response can return different object shapes, the `@type` value tells you which fields to expect. This is useful for type-safe deserialization in statically typed languages.
+
+```json
+{
+  "@type": "raw.fullAccountState",
+  "balance": "1000000000",
+  "code": "te6cc...",
+  "data": "te6cc...",
+  "last_transaction_id": {
+    "@type": "internal.transactionId",
+    "lt": "12345678",
+    "hash": "abc..."
+  }
+}
+```
+
+## TL primitive types
+
+The TL schema maps to JSON types as follows:
+
+| TL type      | JSON type | Notes                                                        |
+| :----------- | :-------- | :----------------------------------------------------------- |
+| `int32`      | number    | 32-bit signed integer                                        |
+| `int53`      | number    | 53-bit signed integer (safe for JavaScript `Number`)         |
+| `int64`      | string    | 64-bit signed integer as decimal string (exceeds JS safe range) |
+| `int256`     | string    | 256-bit integer as decimal or hex string                     |
+| `bytes`      | string    | Binary data, base64-encoded                                  |
+| `string`     | string    | UTF-8 text                                                   |
+| `Bool`       | boolean   | `true` or `false`                                            |
+| `vector<T>`  | array     | Ordered list of elements of type `T`                         |
+
+## Account state
+
+When you query account information, the `account_state` field uses `@type` to indicate which kind of contract is deployed. The TL schema defines these as variants of `AccountState`:
+
+```
+raw.accountState code:bytes data:bytes frozen_hash:bytes = AccountState;
+wallet.v3.accountState wallet_id:int64 seqno:int32 = AccountState;
+wallet.v4.accountState wallet_id:int64 seqno:int32 = AccountState;
+wallet.highload.v1.accountState wallet_id:int64 seqno:int32 = AccountState;
+wallet.highload.v2.accountState wallet_id:int64 = AccountState;
+dns.accountState wallet_id:int64 = AccountState;
+rwallet.accountState wallet_id:int64 seqno:int32 unlocked_balance:int64 config:rwallet.config = AccountState;
+pchan.accountState config:pchan.config state:pchan.State description:string = AccountState;
+uninited.accountState frozen_hash:bytes = AccountState;
+```
+
+| `@type` value                     | API schema                       | TL fields                                     |
+| :-------------------------------- | :------------------------------- | :-------------------------------------------- |
+| `raw.accountState`                | `AccountStateRaw`                | `code`, `data`, `frozen_hash`                 |
+| `wallet.v3.accountState`          | `AccountStateWalletV3`           | `wallet_id`, `seqno`                          |
+| `wallet.v4.accountState`          | `AccountStateWalletV4`           | `wallet_id`, `seqno`                          |
+| `wallet.highload.v1.accountState` | `AccountStateWalletHighloadV1`   | `wallet_id`, `seqno`                          |
+| `wallet.highload.v2.accountState` | `AccountStateWalletHighloadV2`   | `wallet_id`                                   |
+| `dns.accountState`                | `AccountStateDns`                | `wallet_id`                                   |
+| `rwallet.accountState`            | `AccountStateRWallet`            | `wallet_id`, `seqno`, `unlocked_balance`, `config` |
+| `pchan.accountState`              | `AccountStatePChan`              | `config`, `state`, `description`              |
+| `uninited.accountState`           | `AccountStateUninited`           | `frozen_hash`                                 |
+
+## Account information
+
+Full account queries return one of these top-level types:
+
+```
+raw.fullAccountState balance:int64 extra_currencies:vector<extraCurrency> code:bytes data:bytes
+    last_transaction_id:internal.transactionId block_id:ton.blockIdExt frozen_hash:bytes sync_utime:int53
+    = raw.FullAccountState;
+
+fullAccountState address:accountAddress balance:int64 extra_currencies:vector<extraCurrency>
+    last_transaction_id:internal.transactionId block_id:ton.blockIdExt sync_utime:int53
+    account_state:AccountState revision:int32
+    = FullAccountState;
+```
+
+| `@type` value                        | API schema                     | Description                                             |
+| :----------------------------------- | :----------------------------- | :------------------------------------------------------ |
+| `raw.fullAccountState`               | `AddressInformation`           | Raw state with balance, code, data, and frozen hash     |
+| `fullAccountState`                   | `ExtendedAddressInformation`   | Parsed state with identified contract type              |
+| `ext.accounts.walletInformation`     | `WalletInformation`            | Wallet-specific: type, seqno, wallet_id (TON Center extension) |
+
+## Address types
+
+```
+accountAddress account_address:string = AccountAddress;
+```
+
+| `@type` value    | API schema       | TL fields          |
+| :--------------- | :--------------- | :----------------- |
+| `accountAddress` | `AccountAddress` | `account_address`  |
+| `addr_std`       | `SmcAddr`        | `workchain`, `id`  |
+
+## Block identifiers
+
+```
+ton.blockIdExt workchain:int32 shard:int64 seqno:int32 root_hash:bytes file_hash:bytes = ton.BlockIdExt;
+```
+
+| `@type` value    | API schema       | TL fields                                        |
+| :--------------- | :--------------- | :----------------------------------------------- |
+| `ton.blockIdExt` | `TonBlockIdExt`  | `workchain`, `shard`, `seqno`, `root_hash`, `file_hash` |
+
+## Block data
+
+These types are returned by block query endpoints. The TL definitions:
+
+```
+blocks.masterchainInfo last:ton.BlockIdExt state_root_hash:bytes init:ton.BlockIdExt = blocks.MasterchainInfo;
+blocks.shards shards:vector<ton.BlockIdExt> = blocks.Shards;
+blocks.header id:ton.blockIdExt global_id:int32 version:int32 flags:# after_merge:Bool after_split:Bool
+    before_split:Bool want_merge:Bool want_split:Bool validator_list_hash_short:int32 catchain_seqno:int32
+    min_ref_mc_seqno:int32 is_key_block:Bool prev_key_block_seqno:int32 start_lt:int64 end_lt:int64
+    gen_utime:int53 vert_seqno:# prev_blocks:vector<ton.blockIdExt> = blocks.Header;
+blocks.transactions id:ton.blockIdExt req_count:int32 incomplete:Bool
+    transactions:vector<blocks.shortTxId> = blocks.Transactions;
+blocks.transactionsExt id:ton.blockIdExt req_count:int32 incomplete:Bool
+    transactions:vector<raw.transaction> = blocks.TransactionsExt;
+blocks.blockSignatures id:ton.blockIdExt signatures:(vector blocks.signature) = blocks.BlockSignatures;
+blocks.shardBlockProof from:ton.blockIdExt mc_id:ton.blockIdExt
+    links:(vector blocks.shardBlockLink) mc_proof:(vector blocks.blockLinkBack) = blocks.ShardBlockProof;
+blocks.outMsgQueueSizes shards:(vector blocks.outMsgQueueSize)
+    ext_msg_queue_size_limit:int32 = blocks.OutMsgQueueSizes;
+```
+
+| `@type` value                    | API schema                    | Description                                 |
+| :------------------------------- | :---------------------------- | :------------------------------------------ |
+| `blocks.masterchainInfo`         | `MasterchainInfo`             | Latest and genesis block references         |
+| `blocks.shards`                  | `Shards`                      | Active shard block identifiers              |
+| `blocks.header`                  | `BlockHeader`                 | Block metadata, merge/split flags, timing   |
+| `blocks.transactions`            | `BlockTransactions`           | Short transaction IDs within a block        |
+| `blocks.transactionsExt`         | `BlockTransactionsExt`        | Full transactions within a block            |
+| `blocks.shortTxId`               | `ShortTxId`                   | Compact reference: account, lt, hash        |
+| `blocks.blockSignatures`         | `MasterchainBlockSignatures`  | Validator signatures for a block            |
+| `blocks.signature`               | `BlockSignature`              | Single validator signature                  |
+| `blocks.shardBlockProof`         | `ShardBlockProof`             | Merkle proof chain to masterchain           |
+| `blocks.shardBlockLink`          | `ShardBlockLink`              | Single link in a proof chain                |
+| `blocks.blockLinkBack`           | `BlockLinkBack`               | Backward proof link between blocks          |
+| `blocks.outMsgQueueSize`         | `OutMsgQueueSize`             | Per-shard queue size                        |
+| `blocks.outMsgQueueSizes`        | `OutMsgQueueSizes`            | Queue sizes across all shards               |
+| `ext.blocks.consensusBlock`      | `ConsensusBlock`              | Latest finalized block (TON Center extension) |
+
+## Transactions and messages
+
+```
+raw.transaction address:accountAddress utime:int53 data:bytes transaction_id:internal.transactionId
+    fee:int64 storage_fee:int64 other_fee:int64 in_msg:raw.message
+    out_msgs:vector<raw.message> = raw.Transaction;
+raw.transactions transactions:vector<raw.transaction>
+    previous_transaction_id:internal.transactionId = raw.Transactions;
+raw.message hash:bytes source:accountAddress destination:accountAddress value:int64
+    extra_currencies:vector<extraCurrency> fwd_fee:int64 ihr_fee:int64 created_lt:int64
+    body_hash:bytes msg_data:msg.Data = raw.Message;
+raw.extMessageInfo hash:bytes hash_norm:bytes = raw.ExtMessageInfo;
+internal.transactionId lt:int64 hash:bytes = internal.TransactionId;
+```
+
+| `@type` value              | API schema              | Description                                    |
+| :------------------------- | :---------------------- | :--------------------------------------------- |
+| `raw.transaction`          | `TransactionStd`        | Raw transaction with messages and fees          |
+| `raw.transactions`         | `TransactionsStd`       | Paginated transaction list with cursor          |
+| `raw.message`              | `MessageStd`            | Raw message with sender, recipient, value       |
+| `raw.extMessageInfo`       | `ExtMessageInfo`        | External message hash after broadcast           |
+| `internal.transactionId`   | `InternalTransactionId` | Transaction reference: lt + hash                |
+| `ext.transaction`          | `Transaction`           | Transaction with decoded comments (TON Center extension) |
+| `ext.message`              | `Message`               | Message with decoded text comments (TON Center extension) |
+
+### Message body types
+
+The `msg_data` field on messages uses `@type` to indicate how to interpret the body:
+
+```
+msg.dataRaw body:bytes init_state:bytes = msg.Data;
+msg.dataText text:bytes = msg.Data;
+msg.dataDecryptedText text:bytes = msg.Data;
+msg.dataEncryptedText text:bytes = msg.Data;
+```
+
+| `@type` value           | API schema             | Description                              |
+| :---------------------- | :--------------------- | :--------------------------------------- |
+| `msg.dataRaw`           | `MsgDataRaw`           | Raw binary body + optional init state    |
+| `msg.dataText`          | `MsgDataText`          | Plain text comment (base64-encoded UTF-8)|
+| `msg.dataEncryptedText` | `MsgDataEncryptedText` | Encrypted message body                   |
+| `msg.dataDecryptedText` | `MsgDataDecryptedText` | Decrypted message body                   |
+
+## TVM types
+
+Used as input and output for smart contract get methods (`runGetMethod`, `runGetMethodStd`).
+
+### Stack entries
+
+Each stack entry wraps a value with a type tag:
+
+```
+tvm.stackEntryNumber number:tvm.Number = tvm.StackEntry;
+tvm.stackEntryCell cell:tvm.cell = tvm.StackEntry;
+tvm.stackEntrySlice slice:tvm.slice = tvm.StackEntry;
+tvm.stackEntryTuple tuple:tvm.Tuple = tvm.StackEntry;
+tvm.stackEntryList list:tvm.List = tvm.StackEntry;
+tvm.stackEntryUnsupported = tvm.StackEntry;
+```
+
+| `@type` value              | API schema               | Value field           |
+| :------------------------- | :----------------------- | :-------------------- |
+| `tvm.stackEntryNumber`     | `TvmStackEntryNumber`    | `number` (decimal string via `tvm.numberDecimal`) |
+| `tvm.stackEntryCell`       | `TvmStackEntryCell`      | `cell` (base64 BOC via `tvm.cell`)   |
+| `tvm.stackEntrySlice`      | `TvmStackEntrySlice`     | `slice` (base64 BOC via `tvm.slice`) |
+| `tvm.stackEntryTuple`      | `TvmStackEntryTuple`     | `tuple` (nested stack entries)       |
+| `tvm.stackEntryList`       | `TvmStackEntryList`      | `list` (nested stack entries)        |
+| `tvm.stackEntryUnsupported`| `TvmStackEntryUnsupported`| No value (type not representable)   |
+
+### Value types
+
+```
+tvm.cell bytes:bytes = tvm.Cell;
+tvm.slice bytes:bytes = tvm.Slice;
+tvm.numberDecimal number:string = tvm.Number;
+tvm.tuple elements:vector<tvm.StackEntry> = tvm.Tuple;
+tvm.list elements:vector<tvm.StackEntry> = tvm.List;
+```
+
+| `@type` value        | API schema         | TL fields                    |
+| :------------------- | :----------------- | :--------------------------- |
+| `tvm.cell`           | `TvmCell`          | `bytes` (base64 BOC)        |
+| `tvm.slice`          | `TvmSlice`         | `bytes` (base64 BOC)        |
+| `tvm.numberDecimal`  | `TvmNumberDecimal` | `number` (decimal string)    |
+| `tvm.tuple`          | `TvmTuple`         | `elements` (stack entries)   |
+| `tvm.list`           | `TvmList`          | `elements` (stack entries)   |
+
+### Get method result
+
+```
+smc.runResult gas_used:int53 stack:vector<tvm.StackEntry> exit_code:int32 = smc.RunResult;
+```
+
+| `@type` value    | API schema             | TL fields                        |
+| :--------------- | :--------------------- | :------------------------------- |
+| `smc.runResult`  | `RunGetMethodResult`   | `gas_used`, `stack`, `exit_code` |
+| `smc.runResult`  | `RunGetMethodStdResult`| Same fields, typed stack entries |
+
+## Fees
+
+```
+fees in_fwd_fee:int53 storage_fee:int53 gas_fee:int53 fwd_fee:int53 = Fees;
+query.fees source_fees:fees destination_fees:vector<fees> = query.Fees;
+```
+
+| `@type` value  | API schema   | TL fields                                          |
+| :------------- | :----------- | :------------------------------------------------- |
+| `fees`         | `Fees`       | `in_fwd_fee`, `storage_fee`, `gas_fee`, `fwd_fee`  |
+| `query.fees`   | `QueryFees`  | `source_fees`, `destination_fees`                   |
+
+## Configuration
+
+```
+configInfo config:tvm.cell = ConfigInfo;
+```
+
+| `@type` value | API schema  | TL fields                          |
+| :------------ | :---------- | :--------------------------------- |
+| `configInfo`  | `ConfigInfo`| `config` (TVM cell with parameters)|
+
+## Libraries
+
+```
+smc.libraryEntry hash:int256 data:bytes = smc.LibraryEntry;
+smc.libraryResult result:(vector smc.libraryEntry) = smc.LibraryResult;
+```
+
+| `@type` value       | API schema     | TL fields            |
+| :------------------ | :------------- | :------------------- |
+| `smc.libraryEntry`  | `LibraryEntry` | `hash`, `data`       |
+| `smc.libraryResult` | `LibraryResult`| `result` (entries)   |
+
+## Token types (TON Center extensions)
+
+These types are not in the base TonLib TL schema. They are added by TON Center to provide parsed Jetton and NFT data via the `getTokenData` endpoint.
+
+| `@type` value                    | API schema          | Description                                      |
+| :------------------------------- | :------------------ | :----------------------------------------------- |
+| `ext.tokens.jettonMasterData`    | `JettonMasterData`  | Jetton master: total supply, admin, metadata     |
+| `ext.tokens.jettonWalletData`    | `JettonWalletData`  | Jetton wallet: balance, owner, master reference  |
+| `ext.tokens.nftCollectionData`   | `NftCollectionData` | NFT collection: item count, owner, metadata      |
+| `ext.tokens.nftItemData`         | `NftItemData`       | NFT item: index, owner, collection reference     |
+
+## DNS record types
+
+DNS entries use `@type` to indicate the record type stored at a domain:
+
+```
+dns.entryDataNextResolver resolver:AccountAddress = dns.EntryData;
+dns.entryDataSmcAddress smc_address:AccountAddress = dns.EntryData;
+dns.entryDataAdnlAddress adnl_address:AdnlAddress = dns.EntryData;
+dns.entryDataStorageAddress bag_id:int256 = dns.EntryData;
+```
+
+| `@type` value         | API schema               | TL fields                  |
+| :-------------------- | :----------------------- | :------------------------- |
+| `dns_next_resolver`   | `DnsRecordNextResolver`  | `resolver` (address)       |
+| `dns_smc_address`     | `DnsRecordSmcAddress`    | `smc_address` (address)    |
+| `dns_adnl_address`    | `DnsRecordAdnlAddress`   | `adnl_address`             |
+| `dns_storage_address` | `DnsRecordStorageAddress`| `bag_id` (int256)          |
+
+## Payment channel types
+
+```
+pchan.config alice_public_key:string alice_address:accountAddress bob_public_key:string
+    bob_address:accountAddress init_timeout:int32 close_timeout:int32 channel_id:int64 = pchan.Config;
+pchan.stateInit signed_A:Bool signed_B:Bool min_A:int64 min_B:int64
+    expire_at:int53 A:int64 B:int64 = pchan.State;
+pchan.stateClose signed_A:Bool signed_B:Bool min_A:int64 min_B:int64
+    expire_at:int53 A:int64 B:int64 = pchan.State;
+pchan.statePayout A:int64 B:int64 = pchan.State;
+```
+
+| `@type` value      | API schema        | Description                          |
+| :----------------- | :---------------- | :----------------------------------- |
+| `pchan.config`     | `PChanConfig`     | Channel parties, timeouts, ID        |
+| `pchan.stateInit`  | `PChanStateInit`  | Initialization phase (signing)       |
+| `pchan.stateClose` | `PChanStateClose` | Closing phase (signing)              |
+| `pchan.statePayout`| `PChanStatePayout`| Payout phase (final balances)        |
+
+## Restricted wallet types
+
+```
+rwallet.limit seconds:int32 value:int64 = rwallet.Limit;
+rwallet.config start_at:int53 limits:vector<rwallet.limit> = rwallet.Config;
+```
+
+| `@type` value    | API schema     | TL fields                     |
+| :--------------- | :------------- | :---------------------------- |
+| `rwallet.config` | `RWalletConfig`| `start_at`, `limits`          |
+| `rwallet.limit`  | `RWalletLimit` | `seconds`, `value`            |
+
+## Utility types
+
+TON Center extensions.
+
+| `@type` value                      | API schema                  | Description                        |
+| :--------------------------------- | :-------------------------- | :--------------------------------- |
+| `ext.utils.detectedAddress`        | `DetectAddress`             | Address in all encoding formats    |
+| `ext.utils.detectedAddressVariant` | `DetectAddressBase64Variant`| Base64 and URL-safe base64 pair    |
+| `ext.utils.detectedHash`           | `DetectHash`                | Hash in hex, base64, URL-safe      |
+| `extraCurrency`                    | `ExtraCurrencyBalance`      | Non-TON currency ID and balance    |
+| `ok`                               | `ResultOk`                  | Success with no return data        |
+
+## Reference
+
+For background on the TL-B format used across the TON ecosystem, see the [TL-B overview](/languages/tl-b).
+
+Types prefixed with `ext.` are TON Center extensions not present in the upstream TL schema. 
