@@ -1,0 +1,532 @@
+---
+title: "How to add a TON Pay button"
+sidebarTitle: "Add TON Pay button JS"
+---
+
+import { Aside } from "/snippets/aside.jsx";
+
+Add a TON Pay button to a plain HTML/JavaScript page using the embed script or TON Pay client.
+
+## Installation
+
+<Steps>
+  <Step
+    title="Choose an installation method"
+  >
+    Choose one of the installation methods:
+
+    1. npm
+
+       ```bash
+       npm install @ton-pay/ui @tonconnect/ui
+       ```
+
+    1. CDN: no installation needed
+
+       ```html
+       <!-- Use the unpkg CDN directly in HTML -->
+       <script src="https://unpkg.com/@ton-pay/ui@0.1.1/dist/ton-pay-embed.js"></script>
+       ```
+
+    1. Local copy
+
+       After npm install, copy `node_modules/@ton-pay/ui/dist/ton-pay-embed.js` to a public assets folder. For example, the site's `public/` directory.
+       Then include it with a `<script src="...">` tag in HTML.
+  </Step>
+
+  <Step
+    title="Create a TON Connect manifest"
+  >
+    Create a [`tonconnect-manifest.json` file](/ecosystem/ton-connect/manifest) and host it on a public HTTPS URL.
+
+    ```json
+    {
+      "url": "<APP_URL>",
+      "name": "<APP_NAME>",
+      "iconUrl": "<APP_ICON_URL>"
+    }
+    ```
+
+    Placeholders:
+
+    - `<APP_URL>` – public HTTPS URL of the app.
+    - `<APP_NAME>` – display name shown in the wallet.
+    - `<APP_ICON_URL>` – public HTTPS URL of the app icon.
+  </Step>
+</Steps>
+
+## Option 1: embed script
+
+Placeholders:
+
+- `<CONTAINER_ID>` – HTML element ID where the button is mounted.
+- `<CALLBACK_NAME>` – global function name invoked by the embed script.
+- `<RECIPIENT_ADDR>` – recipient wallet address.
+
+<Steps>
+  <Step
+    title="Add the container"
+  >
+    ```html
+    <div id="<CONTAINER_ID>"></div>
+    ```
+  </Step>
+
+  <Step
+    title="Add the embed script"
+  >
+    ```html
+    <script src="https://unpkg.com/@ton-pay/ui@0.1.1/dist/ton-pay-embed.js?preset=gradient&variant=long&borderRadius=8&containerId=<CONTAINER_ID>&callback=<CALLBACK_NAME>"></script>
+    ```
+  </Step>
+
+  <Step
+    title="Add the import map"
+  >
+    ```html
+    <script type="importmap">
+      {
+          "imports": {
+          "@tonconnect/ui": "https://esm.sh/@tonconnect/ui@2.0.9"
+        }
+      }
+    </script>
+    ```
+  </Step>
+
+  <Step
+    title="Create the payment handler"
+  >
+    ```html
+    <script type="module">
+        import { createTonPay } from "https://unpkg.com/@ton-pay/ui@0.1.1/dist/ton-pay-vanilla.mjs";
+
+        // Initialize TonPay client
+        const tonPay = createTonPay({
+          manifestUrl: "/tonconnect-manifest.json"
+        });
+
+        // Define payment handler
+        window["<CALLBACK_NAME>"] = async () => {
+          try {
+            const result = await tonPay.pay(async (senderAddr) => {
+            // Build the payment message
+              const message = {
+                address: "<RECIPIENT_ADDR>",
+                amount: "1000000", // 0.001 TON in nanotons
+                payload: "dGVzdA==", // optional base64 payload
+              };
+              return { message };
+            });
+
+            console.log("Payment successful:", result.txResult);
+            alert("Payment sent!");
+          } catch (error) {
+            console.error("Payment failed:", error);
+            alert("Payment failed: " + error.message);
+      }
+    };
+    </script>
+    ```
+  </Step>
+</Steps>
+
+<Aside type="note">
+  The `callback` parameter in the embed script must match the global function name in the handler.
+</Aside>
+
+## Option 2: use TON Pay client
+
+Use `createTonPay` for custom UI and payment flow control.
+
+<Steps>
+  <Step
+    title="Set up the HTML"
+  >
+    ```html
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>My TON Payment App</title>
+      <script type="importmap">
+        {
+          "imports": {
+          "@tonconnect/ui": "https://esm.sh/@tonconnect/ui@2.0.9"
+        }
+        }
+      </script>
+    </head>
+    <body>
+      <button id="pay-btn">Pay with TON</button>
+      <div id="status"></div>
+    </body>
+    </html>
+    ```
+  </Step>
+
+  <Step
+    title="Import the TON Pay client and create an instance"
+  >
+    ```html
+    <script type="module">
+      import { createTonPay } from "https://unpkg.com/@ton-pay/ui@0.1.1/dist/ton-pay-vanilla.mjs";
+
+      const tonPay = createTonPay({
+        manifestUrl: "/tonconnect-manifest.json",
+        connectTimeoutMs: 300000 // 5 minutes (optional)
+    });
+    </script>
+    ```
+  </Step>
+
+  <Step
+    title="Implement the payment logic"
+  >
+    ```html
+    <script type="module">
+      const payButton = document.getElementById("pay-btn");
+      const statusDiv = document.getElementById("status");
+
+      payButton.addEventListener("click", async () => {
+        payButton.disabled = true;
+        payButton.textContent = "Processing...";
+
+        try {
+          const result = await tonPay.pay(async (senderAddr) => {
+            statusDiv.textContent = `Sending from ${senderAddr}...`;
+
+            // Build payment message
+            const message = {
+              address: "<RECIPIENT_ADDR>",
+              amount: "1000000",
+            };
+
+            return { message };
+          });
+
+          statusDiv.textContent = "Payment successful!";
+          console.log("Transaction:", result.txResult);
+        } catch (error) {
+          statusDiv.textContent = "Payment failed: " + error.message;
+          console.error(error);
+        } finally {
+          payButton.disabled = false;
+          payButton.textContent = "Pay with TON";
+        }
+      });
+    </script>
+    ```
+
+    <Aside
+      type="note"
+    >
+      `createTonPay` opens TON Connect modal when `pay()` is called and no wallet is connected.
+    </Aside>
+  </Step>
+</Steps>
+
+## Create messages with createTonPayTransfer
+
+Use `createTonPayTransfer` to build a canonical payment message with tracking identifiers.
+
+Combine the snippets in this section into one HTML page.
+
+<Steps>
+  <Step
+    title="Add the API package script"
+  >
+    ```html
+    <script type="module">
+      import { createTonPayTransfer } from "https://unpkg.com/@ton-pay/api@0.2.1/dist/index.mjs";
+      import { createTonPay } from "https://unpkg.com/@ton-pay/ui@0.1.1/dist/ton-pay-vanilla.mjs";
+    </script>
+    ```
+  </Step>
+
+  <Step
+    title="Use the API in the payment handler"
+  >
+    ```html
+    <script type="module">
+      const tonPay = createTonPay({
+        manifestUrl: "/tonconnect-manifest.json"
+      });
+
+      window["<CALLBACK_NAME>"] = async () => {
+        try {
+          const result = await tonPay.pay(async (senderAddr) => {
+            // Create payment with tracking
+            const { message, reference, bodyBase64Hash } =
+              await createTonPayTransfer(
+                {
+                  amount: 3.5,
+                  asset: "TON",
+                  recipientAddr: "<RECIPIENT_ADDR>",
+                  senderAddr,
+                  commentToSender: "Order #12345",
+                },
+                { chain: "mainnet" }
+              );
+
+            // Store tracking identifiers
+            console.log("Reference:", reference);
+            console.log("Hash:", bodyBase64Hash);
+
+            return { message, reference, bodyBase64Hash };
+          });
+
+          alert("Payment sent! Reference: " + result.reference);
+        } catch (error) {
+          alert("Payment failed: " + error.message);
+        }
+      };
+    </script>
+    ```
+  </Step>
+</Steps>
+
+<Aside type="note">
+  Store `reference` and `bodyBase64Hash` to track payment status via the [webhooks guide](/ecosystem/ton-pay/webhooks).
+</Aside>
+
+## Embed script parameters
+
+|    Parameter   |             Type            |      Default      |                           Description                          |
+| :------------: | :-------------------------: | :---------------: | :------------------------------------------------------------: |
+|  `containerId` |            string           |  `"ton-pay-btn"`  |           Target element ID where the button renders.          |
+|    `preset`    | `"default"` \| `"gradient"` |         -         |                     Built-in theme preset.                     |
+|    `bgColor`   |            string           |    `"#0098EA"`    | Background color in hex or CSS gradient. URL-encode the value. |
+|   `textColor`  |            string           |    `"#FFFFFF"`    |                      Text and icon color.                      |
+|    `variant`   |    `"long"` \| `"short"`    |      `"long"`     |                      Button text variant.                      |
+|     `text`     |            string           |         -         |            Custom button text. Overrides `variant`.            |
+|  `loadingText` |            string           | `"Processing..."` |                   Text shown during loading.                   |
+| `borderRadius` |            number           |        `8`        |                    Border radius in pixels.                    |
+|  `fontFamily`  |            string           |    `"inherit"`    |                     CSS font-family value.                     |
+|     `width`    |            number           |       `300`       |                     Button width in pixels.                    |
+|    `height`    |            number           |        `44`       |                    Button height in pixels.                    |
+|   `showMenu`   |           boolean           |       `true`      |             Show dropdown menu with wallet actions.            |
+|   `callback`   |            string           |         -         |              Global function name called on click.             |
+
+### Examples
+
+<CodeGroup>
+  ```html Default blue button
+  <script src="https://unpkg.com/@ton-pay/ui@0.1.1/dist/ton-pay-embed.js?preset=default&variant=long&borderRadius=8&containerId=btn-1&callback=handlePayment"></script>
+  ```
+
+  ```html Gradient button
+  <script src="https://unpkg.com/@ton-pay/ui@0.1.1/dist/ton-pay-embed.js?preset=gradient&variant=short&borderRadius=12&containerId=btn-2&callback=handlePayment"></script>
+  ```
+
+  ```html Custom colors
+  <script src="https://unpkg.com/@ton-pay/ui@0.1.1/dist/ton-pay-embed.js?bgColor=%23000000&textColor=%23FFFFFF&borderRadius=99&containerId=btn-3&callback=handlePayment"></script>
+  ```
+
+  ```html Custom size
+  <script src="https://unpkg.com/@ton-pay/ui@0.1.1/dist/ton-pay-embed.js?preset=gradient&width=400&height=56&containerId=btn-4&callback=handlePayment"></script>
+  ```
+</CodeGroup>
+
+<Aside
+  type="caution"
+>
+  URL-encode special characters in parameters. For example, `#` becomes `%23` in color values.
+</Aside>
+
+## TonPayEmbed API
+
+The embed script exposes a global `TonPayEmbed` object for programmatic control.
+
+### `TonPayEmbed.mount(config)`
+
+Update button configuration dynamically.
+
+```js
+TonPayEmbed.mount({
+  preset: "gradient",
+  variant: "short",
+  borderRadius: 12,
+  width: 350
+});
+```
+
+### `TonPayEmbed.setCallback(functionName)`
+
+Change the callback function.
+
+```js
+TonPayEmbed.setCallback("newPaymentHandler");
+```
+
+### `TonPayEmbed.setAddress(address)`
+
+Update the displayed wallet address in the menu.
+
+```js
+TonPayEmbed.setAddress("<RECIPIENT_ADDR>");
+```
+
+### `TonPayEmbed.click()`
+
+Trigger a button click programmatically.
+
+```js
+TonPayEmbed.click();
+```
+
+### Example: dynamic configuration
+
+```html
+<div id="<CONTAINER_ID>"></div>
+<button onclick="changeTheme()">Change Theme</button>
+
+<script src="https://unpkg.com/@ton-pay/ui@0.1.1/dist/ton-pay-embed.js?containerId=<CONTAINER_ID>&callback=<CALLBACK_NAME>"></script>
+
+<script>
+  function changeTheme() {
+    TonPayEmbed.mount({
+      preset: "gradient",
+      variant: "short",
+      borderRadius: 99
+    });
+  }
+</script>
+```
+
+## TonPay client API
+
+`createTonPay` returns a client for wallet connection and payments.
+
+### Properties
+
+- `address: string | null`
+
+  Current wallet address.
+
+  ```js
+  const tonPay = createTonPay({ manifestUrl: "/tonconnect-manifest.json" });
+  console.log(tonPay.address); // null or wallet address
+  ```
+
+### Methods
+
+- `waitForWalletConnection(): Promise<string>`
+
+  Wait for a wallet connection and open the modal if needed.
+
+  ```js
+  try {
+    const address = await tonPay.waitForWalletConnection();
+    console.log("Connected:", address);
+  } catch (error) {
+    console.error("Connection failed:", error);
+  }
+  ```
+
+- `pay(getMessage): Promise<PayResult>`
+
+  Execute a payment transaction.
+
+  ```js
+  const result = await tonPay.pay(async (senderAddr) => {
+    const message = {
+      address: "<RECIPIENT_ADDR>",
+      amount: "1000000"
+    };
+    return { message };
+  });
+
+  console.log(result.txResult);
+  ```
+
+- `disconnect(): Promise<void>`
+
+  Disconnect the current wallet.
+
+  ```js
+  await tonPay.disconnect();
+  ```
+
+## Framework integration
+
+### WordPress
+
+```html
+<!-- Add to the theme footer or a custom HTML block -->
+<div id="<CONTAINER_ID>"></div>
+<script type="importmap">
+{
+  "imports": {
+    "@tonconnect/ui": "https://esm.sh/@tonconnect/ui@2.0.9"
+  }
+}
+</script>
+<script type="module">
+  import { createTonPay } from "https://unpkg.com/@ton-pay/ui@0.1.1/dist/ton-pay-vanilla.mjs";
+  const tonPay = createTonPay({ manifestUrl: "/tonconnect-manifest.json" });
+  window["<CALLBACK_NAME>"] = async () => { /* payment handler */ };
+</script>
+<script src="https://unpkg.com/@ton-pay/ui@0.1.1/dist/ton-pay-embed.js?containerId=<CONTAINER_ID>&callback=<CALLBACK_NAME>"></script>
+```
+
+### Plain HTML/CSS/JS
+
+Use the complete example of the embed script in a single HTML file.
+
+### Build tools: Webpack and Vite
+
+```js
+import { createTonPay } from "@ton-pay/ui/vanilla";
+
+const tonPay = createTonPay({
+  manifestUrl: "/tonconnect-manifest.json"
+});
+
+// Use tonPay.pay() in event handlers
+```
+
+## Best practices
+
+- Wrap payment calls in try-catch blocks and display clear error messages.
+- Update the UI during payment processing to prevent repeated clicks.
+- Check amounts, addresses, and input before calling the payment function.
+- Use HTTPS in production. TON Connect requires HTTPS for the manifest URL and callbacks.
+- Save `reference` and `bodyBase64Hash` from `createTonPayTransfer` to track payments via webhooks.
+- Test with testnet first and handle error scenarios before going live.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion
+    title="If the button does not render"
+  >
+    1. Verify that `containerId` matches the target div ID
+    1. Check the browser console for errors
+    1. Ensure the script loads after the container div
+    1. Verify that the script URL is correct and accessible
+  </Accordion>
+
+  <Accordion
+    title="If the callback is not invoked"
+  >
+    1. Ensure the callback function is defined on the `window` object
+    1. Verify that the function name matches the `callback` parameter exactly
+    1. Define the callback before the embed script runs
+  </Accordion>
+
+  <Accordion
+    title="If import map erros occur"
+  >
+    1. Add the import map before any module scripts
+    1. Verify that the `@tonconnect/ui` version is compatible
+    1. Check that the import map syntax is valid
+  </Accordion>
+
+  <Accordion
+    title="If CORS errors occur"
+  >
+    1. Serve the manifest from the same domain or enable CORS
+    1. Use HTTPS in production
+    1. Verify that CDN resources are accessible
+  </Accordion>
+</AccordionGroup>
