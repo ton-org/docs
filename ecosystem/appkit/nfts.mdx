@@ -1,0 +1,482 @@
+---
+title: "How to work with NFTs using AppKit"
+sidebarTitle: "Work with NFTs"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+<Aside>
+  [Initialize the AppKit](/ecosystem/appkit/init) before using examples on this page.
+</Aside>
+
+[NFTs](/standard/tokens/nft/overview) (non-fungible tokens) are unique digital assets on TON, similar to ERC-721 tokens on Ethereum. Unlike [jettons](/ecosystem/appkit/jettons), which are fungible and interchangeable, each NFT is unique and represents ownership of a specific item. NFTs consist of a collection contract and individual NFT item contracts for each token.
+
+<Aside
+  type="caution"
+  title="Verify NFT authenticity"
+>
+  Before displaying or transferring NFTs, verify they belong to legitimate collections. Scammers may create fake NFTs mimicking popular collections.
+
+  Mitigation: Always verify the collection address matches the official one. Check NFT metadata for suspicious content.
+</Aside>
+
+<Aside type="note">
+  To issue or manage an NFT or an NFT collection without writing code, use [TON Tools](https://ton-collection-edit.vercel.app/).
+</Aside>
+
+## Ownership
+
+NFT ownership is tracked through individual NFT item contracts. Unlike jettons, which have a balance, one either owns a specific NFT item or does not.
+
+Similar to other asset queries, [discrete one-off checks](#on-demand-ownership-check) have limited value on their own and [continuous monitoring](#continuous-ownership-monitoring) should be used for UI display.
+### On-demand ownership check
+
+<Aside
+  type="caution"
+>
+  Do not store the ownership check results anywhere in the application state, as they become outdated quickly. For UI purposes, do [continuous ownership monitoring](#continuous-ownership-monitoring).
+</Aside>
+
+#### Single NFT
+
+Obtain the information of a specific NFT by its address and check the ownership:
+
+<CodeGroup>
+  ```tsx title="React" icon="react"
+  import {
+    useNft,
+    useSelectedWallet,
+  } from '@ton/appkit-react';
+
+  export const NftCard = ({ nftAddress }) => {
+    const [wallet, _] = useSelectedWallet();
+    const {
+      data: nft,
+      isLoading,
+      error,
+    } = useNft({
+      // NFT contract address
+      address: nftAddress ?? '<NFT_CONTRACT_ADDRESS>',
+    });
+
+    if (isLoading) {
+      return <div>Loading...</div>;
+    }
+
+    if (error) {
+      return <div>Error: {error.message}</div>;
+    }
+
+    return (
+      <div>
+        <p><em>NFT info</em></p>
+        <p>Name: {nft?.info?.name}</p>
+        <p>Collection: {nft?.collection?.name}</p>
+        <p>Owner address: {nft?.ownerAddress?.toString()}</p>
+        <p>Am I the owner: {nft?.ownerAddress === wallet?.getAddress() ? 'yes' : 'no'}</p>
+      </div>
+    );
+  };
+  ```
+
+  ```ts title="TypeScript" icon="globe"
+  import {
+    type AppKit,
+    type NFT,
+    getNft,
+    getSelectedWallet,
+  } from '@ton/appkit';
+
+  async function fetchNft(
+    /** Initialized AppKit instance */
+    kit: AppKit,
+    /** NFT contract address */
+    nftAddress: string,
+  ): Promise<NFT | null> {
+    const selectedWallet = getSelectedWallet(kit);
+    const nft = await getNft(kit, {
+      address: nftAddress,
+    });
+    console.log('NFT info');
+    console.log(`Name: ${nft?.info?.name}`);
+    console.log(`Collection: ${nft?.collection?.name}`);
+    console.log(`Owner address: ${nft?.ownerAddress?.toString()}`);
+    console.log(
+      `Am I the owner: ${nft?.ownerAddress === selectedWallet?.getAddress() ? 'yes' : 'no'}`
+    );
+    return nft;
+  }
+  ```
+</CodeGroup>
+
+#### All NFTs
+
+Retrieve every NFT held by the connected TON wallet or an arbitrary address:
+
+<CodeGroup>
+  ```tsx title="React" icon="react"
+  import {
+    useNftsByAddress,
+    useJettonsByAddress,
+    useSelectedWallet,
+    // Helper function targeting the connected wallet
+    useNfts,
+  } from '@ton/appkit-react';
+
+  export const NftListByAddress = () => {
+    const [wallet, _] = useSelectedWallet();
+    const {
+      data: nfts,
+      isLoading,
+      error,
+    } = useNftsByAddress({
+      // TON wallet address of the NFT holder
+      address: wallet?.getAddress() ?? '<TON_WALLET_ADDRESS>',
+    });
+
+    // Alternatively, query the connected wallet directly
+    // const { data: nfts, isLoading, error } = useNfts();
+
+    if (isLoading) {
+      return <div>Loading...</div>;
+    }
+
+    if (error) {
+      return <div>Error: {error.message}</div>;
+    }
+
+    return (
+      <div>
+        <p><em>NFTs</em></p>
+        <ul>
+          {nfts?.nfts.map((nft) => (
+            <li key={nft.address}>
+              {nft.info?.name}: {nft.info?.description ?? '—.'}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  };
+  ```
+
+  ```ts title="TypeScript" icon="globe"
+  import {
+    type AppKit,
+    type NFT,
+    getJettonsByAddress,
+    getSelectedWallet,
+    // Helper function targeting the connected wallet
+    getNfts,
+  } from '@ton/appkit';
+
+  async function fetchNftsByAddress(
+    /** AppKit instance */
+    kit: AppKit,
+  ): Promise<NFT[]> {
+    const selectedWallet = getSelectedWallet(kit);
+    const response = await getNftsByAddress(kit, {
+      address: selectedWallet?.getAddress() ?? '<TON_WALLET_ADDRESS>',
+    });
+
+    // Alternatively, query the connected wallet directly
+    // const response = await getNfts();
+
+    console.log('NFTs by address:', response.nfts.length);
+    return response.nfts;
+  }
+  ```
+</CodeGroup>
+
+### Continuous ownership monitoring
+
+Poll the NFT ownership at regular intervals to keep the displayed value up to date. Use an appropriate interval based on UX requirements — shorter intervals provide fresher data but increase API usage.
+
+Modify the following example according to the application logic:
+
+<CodeGroup>
+  ```tsx title="React" icon="react"
+  import {
+    useNfts,
+  } from '@ton/appkit-react';
+
+  export const NftsCard = () => {
+    const {
+      data: nfts,
+      isLoading,
+      error,
+      refetch,
+    } = useNfts({
+      // Only looks for up to 100 NFTs at a time
+      limit: 100,
+    });
+
+    if (isLoading) {
+      return <div>Loading...</div>;
+    }
+
+    if (error) {
+      return (
+        <div>
+          <p>Error: {error.message}</p>
+          <button onClick={() => refetch()}>Try again</button>
+        </div>
+      );
+    }
+
+    return <div>NFTs by address: {nfts?.nfts.length}</div>;
+  };
+  ```
+
+  ```ts title="TypeScript" icon="globe" expandable
+  // Not runnable: implement the updateNftGallery()
+  import {
+    type AppKit,
+    type NFT,
+    getNfts,
+  } from '@ton/appkit';
+
+  /**
+   * Starts the monitoring of a given wallet's NFT ownership,
+   * calling `onNftsUpdate()` every `intervalMs` milliseconds
+   *
+   * @returns a function to stop monitoring
+   */
+  export function startNftOwnershipMonitoring(
+    kit: AppKit,
+    onNftsUpdate: (nfts: NFT[]) => void,
+    intervalMs: number = 10_000,
+  ): () => void {
+    let isRunning = true;
+
+    const poll = async () => {
+      while (isRunning) {
+        // Only looks for up to 100 NFTs.
+        // To get more, call the `getNfts()` function
+        // multiple times with increasing offsets
+        const { nfts } = await getNfts(kit, { limit: 100 });
+        onNftsUpdate(nfts);
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+    };
+
+    // Start monitoring
+    poll();
+
+    // Return a cleanup function to stop monitoring
+    return () => {
+      isRunning = false;
+    };
+  }
+
+  // Usage
+  const stopMonitoring = startNftOwnershipMonitoring(
+    kit,
+    // The updateNftGallery() function is exemplary and should
+    // be replaced by an app function that refreshes the NFT gallery
+    // displayed in the interface
+    (balance) => updateNftGallery(balance),
+  );
+
+  // Stop monitoring once it is no longer needed
+  stopMonitoring();
+  ```
+</CodeGroup>
+
+## Transfers
+
+<Aside
+  type="danger"
+  title="Assets at risk"
+>
+  Verify the NFT address before initiating a transfer. Transferring an NFT is irreversible — once sent, only the new owner can transfer it back.
+
+  Double-check the recipient address to avoid permanent loss of valuable NFTs.
+</Aside>
+
+NFT transfers require various Toncoin [transaction fees](/foundations/fees). Before making a transfer, make sure there is enough Toncoin in the balance to cover the fees.
+
+Modify the following examples according to the application logic:
+
+<CodeGroup>
+  ```tsx title="React" icon="react"
+  import { useTransferNft } from '@ton/appkit-react';
+
+  export const SendNft = ({ recipientAddress, nftAddress }) => {
+    const { mutate: transfer, isPending, error, data } = useTransferNft();
+
+    const handleTransfer = () => {
+      transfer({
+        // New owner of the sent NFT.
+        // For example: 'UQ...'
+        recipientAddress,
+
+        // NFT contract address.
+        nftAddress,
+
+        // (optional) Additional Toncoin sent to recipient.
+        // An amount string in fractional units.
+        // For example, '0.1' or '1' Toncoin.
+        amount: '<FRACTIONAL_TONCOIN_AMOUNT>',
+
+        // (optional) Comment string. Defaults to none if not provided.
+        comment: 'Hello from AppKit!',
+      });
+    };
+
+    return (
+      <div>
+        <button onClick={handleTransfer} disabled={isPending}>
+          {isPending ? 'Transferring...' : 'Transfer an NFT'}
+        </button>
+        {error && <div>Error: {error.message}</div>}
+        {data && (
+          <div>
+            <p>Transfer successful: {data.boc}</p>
+          </div>
+        )}
+      </div>
+    );
+  };
+  ```
+
+  ```ts title="TypeScript" icon="globe"
+  import {
+    type AppKit,
+    type Base64String,
+    // Single-call transfer
+    transferNft,
+    // Two-step transfer: create a transaction object separately from sending it
+    createTransferNftTransaction,
+    sendTransaction,
+  } from '@ton/appkit';
+
+  async function sendNft(
+    /** Initialized AppKit instance */
+    kit: AppKit,
+    /** Recipient's TON wallet address as a string */
+    recipientAddress: string,
+    /** NFT contract address */
+    nftAddress: string,
+    /**
+     * Optional additional Toncoin sent to recipient.
+     * An amount string in fractional units.
+     * E.g., '0.1' or '1' Toncoin.
+     */
+    amount?: string,
+    /** Optional comment string */
+    comment?: string,
+  ) {
+    // Sign and send via TON Connect
+    const result = await transferNft(kit, {
+      recipientAddress,
+      nftAddress,
+      ...(amount && { amount }),
+      ...(comment && { comment }),
+    });
+    console.log('Transaction sent:', result.boc);
+
+    // Alternatively, build the transaction first with createTransferNftTransaction,
+    // then pass the resulting object to the sendTransaction function.
+  }
+  ```
+</CodeGroup>
+
+## `NFT` type
+
+NFT-related queries produce objects that conform to the following interface:
+
+```ts title="TypeScript"
+/**
+ * Non-fungible token (NFT) on the TON blockchain.
+ */
+export interface NFT {
+  /**
+   * Contract address of the NFT item
+   */
+  address: string;
+
+  /**
+   * Index of the item within its collection
+   */
+  index?: string;
+
+  /**
+   * Display information about the NFT (name, description, images, etc.)
+   */
+  info?: TokenInfo;
+
+  /**
+   * Custom attributes/traits of the NFT (e.g., rarity, properties)
+   */
+  attributes?: NFTAttribute[];
+
+  /**
+   * Information about the collection this item belongs to
+   */
+  collection?: NFTCollection;
+
+  /**
+   * Address of the auction contract, if the NFT is being auctioned
+   */
+  auctionContractAddress?: string;
+
+  /**
+   * Hash of the NFT smart contract code
+   */
+  codeHash?: string; // hexadecimal characters
+
+  /**
+   * Hash of the NFT's on-chain data
+   */
+  dataHash?: string; // hexadecimal characters
+
+  /**
+   * Whether the NFT contract has been initialized
+   */
+  isInited?: boolean;
+
+  /**
+   * Whether the NFT is soulbound (non-transferable)
+   */
+  isSoulbound?: boolean;
+
+  /**
+   * Whether the NFT is currently listed for sale
+   */
+  isOnSale?: boolean;
+
+  /**
+   * Current owner address of the NFT
+   */
+  ownerAddress?: string;
+
+  /**
+   * Real owner address when NFT is on sale (sale contract becomes temporary owner)
+   */
+  realOwnerAddress?: string;
+
+  /**
+   * Address of the sale contract, if the NFT is listed for sale
+   */
+  saleContractAddress?: string;
+
+  /**
+   * Off-chain metadata of the NFT (key-value pairs)
+   */
+  extra?: { [key: string]: unknown };
+}
+```
+
+## See also
+
+NFTs:
+
+- [NFT overview](/standard/tokens/nft/overview)
+- [NFT metadata](/standard/tokens/nft/metadata)
+
+General:
+
+- [Transaction fees](/foundations/fees)
+- [AppKit overview](/ecosystem/appkit/overview)
+- [TON Connect overview](/ecosystem/ton-connect)
