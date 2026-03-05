@@ -1,0 +1,280 @@
+---
+title: "How to configure logging YAML file"
+sidebarTitle: "Logging configuration"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+The TON node uses the [log4rs framework](https://docs.rs/log4rs/1.3.0/log4rs/) for logging.
+
+Logging is configured using a YAML file specified in the `log_config_name` field of the [node configuration](/ecosystem/nodes/rust/node-config). In the Helm chart, this file is mounted at `/main/logs.config.yml`.
+
+
+A default configuration is bundled with the chart at [`files/logs.config.yml`](https://github.com/RSquad/ton-rust-node/blob/master/helm/ton-rust-node/files/logs.config.yml) and is used if no custom configuration is provided. It can be overridden in one of the following ways:
+- inline in `values.yaml`;
+- from local file `--set-file logsConfig=path`;
+- by referencing an existing [ConfigMap](https://kubernetes.io/docs/concepts/configuration/configmap/).
+
+## Hot reload
+
+The `refresh_rate` field instructs log4rs to periodically re-read the configuration file. This allows log levels to be changed without restarting the node – updates are applied within the specified interval.
+
+```yaml
+refresh_rate: 30 seconds
+```
+
+Supported units: `seconds`, `minutes`, `hours`. If the field is omitted, the config is read only once at startup.
+
+This feature can be used during production debugging: temporarily increase a logger’s level to `debug`, observe the output, then restore the original level without restarting the node.
+
+## Appenders
+
+Appenders define where logs are written. Each appender has a unique name, the YAML key, and a `kind`. Three kinds are supported: `rolling_file`, `console`, and `file`.
+
+A TON node can generate a large volume of logs, especially during synchronization, elections, and catch-up. Appender configuration and log levels should be selected accordingly.
+
+### `rolling_file`
+
+The `rolling_file` appender is the default and recommended option for production. It writes logs to a file with automatic size-based rotation.
+
+The chart creates a dedicated `logs` [`PersistentVolumeClaim`](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) for this appender, ensuring logs remain available locally. Rotation prevents uncontrolled disk usage.
+
+```yaml
+appenders:
+  rolling_logfile:
+    kind: rolling_file
+    path: /logs/output.log
+    encoder:
+      pattern: "{d(%Y-%m-%d %H:%M:%S.%f)} {l} [{t}] {I}: {m}{n}"
+    policy:
+      kind: compound
+      trigger:
+        kind: size
+        limit: 25 gb
+      roller:
+        kind: fixed_window
+        pattern: '/logs/output_{}.log'
+        base: 1
+        count: 4
+```
+
+- The `policy` section defines when and how rotation occurs.
+
+- Trigger: `size`
+
+  Rotates the log file when it reaches the configured size.
+  | Field | Description |
+  |-------|-------------|
+  | `limit` | Maximum file size. Supported suffixes: `b`, `kb`, `mb`, `gb`, `tb`; e.g. `25 gb`. |
+
+- Roller: `fixed_window`
+
+  Renames archived files using a pattern with a sliding index.
+  | Field | Required | Description |
+  |-------|----------|-------------|
+  | `pattern` | yes | Archive filename template. `{}` is replaced by the index. Append `.gz` to compress archives. |
+  | `base` | no; default `0` | Starting index |
+  | `count` | yes | Maximum number of archive files |
+
+  Example configuration:
+  - `pattern: "/logs/output_{}.log"`
+  - `base: 1`
+  - `count: 4`
+
+  On rotation:
+  1. `output.log` is renamed to `output_1.log`
+  1. `output_1.log` → `output_2.log`
+  1. `output_2.log` → `output_3.log`
+  1. `output_3.log` → `output_4.log`
+  1. The previous `output_4.log` is deleted
+
+
+  Add `.gz` to the pattern to enable compression of archived logs:
+
+  ```yaml
+  pattern: '/logs/output_{}.log.gz'
+  ```
+
+Storage sizing:
+
+The Helm value `storage.logs.size` defines the size of the PVC mounted at `/logs`. Rotation settings must fit within this limit. Example of default configuration:
+- `limit: 25 gb`
+- `count: 4`
+
+Maximum disk usage is 1 active file + 4 archived files = 5 × 25 gb = 125 gb
+
+The default `storage.logs.size` is 150Gi, providing headroom. If rotation limits are reduced, for example, 1 gb × 10 archives with `.gz` compression, actual disk usage is lower, allowing a smaller volume size.
+
+### `console`
+
+The `console` appender writes logs to `stdout` or `stderr`. It is suitable when the cluster uses a log collection stack such as Loki, Fluentd, or Elasticsearch, and log storage is handled externally.
+
+At `debug` or `trace` levels, log volume can be high and may overload the collector. Log levels should be configured accordingly. When using console-only logging, disable the logs volume by setting `storage.logs.enabled` to `false`.
+
+```yaml
+appenders:
+  stdout:
+    kind: console
+    target: stdout          # or "stderr"
+    encoder:
+      pattern: "{d(%Y-%m-%d %H:%M:%S.%f)} {l} [{t}] {I}: {m}{n}"
+```
+
+### `file`
+
+The `file` appender writes logs to a file without rotation. The file grows indefinitely and may exhaust disk space. Use `rolling_file` instead.
+
+```yaml
+appenders:
+  logfile:
+    kind: file
+    path: /logs/output.log
+    append: true            # default: true
+    encoder:
+      pattern: "..."
+```
+
+### `filters`
+
+`filters` may be attached to any appender for additional message filtering. Here, threshold filter discards messages below the specified level.
+
+```yaml
+appenders:
+  stdout:
+    kind: console
+    filters:
+      - kind: threshold
+        level: warn
+    encoder:
+      pattern: "..."
+```
+
+## Encoder (log format)
+
+Each appender uses an `encoder` to format log entries. The default encoder kind is `pattern`:
+
+```yaml
+encoder:
+  pattern: "{d(%Y-%m-%d %H:%M:%S.%f)} {l} [{t}] {I}: {m}{n}"
+```
+
+### Format specifiers
+
+| Specifier | Name | Description |
+|-----------|------|-------------|
+| `{d}` / `{d(fmt)}` | date | Timestamp. Default format is ISO 8601. Custom format uses chrono syntax: `{d(%Y-%m-%d %H:%M:%S.%f)}`. |
+| `{l}` | level | Log level: `ERROR`, `WARN`, `INFO`, `DEBUG`, `TRACE` |
+| `{m}` | message | Log message body |
+| `{n}` | newline | Platform-dependent newline |
+| `{t}` | target | Logger target; module name or explicit `target:` in the log macro. |
+| `{I}` | thread_id | Numeric thread ID |
+| `{T}` | thread | Thread name |
+| `{f}` | file | Source file name |
+| `{L}` | line | Source line number |
+| `{M}` | module | Module path |
+| `{P}` | pid | Process ID |
+| `{h(..)}` | highlight | Colorizes enclosed text by log level; applies to console output only. |
+
+### Example output
+
+```
+2025-01-15 14:30:45.123456 INFO [validator] 140234567890: Block validated successfully
+```
+
+<Aside type="note">
+  Do not use `{h(...)}` in file appenders. It writes ANSI escape codes to the log output, which makes the file harder to read and search.
+</Aside>
+
+## Loggers
+
+### Root logger
+
+The root logger is the default logger. All log records not matched by a named logger are processed by it.
+
+```yaml
+root:
+  level: error
+  appenders:
+    - rolling_logfile
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `level` | yes | Log level: `off`, `error`, `warn`, `info`, `debug`, `trace`. |
+| `appenders` | yes | List of appender names defined in the appenders section. |
+
+### Named loggers
+
+Named loggers configure log levels for specific components. The logger name must match the `target` used in the node code.
+
+```yaml
+loggers:
+  validator:
+    level: info
+```
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `level` | no | inherited from parent | Log level |
+| `appenders` | no | `[]` | Appenders assigned to this logger. |
+| `additive` | no | `true` | If `true`, messages also propagate to the parent logger appenders (root). |
+
+Loggers form a hierarchy using `::`. For example:
+- `node`;
+- `node::network` is a child of `node`.
+
+If `additive: true`, messages logged by `node::network` are written to:
+- the appenders configured for `node::network`;
+- the appenders of `node`;
+- the appenders of the root logger.
+
+### Log levels
+Ordered from most to least verbose:
+| Level | Description |
+|-------|-------------|
+| `trace` | Most detailed level. Used for execution flow tracing. |
+| `debug` | Debug information. |
+| `info` | Informational messages about normal operation. |
+| `warn` | Indication of a potential problem. |
+| `error` | Errors that don't stop the node. |
+| `off` | Logging disabled. |
+
+### Available logger targets
+
+The following targets can be configured in the `loggers` section:
+
+| Target                      | Description                              |
+|-----------------------------|------------------------------------------|
+| `node`                      | Core node messages                       |
+| `boot`                      | Node bootstrap and initialization        |
+| `sync`                      | Block synchronization                    |
+| `node::network`             | Node networking                          |
+| `node::network::neighbours` | Neighbour tracking (high log volume)     |
+| `node::network::liteserver` | Liteserver request handling              |
+| `node::validator::collator` | Block collation                          |
+| `adnl`                      | ADNL network protocol                    |
+| `adnl_query`                | ADNL query processing                    |
+| `overlay`                   | Overlay networks                         |
+| `overlay_broadcast`         | Overlay broadcast messages               |
+| `rldp`                      | RLDP protocol (reliable large datagrams) |
+| `dht`                       | Distributed Hash Table                   |
+| `block`                     | Block structure and config parsing       |
+| `executor`                  | Transaction execution                    |
+| `tvm`                       | TON Virtual Machine                      |
+| `validator`                 | Validation (general)                     |
+| `validator_manager`         | Validator management                     |
+| `validate_query`            | Block and query validation               |
+| `validate_reject`           | Rejected block and query validation      |
+| `catchain`                  | Catchain consensus protocol              |
+| `catchain_adnl_overlay`     | ADNL overlay for catchain                |
+| `catchain_network`          | Catchain network transport               |
+| `validator_session`         | Validator sessions                       |
+| `consensus_common`          | Shared consensus logic                   |
+| `storage`                   | Data storage                             |
+| `index`                     | Data indexing                            |
+| `ext_messages`              | External message handling                |
+| `telemetry`                 | Telemetry and metrics                    |
+
+<Aside type="note">
+  HTTP requests (for example, JSON-RPC and metrics endpoints) are not logged by the node. There is no logger target for HTTP request tracing.
+</Aside>
