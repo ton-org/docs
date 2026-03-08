@@ -1,0 +1,144 @@
+---
+title: "Quick start"
+---
+
+## Image support
+
+The chart default image is `ghcr.io/rsquad/ton-rust-node/node:v0.2.1-mainnet`.
+
+- `<RELEASE_NAME>`: Helm release name, for example `my-validator`.
+- `<VALUES_FILE>`: path to a Helm values file, for example `values.yaml`.
+
+## Node roles
+
+The chart deploys the same TON Rust node binary in two operational roles: validator and full node. For a high-level role summary (validator, full node, archival full node), see [Rust node overview](/ecosystem/nodes/rust/overview).
+
+| Role      | Purpose                                                          | Ports to expose                                                                                                      |
+| --------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Validator | Participates in consensus and validator elections.               | Keep `liteserver` and `jsonRpc` disabled; expose only required node and ops ports (`adnl`, and `control` if needed). |
+| Full node | Syncs chain and serves external clients (APIs, explorers, bots). | Enable `liteserver` and/or `jsonRpc` when external access is required.                                               |
+
+- Run validators and fullnodes as separate Helm releases so resources, security policy, and lifecycle stay isolated.
+- If full chain history is needed, enable archival mode as described in [Archival node settings](/ecosystem/nodes/rust/node-config#archival-node).
+
+## Quick start
+
+### Prerequisites
+
+- Kubernetes cluster access configured for `helm`.
+- Helm 3 installed. Installation guide: [Install Helm](https://helm.sh/docs/intro/install/).
+- Access to the local chart at `./helm/ton-rust-node` by cloning the [`ton-rust-node` repository](https://github.com/RSquad/ton-rust-node/tree/master/helm/ton-rust-node).
+- A values file for the release, for example `values.yaml`.
+
+Install and deploy TON Rust node with [Helm](https://helm.sh) using a minimal configuration, then optionally enable liteserver and JSON Remote Procedure Call (JSON-RPC) ports.
+
+To deploy a validator, use this page for base node deployment and keep liteserver and JSON-RPC ports disabled. For validator election and operations workflow, use the [validator guide (nodectl)](https://github.com/RSquad/ton-rust-node/blob/master/helm/nodectl/README.md).
+
+### 1. Prepare a values file
+
+```yaml title="values.yaml"
+# Not runnable
+replicas: 2
+
+services:
+  adnl:
+    perReplica:
+      - annotations:
+          metallb.universe.tf/loadBalancerIPs: "1.2.3.4"
+      - annotations:
+          metallb.universe.tf/loadBalancerIPs: "5.6.7.8"
+
+nodeConfigs:
+  node-0.json: |
+    { "log_config_name": "/main/logs.config.yml", ... }
+  node-1.json: |
+    { "log_config_name": "/main/logs.config.yml", ... }
+```
+
+The chart includes a mainnet [`globalConfig`](/ecosystem/nodes/rust/global-config) and a default [`logsConfig`](/ecosystem/nodes/rust/logs-config). This minimal setup requires only [`nodeConfigs`](/ecosystem/nodes/rust/node-config). Per-replica service annotations are optional and shown here for static IP assignment.
+
+The example uses `metallb.universe.tf/loadBalancerIPs` annotations. Other networking modes are described in the [Networking section](/ecosystem/nodes/rust/node-config#networking), including `NodePort`, `hostPort`, `hostNetwork`, and ingress controllers such as `ingress-nginx` (Nginx).
+
+### 2. Install the release
+
+All `helm` commands below require Helm to be installed and available in `PATH`. See [Install Helm](https://helm.sh/docs/intro/install/).
+
+Use the local chart from [`ton-rust-node/helm/ton-rust-node`](https://github.com/RSquad/ton-rust-node/tree/master/helm/ton-rust-node):
+
+```bash
+helm install <RELEASE_NAME> ./helm/ton-rust-node -f <VALUES_FILE>
+```
+
+Or install from an Open Container Initiative registry:
+
+```bash
+helm install <RELEASE_NAME> oci://ghcr.io/rsquad/ton-rust-node/helm/node -f <VALUES_FILE>
+```
+
+## Verify deployment
+
+Check pod status for the release:
+
+```bash
+kubectl get pods -l app.kubernetes.io/name=node,app.kubernetes.io/instance=<RELEASE_NAME>
+```
+
+Check service status for the release:
+
+```bash
+kubectl get svc -l app.kubernetes.io/name=node,app.kubernetes.io/instance=<RELEASE_NAME>
+```
+
+## Enable liteserver and JSON-RPC ports
+
+Use this only for full node deployments. Do not expose these ports on validators.
+
+```yaml
+# Not runnable
+replicas: 2
+
+ports:
+  liteserver: 40000
+  jsonRpc: 8081
+
+services:
+  adnl:
+    perReplica:
+      - annotations:
+          metallb.universe.tf/loadBalancerIPs: "10.0.0.1"
+      - annotations:
+          metallb.universe.tf/loadBalancerIPs: "10.0.0.2"
+
+nodeConfigs:
+  node-0.json: |
+    { "log_config_name": "/main/logs.config.yml", ... }
+  node-1.json: |
+    { "log_config_name": "/main/logs.config.yml", ... }
+```
+
+## Run multiple releases in the same namespace
+
+Use different release names:
+
+```bash
+helm install validator ./helm/ton-rust-node -f validator-values.yaml
+helm install fullnode ./helm/ton-rust-node -f fullnode-values.yaml
+```
+
+This creates separate StatefulSets (`validator`, `fullnode`), services (`validator-0`, `fullnode-0`), and configs.
+
+## Useful commands
+
+```bash
+# Check pod status (replace "my-node" with the release name)
+kubectl get pods -l app.kubernetes.io/name=node,app.kubernetes.io/instance=my-node
+
+# Get external service IPs
+kubectl get svc -l app.kubernetes.io/name=node,app.kubernetes.io/instance=my-node
+
+# View logs
+kubectl logs my-node-0 -c ton-node
+
+# Exec into pod
+kubectl exec -it my-node-0 -c ton-node -- /bin/sh
+```
