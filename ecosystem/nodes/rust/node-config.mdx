@@ -1,0 +1,572 @@
+---
+title: "How to configure node JSON file"
+sidebarTitle: "Node configuration"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Each TON node replica requires its own `config.json` – the main configuration file that defines ADNL settings, database paths, garbage collection, collator behavior, and optional control, liteserver, or JSON-RPC endpoints.
+
+In the Helm chart, per-node configuration files are provided through the `nodeConfigs` map in `values.yaml` or through an existing [Secret](https://kubernetes.io/docs/concepts/configuration/secret/). Keys must follow the `node-N.json` naming pattern, where `N` matches the 0-based [`StatefulSet`](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/) replica index.
+
+During pod initialization, the init container copies `node-<pod-index>.json` to `/main/config.json`.
+
+## Node config overview
+
+### Helm integration constraints
+
+Several fields in the node config must be consistent with Helm values:
+
+| Field                     | Requirement                                                                                                     |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `adnl_node.ip_address`    | Must match the external IP assigned to this replica's `LoadBalancer` service. The port must match `ports.adnl`. |
+| `control_server.address`  | The port must match `ports.control` if the control server is enabled.                                           |
+| `lite_server.address`     | The port must match `ports.liteserver` if the liteserver is enabled.                                            |
+| `json_rpc_server.address` | The port must match `ports.jsonRpc` if JSON-RPC is enabled.                                                     |
+| `metrics.address`         | The port must match `ports.metrics` if metrics are enabled.                                                     |
+| `log_config_name`         | Must be `/main/logs.config.yml`, where the chart mounts the logs config.                                        |
+| `ton_global_config_name`  | Must be `/main/global.config.json`, where the chart mounts the global config.                                   |
+| `internal_db_path`        | Must be `/db`, where the chart mounts the database PVC.                                                         |
+
+### How to provide configs
+
+Choose one of the following options:
+
+- Use `--set-file`:
+  ```bash
+  helm install my-node ./helm/ton-rust-node \
+    --set-file 'nodeConfigs.node-0\.json=./node-0.json' \
+    ...
+  ```
+
+- Define inline in `values.yaml`:
+
+  ```yaml
+  nodeConfigs:
+    node-0.json: |
+      { "log_config_name": "/main/logs.config.yml", ... }
+  ```
+
+- Reference an existing Secret:
+
+  ```yaml
+  existingNodeConfigsSecretName: my-node-configs
+  ```
+
+### Full node with liteserver config example
+
+A typical full node exposes `lite_server` for lite-client queries and `json_rpc_server` for the HTTP API. The `control_server` is optional.
+
+The example shows recommended values for production deployments. These values may differ from the defaults listed in the [field reference](/ecosystem/nodes/rust/node-config-ref). If a field is not specified, the node uses the default value defined in the codebase.
+
+```json expandable
+{
+  "log_config_name": "/main/logs.config.yml",
+  "ton_global_config_name": "/main/global.config.json",
+  "internal_db_path": "/db",
+  "sync_by_archives": true,
+  "states_cache_mode": "Moderate",
+  "adnl_node": {
+    "ip_address": "<your-external-ip>:30303",
+    "keys": [
+      { "tag": 1, "data": { "type_id": 1209251014, "pvt_key": "<dht-private-key-base64>" } },
+      { "tag": 2, "data": { "type_id": 1209251014, "pvt_key": "<overlay-private-key-base64>" } }
+    ]
+  },
+  "lite_server": {
+    "address": "0.0.0.0:40000",
+    "server_key": { "type_id": 1209251014, "pvt_key": "<liteserver-private-key-base64>" }
+  },
+  "json_rpc_server": {
+    "address": "0.0.0.0:8081"
+  },
+  "metrics": {
+    "address": "0.0.0.0:9100",
+    "global_labels": { "network": "mainnet", "node_id": "lite-0" }
+  },
+  "gc": {
+    "enable_for_archives": true,
+    "archives_life_time_hours": 48,
+    "enable_for_shard_state_persistent": true,
+    "cells_gc_config": {
+      "gc_interval_sec": 900,
+      "cells_lifetime_sec": 86400
+    }
+  },
+  "cells_db_config": {
+    "states_db_queue_len": 1000,
+    "prefill_cells_counters": false,
+    "cells_cache_size_bytes": 4000000000,
+    "counters_cache_size_bytes": 4000000000
+  }
+}
+```
+
+### Validator node config example
+
+A validator requires `control_server` for key management and election participation. Liteserver and JSON-RPC endpoints are not required on a validator and should be deployed separately for security reasons. The `collator_config` defines block production parameters.
+
+The example shows recommended values for production deployments. These values may differ from the defaults listed in the [field reference](/ecosystem/nodes/rust/node-config-ref). If a field is not specified, the node uses the default value defined in the codebase.
+
+```json expandable
+{
+  "log_config_name": "/main/logs.config.yml",
+  "ton_global_config_name": "/main/global.config.json",
+  "internal_db_path": "/db",
+  "sync_by_archives": true,
+  "states_cache_mode": "Moderate",
+  "adnl_node": {
+    "ip_address": "<your-external-ip>:30303",
+    "keys": [
+      { "tag": 1, "data": { "type_id": 1209251014, "pvt_key": "<dht-private-key-base64>" } },
+      { "tag": 2, "data": { "type_id": 1209251014, "pvt_key": "<overlay-private-key-base64>" } }
+    ]
+  },
+  "control_server": {
+    "address": "0.0.0.0:50000",
+    "server_key": { "type_id": 1209251014, "pvt_key": "<control-server-private-key-base64>" },
+    "clients": {
+      "list": [
+        { "type_id": 1209251014, "pub_key": "<control-client-public-key-base64>" }
+      ]
+    }
+  },
+  "metrics": {
+    "address": "0.0.0.0:9100",
+    "global_labels": { "network": "mainnet", "node_id": "validator-0" }
+  },
+  "collator_config": {
+    "cutoff_timeout_ms": 1000,
+    "stop_timeout_ms": 1500,
+    "max_collate_threads": 10,
+    "retry_if_empty": false,
+    "finalize_empty_after_ms": 800,
+    "empty_collation_sleep_ms": 100,
+    "external_messages_maximum_queue_length": 25600
+  },
+  "gc": {
+    "enable_for_archives": true,
+    "archives_life_time_hours": 48,
+    "enable_for_shard_state_persistent": true,
+    "cells_gc_config": {
+      "gc_interval_sec": 900,
+      "cells_lifetime_sec": 86400
+    }
+  },
+  "cells_db_config": {
+    "states_db_queue_len": 1000,
+    "prefill_cells_counters": false,
+    "cells_cache_size_bytes": 4000000000,
+    "counters_cache_size_bytes": 4000000000
+  }
+}
+```
+
+### How to generate keys
+
+Each node requires multiple [Ed25519](https://en.wikipedia.org/wiki/EdDSA#Ed25519) key pairs. The config references them as base64-encoded 32-byte private keys. A separate key pair is required for each purpose: DHT, overlay, liteserver, control server, and control client.
+
+All keys in the config use the following structure:
+
+```json
+{ "type_id": 1209251014, "pvt_key": "<base64-encoded-32-byte-private-key>" }
+```
+
+The `type_id` value `1209251014` corresponds to Ed25519, which is the only supported key type. Public keys, such as in `control_server.clients`, use the same structure but specify `pub_key` instead of `pvt_key`.
+
+To generate:
+
+<Steps>
+  <Step
+    title="Generate private key"
+  >
+    Generate a raw 32-byte Ed25519 private key using OpenSSL:
+
+    ```bash
+    openssl genpkey -algorithm ed25519 -outform DER | tail -c 32 | base64
+    ```
+
+    This command outputs a base64 string such as `GnEN3s5t2Z3W1e...==`. Use this value as `pvt_key`.
+  </Step>
+
+  <Step
+    title="Derive public key"
+  >
+    Derive the corresponding public key from the private key:
+
+    ```bash
+    openssl genpkey -algorithm ed25519 -outform DER > /tmp/ed25519.der
+    # private key (base64):
+    tail -c 32 /tmp/ed25519.der | base64
+    # public key (base64):
+    openssl pkey -inform DER -in /tmp/ed25519.der -pubout -outform DER | tail -c 32 | base64
+    ```
+
+    Use the public key for `control_server.clients` and for publishing the liteserver key in the global config.
+  </Step>
+
+  <Step
+    title="Repeat the process"
+  >
+    Repeat the process for each required key pair.
+
+    A typical full node with liteserver requires 3 key pairs:
+
+    | Key                    | Used in                     | Field     |
+    | ---------------------- | --------------------------- | --------- |
+    | DHT private key        | `adnl_node.keys[0]` (tag 1) | `pvt_key` |
+    | Overlay private key    | `adnl_node.keys[1]` (tag 2) | `pvt_key` |
+    | Liteserver private key | `lite_server.server_key`    | `pvt_key` |
+
+    A validator additionally requires:
+
+    | Key                        | Used in                          | Field                        |
+    | -------------------------- | -------------------------------- | ---------------------------- |
+    | Control server private key | `control_server.server_key`      | `pvt_key`                    |
+    | Control client key pair    | `control_server.clients.list[0]` | `pub_key` (public part only) |
+  </Step>
+</Steps>
+
+#### Quick generation script
+
+Generate all keys at once for a full node with liteserver:
+
+```bash
+#!/bin/bash
+for name in dht overlay liteserver; do
+  openssl genpkey -algorithm ed25519 -outform DER > /tmp/${name}.der
+  pvt=$(tail -c 32 /tmp/${name}.der | base64)
+  pub=$(openssl pkey -inform DER -in /tmp/${name}.der -pubout -outform DER | tail -c 32 | base64)
+  echo "${name}:"
+  echo "  pvt_key: ${pvt}"
+  echo "  pub_key: ${pub}"
+  rm /tmp/${name}.der
+done
+```
+
+For a validator, add `control-server` and `control-client` to the loop.
+
+<Aside
+  type="danger"
+  title="Key reuse risk"
+>
+  Each key must be unique. Do not reuse the same key for different purposes, such as DHT and overlay. Do not share keys between different nodes.
+</Aside>
+
+### Archival node
+
+By default, the node prunes old block archives and state snapshots through the `gc` section. To preserve the full blockchain history, override the `gc` settings in the node configuration:
+
+```json
+{
+  "gc": {
+    "enable_for_archives": false,
+    "enable_for_shard_state_persistent": false,
+    "cells_gc_config": {
+      "gc_interval_sec": 900,
+      "cells_lifetime_sec": 86400
+    }
+  },
+  "skip_saving_persistent_states": false
+}
+```
+
+- `enable_for_archives: false` stops pruning of block archives. When turned off, `archives_life_time_hours` is ignored.
+- `enable_for_shard_state_persistent: false` stops `gc` from pruning persistent state snapshots. With `gc` enabled, older states are retained at decreasing frequency. Turning it off preserves all snapshots and increases disk usage.
+- `skip_saving_persistent_states: false`  ensures persistent snapshots are created. If set to `true`, snapshots are never saved regardless of `gc` settings.
+- Do not turn `cells_gc_config` off. Cells `gc` removes unreferenced cells only and does not delete blocks or states. Disabling it leads to database storage leaks.
+
+Full mainnet history is in the terabytes range and grows continuously. Make sure `storage.db.size` is large enough.
+
+## Networking
+
+A TON node needs a stable, publicly reachable IP address. Other nodes connect to the `adnl_node.ip_address` specified in the node config.
+
+### Ports and services
+
+The chart exposes five ports. Each port is optional. Set it to `null` to omit it. `ports.adnl` is an exception and is always enabled.
+
+| Port               | Protocol | Default | Purpose                                                            |
+| ------------------ | -------- | ------- | ------------------------------------------------------------------ |
+| `ports.adnl`       | UDP      | `30303` | Peer-to-peer protocol. Must be publicly reachable.                 |
+| `ports.control`    | TCP      | `50000` | Node management; stop, restart, elections. Should remain internal. |
+| `ports.liteserver` | TCP      | `null`  | Liteserver API for external consumers.                             |
+| `ports.jsonRpc`    | TCP      | `null`  | JSON-RPC API for external consumers.                               |
+| `ports.metrics`    | TCP      | `null`  | Prometheus metrics, health and readiness probes.                   |
+
+#### Per-port services
+
+Each enabled port gets its own Kubernetes Service per replica. This allows independent configuration of the service type, annotations, and traffic policy for each port.
+
+| Port       | Service name               | Default type | Rationale                                                                                  |
+| ---------- | -------------------------- | ------------ | ------------------------------------------------------------------------------------------ |
+| ADNL       | `<release>-<i>`            | LoadBalancer | Must be publicly reachable for peer-to-peer communication.                                 |
+| control    | `<release>-<i>-control`    | ClusterIP    | Used for node management. Keep internal.                                                   |
+| liteserver | `<release>-<i>-liteserver` | LoadBalancer | Serves external API consumers.                                                             |
+| jsonRpc    | `<release>-<i>-jsonrpc`    | LoadBalancer | Serves external API consumers.                                                             |
+| metrics    | `<release>-metrics`        | ClusterIP    | Used for internal scraping only. Not per-replica, implemented through a separate template. |
+
+To override the type per port:
+
+```yaml
+services:
+  adnl:
+    type: LoadBalancer           # default
+    externalTrafficPolicy: Local
+  control:
+    type: ClusterIP              # default — recommended to keep internal
+  liteserver:
+    type: LoadBalancer           # default
+  jsonRpc:
+    type: LoadBalancer           # default
+```
+
+Each port's service supports `type`, `externalTrafficPolicy`, `annotations`, and [`perReplica`](/ecosystem/nodes/rust/node-config#loadbalancer-recommended) overrides.
+
+### Exposure modes
+
+The chart supports five exposure modes. Exposure modes control how traffic reaches the pod, not which ports are enabled. Choose one mode per deployment. Modes can be combined, but this is uncommon.
+
+#### LoadBalancer (recommended)
+
+Each per-replica Service provisions a cloud load balancer or a MetalLB VIP. The external IP is assigned through provider-specific annotations on the ADNL service.
+
+```yaml
+services:
+  adnl:
+    type: LoadBalancer
+    externalTrafficPolicy: Local
+```
+
+This is the default. No changes are required for a basic deployment.
+
+##### Static IP assignment
+
+Use `perReplica` annotations to pin IPs. List index matches replica index.
+
+- MetalLB:
+
+  ```yaml
+  services:
+    adnl:
+      perReplica:
+        - annotations:
+            metallb.universe.tf/loadBalancerIPs: "192.168.1.100"
+        - annotations:
+            metallb.universe.tf/loadBalancerIPs: "192.168.1.101"
+  ```
+
+- AWS Elastic IP:
+
+  ```yaml
+  services:
+    adnl:
+      perReplica:
+        - annotations:
+            service.beta.kubernetes.io/aws-load-balancer-eip-allocations: "eipalloc-aaa"
+        - annotations:
+            service.beta.kubernetes.io/aws-load-balancer-eip-allocations: "eipalloc-bbb"
+  ```
+
+- GCP:
+
+  ```yaml
+  services:
+    adnl:
+      perReplica:
+        - annotations:
+            networking.gke.io/load-balancer-ip-addresses: "my-ip-ref-0"
+        - annotations:
+            networking.gke.io/load-balancer-ip-addresses: "my-ip-ref-1"
+  ```
+
+The `adnl_node.ip_address` in the node config must match the external IP assigned to that replica's ADNL service.
+
+#### NodePort
+
+Uses the Kubernetes NodePort mechanism. Traffic arrives at `<node-ip>:<nodePort>` and is forwarded to the pod.
+
+```yaml
+services:
+  adnl:
+    type: NodePort
+    externalTrafficPolicy: Local
+```
+
+Use this mode in clusters without a LoadBalancer controller; no cloud load balancer, no MetalLB.
+
+Trade-offs:
+
+- Works on any cluster. No load balancer infrastructure required.
+- Port conflicts must be managed manually. Multiple replicas require different ports; NodePorts default range: 30000–32767.
+- The `adnl_node.ip_address` must be the node's external IP with the NodePort, not the container port.
+- The pod must run on the node whose IP is configured. Enforce this using `nodeSelector` or `nodeAffinity`.
+
+#### hostPort
+
+Binds selected container ports directly to the host network interface. The pod remains in the pod network. Only the selected ports are exposed on the host IP. Network policies continue to work.
+
+Each port can be enabled independently:
+
+```yaml
+hostPort:
+  adnl: true
+  control: false
+  liteserver: false
+  jsonRpc: false
+  metrics: false
+```
+
+Use this mode when ADNL must be exposed on the host IP without a LoadBalancer, while keeping other ports isolated in the pod network. Common in bare-metal clusters with direct public IPs assigned to nodes.
+
+Trade-offs:
+
+- Only the enabled ports are exposed on the host. Other ports remain in the pod network behind Services.
+- Network policies still work, unlike `hostNetwork`.
+- One pod per node. The port binds to `0.0.0.0` on the host. Two pods on the same node would conflict. Use `podAntiAffinity` or `nodeSelector` to spread replicas.
+- `adnl_node.ip_address` must match the host's external IP.
+
+Example with anti-affinity:
+
+```yaml
+hostPort:
+  adnl: true
+
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: node
+        topologyKey: kubernetes.io/hostname
+```
+
+#### hostNetwork
+
+The pod uses the host network stack directly. All container ports bind directly to the host IP. No NAT or Service abstraction is required. The pod itself becomes the network endpoint.
+
+```yaml
+hostNetwork: true
+```
+
+Use this mode in bare-metal deployments that require zero NAT overhead and accept the security trade-offs.
+
+Trade-offs:
+
+- Zero NAT overhead. Provides the best possible network performance.
+- All ports are exposed on the host, including control. Restrict access using firewall rules.
+- Network policies do not work. The pod runs in the host network namespace.
+- One pod per node. Same scheduling constraint as `hostPort`.
+- `adnl_node.ip_address` must match the host's external IP.
+- Services are still created. Set `services.adnl.type: ClusterIP` if a LoadBalancer is not required.
+
+Example with anti-affinity:
+
+```yaml
+hostNetwork: true
+
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: node
+        topologyKey: kubernetes.io/hostname
+```
+
+#### Ingress-nginx stream proxy
+
+Reuses an existing ingress-nginx controller to forward raw TCP and UDP streams to the node's ClusterIP Services. No chart changes are required. Configuration is external.
+
+Override the service type to ClusterIP for the ports routed through the ingress:
+
+```yaml
+services:
+  liteserver:
+    type: ClusterIP
+  jsonRpc:
+    type: ClusterIP
+```
+
+ADNL still requires external reachability. Keep it as LoadBalancer or enable `hostPort.adnl: true`.
+
+Use this mode when ingress-nginx is already deployed, and additional LoadBalancers for liteserver or JSON-RPC are not desired. ADNL still requires a direct path; LoadBalancer or hostPort.
+
+Trade-offs:
+
+- Reuses existing infrastructure. No additional load balancer cost.
+- Adds an extra proxy hop; ingress-nginx sits between the client and the node.
+- `adnl_node.ip_address` must be the ingress controller's external IP.
+- Configuration is external. The ingress-nginx `tcp-services` and `udp-services` ConfigMaps must be managed separately.
+
+Example ingress-nginx ConfigMap:
+
+```yaml
+# TCP services (control, liteserver)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tcp-services
+  namespace: ingress-nginx
+data:
+  "50000": "ton/my-node-0-control:50000"
+  "40000": "ton/my-node-0-liteserver:40000"
+---
+# UDP services (ADNL)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: udp-services
+  namespace: ingress-nginx
+data:
+  "30303": "ton/my-node-0:30303"
+```
+
+### Comparison
+
+| Mode                 | NAT overhead | LB required              | Port management           | Network policies | Complexity |
+| -------------------- | ------------ | ------------------------ | ------------------------- | ---------------- | ---------- |
+| LoadBalancer         | DNAT         | yes (cloud LB / MetalLB) | automatic                 | yes              | low        |
+| NodePort             | kube-proxy   | no                       | manual (port ranges)      | yes              | medium     |
+| hostPort             | minimal      | no                       | manual (one pod per node) | yes              | medium     |
+| hostNetwork          | none         | no                       | manual (one pod per node) | **no**           | medium     |
+| Ingress-nginx stream | proxy hop    | no (reuses ingress)      | manual (ConfigMaps)       | yes              | medium     |
+
+LoadBalancer with a static IP is recommended for most deployments.
+
+- Use `hostPort` in bare-metal with direct public IPs when MetalLB is not available.
+- Use `hostNetwork` only when zero NAT overhead is critical, and the security trade-offs of exposing all ports are acceptable.
+
+### NetworkPolicy
+
+The chart can create a NetworkPolicy with per-port ingress rules.
+
+```yaml
+networkPolicy:
+  enabled: true
+  control:
+    enabled: true
+    allowFrom:
+      - ipBlock:
+          cidr: 10.0.0.0/8
+  metrics:
+    enabled: true
+    allowFrom:
+      - namespaceSelector:
+          matchLabels:
+            name: monitoring
+```
+
+When `networkPolicy.enabled` is `true`:
+
+- ADNL (UDP) ingress is always created. If `networkPolicy.adnl.allowFrom` is empty, the default source is `0.0.0.0/0`.
+- TCP rules are configured independently per port: `control`, `liteserver`, `jsonRpc`, `metrics`.
+- A TCP rule is created only when both conditions are true:
+- the corresponding port is enabled in `ports.*`;
+- `networkPolicy.<port>.enabled: true`.
+- `networkPolicy.<port>.allowFrom` accepts raw Kubernetes `from` entries. If omitted or empty, source is not restricted for that rule.
+- `networkPolicy.extraIngress` appends additional raw ingress rules.
+
+This policy covers ingress only. If the cluster enforces egress policies, outbound UDP to `0.0.0.0/0` must be allowed separately for ADNL.
+
+NetworkPolicy has no effect when `hostNetwork: true`, because the pod runs in the host network namespace.
