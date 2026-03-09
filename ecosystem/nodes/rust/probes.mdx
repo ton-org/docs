@@ -1,0 +1,133 @@
+---
+title: "Health probes"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Kubernetes liveness, readiness, and startup probes for the TON node.
+
+## Available endpoints
+
+The TON node metrics HTTP server exposes two health endpoints:
+
+| Endpoint   | Purpose         | Kubernetes probe |
+| ---------- | --------------- | ---------------- |
+| `/healthz` | Liveness check  | `livenessProbe`  |
+| `/readyz`  | Readiness check | `readinessProbe` |
+
+Both endpoints return `HTTP 200` with a JSON body:
+
+```json
+{
+  "status": "ok",
+  "sync_status": 6,
+  "last_mc_block_seqno": 12345678,
+  "validation_status": 3
+}
+```
+
+These endpoints are served by the same HTTP server as `/metrics` and require the `metrics` section in the [node config](/ecosystem/nodes/rust/node-config).
+
+<Aside type="note">
+  Both `/healthz` and `/readyz` return 200 if the metrics HTTP server is running. They do not check sync status or other internal health criteria.
+</Aside>
+
+## Enabling probes
+
+Probes require `ports.metrics` to be set in the Helm values:
+
+```yaml
+ports:
+  metrics: 9100
+
+probes:
+  startup:
+    httpGet:
+      path: /healthz
+      port: metrics
+    failureThreshold: 60
+    periodSeconds: 10
+  liveness:
+    httpGet:
+      path: /healthz
+      port: metrics
+    periodSeconds: 30
+    failureThreshold: 3
+  readiness:
+    httpGet:
+      path: /readyz
+      port: metrics
+    periodSeconds: 10
+    failureThreshold: 3
+```
+
+The `port: metrics` value references the named container port and resolves to the value defined in `ports.metrics`.
+
+## Startup probe
+
+The startup probe is critical for TON nodes. The node may take several minutes to start, depending on:
+
+- Database size and integrity checks.
+- State loading and Merkle tree reconstruction.
+- Network bootstrap and peer discovery.
+
+Without a startup probe, the liveness probe may restart the pod before the node finishes initializing.
+
+Recommended settings:
+
+| Parameter          | Value  | Rationale                                             |
+| ------------------ | ------ | ----------------------------------------------------- |
+| `failureThreshold` | `60`   | Allows up to 10 minutes for initialization (60 x 10s) |
+| `periodSeconds`    | `10` s | Checks every 10 seconds                               |
+
+Once the startup probe succeeds, Kubernetes switches to the liveness and readiness probes.
+
+## Tuning
+
+### Validators
+
+Validators have stricter uptime requirements. Use tighter probe settings:
+
+```yaml
+probes:
+  startup:
+    httpGet:
+      path: /healthz
+      port: metrics
+    failureThreshold: 60
+    periodSeconds: 10
+  liveness:
+    httpGet:
+      path: /healthz
+      port: metrics
+    periodSeconds: 15
+    failureThreshold: 3
+  readiness:
+    httpGet:
+      path: /readyz
+      port: metrics
+    periodSeconds: 5
+    failureThreshold: 2
+```
+
+### Full nodes and liteservers
+
+Full nodes are more tolerant of brief interruptions. The default values from the enabling probes are appropriate.
+
+### Without the metrics port
+
+If the metrics HTTP server cannot be enabled, configure a TCP socket probe on the control port as a basic liveness check:
+
+```yaml
+ports:
+  control: 50000
+
+probes:
+  liveness:
+    tcpSocket:
+      port: control
+    periodSeconds: 30
+    failureThreshold: 3
+```
+
+A TCP socket probe only verifies that the port accepts connections. It does not check node health. Use this approach only when the metrics endpoint cannot be enabled.
