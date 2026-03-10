@@ -2,12 +2,19 @@
 title: "Quick start"
 ---
 
-## Image support
+> **Note:** This Rust node quick start focuses on first successful deployment.
+> The Helm chart also ships its own operator-focused documentation (networking, Vault, monitoring).
+> Use it as the source of truth for chart-specific values and examples:
+> - Chart README: https://github.com/RSquad/ton-rust-node/tree/master/helm/ton-rust-node
 
-The chart default image is `ghcr.io/rsquad/ton-rust-node/node:v0.2.1-mainnet`.
+## Image configuration
 
-- `<RELEASE_NAME>`: Helm release name, for example `my-validator`.
-- `<VALUES_FILE>`: path to a Helm values file, for example `values.yaml`.
+The Helm chart selects the container image via Helm values (`image.repository` and `image.tag`).
+Avoid relying on a hard-coded tag in documentation: the defaults can change with chart releases.
+
+References:
+- Chart values defaults: https://raw.githubusercontent.com/RSquad/ton-rust-node/master/helm/ton-rust-node/values.yaml
+- Chart appVersion: https://raw.githubusercontent.com/RSquad/ton-rust-node/master/helm/ton-rust-node/Chart.yaml
 
 ## Node roles
 
@@ -27,12 +34,15 @@ The chart deploys the same TON Rust node binary in two operational roles: valida
 
 - Kubernetes cluster access configured for `helm`.
 - [Helm 3 installed](https://helm.sh/docs/intro/install/).
-- Access to the local chart at `./helm/ton-rust-node` by cloning the [`ton-rust-node` repository](https://github.com/RSquad/ton-rust-node/tree/e8bd0451b326099146a90a913beedaebd952fa56/helm/ton-rust-node).
+- Access to the chart at `./helm/ton-rust-node` by cloning the `ton-rust-node` repository:
+  https://github.com/RSquad/ton-rust-node/tree/master/helm/ton-rust-node
 - A values file for the release, for example `values.yaml`.
 
 Install and deploy TON Rust node with [Helm](https://helm.sh) using a minimal configuration, then optionally enable liteserver and JSON Remote Procedure Call (JSON-RPC) ports.
 
-To deploy a validator, use this page for base node deployment and keep liteserver and JSON-RPC ports disabled. For validator election and operations workflow, use the [validator guide (`nodectl`)](https://github.com/RSquad/ton-rust-node/blob/e8bd0451b326099146a90a913beedaebd952fa56/helm/nodectl/README.md).
+To deploy a validator, use this page for base deployment and keep liteserver and JSON-RPC ports disabled.
+For validator election and operations workflow, use the validator guide (`nodectl`):
+https://github.com/RSquad/ton-rust-node/tree/master/helm/nodectl
 
 ### 1. Prepare a values file
 
@@ -57,9 +67,10 @@ nodeConfigs:
     { "log_config_name": "/main/logs.config.yml", ... }
 ```
 
-The chart includes a mainnet [`globalConfig`](/ecosystem/nodes/rust/global-config) and a default [`logsConfig`](/ecosystem/nodes/rust/logs-config). This minimal setup requires only [`nodeConfigs`](/ecosystem/nodes/rust/node-config). Per-replica service annotations are optional and shown here for static IP assignment.
+The chart includes a mainnet [`globalConfig`](/ecosystem/nodes/rust/global-config) and a default [`logsConfig`](/ecosystem/nodes/rust/logs-config).
+This minimal setup requires only [`nodeConfigs`](/ecosystem/nodes/rust/node-config).
 
-The example uses `metallb.universe.tf/loadBalancerIPs` annotations. Other networking modes are described in the [Networking section](/ecosystem/nodes/rust/node-config#networking), including `NodePort`, `hostPort`, `hostNetwork`, and ingress controllers such as `ingress-nginx` (Nginx).
+Other networking modes are described in the [Networking section](/ecosystem/nodes/rust/node-config#networking), including `NodePort`, `hostPort`, `hostNetwork`, and ingress controllers such as `ingress-nginx`.
 
 ### 2. Install the release
 
@@ -130,6 +141,88 @@ helm install fullnode ./helm/ton-rust-node -f fullnode-values.yaml
 ```
 
 This creates separate StatefulSets (`validator`, `fullnode`), services (`validator-0`, `fullnode-0`), and configs.
+
+## Operator notes
+
+### 1. Helm hooks
+
+This chart does not rely on Helm hooks for bootstrap. Instead, it uses an init container that seeds `/main` from ConfigMaps/Secrets before the main container starts.
+
+If you need pre/post actions (for example, backup before upgrade, or data integrity checks), implement them outside the chart (CI/CD pipeline, dedicated Jobs, or Helm hooks in a wrapper chart).
+Helm hooks are described here: https://helm.sh/docs/topics/charts_hooks/
+
+Chart implementation references:
+- Init bootstrap script: https://raw.githubusercontent.com/RSquad/ton-rust-node/master/helm/ton-rust-node/files/init-script.sh
+- StatefulSet init container: https://raw.githubusercontent.com/RSquad/ton-rust-node/master/helm/ton-rust-node/templates/statefulset.yaml
+
+### 2. Ingress and TLS
+
+The chart does not create Kubernetes `Ingress` resources.
+
+- For UDP/TCP stream ports (ADNL UDP, liteserver TCP, control TCP), standard HTTP Ingress is not sufficient.
+  If you already use ingress-nginx, you can expose raw TCP/UDP via its `tcp-services` / `udp-services` ConfigMaps (stream proxy mode).
+  Upstream ingress-nginx documentation: https://kubernetes.github.io/ingress-nginx/user-guide/exposing-tcp-udp-services/
+
+- TLS termination choices depend on the port and protocol:
+  - If a port is HTTP-based in your environment (for example, some JSON-RPC setups), terminate TLS at an L7 proxy / Ingress controller that supports HTTP routing.
+  - For pure TCP stream proxying, terminate TLS at an external load balancer / proxy (or use a TCP proxy that supports TLS passthrough/termination).
+  - ADNL is UDP-based and is typically exposed directly (LoadBalancer or hostPort/hostNetwork); TLS termination is not applicable in the same way as HTTP.
+
+Chart networking reference: https://raw.githubusercontent.com/RSquad/ton-rust-node/master/helm/ton-rust-node/docs/networking.md
+
+### 3. PV/PVC resize and migration
+
+The chart uses `volumeClaimTemplates` (StatefulSet) for `main`, `db`, `keys`, and optionally `logs`.
+
+Resize (expand) is storage-class dependent. Kubernetes supports PVC expansion by editing the PVC size when the StorageClass has `allowVolumeExpansion: true`.
+Shrinking PVCs is not supported.
+
+Operational guidance (Kubernetes):
+- PVC expansion overview: https://kubernetes.io/blog/2018/07/12/resizing-persistent-volumes-using-kubernetes/
+- If data is precious, consider PV reclaim policy `Retain` instead of default `Delete` for dynamically provisioned volumes:
+  https://kubernetes.io/docs/tasks/administer-cluster/change-pv-reclaim-policy/
+
+Chart retention behavior note:
+- The chart supports `helm.sh/resource-policy: keep` for selected PVCs via `storage.<vol>.resourcePolicy` (defaults keep for `main` and `keys`).
+  See chart values: https://raw.githubusercontent.com/RSquad/ton-rust-node/master/helm/ton-rust-node/values.yaml
+
+### 4. Safe upgrades, backups, and rolling restarts
+
+1) Prefer `helm upgrade` with a controlled image tag bump.
+2) Treat the database PVC (`db`) and keys PVC (`keys`) as critical state; plan backups according to your storage backend.
+3) Configuration changes:
+   - Inline configuration changes trigger pod restarts via a checksum annotation.
+   - External `existing*` ConfigMaps/Secrets are managed outside the chart; changing them does not guarantee an automatic rollout. Restart the pods (or upgrade the release) explicitly.
+
+### 5. Exposure mode examples
+
+Use one exposure mode per deployment (combining is possible but uncommon). Examples and trade-offs are documented in:
+https://docs.ton.org/ecosystem/nodes/rust/node-config#networking
+
+Chart implementation reference (per-port Services): https://raw.githubusercontent.com/RSquad/ton-rust-node/master/helm/ton-rust-node/templates/services.yaml
+
+### 6. Vault integration via VAULT_URL
+
+The chart supports an operator workflow where private keys are stored in an encrypted vault file and the vault URL is passed via the `VAULT_URL` environment variable.
+
+Recommended configuration (Secret-based):
+
+```yaml
+vault:
+  secretName: ton-node-vault
+  secretKey: VAULT_URL
+```
+
+The Secret should contain `VAULT_URL` (example format: `file:///keys/vault.json&master_key=<64-hex-chars>`).
+
+Important:
+- In the RSquad chart workflow, Vault is configured via `VAULT_URL`. If you use this workflow, do not rely on `secrets_vault_config` in `config.json` for key management.
+- Keep the vault master key secure: it decrypts the vault file.
+
+Chart Vault reference: https://raw.githubusercontent.com/RSquad/ton-rust-node/master/helm/ton-rust-node/docs/vault.md
+Chart implementation references:
+- `VAULT_URL` injection helper: https://raw.githubusercontent.com/RSquad/ton-rust-node/master/helm/ton-rust-node/templates/_helpers.tpl
+- Container env wiring: https://raw.githubusercontent.com/RSquad/ton-rust-node/master/helm/ton-rust-node/templates/statefulset.yaml
 
 ## Useful commands
 
