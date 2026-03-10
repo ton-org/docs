@@ -49,12 +49,12 @@ export const FileTree = ({ items = [], defaultOpen = true }) => {
       );
     }
 
-    const errorMessage = [
-      `In the FileTree component, found: ${item}.`,
-      `Expected either of: ..., …, string, { kind: "file", ... }, or { kind: "folder", ... }`,
-    ].join(' ');
-    alert(errorMessage);
-    throw new Error(errorMessage);
+    throw new Error(
+      [
+        `In the FileTree component, found: ${item}.`,
+        `Expected either of: ..., …, string, { kind: "file", ... }, or { kind: "folder", ... }`,
+      ].join(' '),
+    );
   };
 
   // @ts-ignore
