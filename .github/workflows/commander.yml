@@ -35,18 +35,11 @@ jobs:
       (startsWith(github.event.comment.body, '/fmt ') || github.event.comment.body == '/fmt')
     steps:
       # This is done cautiously to confirm whether the comment comes from a PR that is a fork.
-      # If so, immediately skips all other steps and does NOT run anything locally there.
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
+      # If so, all other steps are skipped and nothing important is run afterwards.
       - name: Gather PR context in env variables
         env:
-          GH_TOKEN: ${{ github.token }}
           FROM_PR: ${{ github.event.pull_request.number }}
           FROM_ISSUE: ${{ github.event.issue.number }}
-          REPO: ${{ github.repository }}
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
@@ -58,24 +51,28 @@ jobs:
               process.exit(1);
             }
             core.exportVariable('PR_NUMBER', prNumRaw);
-            const repo = process.env.REPO ?? '';
-            if (repo === '') {
-              console.error(`No repository information found`);
-              process.exit(1);
-            }
-            const filepath = 'pr.json';
-            await exec.exec('gh', ['api', `repos/${repo}/pulls/${prNumRaw}`, `>${filepath}`]);
-            const file = JSON.parse(fs.readFileSync(filepath, 'utf8'));
-            await io.rmRF(filepath);
-            core.exportVariable('BASE_REF', file.base.ref);
-            core.exportVariable('HEAD_REF', file.head.ref);
-            const headRepo = file.head.repo?.full_name ?? '';
-            if (headRepo === '' && headRepo !== repo) {
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNum,
+            });
+            core.exportVariable('BASE_REF', pr.base.ref);
+            core.exportVariable('HEAD_REF', pr.head.ref);
+            const headRepo = pr.head.repo?.full_name ?? '';
+            const thisRepo = `${context.repo.owner}/${context.repo.repo}`;
+            if (headRepo === '' && headRepo !== thisRepo) {
               core.exportVariable('IS_FORK', 'true');
+              core.notice('This job does not run in forks for a vast number of reasons. Please, apply the necessary fixes yourself.');
             } else {
               core.exportVariable('IS_FORK', 'false');
-              core.notice('This job does not run in forks for a vast number of reasons. Please, apply the necessary fixes yourself.');
             }
+
+      - name: Checkout the PR branch
+        if: env.IS_FORK != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.HEAD_REF }}
+          fetch-depth: 0
 
       - name: Setup Node.js
         if: env.IS_FORK != 'true'
@@ -99,6 +96,7 @@ jobs:
             **.md
             **.mdx
           separator: " "
+          base_sha: ${{ env.BASE_REF }}
 
       - name: Apply formatting
         if: env.IS_FORK != 'true'
@@ -133,4 +131,4 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3 # v7.0.0
         with:
           commit_message: "fix: formatting"
-
+          branch: ${{ env.HEAD_REF }}
