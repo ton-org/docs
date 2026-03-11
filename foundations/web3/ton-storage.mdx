@@ -1,0 +1,202 @@
+---
+title: "TON Storage"
+description: "Distributed file storage for the TON Network using torrent-like technology and on-chain payment contracts"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+TON Storage is a distributed file storage system on the TON Network. Files are shared using a torrent-like protocol, with optional on-chain smart contracts for paid storage guarantees. The TON Blockchain uses TON Storage to distribute archive copies of blocks and state snapshots.
+
+## Bags
+
+Files are organized into **bags**, each identified by a unique 256-bit `BagID` (the hash of the torrent info cell). A bag can contain a single file or a directory.
+
+Files in a bag are split into **128 KB chunks**. A Merkle tree built from SHA-256 hashes allows verification of individual chunks without downloading the full bag. Bag metadata can be exported as a metafile.
+
+## Peer discovery
+
+Nodes that store a bag register in the TON DHT under a key derived from the `BagID`. Clients query the DHT to find seeder addresses for a given bag.
+
+## Storage daemon
+
+`storage-daemon` is the official implementation, distributed as part of the TON software suite. To start:
+
+```bash
+storage-daemon -v 3 -C global.config.json -I <ip>:3333 -p 5555 -D storage-db
+```
+
+### Manage bags
+
+| Command | Description |
+|---|---|
+| `create <path> -d "description"` | Create a new bag from a file or directory |
+| `add-by-hash <hash> -d <dir>` | Add a bag by its `BagID` |
+| `add-by-meta <metafile> -d <dir>` | Add a bag from a metafile |
+| `list` | List all bags |
+| `list --hashes` | List bags with their `BagID`s |
+| `get <BagID>` | Show full bag information |
+| `get-peers <BagID>` | Show peers connected for a bag |
+| `get-meta <BagID> <file>` | Export the bag metafile |
+| `download-pause <BagID>` | Pause a download |
+| `download-resume <BagID>` | Resume a download |
+| `priority-name <BagID> <name> <N>` | Set download priority for a file (0 = skip, 255 = highest) |
+
+To download only specific files from a bag, use the `--partial` flag when adding:
+
+```bash
+add-by-hash <BagID> --partial file1.txt file2.txt
+```
+
+Files not listed are assigned priority 0 and are not downloaded.
+
+## Storage providers
+
+A storage provider is a node that stores bags for a fee, backed by an on-chain smart contract. The provider system has two components:
+
+- **Smart contract**: deployed on the TON Blockchain, stores the Merkle tree hash of each bag, issues proof challenges, and manages client payments.
+- **`storage-daemon`**: runs on the provider's machine, downloads bags, serves data to peers, and submits storage proofs to the contract.
+
+### Provider workflow
+
+1. The provider deploys a main smart contract and shares its address with clients.
+2. A client creates a bag and sends a storage request to the provider contract.
+3. The provider contract deploys a per-bag storage contract and notifies the client.
+4. The provider downloads the bag and activates the per-bag contract.
+5. The client transfers payment. The provider submits periodic Merkle proofs to prove data possession.
+6. When the client balance reaches zero or either party closes the contract, remaining funds return to the client and the contract self-destructs.
+
+Storage pricing is expressed in **nanoTON per megabyte per day**.
+
+### Provider commands
+
+| Command | Description |
+|---|---|
+| `deploy-provider` | Deploy the main provider smart contract |
+| `get-provider-info` | Show current provider settings |
+| `get-provider-info --contracts --balances` | List active storage contracts and balances |
+| `set-provider-params --accept 1 --rate <nanoTON> --max-span <seconds>` | Set pricing and acceptance policy |
+| `set-provider-config --max-contracts <N> --max-total-size <bytes>` | Set capacity limits |
+| `new-contract-message <BagID> <file> --provider <address>` | Create a storage request message (client-side) |
+| `get-provider-params <address>` | Retrieve on-chain provider parameters |
+| `withdraw-all` | Withdraw accumulated provider earnings |
+| `close-contract <address>` | Close a storage contract |
+
+## Smart contract reference
+
+The provider system uses two FunC contracts, available in the TON monorepo under [`storage/storage-daemon/smartcont`](https://github.com/ton-blockchain/ton/tree/master/storage/storage-daemon/smartcont).
+
+- `storage-provider.fc`: main provider contract (wallet with seqno authentication). Deploys per-bag contracts.
+- `storage-contract.fc`: per-bag contract. Tracks client balance, enforces proof challenges, transfers earnings.
+
+### Contract state
+
+The per-bag contract stores state in a single cell:
+
+```tlb
+storage_contract#_ active:Bool balance:Coins provider:MsgAddress
+                   merkle_hash:uint256 file_size:uint64 next_proof_byte:uint64
+                   rate_per_mb_day:Coins max_span:uint32 last_proof_time:uint32
+                   ^[client:MsgAddress torrent_hash:uint256] = StorageContract;
+```
+
+The provider contract state:
+
+```tlb
+storage_provider#_ seqno:uint32 subwallet:uint32 public_key:uint256
+                   accept_new_contracts:Bool rate_per_mb_day:Coins max_span:uint32
+                   minimal_file_size:uint64 maximal_file_size:uint64 = StorageProvider;
+```
+
+### Messages
+
+To request a new storage contract, a client sends `offer_storage_contract` to the provider address with a minimum attached value of 60,000,000 nanoTON:
+
+```tlb
+torrent_info piece_size:uint32 file_size:uint64 root_hash:uint256
+             header_size:uint64 header_hash:uint256
+             description:Text = TorrentInfo;
+
+offer_storage_contract#107c49ef query_id:uint64 info:(^TorrentInfo) microchunk_hash:uint256
+                               expected_rate:Coins expected_max_span:uint32 = OfferStorageContract;
+```
+
+The following op codes are defined in `constants.fc` and used across both contracts:
+
+| Op code | Value | Direction | Description |
+|---|---|---|---|
+| `offer_storage_contract` | `0x107c49ef` | Client → Provider | Client requests a new per-bag contract |
+| `deploy_storage_contract` | `0xe4748df1` | Provider → StorageContract | Provider deploys the per-bag contract |
+| `contract_deployed` | `0xbf7bd0c1` | StorageContract → Client | Notifies the client that the contract is deployed |
+| `accept_storage_contract` | `0x7a361688` | Provider → StorageContract | Provider activates the contract after downloading the bag |
+| `storage_contract_confirmed` | `0xd4caedcd` | StorageContract → Client | Contract is active; client may top up balance |
+| `proof_storage` | `0x419d5d4d` | Provider → StorageContract | Provider submits a Merkle proof to collect earnings |
+| `withdraw` | `0x46ed2e94` | Provider → StorageContract | Provider withdraws accrued earnings |
+| `reward_withdrawal` | `0xa91baf56` | StorageContract → Provider | Earnings transfer confirmation |
+| `close_contract` | `0x79f937ea` | Client or Provider → StorageContract | Either party closes the contract |
+| `storage_contract_terminated` | `0xb6236d63` | StorageContract → Client and Provider | Contract closed; remaining client balance returned |
+| `update_pubkey` | `0x53f34cd6` | Internal | Provider contract rotates its signing key |
+| `update_storage_params` | `0x54cbf19b` | Internal | Provider contract updates its parameters |
+
+### Proof challenge
+
+The provider must periodically prove it still holds the bag. The contract stores `next_proof_byte`, a random byte offset. To collect earnings, the provider sends `proof_storage` with an exotic cell (type 3, Merkle proof) rooted at `merkle_hash`, proving the 64-byte chunk at `next_proof_byte / 64` exists in the bag.
+
+On a valid proof, the contract computes the provider's earnings for the elapsed period:
+
+```
+bounty = (file_size × rate_per_mb_day × actual_span) ÷ (86400 × 1 048 576)
+actual_span = min(now() − last_proof_time, max_span)
+```
+
+Where `file_size` is in bytes, `rate_per_mb_day` is in nanoTON per MiB per day, `actual_span` is in seconds, and `bounty` is in nanoTON.
+
+### Error codes
+
+| Code | Name | Condition |
+|---|---|---|
+| `401` | `unauthorized` | Sender is not authorized for the operation |
+| `1001` | `not_enough_money` | Attached value is below the required minimum |
+| `1002` | `wrong_proof` | The submitted Merkle proof is invalid |
+| `1003` | `contract_not_active` | Operation requires an active contract |
+| `1004` | `file_too_small` | File size is below the provider's `minimal_file_size` |
+| `1005` | `file_too_big` | File size exceeds the provider's `maximal_file_size` |
+| `1006` | `no_new_contracts` | Provider is not accepting new contracts |
+| `1007` | `contract_already_active` | Contract has already been activated |
+| `1008` | `no_microchunk_hash` | A microchunk hash is required but not present |
+| `1009` | `provider_params_changed` | Offered rate or `max_span` does not match current provider parameters |
+
+### Get methods
+
+**Storage contract** (`storage-contract.fc`):
+
+| Method | Returns | Description |
+|---|---|---|
+| `get_storage_contract_data()` | `(active, balance, provider, merkle_hash, file_size, next_proof, rate_per_mb_day, max_span, last_proof_time, client, torrent_hash)` | Full contract state |
+| `get_torrent_hash()` | `uint256` | Hash of the bag's torrent info cell |
+| `is_active()` | `Bool` | Whether the contract is currently active |
+| `get_next_proof_info()` | `(next_proof, last_proof_time, max_span)` | Proof challenge parameters |
+
+**Provider contract** (`storage-provider.fc`):
+
+| Method | Returns | Description |
+|---|---|---|
+| `seqno()` | `uint32` | Current wallet sequence number |
+| `get_public_key()` | `uint256` | Provider's Ed25519 public key |
+| `get_wallet_params()` | `(seqno, subwallet, public_key)` | Wallet authentication parameters |
+| `get_storage_params()` | `(accept_new_contracts, rate_per_mb_day, max_span, minimal_file_size, maximal_file_size)` | Current provider configuration |
+| `get_storage_contract_address(merkle_hash, file_size, client, torrent_hash)` | `slice` | Deterministic address of the per-bag contract for given parameters |
+
+## Integration with TON DNS
+
+A `.ton` domain can point to a bag using the `dns_storage_address` record:
+
+```tlb
+dns_storage_address#7473 bag_id:bits256 = DNSRecord;
+```
+
+See [TON DNS](/foundations/web3/ton-dns#dns-record-types) for all record types.
+
+## Ecosystem use cases
+
+- **NFT metadata**: NFT collections can reference off-chain media and metadata stored as bags, using the `BagID` as a stable content identifier. Individual files within a bag are addressed using the `tonstorage://<BagID>/path` URI scheme.
+- **[Static TON Sites](/foundations/web3/ton-sites)**: a bag containing HTML and static assets can be served as a TON Site by combining TON Storage, [TON DNS](/foundations/web3/ton-dns), and [TON Proxy](/foundations/web3/ton-proxy).
