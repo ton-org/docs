@@ -1,0 +1,1035 @@
+---
+title: "Tolk contract examples"
+sidebarTitle: "Examples"
+---
+
+This page embeds the basic jetton and NFT contract examples from [`ton-blockchain/tolk-bench`](https://github.com/ton-blockchain/tolk-bench), extracted from commit [`cb9648b`](https://github.com/ton-blockchain/tolk-bench/tree/cb9648bdf936f88eb9d773d9058405f74a1e24d9).
+
+Each accordion contains one source file with its original filename. Copy the blocks into files with the same names to recreate the original contract layout.
+
+## Jetton
+
+Source directory in `tolk-bench`: [`contracts_Tolk/01_jetton`](https://github.com/ton-blockchain/tolk-bench/tree/cb9648bdf936f88eb9d773d9058405f74a1e24d9/contracts_Tolk/01_jetton)
+
+```text title="File layout"
+01_jetton/
+  errors.tolk
+  fees-management.tolk
+  storage.tolk
+  messages.tolk
+  jetton-utils.tolk
+  jetton-minter-contract.tolk
+  jetton-wallet-contract.tolk
+```
+
+Not runnable as a single file. Use all files in this section together.
+
+<AccordionGroup>
+  <Accordion
+    title="errors.tolk"
+  >
+    ```tolk title="contracts_Tolk/01_jetton/errors.tolk"
+    // these error codes are quite strange, but they are exactly the same as in FunC implementation
+
+    const ERR_INVALID_OP = 709
+    const ERR_NOT_FROM_ADMIN = 73
+    const ERR_UNAUTHORIZED_BURN = 74
+    const ERR_NOT_ENOUGH_AMOUNT_TO_RESPOND = 75
+    const ERR_NOT_FROM_OWNER = 705
+    const ERR_NOT_ENOUGH_TON = 709
+    const ERR_NOT_ENOUGH_GAS = 707
+    const ERR_INVALID_WALLET = 707
+    const ERR_WRONG_WORKCHAIN = 333
+    const ERR_NOT_ENOUGH_BALANCE = 706
+    const ERR_INVALID_PAYLOAD = 708
+    ```
+  </Accordion>
+
+  <Accordion
+    title="fees-management.tolk"
+  >
+    ```tolk title="contracts_Tolk/01_jetton/fees-management.tolk"
+    // 6905(computational_gas_price) * 1000(cur_gas_price) = 6905000 ~= 0.01 TON
+    const MINIMAL_MESSAGE_VALUE_BOUND = ton("0.01")
+
+    const MIN_TONS_FOR_STORAGE = ton("0.01")
+
+    const JETTON_WALLET_GAS_CONSUMPTION = ton("0.015")
+    ```
+  </Accordion>
+
+  <Accordion
+    title="storage.tolk"
+  >
+    ```tolk title="contracts_Tolk/01_jetton/storage.tolk"
+    struct WalletStorage {
+        jettonBalance: coins
+        ownerAddress: address
+        minterAddress: address
+    }
+
+    struct MinterStorage {
+        totalSupply: coins
+        adminAddress: address
+        content: cell
+        jettonWalletCode: cell
+    }
+
+
+    fun MinterStorage.load() {
+        return MinterStorage.fromCell(contract.getData())
+    }
+
+    fun MinterStorage.save(self) {
+        contract.setData(self.toCell())
+    }
+
+
+    fun WalletStorage.load() {
+        return WalletStorage.fromCell(contract.getData())
+    }
+
+    fun WalletStorage.save(self) {
+        contract.setData(self.toCell())
+    }
+    ```
+  </Accordion>
+
+  <Accordion
+    title="messages.tolk"
+  >
+    ```tolk title="contracts_Tolk/01_jetton/messages.tolk"
+    type ForwardPayloadRemainder = RemainingBitsAndRefs
+
+    struct (0x0f8a7ea5) AskToTransfer {
+        queryId: uint64
+        jettonAmount: coins
+        transferRecipient: address
+        sendExcessesTo: address?
+        customPayload: cell?
+        forwardTonAmount: coins
+        forwardPayload: ForwardPayloadRemainder
+    }
+
+    struct (0x7362d09c) TransferNotificationForRecipient {
+        queryId: uint64
+        jettonAmount: coins
+        transferInitiator: address?
+        forwardPayload: ForwardPayloadRemainder
+    }
+
+    struct (0x178d4519) InternalTransferStep {
+        queryId: uint64
+        jettonAmount: coins
+        transferInitiator: address? // is null when minting (not initiated by another wallet)
+        sendExcessesTo: address?
+        forwardTonAmount: coins
+        forwardPayload: ForwardPayloadRemainder
+    }
+
+    struct (0xd53276db) ReturnExcessesBack {
+        queryId: uint64
+    }
+
+    struct (0x595f07bc) AskToBurn {
+        queryId: uint64
+        jettonAmount: coins
+        sendExcessesTo: address?
+        customPayload: cell?
+    }
+
+    struct (0x7bdd97de) BurnNotificationForMinter {
+        queryId: uint64
+        jettonAmount: coins
+        burnInitiator: address
+        sendExcessesTo: address?
+    }
+
+    struct (0x2c76b973) RequestWalletAddress {
+        queryId: uint64
+        ownerAddress: address
+        includeOwnerAddress: bool
+    }
+
+    struct (0xd1735400) ResponseWalletAddress {
+        queryId: uint64
+        jettonWalletAddress: address?
+        ownerAddress: Cell<address>?
+    }
+
+    struct (0x00000015) MintNewJettons {
+        queryId: uint64
+        mintRecipient: address
+        tonAmount: coins
+        internalTransferMsg: Cell<InternalTransferStep>
+    }
+
+    struct (0x00000003) ChangeMinterAdmin {
+        queryId: uint64
+        newAdminAddress: address
+    }
+
+    struct (0x00000004) ChangeMinterContent {
+        queryId: uint64
+        newContent: cell
+    }
+    ```
+  </Accordion>
+
+  <Accordion
+    title="jetton-utils.tolk"
+  >
+    ```tolk title="contracts_Tolk/01_jetton/jetton-utils.tolk"
+    import "storage"
+
+    fun calcDeployedJettonWallet(ownerAddress: address, minterAddress: address, jettonWalletCode: cell): AutoDeployAddress {
+        val emptyWalletStorage: WalletStorage = {
+            jettonBalance: 0,
+            ownerAddress,
+            minterAddress,
+        };
+
+        return {
+            stateInit: {
+                code: jettonWalletCode,
+                data: emptyWalletStorage.toCell()
+            }
+        }
+    }
+
+    fun calcAddressOfJettonWallet(ownerAddress: address, minterAddress: address, jettonWalletCode: cell) {
+        val jwDeployed = calcDeployedJettonWallet(ownerAddress, minterAddress, jettonWalletCode);
+        return jwDeployed.calculateAddress()
+    }
+    ```
+  </Accordion>
+
+  <Accordion
+    title="jetton-minter-contract.tolk"
+  >
+    ```tolk title="contracts_Tolk/01_jetton/jetton-minter-contract.tolk"
+    import "@stdlib/gas-payments"
+    import "errors"
+    import "jetton-utils"
+    import "messages"
+    import "storage"
+    import "fees-management"
+
+    type AllowedMessageToMinter =
+        | MintNewJettons
+        | BurnNotificationForMinter
+        | RequestWalletAddress
+        | ChangeMinterAdmin
+        | ChangeMinterContent
+
+    fun onInternalMessage(in: InMessage) {
+        val msg = lazy AllowedMessageToMinter.fromSlice(in.body);
+
+        match (msg) {
+            BurnNotificationForMinter => {
+                var storage = lazy MinterStorage.load();
+                assert (in.senderAddress == calcAddressOfJettonWallet(msg.burnInitiator, contract.getAddress(), storage.jettonWalletCode)) throw ERR_UNAUTHORIZED_BURN;
+
+                storage.totalSupply -= msg.jettonAmount;
+                storage.save();
+
+                if (msg.sendExcessesTo == null) {
+                    return;
+                }
+
+                val excessesMsg = createMessage({
+                    bounce: BounceMode.NoBounce,
+                    dest: msg.sendExcessesTo,
+                    value: 0,
+                    body: ReturnExcessesBack {
+                        queryId: msg.queryId
+                    }
+                });
+                excessesMsg.send(SEND_MODE_IGNORE_ERRORS + SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+            }
+
+            RequestWalletAddress => {
+                assert (in.valueCoins > in.originalForwardFee + MINIMAL_MESSAGE_VALUE_BOUND) throw ERR_NOT_ENOUGH_AMOUNT_TO_RESPOND;
+
+                var respondOwnerAddress: Cell<address>? = msg.includeOwnerAddress
+                    ? msg.ownerAddress.toCell()
+                    : null;
+
+                var walletAddress: address? = null;
+                if (msg.ownerAddress.getWorkchain() == BASECHAIN) {
+                    var storage = lazy MinterStorage.load();
+                    walletAddress = calcAddressOfJettonWallet(msg.ownerAddress, contract.getAddress(), storage.jettonWalletCode);
+                }
+
+                val respondMsg = createMessage({
+                    bounce: BounceMode.Only256BitsOfBody,
+                    dest: in.senderAddress,
+                    value: 0,
+                    body: ResponseWalletAddress {
+                        queryId: msg.queryId,
+                        jettonWalletAddress: walletAddress,
+                        ownerAddress: respondOwnerAddress,
+                    }
+                });
+                respondMsg.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+            }
+
+            MintNewJettons => {
+                var storage = lazy MinterStorage.load();
+                assert (in.senderAddress == storage.adminAddress) throw ERR_NOT_FROM_ADMIN;
+
+                var internalTransferMsg = lazy msg.internalTransferMsg.load();
+                storage.totalSupply += internalTransferMsg.jettonAmount;
+                storage.save();
+
+                val deployMsg = createMessage({
+                    bounce: BounceMode.Only256BitsOfBody,
+                    dest: calcDeployedJettonWallet(msg.mintRecipient, contract.getAddress(), storage.jettonWalletCode),
+                    value: msg.tonAmount,
+                    body: msg.internalTransferMsg,  // a newly-deployed wallet contract will immediately handle it
+                });
+                deployMsg.send(SEND_MODE_PAY_FEES_SEPARATELY);
+            }
+
+            ChangeMinterAdmin => {
+                var storage = lazy MinterStorage.load();
+                assert (in.senderAddress == storage.adminAddress) throw ERR_NOT_FROM_ADMIN;
+                storage.adminAddress = msg.newAdminAddress;
+                storage.save();
+            }
+
+            ChangeMinterContent => {
+                var storage = lazy MinterStorage.load();
+                assert (in.senderAddress == storage.adminAddress) throw ERR_NOT_FROM_ADMIN;
+                storage.content = msg.newContent;
+                storage.save();
+            }
+
+            else => {
+                // ignore empty messages, "wrong opcode" for others
+                assert (in.body.isEmpty()) throw 0xFFFF
+            }
+        }
+    }
+
+
+
+    struct JettonDataReply {
+        totalSupply: int
+        mintable: bool
+        adminAddress: address
+        jettonContent: cell
+        jettonWalletCode: cell
+    }
+
+    get fun get_jetton_data(): JettonDataReply {
+        val storage = lazy MinterStorage.load();
+
+        return {
+            totalSupply: storage.totalSupply,
+            mintable: true,
+            adminAddress: storage.adminAddress,
+            jettonContent: storage.content,
+            jettonWalletCode: storage.jettonWalletCode,
+        }
+    }
+
+    get fun get_wallet_address(ownerAddress: address): address {
+        val storage = lazy MinterStorage.load();
+        return calcAddressOfJettonWallet(ownerAddress, contract.getAddress(), storage.jettonWalletCode);
+    }
+    ```
+  </Accordion>
+
+  <Accordion
+    title="jetton-wallet-contract.tolk"
+  >
+    ```tolk title="contracts_Tolk/01_jetton/jetton-wallet-contract.tolk"
+    import "@stdlib/gas-payments"
+    import "errors"
+    import "jetton-utils"
+    import "messages"
+    import "fees-management"
+    import "storage"
+
+    type AllowedMessageToWallet =
+        | AskToTransfer
+        | AskToBurn
+        | InternalTransferStep
+
+    type BounceOpToHandle = InternalTransferStep | BurnNotificationForMinter
+
+    fun onBouncedMessage(in: InMessageBounced) {
+        in.bouncedBody.skipBouncedPrefix();
+
+        val msg = lazy BounceOpToHandle.fromSlice(in.bouncedBody);
+        val restoreAmount = match (msg) {
+            InternalTransferStep => msg.jettonAmount,       // safe to fetch jettonAmount, because
+            BurnNotificationForMinter => msg.jettonAmount,  // it's in the beginning of a message
+        };
+
+        var storage = lazy WalletStorage.load();
+        storage.jettonBalance += restoreAmount;
+        storage.save();
+    }
+
+    fun onInternalMessage(in: InMessage) {
+        val msg = lazy AllowedMessageToWallet.fromSlice(in.body);
+
+        match (msg) {
+            InternalTransferStep => {
+                var storage = lazy WalletStorage.load();
+                if (in.senderAddress != storage.minterAddress) {
+                    assert (in.senderAddress == calcAddressOfJettonWallet(msg.transferInitiator!, storage.minterAddress, contract.getCode())) throw ERR_INVALID_WALLET;
+                }
+                storage.jettonBalance += msg.jettonAmount;
+                storage.save();
+
+                var msgValue = in.valueCoins;
+                var tonBalanceBeforeMsg = contract.getOriginalBalance() - msgValue;
+                var storageFee = MIN_TONS_FOR_STORAGE - min(tonBalanceBeforeMsg, MIN_TONS_FOR_STORAGE);
+                msgValue -= (storageFee + JETTON_WALLET_GAS_CONSUMPTION);
+
+                if (msg.forwardTonAmount) {
+                    msgValue -= (msg.forwardTonAmount + in.originalForwardFee);
+
+                    val notifyOwnerMsg = createMessage({
+                        bounce: BounceMode.NoBounce,      // cause receiver can have uninitialized contract
+                        dest: storage.ownerAddress,
+                        value: msg.forwardTonAmount,
+                        body: TransferNotificationForRecipient {
+                            queryId: msg.queryId,
+                            jettonAmount: msg.jettonAmount,
+                            transferInitiator: msg.transferInitiator,
+                            forwardPayload: msg.forwardPayload
+                        }
+                    });
+                    notifyOwnerMsg.send(SEND_MODE_PAY_FEES_SEPARATELY);
+                }
+
+                if (msg.sendExcessesTo != null & (msgValue > 0)) {
+                    val excessesMsg = createMessage({
+                        bounce: BounceMode.NoBounce,
+                        dest: msg.sendExcessesTo!,
+                        value: msgValue,
+                        body: ReturnExcessesBack {
+                            queryId: msg.queryId
+                        }
+                    });
+                    excessesMsg.send(SEND_MODE_IGNORE_ERRORS);
+                }
+            }
+
+            AskToTransfer => {
+                assert (msg.forwardPayload.remainingBitsCount()) throw ERR_INVALID_PAYLOAD;
+                assert (msg.transferRecipient.getWorkchain() == BASECHAIN) throw ERR_WRONG_WORKCHAIN;
+
+                var storage = lazy WalletStorage.load();
+                assert (in.senderAddress == storage.ownerAddress) throw ERR_NOT_FROM_OWNER;
+                assert (storage.jettonBalance >= msg.jettonAmount) throw ERR_NOT_ENOUGH_BALANCE;
+                storage.jettonBalance -= msg.jettonAmount;
+                storage.save();
+
+                var forwardedMessagesCount = msg.forwardTonAmount ? 2 : 1;
+                assert (in.valueCoins >
+                    msg.forwardTonAmount +
+                    // 3 messages: wal1->wal2,  wal2->owner, wal2->response
+                    // but last one is optional (it is ok if it fails)
+                    forwardedMessagesCount * in.originalForwardFee +
+                    (2 * JETTON_WALLET_GAS_CONSUMPTION + MIN_TONS_FOR_STORAGE)
+                ) throw ERR_NOT_ENOUGH_TON;
+
+                val deployMsg = createMessage({
+                    bounce: BounceMode.Only256BitsOfBody,
+                    dest: calcDeployedJettonWallet(msg.transferRecipient, storage.minterAddress, contract.getCode()),
+                    value: 0,
+                    body: InternalTransferStep {
+                        queryId: msg.queryId,
+                        jettonAmount: msg.jettonAmount,
+                        transferInitiator: storage.ownerAddress,
+                        sendExcessesTo: msg.sendExcessesTo,
+                        forwardTonAmount: msg.forwardTonAmount,
+                        forwardPayload: msg.forwardPayload,
+                    }
+                });
+                deployMsg.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+            }
+
+            AskToBurn => {
+                var storage = lazy WalletStorage.load();
+                assert (in.senderAddress == storage.ownerAddress) throw ERR_NOT_FROM_OWNER;
+                assert (storage.jettonBalance >= msg.jettonAmount) throw ERR_NOT_ENOUGH_BALANCE;
+                storage.jettonBalance -= msg.jettonAmount;
+                storage.save();
+
+                val notifyMinterMsg = createMessage({
+                    bounce: BounceMode.Only256BitsOfBody,
+                    dest: storage.minterAddress,
+                    value: 0,
+                    body: BurnNotificationForMinter {
+                        queryId: msg.queryId,
+                        jettonAmount: msg.jettonAmount,
+                        burnInitiator: storage.ownerAddress,
+                        sendExcessesTo: msg.sendExcessesTo,
+                    }
+                });
+                notifyMinterMsg.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE | SEND_MODE_BOUNCE_ON_ACTION_FAIL);
+            }
+
+            else => {
+                // ignore empty messages, "wrong opcode" for others
+                assert (in.body.isEmpty()) throw 0xFFFF
+            }
+        }
+    }
+
+
+
+    struct JettonWalletDataReply {
+        jettonBalance: coins
+        ownerAddress: address
+        minterAddress: address
+        jettonWalletCode: cell
+    }
+
+    get fun get_wallet_data(): JettonWalletDataReply {
+        val storage = lazy WalletStorage.load();
+
+        return {
+            jettonBalance: storage.jettonBalance,
+            ownerAddress: storage.ownerAddress,
+            minterAddress: storage.minterAddress,
+            jettonWalletCode: contract.getCode(),
+        }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## NFT
+
+Source directory in `tolk-bench`: [`contracts_Tolk/02_nft`](https://github.com/ton-blockchain/tolk-bench/tree/cb9648bdf936f88eb9d773d9058405f74a1e24d9/contracts_Tolk/02_nft)
+
+```text title="File layout"
+02_nft/
+  errors.tolk
+  fees-management.tolk
+  storage.tolk
+  messages.tolk
+  nft-collection-contract.tolk
+  nft-item-contract.tolk
+```
+
+Not runnable as a single file. Use all files in this section together.
+
+<AccordionGroup>
+  <Accordion
+    title="errors.tolk"
+  >
+    ```tolk title="contracts_Tolk/02_nft/errors.tolk"
+    // these error codes are quite strange, but they are exactly the same as in FunC implementation
+
+    const ERROR_NOT_FROM_ADMIN = 401
+    const ERROR_NOT_FROM_OWNER = 401
+    const ERROR_NOT_FROM_COLLECTION = 405
+    const ERROR_BATCH_LIMIT_EXCEEDED = 399
+    const ERROR_INVALID_ITEM_INDEX = 402
+    const ERROR_INCORRECT_FORWARD_PAYLOAD = 708
+    const ERROR_INVALID_WORKCHAIN = 333
+    const ERROR_TOO_SMALL_REST_AMOUNT = 402
+    ```
+  </Accordion>
+
+  <Accordion
+    title="fees-management.tolk"
+  >
+    ```tolk title="contracts_Tolk/02_nft/fees-management.tolk"
+    const MIN_TONS_FOR_STORAGE = ton("0.05")
+    ```
+  </Accordion>
+
+  <Accordion
+    title="storage.tolk"
+  >
+    ```tolk title="contracts_Tolk/02_nft/storage.tolk"
+    // SnakeString describes a (potentially long) string inside a cell;
+    // short strings are stored as-is, like "my-picture.png";
+    // long strings are nested refs, like "xxxx".ref("yyyy".ref("zzzz"))
+    type SnakeString = slice
+
+    fun SnakeString.unpackFromSlice(mutate s: slice) {
+        // obviously, SnakeString can be only the last: it's just "the remainder";
+        // for correctness, it's better to validate it has no more refs:
+        // assert (s.remainingRefsCount() <= 1) throw 5;
+        // but since here we're matching the original FunC implementation, leave no checks
+        val snakeRemainder = s;
+        s = createEmptySlice();     // no more left to read
+        return snakeRemainder
+    }
+
+    fun SnakeString.packToBuilder(self, mutate b: builder) {
+        b.storeSlice(self)
+    }
+
+
+    struct RoyaltyParams {
+        numerator: uint16
+        denominator: uint16
+        royaltyAddress: address
+    }
+
+    struct NftCollectionStorage {
+        adminAddress: address
+        nextItemIndex: uint64
+        content: Cell<CollectionContent>
+        nftItemCode: cell
+        royaltyParams: Cell<RoyaltyParams>
+    }
+
+    struct CollectionContent {
+        collectionMetadata: cell
+        commonContent: Cell<SnakeString>
+    }
+
+    struct NftItemStorage {
+        itemIndex: uint64
+        collectionAddress: address
+        ownerAddress: address
+        content: Cell<SnakeString>
+    }
+
+    struct NftItemStorageNotInitialized {
+        itemIndex: uint64
+        collectionAddress: address
+    }
+
+
+    fun NftCollectionStorage.load() {
+        return NftCollectionStorage.fromCell(contract.getData())
+    }
+
+    fun NftCollectionStorage.save(self) {
+        contract.setData(self.toCell())
+    }
+
+
+    // actual storage of an NFT item is tricky: it's either initialized or not;
+    // after NFT has been inited, it's represented as `NftItemStorage`;
+    // before initialization, it has only itemIndex and collectionAddress: `NftItemStorageNotInitialized`;
+    // hence, we start parsing it, that then we detect, whether it's inited or not
+    struct NftItemStorageMaybeNotInitialized {
+        contractData: slice
+    }
+
+    // how do we detect whether it's initialized or not?
+    // the answer: when "inited", we store `content` (cell),
+    // so, we have a ref, and for uninited, we don't have a ref
+    fun NftItemStorageMaybeNotInitialized.isInitialized(self) {
+        val hasContent = self.contractData.remainingRefsCount();
+        return hasContent
+    }
+
+    fun NftItemStorageMaybeNotInitialized.parseNotInitialized(self) {
+        return NftItemStorageNotInitialized.fromSlice(self.contractData)
+    }
+
+    fun NftItemStorageMaybeNotInitialized.parseInitialized(self) {
+        return NftItemStorage.fromSlice(self.contractData)
+    }
+
+    fun startLoadingNftItemStorage(): NftItemStorageMaybeNotInitialized {
+        return {
+            contractData: contract.getData().beginParse()
+        }
+    }
+
+    fun NftItemStorage.save(self) {
+        contract.setData(self.toCell())
+    }
+
+
+    fun calcDeployedNftItem(itemIndex: uint64, collectionAddress: address, nftItemCode: cell): AutoDeployAddress {
+        val emptyNftItemStorage: NftItemStorageNotInitialized = {
+            itemIndex,
+            collectionAddress,
+        };
+
+        return {
+            stateInit: {
+                code: nftItemCode,
+                data: emptyNftItemStorage.toCell()
+            }
+        }
+    }
+    ```
+  </Accordion>
+
+  <Accordion
+    title="messages.tolk"
+  >
+    ```tolk title="contracts_Tolk/02_nft/messages.tolk"
+    import "storage"
+
+    struct NftItemInitAtDeployment {
+        ownerAddress: address
+        content: Cell<SnakeString>
+    }
+
+    struct (0x693d3950) RequestRoyaltyParams {
+        queryId: uint64
+    }
+
+    struct (0xa8cb00ad) ResponseRoyaltyParams {
+        queryId: uint64
+        royaltyParams: RoyaltyParams
+    }
+
+    struct (0x00000001) DeployNft {
+        queryId: uint64
+        itemIndex: uint64
+        attachTonAmount: coins
+        initParams: Cell<NftItemInitAtDeployment>
+    }
+
+    struct (0x00000002) BatchDeployNfts {
+        queryId: uint64
+        deployList: map<uint64, BatchDeployDictItem>
+    }
+
+    struct BatchDeployDictItem {
+        attachTonAmount: coins
+        initParams: Cell<NftItemInitAtDeployment>
+    }
+
+    struct (0x00000003) ChangeCollectionAdmin {
+        queryId: uint64
+        newAdminAddress: address
+    }
+
+    struct (0x2fcb26a2) RequestStaticData {
+        queryId: uint64
+    }
+
+    struct (0x8b771735) ResponseStaticData {
+        queryId: uint64
+        itemIndex: uint256
+        collectionAddress: address
+    }
+
+    struct (0x05138d91) NotificationForNewOwner {
+        queryId: uint64
+        oldOwnerAddress: address
+        payload: RemainingBitsAndRefs
+    }
+
+    struct (0xd53276db) ReturnExcessesBack {
+        queryId: uint64
+    }
+
+    struct (0x5fcc3d14) AskToChangeOwnership {
+        queryId: uint64
+        newOwnerAddress: address
+        sendExcessesTo: address?
+        customPayload: dict
+        forwardTonAmount: coins
+        forwardPayload: RemainingBitsAndRefs
+    }
+    ```
+  </Accordion>
+
+  <Accordion
+    title="nft-collection-contract.tolk"
+  >
+    ```tolk title="contracts_Tolk/02_nft/nft-collection-contract.tolk"
+    import "errors"
+    import "storage"
+    import "messages"
+
+    fun deployNftItem(itemIndex: int, nftItemCode: cell, attachTonAmount: coins, initParams: Cell<NftItemInitAtDeployment>) {
+        val deployMsg = createMessage({
+            bounce: BounceMode.Only256BitsOfBody,
+            dest: calcDeployedNftItem(itemIndex, contract.getAddress(), nftItemCode),
+            value: attachTonAmount,
+            body: initParams,
+        });
+        deployMsg.send(SEND_MODE_PAY_FEES_SEPARATELY);
+    }
+
+    type AllowedMessageToNftCollection =
+        | RequestRoyaltyParams
+        | DeployNft
+        | BatchDeployNfts
+        | ChangeCollectionAdmin
+
+    fun onInternalMessage(in: InMessage) {
+        val msg = lazy AllowedMessageToNftCollection.fromSlice(in.body);
+
+        match (msg) {
+            DeployNft => {
+                var storage = lazy NftCollectionStorage.load();
+                assert (in.senderAddress == storage.adminAddress) throw ERROR_NOT_FROM_ADMIN;
+                assert (msg.itemIndex <= storage.nextItemIndex) throw ERROR_INVALID_ITEM_INDEX;
+
+                var isLast = msg.itemIndex == storage.nextItemIndex;
+                deployNftItem(msg.itemIndex, storage.nftItemCode, msg.attachTonAmount, msg.initParams);
+                if (isLast) {
+                    storage.nextItemIndex += 1;
+                    storage.save();
+                }
+            }
+
+            RequestRoyaltyParams => {
+                val storage = lazy NftCollectionStorage.load();
+                val respondMsg = createMessage({
+                    bounce: BounceMode.NoBounce,
+                    dest: in.senderAddress,
+                    value: 0,
+                    body: ResponseRoyaltyParams {
+                        queryId: msg.queryId,
+                        royaltyParams: storage.royaltyParams.load(),
+                    }
+                });
+                respondMsg.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+            }
+
+            BatchDeployNfts => {
+                var storage = lazy NftCollectionStorage.load();
+                assert (in.senderAddress == storage.adminAddress) throw ERROR_NOT_FROM_ADMIN;
+
+                var counter = 0;
+                var r = msg.deployList.findFirst();
+                while (r.isFound) {
+                    counter += 1;
+                    assert (counter < 250) throw ERROR_BATCH_LIMIT_EXCEEDED;   // due to limits of action list size
+
+                    val itemIndex = r.getKey();
+                    assert (itemIndex <= storage.nextItemIndex) throw ERROR_NOT_FROM_ADMIN + counter;
+
+                    val dictItem = r.loadValue();
+                    deployNftItem(itemIndex, storage.nftItemCode, dictItem.attachTonAmount, dictItem.initParams);
+                    if (itemIndex == storage.nextItemIndex) {
+                        storage.nextItemIndex += 1;
+                    }
+
+                    r = msg.deployList.iterateNext(r);
+                }
+                storage.save();
+            }
+
+            ChangeCollectionAdmin => {
+                var storage = lazy NftCollectionStorage.load();
+                assert (in.senderAddress == storage.adminAddress) throw ERROR_NOT_FROM_ADMIN;
+                storage.adminAddress = msg.newAdminAddress;
+                storage.save();
+            }
+
+            else => {
+                // ignore empty messages, "wrong opcode" for others
+                assert (in.body.isEmpty()) throw 0xFFFF
+            }
+        }
+    }
+
+
+
+    struct CollectionDataReply {
+        nextItemIndex: int
+        collectionMetadata: cell
+        adminAddress: address
+    }
+
+    struct (0x01) OffchainMetadataReply {
+        string: SnakeString
+    }
+
+    get fun get_collection_data(): CollectionDataReply {
+        val storage = lazy NftCollectionStorage.load();
+        val content = lazy storage.content.load();
+
+        return {
+            nextItemIndex: storage.nextItemIndex,
+            collectionMetadata: content.collectionMetadata,
+            adminAddress: storage.adminAddress,
+        }
+    }
+
+    get fun get_nft_address_by_index(itemIndex: int): address {
+        val storage = lazy NftCollectionStorage.load();
+        val nftDeployed = calcDeployedNftItem(itemIndex, contract.getAddress(), storage.nftItemCode);
+        return nftDeployed.calculateAddress();
+    }
+
+    get fun royalty_params(): RoyaltyParams {
+        val storage = lazy NftCollectionStorage.load();
+        return storage.royaltyParams.load();
+    }
+
+    get fun get_nft_content(itemIndex: int, individualNftContent: Cell<SnakeString>): Cell<OffchainMetadataReply> {
+        val storage = lazy NftCollectionStorage.load();
+        val content = lazy storage.content.load();
+
+        // construct a responce from "common content" and "individual content";
+        // for example:
+        // common content = "https://site.org/my-collection/"
+        // individual nft = "my-picture-123.png"  (probably, a long string, snake-encoded)
+        // result         = concatenation
+        return OffchainMetadataReply {
+            string: beginCell()
+                .storeSlice(content.commonContent.load())   // assume it's short (no refs)
+                .storeRef(individualNftContent)             // so, it's the first ref (snake encoding)
+                .endCell().beginParse()
+        }.toCell()
+    }
+    ```
+  </Accordion>
+
+  <Accordion
+    title="nft-item-contract.tolk"
+  >
+    ```tolk title="contracts_Tolk/02_nft/nft-item-contract.tolk"
+    import "@stdlib/gas-payments"
+    import "errors"
+    import "storage"
+    import "messages"
+    import "fees-management"
+
+    type AllowedMessageToNftItem =
+        | AskToChangeOwnership
+        | RequestStaticData
+
+    fun onInternalMessage(in: InMessage) {
+        var loadingStorage = startLoadingNftItemStorage();
+        if (!loadingStorage.isInitialized()) {
+            val uninitedSt = loadingStorage.parseNotInitialized();
+            assert (in.senderAddress == uninitedSt.collectionAddress) throw ERROR_NOT_FROM_COLLECTION;
+
+            // using a message from collection, convert "uninitialized" to "initialized" state
+            val initParams = NftItemInitAtDeployment.fromSlice(in.body);
+            val storage: NftItemStorage = {
+                itemIndex: uninitedSt.itemIndex,
+                collectionAddress: uninitedSt.collectionAddress,
+                ownerAddress: initParams.ownerAddress,
+                content: initParams.content,
+            };
+            storage.save();
+            return;
+        }
+
+        var storage = loadingStorage.parseInitialized();
+
+        val msg = lazy AllowedMessageToNftItem.fromSlice(in.body);
+
+        match (msg) {
+            AskToChangeOwnership => {
+                assert (in.senderAddress == storage.ownerAddress) throw ERROR_NOT_FROM_OWNER;
+
+                assert (msg.forwardPayload.remainingBitsCount()) throw ERROR_INCORRECT_FORWARD_PAYLOAD;
+                assert (msg.newOwnerAddress.getWorkchain() == BASECHAIN) throw ERROR_INVALID_WORKCHAIN;
+
+                val fwdFee = in.originalForwardFee;
+                var restAmount = contract.getOriginalBalance() - MIN_TONS_FOR_STORAGE;
+                if (msg.forwardTonAmount) {
+                    restAmount -= (msg.forwardTonAmount + fwdFee);
+                }
+                if (msg.sendExcessesTo != null) {
+                    assert (msg.sendExcessesTo.getWorkchain() == BASECHAIN) throw ERROR_INVALID_WORKCHAIN;
+                    restAmount -= fwdFee;
+                }
+
+                assert (restAmount >= 0) throw ERROR_TOO_SMALL_REST_AMOUNT; // base nft spends fixed amount of gas, will not check for response
+
+                if (msg.forwardTonAmount) {
+                    val ownershipMsg = createMessage({
+                        bounce: BounceMode.NoBounce,
+                        dest: msg.newOwnerAddress,
+                        value: msg.forwardTonAmount,
+                        body: NotificationForNewOwner {
+                            queryId: msg.queryId,
+                            oldOwnerAddress: storage.ownerAddress,
+                            payload: msg.forwardPayload,
+                        }
+                    });
+                    ownershipMsg.send(SEND_MODE_PAY_FEES_SEPARATELY);
+                }
+                if (msg.sendExcessesTo != null) {
+                    val excessesMsg = createMessage({
+                        bounce: BounceMode.NoBounce,
+                        dest: msg.sendExcessesTo,
+                        value: restAmount,
+                        body: ReturnExcessesBack {
+                            queryId: msg.queryId,
+                        }
+                    });
+                    excessesMsg.send(SEND_MODE_PAY_FEES_SEPARATELY);
+                }
+
+                storage.ownerAddress = msg.newOwnerAddress;
+                storage.save();
+            }
+
+            RequestStaticData => {
+                val respondMsg = createMessage({
+                    bounce: BounceMode.NoBounce,
+                    dest: in.senderAddress,
+                    value: 0,
+                    // why ever, in FunC implementation, item index was encoded as 256-bit (not 64-bit),
+                    // do the same here to pass FunC tests;
+                    // but since a response becomes too long (64 + 256 + address), the compiler will create a ref;
+                    // force the compiler not to create a ref, because it's guaranteed that with
+                    // value (coins) = 0 it will nevertheless fit into a message cell directly
+                    body: UnsafeBodyNoRef {
+                        forceInline: ResponseStaticData {
+                            queryId: msg.queryId,
+                            itemIndex: storage.itemIndex as uint256,
+                            collectionAddress: storage.collectionAddress,
+                        }
+                    }
+                });
+                respondMsg.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE);
+            }
+
+            else => {
+                // ignore empty messages, "wrong opcode" for others
+                assert (in.body.isEmpty()) throw 0xFFFF
+            }
+        }
+    }
+
+
+
+    struct NftDataReply {
+        isInitialized: bool
+        itemIndex: int
+        collectionAddress: address
+        ownerAddress: address? = null
+        content: Cell<SnakeString>? = null
+    }
+
+    get fun get_nft_data(): NftDataReply {
+        var loadingStorage = startLoadingNftItemStorage();
+        if (!loadingStorage.isInitialized()) {
+            val uninitedSt = loadingStorage.parseNotInitialized();
+            return {
+                isInitialized: false,
+                itemIndex: uninitedSt.itemIndex,
+                collectionAddress: uninitedSt.collectionAddress,
+            }
+        }
+
+        val storage = loadingStorage.parseInitialized();
+        return {
+            isInitialized: true,
+            itemIndex: storage.itemIndex,
+            collectionAddress: storage.collectionAddress,
+            ownerAddress: storage.ownerAddress,
+            content: storage.content,
+        }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## See also
+
+- [Tolk language overview](/languages/tolk/overview)
+- [Tolk vs FunC](/languages/tolk/from-func/tolk-vs-func)
