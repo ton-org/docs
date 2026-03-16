@@ -1,0 +1,192 @@
+---
+title: "Verify Groth16 examples on TON"
+sidebarTitle: "Groth16 examples"
+description: "Run Groth16 verifier examples on TON with Circom, Noname, Gnark, and Arkworks."
+doc_type: "How-to guide"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Run one of the Groth16 verifier examples from [`zk-examples/zk-ton-examples`](https://github.com/zk-examples/zk-ton-examples) and confirm the proof both locally and on-chain in TON.
+For the underlying export flow, see [Zero-knowledge proofs on TON](/contract-dev/zero-knowledge).
+
+## Objective
+
+Run one of these upstream circuits on TON:
+
+- `Multiplier` from Circom
+- `Sudoku` from Noname
+- `cubic-gnark` from Gnark
+- `MulCircuit` from Arkworks
+
+## Prerequisites
+
+- [Node.js](https://nodejs.org/en/download/) 18 or later LTS
+- [Blueprint](/contract-dev/blueprint/overview)
+- One proving stack: [Circom](https://docs.circom.io/getting-started/installation/#installing-circom), [Noname](https://github.com/zksecurity/noname), [Go](https://go.dev/dl/), or [Rust](https://www.rust-lang.org/tools/install)
+
+## Clone the examples repository
+
+```bash
+git clone https://github.com/zk-examples/zk-ton-examples.git
+cd zk-ton-examples
+npm install
+```
+
+## Choose an example
+
+| Example       | Stack    | Circuit                                                                                                                 | What the proof exposes publicly | Tact test                                     |
+| ------------- | -------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------- | --------------------------------------------- |
+| `Multiplier`  | Circom   | [`circuits/Multiplier`](https://github.com/zk-examples/zk-ton-examples/tree/main/circuits/Multiplier)                   | `c = a * b`                     | `npx blueprint test Verifier_multiplier_tact` |
+| `Sudoku`      | Noname   | [`circuits/Sudoku`](https://github.com/zk-examples/zk-ton-examples/tree/main/circuits/Sudoku)                           | A partially filled grid         | `npx blueprint test Verifier_sudoku_tact`     |
+| `cubic-gnark` | Gnark    | [`circuits/cubic-gnark`](https://github.com/zk-examples/zk-ton-examples/tree/main/circuits/cubic-gnark)                 | `y = x^3 + x + 5`               | `npx blueprint test Verifier_cubic_tact`      |
+| `MulCircuit`  | Arkworks | [`circuits/Arkworks/MulCircuit`](https://github.com/zk-examples/zk-ton-examples/tree/main/circuits/Arkworks/MulCircuit) | `z = x * y`                     | `npx blueprint test Verifier_ark`             |
+
+<Aside type="tip">
+  The upstream repository also contains matching FunC and Tolk tests for all four circuits.
+</Aside>
+
+## Run the `Multiplier` example
+
+Select `Multiplier` for the smallest end-to-end Groth16 verifier flow in the repository.
+The proof is generated at test time from `Multiplier.wasm` and `Multiplier_final.zkey`.
+
+```bash
+cd circuits/Multiplier
+circom Multiplier.circom --r1cs --wasm --sym --prime bls12381
+snarkjs powersoftau new bls12-381 10 pot10_0000.ptau -v
+snarkjs powersoftau contribute pot10_0000.ptau pot10_0001.ptau --name="First contribution" -v -e="some random text"
+snarkjs powersoftau prepare phase2 pot10_0001.ptau pot10_final.ptau -v
+snarkjs groth16 setup Multiplier.r1cs pot10_final.ptau Multiplier_0000.zkey
+snarkjs zkey contribute Multiplier_0000.zkey Multiplier_final.zkey --name="1st Contributor" -v -e="some random text"
+snarkjs zkey export verificationkey Multiplier_final.zkey verification_key.json
+cd ../..
+npx export-ton-verifier ./circuits/Multiplier/Multiplier_final.zkey ./contracts/verifier_multiplier.tact --tact
+npx blueprint build --all
+npx blueprint test Verifier_multiplier_tact
+```
+
+Expected output
+
+```text
+PASS tests/Verifier_multiplier_tact.spec.ts
+```
+
+The checked-in upstream Tact snapshot records `Verify = 90637` gas and code size `5402 bits / 10 cells`.
+
+## Run the `Sudoku` example
+
+Select `Sudoku` for a larger verification key and many public inputs.
+The current `Sudoku` source checks rows, columns, and diagonals. It does not check 3x3 boxes (subgrids).
+
+```bash
+cd circuits/Sudoku
+noname check
+noname run --backend r1cs-bls12-381 --private-inputs '<SOLUTION_JSON>' --public-inputs '<GRID_JSON>'
+snarkjs powersoftau new bls12-381 14 pot14_0000.ptau -v
+snarkjs powersoftau contribute pot14_0000.ptau pot14_0001.ptau --name="First contribution" -v -e="some random text"
+snarkjs powersoftau prepare phase2 pot14_0001.ptau pot14_final.ptau -v
+snarkjs groth16 setup Sudoku.r1cs pot14_final.ptau Sudoku_0000.zkey
+snarkjs zkey contribute Sudoku_0000.zkey Sudoku_final.zkey --name="1st Contributor" -v -e="some random text"
+snarkjs zkey export verificationkey Sudoku_final.zkey verification_key.json
+snarkjs groth16 prove Sudoku_final.zkey Sudoku.wtns proof.json public.json
+cd ../..
+npx export-ton-verifier ./circuits/Sudoku/Sudoku_final.zkey ./contracts/verifier_sudoku.tact --tact
+npx blueprint build --all
+npx blueprint test Verifier_sudoku_tact
+```
+
+Define placeholders
+
+- `<SOLUTION_JSON>` — JSON object with the private solved grid in the format expected by `circuits/Sudoku/src/main.no`
+- `<GRID_JSON>` — JSON object with the public partially filled grid in the format expected by `circuits/Sudoku/src/main.no`
+
+Expected output
+
+```text
+PASS tests/Verifier_sudoku_tact.spec.ts
+```
+
+The checked-in upstream Tact snapshot records `Verify = 866113` gas and code size `44890 bits / 80 cells`.
+
+## Run the `cubic-gnark` example
+
+Select `cubic-gnark` when the proving stack is Go.
+The upstream `main.go` proves the public relation `y = x^3 + x + 5` and exports `proof.json` plus `verification_key.json` in `snarkjs` format.
+
+```bash
+cd circuits/cubic-gnark
+go run main.go
+cd ../..
+npx export-ton-verifier ./circuits/cubic-gnark/verification_key.json ./contracts/verifier_cubic.tact --tact
+npx blueprint build --all
+npx blueprint test Verifier_cubic_tact
+```
+
+Expected output
+
+```text
+PASS tests/Verifier_cubic_tact.spec.ts
+```
+
+The checked-in upstream Tact snapshot records `Verify = 90637` gas and code size `5402 bits / 10 cells`.
+
+## Run the `MulCircuit` example
+
+Select `MulCircuit` when the proving stack is Rust.
+The upstream `main.rs` proves a multiplication circuit over `Bls12_381` and exports `json/proof.json` plus `json/verification_key.json`.
+
+```bash
+cd circuits/Arkworks/MulCircuit
+cargo run
+cd ../../..
+npx export-ton-verifier ./circuits/Arkworks/MulCircuit/json/verification_key.json ./contracts/verifier_ark.tact --tact
+npx blueprint build --all
+npx blueprint test Verifier_ark
+```
+
+Expected output
+
+```text
+PASS tests/Verifier_ark_tact.spec.ts
+```
+
+The checked-in upstream Tact snapshot records `Verify = 90637` gas and code size `5402 bits / 10 cells`.
+
+## Verify
+
+Run-time verification succeeds when all of the following are true:
+
+- `snarkjs.groth16.verify(...)` returns `true`
+- The contract `getVerify` method returns `true`
+- `npx blueprint test ...` exits with code `0`
+
+Partial snippet from the upstream Tact tests. Not runnable:
+
+```ts
+const okLocal = await snarkjs.groth16.verify(verificationKey, publicSignals, proof);
+expect(okLocal).toBe(true);
+
+const { pi_a, pi_b, pi_c, pubInputs } = await groth16CompressProof(proof, publicSignals);
+
+expect(
+  await verifier.getVerify(
+    beginCell().storeBuffer(pi_a).endCell().asSlice(),
+    beginCell().storeBuffer(pi_b).endCell().asSlice(),
+    beginCell().storeBuffer(pi_c).endCell().asSlice(),
+    dictFromInputList(pubInputs),
+  ),
+).toBe(true);
+```
+
+## Troubleshoot
+
+- If `npx blueprint test ...` fails because build artifacts are missing, run `npx blueprint build --all` first.
+- If `snarkjs.groth16.verify(...)` returns `false`, confirm that the proof, public signals, and verification key come from the same circuit build.
+- If `export-ton-verifier` rejects the input file, confirm that the example uses Groth16 over `bls12-381`.
+
+## See also
+
+- [Zero-knowledge proofs on TON](/contract-dev/zero-knowledge)
+- [`zk-examples/zk-ton-examples`](https://github.com/zk-examples/zk-ton-examples)
+- [`mysteryon88/export-ton-verifier`](https://github.com/mysteryon88/export-ton-verifier)
