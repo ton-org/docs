@@ -55,9 +55,7 @@ Some files in the source directory are not runnable on their own and depend on o
     ```tolk
     // 6905(computational_gas_price) * 1000(cur_gas_price) = 6905000 ~= 0.01 TON
     const MINIMAL_MESSAGE_VALUE_BOUND = ton("0.01")
-
     const MIN_TONS_FOR_STORAGE = ton("0.01")
-
     const JETTON_WALLET_GAS_CONSUMPTION = ton("0.015")
     ```
   </Accordion>
@@ -125,7 +123,8 @@ Some files in the source directory are not runnable on their own and depend on o
     struct (0x178d4519) InternalTransferStep {
         queryId: uint64
         jettonAmount: coins
-        transferInitiator: address? // is null when minting (not initiated by another wallet)
+        // is null when minting (not initiated by another wallet)
+        transferInitiator: address?
         sendExcessesTo: address?
         forwardTonAmount: coins
         forwardPayload: ForwardPayloadRemainder
@@ -200,7 +199,7 @@ Some files in the source directory are not runnable on their own and depend on o
         return {
             stateInit: {
                 code: jettonWalletCode,
-                data: emptyWalletStorage.toCell()
+                data: emptyWalletStorage.toCell(),
             }
         }
     }
@@ -267,13 +266,14 @@ Some files in the source directory are not runnable on their own and depend on o
                     }
                 });
                 excessesMsg.send(
-                    SEND_MODE_IGNORE_ERRORS + 
+                    SEND_MODE_IGNORE_ERRORS +
                     SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
                 );
             }
 
             RequestWalletAddress => {
-                assert (in.valueCoins > in.originalForwardFee + MINIMAL_MESSAGE_VALUE_BOUND)
+                assert (in.valueCoins >
+                    in.originalForwardFee + MINIMAL_MESSAGE_VALUE_BOUND)
                     throw ERR_NOT_ENOUGH_AMOUNT_TO_RESPOND;
 
                 var respondOwnerAddress: Cell<address>? = msg.includeOwnerAddress
@@ -305,7 +305,8 @@ Some files in the source directory are not runnable on their own and depend on o
 
             MintNewJettons => {
                 var storage = lazy MinterStorage.load();
-                assert (in.senderAddress == storage.adminAddress) throw ERR_NOT_FROM_ADMIN;
+                assert (in.senderAddress == storage.adminAddress)
+                    throw ERR_NOT_FROM_ADMIN;
 
                 var internalTransferMsg = lazy msg.internalTransferMsg.load();
                 storage.totalSupply += internalTransferMsg.jettonAmount;
@@ -327,14 +328,16 @@ Some files in the source directory are not runnable on their own and depend on o
 
             ChangeMinterAdmin => {
                 var storage = lazy MinterStorage.load();
-                assert (in.senderAddress == storage.adminAddress) throw ERR_NOT_FROM_ADMIN;
+                assert (in.senderAddress == storage.adminAddress)
+                    throw ERR_NOT_FROM_ADMIN;
                 storage.adminAddress = msg.newAdminAddress;
                 storage.save();
             }
 
             ChangeMinterContent => {
                 var storage = lazy MinterStorage.load();
-                assert (in.senderAddress == storage.adminAddress) throw ERR_NOT_FROM_ADMIN;
+                assert (in.senderAddress == storage.adminAddress)
+                    throw ERR_NOT_FROM_ADMIN;
                 storage.content = msg.newContent;
                 storage.save();
             }
@@ -345,8 +348,6 @@ Some files in the source directory are not runnable on their own and depend on o
             }
         }
     }
-
-
 
     struct JettonDataReply {
         totalSupply: int
@@ -382,7 +383,7 @@ Some files in the source directory are not runnable on their own and depend on o
   <Accordion
     title="jetton-wallet-contract.tolk"
   >
-    ```tolk title="contracts_Tolk/01_jetton/jetton-wallet-contract.tolk"
+    ```tolk
     import "@stdlib/gas-payments"
     import "errors"
     import "jetton-utils"
@@ -405,7 +406,7 @@ Some files in the source directory are not runnable on their own and depend on o
             // fetching jettonAmount is safe because
             // it is at the beginning of the message body
             InternalTransferStep => msg.jettonAmount,
-            BurnNotificationForMinter => msg.jettonAmount,  
+            BurnNotificationForMinter => msg.jettonAmount,
         };
 
         var storage = lazy WalletStorage.load();
@@ -545,8 +546,6 @@ Some files in the source directory are not runnable on their own and depend on o
         }
     }
 
-
-
     struct JettonWalletDataReply {
         jettonBalance: coins
         ownerAddress: address
@@ -588,7 +587,8 @@ Some files in the source directory are not runnable on their own and depend on o
   <Accordion
     title="errors.tolk"
   >
-    
+    ```tolk
+    const ERROR_NOT_FROM_ADMIN = 401
     const ERROR_NOT_FROM_OWNER = 401
     const ERROR_NOT_FROM_COLLECTION = 405
     const ERROR_BATCH_LIMIT_EXCEEDED = 399
@@ -602,7 +602,7 @@ Some files in the source directory are not runnable on their own and depend on o
   <Accordion
     title="fees-management.tolk"
   >
-    ```tolk title="contracts_Tolk/02_nft/fees-management.tolk"
+    ```tolk
     const MIN_TONS_FOR_STORAGE = ton("0.05")
     ```
   </Accordion>
@@ -610,17 +610,18 @@ Some files in the source directory are not runnable on their own and depend on o
   <Accordion
     title="storage.tolk"
   >
-    ```tolk title="contracts_Tolk/02_nft/storage.tolk"
+    ```tolk
     // SnakeString describes a (potentially long) string inside a cell;
     // short strings are stored as-is, like "my-picture.png";
     // long strings are nested refs, like "xxxx".ref("yyyy".ref("zzzz"))
     type SnakeString = slice
 
     fun SnakeString.unpackFromSlice(mutate s: slice) {
-        // obviously, SnakeString can be only the last: it's just "the remainder";
-        // for correctness, it's better to validate it has no more refs:
-        // assert (s.remainingRefsCount() <= 1) throw 5;
-        // but since here we're matching the original FunC implementation, leave no checks
+        // SnakeString can be only the last — it's just the remainder;
+        // For correctness, it's better to validate it has no more refs:
+        //   assert (s.remainingRefsCount() <= 1) throw 5;
+        // Since it is matching the original FunC implementation,
+        // checks are not kept
         val snakeRemainder = s;
         s = createEmptySlice();     // no more left to read
         return snakeRemainder
@@ -629,7 +630,6 @@ Some files in the source directory are not runnable on their own and depend on o
     fun SnakeString.packToBuilder(self, mutate b: builder) {
         b.storeSlice(self)
     }
-
 
     struct RoyaltyParams {
         numerator: uint16
@@ -662,7 +662,6 @@ Some files in the source directory are not runnable on their own and depend on o
         collectionAddress: address
     }
 
-
     fun NftCollectionStorage.load() {
         return NftCollectionStorage.fromCell(contract.getData())
     }
@@ -671,11 +670,10 @@ Some files in the source directory are not runnable on their own and depend on o
         contract.setData(self.toCell())
     }
 
-
-    // actual storage of an NFT item is tricky: it's either initialized or not;
-    // after NFT has been inited, it's represented as `NftItemStorage`;
-    // before initialization, it has only itemIndex and collectionAddress: `NftItemStorageNotInitialized`;
-    // hence, we start parsing it, that then we detect, whether it's inited or not
+    // Actual storage of an NFT item is tricky: it's either initialized or not;
+    // After NFT has been inited, it's represented as `NftItemStorage`;
+    // Before initialization, it has only itemIndex and collectionAddress;
+    // Hence, detect whether it's inited or not during parsing.
     struct NftItemStorageMaybeNotInitialized {
         contractData: slice
     }
@@ -706,7 +704,6 @@ Some files in the source directory are not runnable on their own and depend on o
         contract.setData(self.toCell())
     }
 
-
     fun calcDeployedNftItem(
         itemIndex: uint64,
         collectionAddress: address,
@@ -730,7 +727,7 @@ Some files in the source directory are not runnable on their own and depend on o
   <Accordion
     title="messages.tolk"
   >
-    ```tolk title="contracts_Tolk/02_nft/messages.tolk"
+    ```tolk
     import "storage"
 
     struct NftItemInitAtDeployment {
@@ -803,7 +800,7 @@ Some files in the source directory are not runnable on their own and depend on o
   <Accordion
     title="nft-collection-contract.tolk"
   >
-    ```tolk title="contracts_Tolk/02_nft/nft-collection-contract.tolk"
+    ```tolk
     import "errors"
     import "storage"
     import "messages"
@@ -816,7 +813,11 @@ Some files in the source directory are not runnable on their own and depend on o
     ) {
         val deployMsg = createMessage({
             bounce: BounceMode.Only256BitsOfBody,
-            dest: calcDeployedNftItem(itemIndex, contract.getAddress(), nftItemCode),
+            dest: calcDeployedNftItem(
+                itemIndex,
+                contract.getAddress(),
+                nftItemCode,
+            ),
             value: attachTonAmount,
             body: initParams,
         });
@@ -914,8 +915,6 @@ Some files in the source directory are not runnable on their own and depend on o
         }
     }
 
-
-
     struct CollectionDataReply {
         nextItemIndex: int
         collectionMetadata: cell
@@ -962,8 +961,7 @@ Some files in the source directory are not runnable on their own and depend on o
         // construct a responce from "common content" and "individual content";
         // for example:
         // common content = "https://site.org/my-collection/"
-        // individual nft = "my-picture-123.png"  (probably, a long string, snake-encoded)
-        // result         = concatenation
+        // individual nft = "my-picture-123.png" (a long, snake-encoded string)
         return OffchainMetadataReply {
             string: beginCell()
                 // assume it's short (no refs)
@@ -979,7 +977,7 @@ Some files in the source directory are not runnable on their own and depend on o
   <Accordion
     title="nft-item-contract.tolk"
   >
-    
+    ```tolk
     import "@stdlib/gas-payments"
     import "errors"
     import "storage"
@@ -1095,8 +1093,6 @@ Some files in the source directory are not runnable on their own and depend on o
             }
         }
     }
-
-
 
     struct NftDataReply {
         isInitialized: bool
