@@ -3,6 +3,8 @@ title: "Tolk contract examples"
 sidebarTitle: "Examples"
 ---
 
+import { Aside } from '/snippets/aside.jsx';
+
 This page embeds the basic jetton and NFT contract examples from [`ton-blockchain/tolk-bench`](https://github.com/ton-blockchain/tolk-bench), extracted from commit [`cb9648b`](https://github.com/ton-blockchain/tolk-bench/tree/cb9648bdf936f88eb9d773d9058405f74a1e24d9). Each accordion contains one source file with its original filename.
 
 <Aside
@@ -26,7 +28,7 @@ Source directory: [`contracts_Tolk/01_jetton`](https://github.com/ton-blockchain
   jetton-wallet-contract.tolk
 ```
 
-Not runnable as a single file. Use all files in this section together.
+Some files in the source directory are not runnable on their own and depend on others. Keep all the listed files together.
 
 <AccordionGroup>
   <Accordion
@@ -184,7 +186,11 @@ Not runnable as a single file. Use all files in this section together.
     ```tolk
     import "storage"
 
-    fun calcDeployedJettonWallet(ownerAddress: address, minterAddress: address, jettonWalletCode: cell): AutoDeployAddress {
+    fun calcDeployedJettonWallet(
+        ownerAddress: address,
+        minterAddress: address,
+        jettonWalletCode: cell,
+    ): AutoDeployAddress {
         val emptyWalletStorage: WalletStorage = {
             jettonBalance: 0,
             ownerAddress,
@@ -199,8 +205,16 @@ Not runnable as a single file. Use all files in this section together.
         }
     }
 
-    fun calcAddressOfJettonWallet(ownerAddress: address, minterAddress: address, jettonWalletCode: cell) {
-        val jwDeployed = calcDeployedJettonWallet(ownerAddress, minterAddress, jettonWalletCode);
+    fun calcAddressOfJettonWallet(
+        ownerAddress: address,
+        minterAddress: address,
+        jettonWalletCode: cell,
+    ) {
+        val jwDeployed = calcDeployedJettonWallet(
+            ownerAddress,
+            minterAddress,
+            jettonWalletCode,
+        );
         return jwDeployed.calculateAddress()
     }
     ```
@@ -251,7 +265,8 @@ Not runnable as a single file. Use all files in this section together.
             }
 
             RequestWalletAddress => {
-                assert (in.valueCoins > in.originalForwardFee + MINIMAL_MESSAGE_VALUE_BOUND) throw ERR_NOT_ENOUGH_AMOUNT_TO_RESPOND;
+                assert (in.valueCoins > in.originalForwardFee + MINIMAL_MESSAGE_VALUE_BOUND)
+                    throw ERR_NOT_ENOUGH_AMOUNT_TO_RESPOND;
 
                 var respondOwnerAddress: Cell<address>? = msg.includeOwnerAddress
                     ? msg.ownerAddress.toCell()
@@ -260,7 +275,11 @@ Not runnable as a single file. Use all files in this section together.
                 var walletAddress: address? = null;
                 if (msg.ownerAddress.getWorkchain() == BASECHAIN) {
                     var storage = lazy MinterStorage.load();
-                    walletAddress = calcAddressOfJettonWallet(msg.ownerAddress, contract.getAddress(), storage.jettonWalletCode);
+                    walletAddress = calcAddressOfJettonWallet(
+                        msg.ownerAddress,
+                        contract.getAddress(),
+                        storage.jettonWalletCode,
+                    );
                 }
 
                 val respondMsg = createMessage({
@@ -286,9 +305,14 @@ Not runnable as a single file. Use all files in this section together.
 
                 val deployMsg = createMessage({
                     bounce: BounceMode.Only256BitsOfBody,
-                    dest: calcDeployedJettonWallet(msg.mintRecipient, contract.getAddress(), storage.jettonWalletCode),
+                    dest: calcDeployedJettonWallet(
+                        msg.mintRecipient,
+                        contract.getAddress(),
+                        storage.jettonWalletCode,
+                    ),
                     value: msg.tonAmount,
-                    body: msg.internalTransferMsg,  // a newly-deployed wallet contract will immediately handle it
+                    // a newly-deployed wallet contract will immediately handle it
+                    body: msg.internalTransferMsg,
                 });
                 deployMsg.send(SEND_MODE_PAY_FEES_SEPARATELY);
             }
@@ -338,7 +362,11 @@ Not runnable as a single file. Use all files in this section together.
 
     get fun get_wallet_address(ownerAddress: address): address {
         val storage = lazy MinterStorage.load();
-        return calcAddressOfJettonWallet(ownerAddress, contract.getAddress(), storage.jettonWalletCode);
+        return calcAddressOfJettonWallet(
+            ownerAddress,
+            contract.getAddress(),
+            storage.jettonWalletCode,
+        );
     }
     ```
   </Accordion>
@@ -366,8 +394,10 @@ Not runnable as a single file. Use all files in this section together.
 
         val msg = lazy BounceOpToHandle.fromSlice(in.bouncedBody);
         val restoreAmount = match (msg) {
-            InternalTransferStep => msg.jettonAmount,       // safe to fetch jettonAmount, because
-            BurnNotificationForMinter => msg.jettonAmount,  // it's in the beginning of a message
+            // fetching jettonAmount is safe because
+            // it is at the beginning of the message body
+            InternalTransferStep => msg.jettonAmount,
+            BurnNotificationForMinter => msg.jettonAmount,  
         };
 
         var storage = lazy WalletStorage.load();
@@ -382,21 +412,30 @@ Not runnable as a single file. Use all files in this section together.
             InternalTransferStep => {
                 var storage = lazy WalletStorage.load();
                 if (in.senderAddress != storage.minterAddress) {
-                    assert (in.senderAddress == calcAddressOfJettonWallet(msg.transferInitiator!, storage.minterAddress, contract.getCode())) throw ERR_INVALID_WALLET;
+                    assert (in.senderAddress ==
+                        calcAddressOfJettonWallet(
+                            msg.transferInitiator!,
+                            storage.minterAddress,
+                            contract.getCode(),
+                        )) throw ERR_INVALID_WALLET;
                 }
                 storage.jettonBalance += msg.jettonAmount;
                 storage.save();
 
                 var msgValue = in.valueCoins;
                 var tonBalanceBeforeMsg = contract.getOriginalBalance() - msgValue;
-                var storageFee = MIN_TONS_FOR_STORAGE - min(tonBalanceBeforeMsg, MIN_TONS_FOR_STORAGE);
+                var storageFee = MIN_TONS_FOR_STORAGE - min(
+                    tonBalanceBeforeMsg,
+                    MIN_TONS_FOR_STORAGE,
+                );
                 msgValue -= (storageFee + JETTON_WALLET_GAS_CONSUMPTION);
 
                 if (msg.forwardTonAmount) {
                     msgValue -= (msg.forwardTonAmount + in.originalForwardFee);
 
                     val notifyOwnerMsg = createMessage({
-                        bounce: BounceMode.NoBounce,      // cause receiver can have uninitialized contract
+                        // cause receiver can have uninitialized contract
+                        bounce: BounceMode.NoBounce,
                         dest: storage.ownerAddress,
                         value: msg.forwardTonAmount,
                         body: TransferNotificationForRecipient {
@@ -423,12 +462,16 @@ Not runnable as a single file. Use all files in this section together.
             }
 
             AskToTransfer => {
-                assert (msg.forwardPayload.remainingBitsCount()) throw ERR_INVALID_PAYLOAD;
-                assert (msg.transferRecipient.getWorkchain() == BASECHAIN) throw ERR_WRONG_WORKCHAIN;
+                assert (msg.forwardPayload.remainingBitsCount())
+                    throw ERR_INVALID_PAYLOAD;
+                assert (msg.transferRecipient.getWorkchain() == BASECHAIN)
+                    throw ERR_WRONG_WORKCHAIN;
 
                 var storage = lazy WalletStorage.load();
-                assert (in.senderAddress == storage.ownerAddress) throw ERR_NOT_FROM_OWNER;
-                assert (storage.jettonBalance >= msg.jettonAmount) throw ERR_NOT_ENOUGH_BALANCE;
+                assert (in.senderAddress == storage.ownerAddress)
+                    throw ERR_NOT_FROM_OWNER;
+                assert (storage.jettonBalance >= msg.jettonAmount)
+                    throw ERR_NOT_ENOUGH_BALANCE;
                 storage.jettonBalance -= msg.jettonAmount;
                 storage.save();
 
@@ -443,7 +486,11 @@ Not runnable as a single file. Use all files in this section together.
 
                 val deployMsg = createMessage({
                     bounce: BounceMode.Only256BitsOfBody,
-                    dest: calcDeployedJettonWallet(msg.transferRecipient, storage.minterAddress, contract.getCode()),
+                    dest: calcDeployedJettonWallet(
+                        msg.transferRecipient,
+                        storage.minterAddress,
+                        contract.getCode(),
+                    ),
                     value: 0,
                     body: InternalTransferStep {
                         queryId: msg.queryId,
@@ -459,8 +506,10 @@ Not runnable as a single file. Use all files in this section together.
 
             AskToBurn => {
                 var storage = lazy WalletStorage.load();
-                assert (in.senderAddress == storage.ownerAddress) throw ERR_NOT_FROM_OWNER;
-                assert (storage.jettonBalance >= msg.jettonAmount) throw ERR_NOT_ENOUGH_BALANCE;
+                assert (in.senderAddress == storage.ownerAddress)
+                    throw ERR_NOT_FROM_OWNER;
+                assert (storage.jettonBalance >= msg.jettonAmount)
+                    throw ERR_NOT_ENOUGH_BALANCE;
                 storage.jettonBalance -= msg.jettonAmount;
                 storage.save();
 
@@ -475,7 +524,10 @@ Not runnable as a single file. Use all files in this section together.
                         sendExcessesTo: msg.sendExcessesTo,
                     }
                 });
-                notifyMinterMsg.send(SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE | SEND_MODE_BOUNCE_ON_ACTION_FAIL);
+                notifyMinterMsg.send(
+                    SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
+                    | SEND_MODE_BOUNCE_ON_ACTION_FAIL
+                );
             }
 
             else => {
@@ -522,16 +574,13 @@ Source directory: [`contracts_Tolk/02_nft`](https://github.com/ton-blockchain/to
   nft-item-contract.tolk
 ```
 
-Not runnable as a single file. Use all files in this section together.
+Some files in the source directory are not runnable on their own and depend on others. Keep all the listed files together.
 
 <AccordionGroup>
   <Accordion
     title="errors.tolk"
   >
-    ```tolk title="contracts_Tolk/02_nft/errors.tolk"
-    // these error codes are quite strange, but they are exactly the same as in FunC implementation
-
-    const ERROR_NOT_FROM_ADMIN = 401
+    
     const ERROR_NOT_FROM_OWNER = 401
     const ERROR_NOT_FROM_COLLECTION = 405
     const ERROR_BATCH_LIMIT_EXCEEDED = 399
@@ -769,11 +818,18 @@ Not runnable as a single file. Use all files in this section together.
         match (msg) {
             DeployNft => {
                 var storage = lazy NftCollectionStorage.load();
-                assert (in.senderAddress == storage.adminAddress) throw ERROR_NOT_FROM_ADMIN;
-                assert (msg.itemIndex <= storage.nextItemIndex) throw ERROR_INVALID_ITEM_INDEX;
+                assert (in.senderAddress == storage.adminAddress)
+                    throw ERROR_NOT_FROM_ADMIN;
+                assert (msg.itemIndex <= storage.nextItemIndex)
+                    throw ERROR_INVALID_ITEM_INDEX;
 
                 var isLast = msg.itemIndex == storage.nextItemIndex;
-                deployNftItem(msg.itemIndex, storage.nftItemCode, msg.attachTonAmount, msg.initParams);
+                deployNftItem(
+                    msg.itemIndex,
+                    storage.nftItemCode,
+                    msg.attachTonAmount,
+                    msg.initParams,
+                );
                 if (isLast) {
                     storage.nextItemIndex += 1;
                     storage.save();
@@ -796,19 +852,27 @@ Not runnable as a single file. Use all files in this section together.
 
             BatchDeployNfts => {
                 var storage = lazy NftCollectionStorage.load();
-                assert (in.senderAddress == storage.adminAddress) throw ERROR_NOT_FROM_ADMIN;
+                assert (in.senderAddress == storage.adminAddress)
+                    throw ERROR_NOT_FROM_ADMIN;
 
                 var counter = 0;
                 var r = msg.deployList.findFirst();
                 while (r.isFound) {
                     counter += 1;
-                    assert (counter < 250) throw ERROR_BATCH_LIMIT_EXCEEDED;   // due to limits of action list size
+                    // due to limits of action list size
+                    assert (counter < 250) throw ERROR_BATCH_LIMIT_EXCEEDED;
 
                     val itemIndex = r.getKey();
-                    assert (itemIndex <= storage.nextItemIndex) throw ERROR_NOT_FROM_ADMIN + counter;
+                    assert (itemIndex <= storage.nextItemIndex)
+                        throw ERROR_NOT_FROM_ADMIN + counter;
 
                     val dictItem = r.loadValue();
-                    deployNftItem(itemIndex, storage.nftItemCode, dictItem.attachTonAmount, dictItem.initParams);
+                    deployNftItem(
+                        itemIndex,
+                        storage.nftItemCode,
+                        dictItem.attachTonAmount,
+                        dictItem.initParams,
+                    );
                     if (itemIndex == storage.nextItemIndex) {
                         storage.nextItemIndex += 1;
                     }
@@ -820,7 +884,8 @@ Not runnable as a single file. Use all files in this section together.
 
             ChangeCollectionAdmin => {
                 var storage = lazy NftCollectionStorage.load();
-                assert (in.senderAddress == storage.adminAddress) throw ERROR_NOT_FROM_ADMIN;
+                assert (in.senderAddress == storage.adminAddress)
+                    throw ERROR_NOT_FROM_ADMIN;
                 storage.adminAddress = msg.newAdminAddress;
                 storage.save();
             }
@@ -857,7 +922,11 @@ Not runnable as a single file. Use all files in this section together.
 
     get fun get_nft_address_by_index(itemIndex: int): address {
         val storage = lazy NftCollectionStorage.load();
-        val nftDeployed = calcDeployedNftItem(itemIndex, contract.getAddress(), storage.nftItemCode);
+        val nftDeployed = calcDeployedNftItem(
+            itemIndex,
+            contract.getAddress(),
+            storage.nftItemCode,
+        );
         return nftDeployed.calculateAddress();
     }
 
@@ -866,7 +935,10 @@ Not runnable as a single file. Use all files in this section together.
         return storage.royaltyParams.load();
     }
 
-    get fun get_nft_content(itemIndex: int, individualNftContent: Cell<SnakeString>): Cell<OffchainMetadataReply> {
+    get fun get_nft_content(
+        itemIndex: int,
+        individualNftContent: Cell<SnakeString>,
+    ): Cell<OffchainMetadataReply> {
         val storage = lazy NftCollectionStorage.load();
         val content = lazy storage.content.load();
 
@@ -877,8 +949,10 @@ Not runnable as a single file. Use all files in this section together.
         // result         = concatenation
         return OffchainMetadataReply {
             string: beginCell()
-                .storeSlice(content.commonContent.load())   // assume it's short (no refs)
-                .storeRef(individualNftContent)             // so, it's the first ref (snake encoding)
+                // assume it's short (no refs)
+                .storeSlice(content.commonContent.load())
+                // so, it's the first ref (snake encoding)
+                .storeRef(individualNftContent)
                 .endCell().beginParse()
         }.toCell()
     }
@@ -888,7 +962,7 @@ Not runnable as a single file. Use all files in this section together.
   <Accordion
     title="nft-item-contract.tolk"
   >
-    ```tolk title="contracts_Tolk/02_nft/nft-item-contract.tolk"
+    
     import "@stdlib/gas-payments"
     import "errors"
     import "storage"
@@ -903,9 +977,11 @@ Not runnable as a single file. Use all files in this section together.
         var loadingStorage = startLoadingNftItemStorage();
         if (!loadingStorage.isInitialized()) {
             val uninitedSt = loadingStorage.parseNotInitialized();
-            assert (in.senderAddress == uninitedSt.collectionAddress) throw ERROR_NOT_FROM_COLLECTION;
+            assert (in.senderAddress == uninitedSt.collectionAddress)
+                throw ERROR_NOT_FROM_COLLECTION;
 
-            // using a message from collection, convert "uninitialized" to "initialized" state
+            // using a message from collection,
+            // convert "uninitialized" to "initialized" state
             val initParams = NftItemInitAtDeployment.fromSlice(in.body);
             val storage: NftItemStorage = {
                 itemIndex: uninitedSt.itemIndex,
@@ -923,10 +999,12 @@ Not runnable as a single file. Use all files in this section together.
 
         match (msg) {
             AskToChangeOwnership => {
-                assert (in.senderAddress == storage.ownerAddress) throw ERROR_NOT_FROM_OWNER;
-
-                assert (msg.forwardPayload.remainingBitsCount()) throw ERROR_INCORRECT_FORWARD_PAYLOAD;
-                assert (msg.newOwnerAddress.getWorkchain() == BASECHAIN) throw ERROR_INVALID_WORKCHAIN;
+                assert (in.senderAddress == storage.ownerAddress)
+                    throw ERROR_NOT_FROM_OWNER;
+                assert (msg.forwardPayload.remainingBitsCount())
+                    throw ERROR_INCORRECT_FORWARD_PAYLOAD;
+                assert (msg.newOwnerAddress.getWorkchain() == BASECHAIN)
+                    throw ERROR_INVALID_WORKCHAIN;
 
                 val fwdFee = in.originalForwardFee;
                 var restAmount = contract.getOriginalBalance() - MIN_TONS_FOR_STORAGE;
@@ -934,11 +1012,13 @@ Not runnable as a single file. Use all files in this section together.
                     restAmount -= (msg.forwardTonAmount + fwdFee);
                 }
                 if (msg.sendExcessesTo != null) {
-                    assert (msg.sendExcessesTo.getWorkchain() == BASECHAIN) throw ERROR_INVALID_WORKCHAIN;
+                    assert (msg.sendExcessesTo.getWorkchain() == BASECHAIN)
+                        throw ERROR_INVALID_WORKCHAIN;
                     restAmount -= fwdFee;
                 }
 
-                assert (restAmount >= 0) throw ERROR_TOO_SMALL_REST_AMOUNT; // base nft spends fixed amount of gas, will not check for response
+                // base nft spends fixed amount of gas, will not check for response
+                assert (restAmount >= 0) throw ERROR_TOO_SMALL_REST_AMOUNT;
 
                 if (msg.forwardTonAmount) {
                     val ownershipMsg = createMessage({
@@ -974,11 +1054,13 @@ Not runnable as a single file. Use all files in this section together.
                     bounce: BounceMode.NoBounce,
                     dest: in.senderAddress,
                     value: 0,
-                    // why ever, in FunC implementation, item index was encoded as 256-bit (not 64-bit),
-                    // do the same here to pass FunC tests;
-                    // but since a response becomes too long (64 + 256 + address), the compiler will create a ref;
-                    // force the compiler not to create a ref, because it's guaranteed that with
-                    // value (coins) = 0 it will nevertheless fit into a message cell directly
+                    // The `itemIndex` was encoded as 256-bit in FunC implementation,
+                    // we do the same here to pass FunC tests;
+                    // As such, response becomes too long (64 + 256 + address),
+                    // and the compiler will create a ref;
+                    // To circumvent that, let's force the compiler to inline the body,
+                    // since it is guaranteed that with value (coins) = 0,
+                    // it will always fit into a message cell directly.
                     body: UnsafeBodyNoRef {
                         forceInline: ResponseStaticData {
                             queryId: msg.queryId,
