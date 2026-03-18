@@ -1,165 +1,501 @@
 ---
-title: "MCP servers"
+title: "Agentic MCP server: @ton/mcp"
+sidebarTitle: "Agentic MCP server"
 ---
 
 import { Aside } from '/snippets/aside.jsx';
 
-[Model Context Protocol](https://modelcontextprotocol.io/) (MCP) is an open-source standard for connecting AI applications to external systems, tools, and data sources. MCP servers expose specific capabilities to AI applications through standardized protocol interfaces.
+The [`@ton/mcp` server][mcp-repo] enables AI agents to operate TON wallets and perform common blockchain operations through the [Model Context Protocol (MCP)][mcp-spec]. It handles private keys and signing internally, so agents interact only with high-level intents and confirmation flows. The server is built on top of [WalletKit](/ecosystem/walletkit/overview).
 
 <Aside
   type="caution"
 >
-  Code generation with the MCP server may result in financial loss. Never trust the responses completely. Always validate in local testing environments.
+  `@ton/mcp` is currently in <Badge size="xs">alpha</Badge>. It is safe for use in mainnet, but APIs, behaviors, and [underlying wallet contracts][wallets] may change between releases. Pin a specific version for production use and check the [changelog][changelog] before upgrading.
 </Aside>
 
-## Search documentation
-
-Documentation generates and exposes a remote MCP server as a search tool for AI applications to query. Access it at `https://docs.ton.org/mcp`.
-
-<Aside type="note">
-  To avoid context overlapping and prevent misuse, use either this server or `@ton/mcp`, not both.
-</Aside>
-
-Use the contextual menu at the top of this page to copy the MCP server URL or follow a deep link to connect from Cursor or VS Code directly.
-
-For Claude Code, run the following command:
+The latest alpha release is available on [npm][mcp-npm]. Run it locally with:
 
 ```shell
-claude mcp add --transport http TonDocs https://docs.ton.org/mcp
+npx -y @ton/mcp@alpha
 ```
 
-For [OpenCode](https://opencode.ai/docs/config/#mcp-servers), use the following configuration:
+To set it up, follow the [quick start guide](#quick-start).
 
-```json title="opencode.json"
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "ton-docs": {
-      "type": "remote",
-      "url": "https://docs.ton.org/mcp",
-      "enabled": true
-    }
-  }
-}
-```
-
-## Perform blockchain operations with `@ton/mcp`
-
-<Aside type="note">
-  To avoid context overlapping and prevent misuse, use either this server or the [documentation search one](#search-documentation), not both.
-</Aside>
-
-The [`@ton/mcp` server](https://github.com/ton-connect/kit/tree/main/packages/mcp) enables agents to operate with TON wallets and perform many common blockchain operations. It manages dangerous parts like private keys and signing, allowing agents to handle intents and confirmation flows safely. The server is built on top of [WalletKit](/ecosystem/walletkit/overview).
-
-The latest alpha release is available on [npm](https://www.npmjs.com/package/@ton/mcp/v/0.1.15-alpha.0). Run it locally with the following command, passing CLI flags as needed.
-
-```shell
-# Latest alpha version
-npx @ton/mcp@alpha
-```
-
-<Aside
-  type="caution"
->
-  The `@ton/mcp` is currently in a public <Badge size="xs">alpha</Badge> version. Some behaviors and APIs might change in the future.
-</Aside>
-
-### Features
+## Features
 
 - Balance queries: check Toncoin and jetton (token) balances, view transaction history
-- Transfers: send Toncoin, jettons, and NFTs to any TON address
-- Assets: list, inspect, and manage popular jettons or NFTs
-- Swaps: get quotes for token swaps via DEX aggregators
-- DNS: resolve TON DNS-compatible domains and perform reverse-lookup for addresses
-- Work with multiple stored wallets, active wallet selection, and local config-backed management tools
-- Agentic sub-wallet deployments: deploy additional agentic wallets from a root wallet
-- Multiple transports: standard I/O (default), multi-session HTTP server, and serverless
+- Transfers: send Toncoin, jettons, and NFTs
+- Assets: list, inspect, and manage popular jettons and NFTs
+- Swaps: get quotes for token swaps through DEX aggregators
+- DNS: resolve TON DNS domains and perform reverse lookups
+- Agentic wallets: create, import, and manage self-custody [agentic wallets][wallets]
+- Multiple transports: standard I/O (default), multi-session HTTP, and serverless (AWS Lambda, Vercel, or custom integrations)
 
-### Quick start
+## Quick start
 
-The `@ton/mcp` supports two runtime modes. If neither `MNEMONIC` nor `PRIVATE_KEY` environment variables are set, the server starts in the **registry mode**, reading from a local config registry found at `~/.config/ton/config.json` or at `TON_CONFIG_PATH`, if available. Otherwise, server starts with one in-memory wallet in the **single-wallet** mode.
+There are two ways to set up `@ton/mcp`:
+
+<AccordionGroup>
+  <Accordion
+    title="Install skills (recommended)"
+  >
+    Skills give an agent instructions on how to launch and use `@ton/mcp` on its own. No manual MCP client configuration is required. This approach works best with agents that support the [skills specification](https://agentskills.io/specification).
+
+    Run the following command to install the skills for `@ton/mcp`:
+
+    ```shell
+    npx skills add ton-connect/kit/packages/mcp
+    ```
+
+    After installation, agents can launch and manage `@ton/mcp` on their own. No further configuration is needed. The server starts in [agentic wallets mode](#agentic-wallets-mode) by default.
+  </Accordion>
+
+  <Accordion
+    title="Configure MCP client manually"
+  >
+    Register `@ton/mcp` as a server in Claude Desktop, Cursor, Windsurf, or another MCP client. Use this approach when the agent does not support skills or when finer control over server configuration is needed.
+
+    Add the following block to the MCP client configuration file:
+
+    ```json
+    {
+      "mcpServers": {
+        "ton": {
+          "command": "npx",
+          "args": ["-y", "@ton/mcp@alpha"]
+        }
+      }
+    }
+    ```
+
+    The server starts in [agentic wallets mode](#agentic-wallets-mode) by default. For [single-wallet mode](#single-wallet-mode), add `MNEMONIC` or `PRIVATE_KEY` to the `env` object.
+
+    See [environment variables](#environment-variables) for the full list of configuration options.
+  </Accordion>
+</AccordionGroup>
+
+To start using `@ton/mcp` in agentic wallets mode:
+
+<Steps>
+  <Step
+    title="Create"
+  >
+    To create a first agentic wallet, ask the agent to "create an agentic wallet" and follow the instructions.
+
+    The process goes as follows:
+
+    1. The agent generates private keys for a new wallet and suggests [opening the dashboard](https://agentic-wallets-dashboard.vercel.app).
+    1. On the dashboard, the user should connect their regular mainnet or testnet TON wallet: it will be the owner of an agentic wallet.
+    1. Agentic wallet gets deployed from the dashboard.
+    1. User provides the address of the deployed agentic wallet to the agent.
+    1. Agent imports the wallet and becomes able to sign transactions using its operator key.
+
+    The user can revoke access or withdraw funds at any time from the dashboard.
+  </Step>
+
+  <Step
+    title="Fund"
+  >
+    An agentic wallet is a TON contract that needs Toncoin to operate. There are three ways to fund it:
+
+    1. During creation: use the "Initial TON deposit" field on the deployment page.
+    1. From the dashboard: use the <kbd>Fund</kbd> button to transfer Toncoin, jettons, or NFTs.
+    1. Directly: use a wallet app like Tonkeeper to transfer assets to the agentic wallet address directly.
+
+    To check the balance, ask the agent: "What is my agent balance?"
+  </Step>
+
+  <Step
+    title="Use"
+  >
+    Once setup is complete, ask agent to perform desired actions. For example:
+
+    - "Send 1 TON to UQB..\_WALLET\_ADDRESS" - sign and send a transfer from the agentic wallet.
+    - "Swap 5 TON for USDT" - get a quote and execute a swap.
+    - "Resolve the contract address of this DNS domain: DOMAIN\_NAME.ton" - obtain the wallet address of the domain owner.
+    - "Show my NFTs" - query all NFTs owned by the wallet.
+    - "Check my balance" - current Toncoin and jetton balances. Do not use this data for any calculations, as it becomes outdated quickly.
+    - "Get my last transactions" - list of several latest events initiated by the wallet.
+    - "Import agentic wallet" - reinstate a wallet previously managed by another agent.
+  </Step>
+
+  <Step
+    title="Observe the dashboard"
+  >
+    Local web dashboard allows to see all agentic wallets in one place. Monitor transactions, fund and withdraw assets, grant and revoke accesses, rotate operator keys without redeploying the wallets.
+  </Step>
+</Steps>
+
+## Runtime modes
+
+`@ton/mcp` supports two runtime modes:
+
+- [Agentic wallets mode](#agentic-wallets-mode) (default) - operates with self-custody wallets for autonomous AI agents.
+- [Single-wallet mode](#single-wallet) - operates with a single in-memory wallet.
+
+### Agentic wallets mode
+
+[Agentic wallets][wallets] are self-custody wallets designed for autonomous agents. The user retains the owner (master) key, and the agent holds a separate operator key. This split-key design gives agents access to transfers, swaps, and other on-chain operations without exposing the root credentials.
+
+Agentic wallets mode is the **default**. When neither `MNEMONIC` nor `PRIVATE_KEY` is set, the server loads wallets from a local config registry at `~/.config/ton/config.json` or the path in `TON_CONFIG_PATH`.
+
+In this mode the server provides additional tools for multi-wallet management, agentic wallet onboarding, operator key rotation, and wallet import. Wallet-scoped tools accept an optional selector parameter: wallet ID, name, or address. When omitted, the current active wallet is used.
 
 ```shell
-# Run as stdio MCP server in registry mode
-# MNEMONIC and PRIVATE_KEY are both unset
+# Start in agentic wallets mode (default)
 npx @ton/mcp@alpha
 
-# Run in registry mode with a custom config path
+# Start with a custom config path
 TON_CONFIG_PATH=/path/to/config.json npx @ton/mcp@alpha
+```
 
-# Run as stdio MCP server with mnemonic
-MNEMONIC="word1 word2 ..." npx @ton/mcp@alpha
+### Single-wallet mode
 
-# Run as HTTP server (port 3000)
-npx @ton/mcp@alpha --http
+Single-wallet mode starts the server with one in-memory wallet derived from a mnemonic or private key. This mode is useful for one-off tasks or for operating a single known wallet.
 
-# Run as HTTP server on custom port
-npx @ton/mcp@alpha --http 8080
+Set `MNEMONIC` or `PRIVATE_KEY` as an environment variable to activate this mode:
 
-# Run with custom agentic wallet contract
-PRIVATE_KEY="0x.._YOUR_PRIVATE_KEY" \
-WALLET_VERSION="agentic" \
+```shell
+# First, securely set either a MNEMONIC="<WORD_1> <WORD_2> ... <WORD_24>"
+# or a PRIVATE_KEY="<HEX_PRIVATE_KEY>"
+
+# Then, launch the server
+npx @ton/mcp@alpha
+```
+
+<Aside
+  type="danger"
+  title="Funds at risk"
+>
+  `MNEMONIC` and `PRIVATE_KEY` grant full control of the wallet. Store these values in environment variables or a secrets manager. Do not commit them to Git or other source control systems. Do not pass them inline in shell commands.
+</Aside>
+
+The default TON wallet version in the single-wallet mode is [`v5r1`][wallets-comparison]. Override it with `WALLET_VERSION`:
+
+```shell
+# First, securely set either a MNEMONIC or a PRIVATE_KEY
+# Then, use a diffent wallet version
+WALLET_VERSION=v4r2 npx @ton/mcp@alpha
+
+# When using an agentic wallet in a single-wallet mode,
+# one may also set its wallet address explicitly.
+# Otherwise, it will be derived from init params.
+WALLET_VERSION=agentic \
 AGENTIC_WALLET_ADDRESS="EQ.._WALLET_ADDRESS" \
 npx @ton/mcp@alpha
 ```
 
-### Usage with MCP clients
+## Transport modes
 
-For Claude or Cursor, add:
+The `@ton/mcp` server supports three transport modes:
+
+- [Standard I/O](#standard-i%2Fo) (stdio, default)
+- [HTTP](#http)
+- [Serverless](#serverless)
+
+### Standard I/O
+
+Standard IO is the default transport. The server reads MCP requests from stdin and writes responses to stdout. Most MCP clients, including Claude Desktop and Cursor, can use this transport. They spawn the server process and interact over standard streams.
+
+```shell
+npx @ton/mcp@alpha
+```
+
+### HTTP
+
+HTTP mode starts a multi-session HTTP server. Each MCP client session gets its own server transport, so multiple clients can initialize and reconnect independently.
+
+```shell
+# Start on the default port (3000)
+npx @ton/mcp@alpha --http
+
+# Start on a custom port
+npx @ton/mcp@alpha --http 8080
+
+# Start on a custom host and port
+npx @ton/mcp@alpha --http 8080 --host 127.0.0.1
+```
+
+The MCP endpoint is available at `http://<HOST>:<PORT>/mcp`. Point the MCP client to this URL to connect.
+
+### Serverless
+
+The package exports a `@ton/mcp/serverless` entry point for deployment as a serverless function on AWS Lambda, Vercel, Cloudflare Workers, and similar platforms. In serverless mode, credentials are passed via request headers rather than environment variables.
+
+<Aside
+  type="danger"
+  title="Funds at risk"
+>
+  Serverless headers carry wallet credentials in every request. Use HTTPS in production to prevent credential interception. Restrict access to the serverless endpoint with authentication or network-level controls.
+</Aside>
+
+Serverless mode operates in [single-wallet mode](#single-wallet-mode) only and always uses the [`v5r1` TON wallet version][wallets-comparison]. It does not use the wallet registry, nor does it expose wallet management or onboarding tools.
+
+| Header          | Description                                                                                              |
+| --------------- | -------------------------------------------------------------------------------------------------------- |
+| `MNEMONIC`      | Space-separated 24-word mnemonic phrase.                                                                 |
+| `PRIVATE_KEY`   | Hex-encoded 32-byte or 64-byte private key (paired with the public key). Takes priority over `MNEMONIC`. |
+| `NETWORK`       | Either `mainnet` (default) or `testnet`.                                                                 |
+| `TONCENTER_KEY` | Optional API key for higher rate limits.                                                                 |
 
 <CodeGroup>
-  ```json title="Registry mode"
-  {
-    "mcpServers": {
-      "ton": {
-        "command": "npx",
-        "args": ["-y", "@ton/mcp@alpha"],
-        "env": {
-          "TON_CONFIG_PATH": "/absolute/path/to/config.json"
-        }
-      }
-    }
-  }
+  ```typescript title="AWS Lambda"
+  import { createServerlessHandler } from '@ton/mcp/serverless';
+  export const handler = createServerlessHandler();
   ```
 
-  ```json title="Single-wallet mode"
-  {
-    "mcpServers": {
-      "ton": {
-        "command": "npx",
-        "args": ["-y", "@ton/mcp@alpha"],
-        "env": {
-          "MNEMONIC": "word1 word2 word3 ...",
-          "PRIVATE_KEY": "0x.._YOUR_PRIVATE_KEY_HERE (optional, alternative to MNEMONIC)"
-        }
-      }
-    }
-  }
+  ```typescript title="Vercel"
+  import { createServerlessHandler } from '@ton/mcp/serverless';
+  export default createServerlessHandler();
+  ```
+
+  ```typescript title="Custom integration"
+  import { createServerlessHandler } from '@ton/mcp/serverless';
+  const handle = createServerlessHandler();
+  const response = await handle({
+    method: 'POST',
+    url: '/mcp',
+    headers: {
+      'MNEMONIC': '<WORD_1> <WORD_2> ... <WORD_24>',
+      'NETWORK': 'mainnet',
+    },
+    body: {},
+  });
   ```
 </CodeGroup>
 
-For HTTP mode, start the server and point the MCP client to the endpoint:
+## Available tools
 
-```shell
-npx @ton/mcp@alpha --http 3000
-# MCP endpoint: http://localhost:3000/mcp
+### Common tools
+
+<Aside
+  type="caution"
+  title="Confirm before sending"
+>
+  All transfer tools move real funds. The agent confirms every transfer with the user before executing. After sending, the default flow polls `get_transaction_status` until the transaction completes or fails.
+</Aside>
+
+- Wallet management:
+  - `get_wallet` - returns the current wallet address and network: `mainnet` or `testnet`.
+- Balances and history:
+  - `get_balance` - returns the Toncoin balance of the current wallet.
+  - `get_balance_by_address` - returns the Toncoin balance for any address.
+  - `get_jetton_balance` - returns the balance of a specific jetton in the current wallet.
+  - `get_jettons` - lists all jettons held by the current wallet with balances and metadata.
+  - `get_jettons_by_address` - lists all jettons held by any address with balances and metadata. Supports pagination.
+  - `get_jetton_info` - returns metadata for a jetton master contract: name, symbol, decimals, image, URI.
+  - `get_known_jettons` - returns a built-in list of popular jettons on TON with addresses and metadata.
+  - `get_transactions` - returns recent transaction history: Toncoin transfers, jetton transfers, swaps.
+  - `get_transaction_status` - returns the status (pending, completed, or failed) and trace details for a transaction by its normalized hash.
+- Transfers:
+  - `send_ton` - sends Toncoin to an address. Amounts are in human-readable format. For example, `"1.5"` for 1.5 Toncoin. Returns a `normalizedHash`.
+  - `send_jetton` - sends jettons to an address. Amounts are in human-readable format. Returns a `normalizedHash`.
+  - `send_nft` - transfers an NFT to another address. Returns a `normalizedHash`.
+  - `send_raw_transaction` - sends a raw transaction with full control over messages. Amounts are in nanoToncoin. Supports multiple messages. Returns a `normalizedHash`.
+- Swaps:
+  - `get_swap_quote` - returns a quote for a token swap. The response includes transaction parameters ready for `send_raw_transaction`. Use `"TON"` for native Toncoin or a jetton master contract address.
+- NFTs:
+  - `get_nfts` - lists NFTs in the current wallet with metadata, collection info, and attributes. Supports pagination.
+  - `get_nfts_by_address` - lists NFTs held by any address. Supports pagination.
+  - `get_nft` - returns detailed information about a specific NFT by its item contract address.
+- DNS:
+  - `resolve_dns` - resolves a TON DNS domain to a wallet address.
+  - `back_resolve_dns` - reverse-resolves a wallet address to its associated DNS domain when one exists.
+
+### Agentic tools
+
+- Wallet management:
+  - `list_wallets` - lists all wallets in the local config registry.
+  - `get_current_wallet` - returns the active wallet from the local config registry.
+  - `set_active_wallet` - switches the active wallet in the local config registry by its ID, name, or address.
+  - `remove_wallet` - soft-deletes a wallet from the local config registry. The wallet remains in the config file but is hidden from MCP lookups.
+- Agentic wallet management:
+  - `agentic_validate_wallet` - validates an agentic wallet address against the expected network and collection.
+  - `agentic_list_wallets_by_owner` - lists agentic wallets owned by a given main wallet address.
+  - `agentic_import_wallet` - imports existing agentic wallet into the local registry. If no matching pending draft exists, the wallet is read-only until `agentic_rotate_operator_key` completes.
+  - `agentic_rotate_operator_key` - starts operator key rotation: generates a replacement key, persists a pending draft, and returns a dashboard URL for the on-chain change.
+  - `agentic_get_pending_operator_key_rotation` - returns one pending operator key rotation by ID.
+  - `agentic_complete_rotate_operator_key` - completes a key rotation after the on-chain transaction confirms and updates the stored operator key locally.
+  - `agentic_cancel_rotate_operator_key` - cancels a pending key rotation and discards the replacement key.
+- Agentic wallet onboarding:
+  - `agentic_start_root_wallet_setup` - starts first-time root agent setup: generates operator keys, persists a pending draft, and returns a dashboard URL.
+  - `agentic_list_pending_root_wallet_setups` - lists pending root agent onboarding drafts and their callback status.
+  - `agentic_get_root_wallet_setup` - returns one pending onboarding draft by setup ID.
+  - `agentic_complete_root_wallet_setup` - completes onboarding from a callback payload or a manually supplied wallet address, then imports the wallet and makes it active.
+  - `agentic_cancel_root_wallet_setup` - cancels a pending onboarding draft and removes its state.
+
+## Environment variables
+
+### Common
+
+<ParamField
+  path="NETWORK"
+  type="string"
+  default="mainnet"
+>
+  TON network and default env override target for `TONCENTER_API_KEY`. Use `mainnet` for production and `testnet` for development and testing.
+
+  Defaults to `mainnet`.
+</ParamField>
+
+<ParamField
+  path="TONCENTER_API_KEY"
+  type="string"
+>
+  API key for [TON Center](/ecosystem/api/toncenter/introduction). Raises the default rate limit from 1 request per second to the limit of the selected plan. Without a key, the server uses a built-in shared key suitable for low-volume development and experiments.
+
+  For production workloads, [obtain a dedicated key](/ecosystem/api/toncenter/get-api-key).
+</ParamField>
+
+<ParamField
+  path="AGENTIC_CALLBACK_BASE_URL"
+  type="string"
+>
+  Optional public base URL for agentic onboarding callbacks
+</ParamField>
+
+<ParamField
+  path="AGENTIC_CALLBACK_HOST"
+  type="string"
+>
+  Host for the local callback server in stdio mode. Defaults to `127.0.0.1`.
+</ParamField>
+
+<ParamField
+  path="AGENTIC_CALLBACK_PORT"
+  type="string"
+>
+  Port for the local callback server in stdio mode. Defaults to a random free port.
+</ParamField>
+
+### Agentic wallets
+
+<ParamField
+  path="TON_CONFIG_PATH"
+  type="string"
+  default="~/.config/ton/config.json"
+>
+  Config path for agentic wallets mode. Defaults to `~/.config/ton/config.json`.
+</ParamField>
+
+### Single-wallet
+
+<ParamField
+  path="MNEMONIC"
+  type="string"
+>
+  Space-separated 24-word mnemonic phrase for the single-wallet mode.
+
+  Alternative to `PRIVATE_KEY`.
+</ParamField>
+
+<ParamField
+  path="PRIVATE_KEY"
+  type="string"
+>
+  Hex-encoded private key for the single-wallet mode. Can be given either 32-byte standalone or 64-byte when paired with the public key.
+
+  Alternative to `MNEMONIC`. Takes priority over it.
+</ParamField>
+
+<ParamField
+  path="WALLET_VERSION"
+  type="string"
+  default="v5r1"
+>
+  TON wallet version to use in the single-wallet mode: [`v5r1`, `v4r2`][wallets-comparison], or [`agentic`][wallets].
+
+  Defaults to `v5r1`.
+</ParamField>
+
+<ParamField
+  path="AGENTIC_WALLET_ADDRESS"
+  type="string"
+>
+  Address of the agentic wallet in the single-wallet mode. Required for `WALLET_VERSION` set to `agentic`, unless derived from initial params.
+</ParamField>
+
+<ParamField
+  path="AGENTIC_WALLET_NFT_INDEX"
+  type="uint256"
+>
+  Optional index of the agentic wallet NFT contract.
+
+  Defaults to none.
+</ParamField>
+
+<ParamField
+  path="AGENTIC_COLLECTION_ADDRESS"
+  type="string"
+  default="EQByQ19qvWxW7VibSbGEgZiYMqilHY5y1a_eeSL2VaXhfy07"
+>
+  Agentic collection address override for single-wallet mode.
+
+  Defaults to `EQByQ19qvWxW7VibSbGEgZiYMqilHY5y1a_eeSL2VaXhfy07` on the mainnet.
+</ParamField>
+
+## Library usage
+
+The package also exports a programmatic API for building custom MCP servers:
+
+```typescript
+import { createTonWalletMCP } from '@ton/mcp';
+import {
+  Signer,
+  WalletV5R1Adapter,
+  TonWalletKit,
+  MemoryStorageAdapter,
+  Network,
+} from '@ton/walletkit';
+
+// Mnemonic as a single string of 24 words:
+// "<WORD_1> <WORD_2> ... <WORD_24>"
+const MNEMONIC = process.env.MNEMONIC!;
+
+// Initialize WalletKit
+const network = Network.mainnet();
+const kit = new TonWalletKit({
+  networks: { [network.chainId]: {} },
+  storage: new MemoryStorageAdapter(),
+});
+await kit.waitForReady();
+
+// Create a wallet from a mnemonic
+const signer = await Signer.fromMnemonic(MNEMONIC.split(' '), { type: 'ton' });
+const walletAdapter = await WalletV5R1Adapter.create(signer, {
+  client: kit.getApiClient(network),
+  network,
+});
+const wallet = await kit.addWallet(walletAdapter);
+
+// Create the MCP server object
+const server = await createTonWalletMCP({ wallet });
 ```
 
-HTTP mode keeps a separate MCP session (transport) per client session ID, so multiple clients can initialize and reconnect independently.
+Agentic wallets mode:
 
-### Environment variables
+```typescript
+import { createTonWalletMCP } from '@ton/mcp';
 
-| Variable                     | Default                                            | Description                                                                                                                                  |
-| ---------------------------- | :------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NETWORK`                    | `mainnet`                                          | TON network and default env override target for `TONCENTER_API_KEY`. Use `mainnet` for production and `testnet` for development and testing. |
-| `MNEMONIC`                   |                                                    | Space-separated 24-word mnemonic phrase for single-wallet mode                                                                               |
-| `PRIVATE_KEY`                |                                                    | Hex-encoded private key: 32-byte seed or 64-byte (private + public key), alternative to mnemonic                                             |
-| `WALLET_VERSION`             | `v5r1`                                             | Wallet version to use in single-wallet mode (`v5r1`, `v4r2`, or `agentic`)                                                                   |
-| `AGENTIC_WALLET_ADDRESS`     |                                                    | Agentic wallet address (required for `WALLET_VERSION=agentic`, unless derived from init params)                                              |
-| `AGENTIC_WALLET_NFT_INDEX`   |                                                    | Agentic wallet NFT index or subwallet ID (`uint256`, optional)                                                                               |
-| `AGENTIC_COLLECTION_ADDRESS` | `EQByQ19qvWxW7VibSbGEgZiYMqilHY5y1a_eeSL2VaXhfy07` | Agentic collection address override for single-wallet mode                                                                                   |
-| `TONCENTER_API_KEY`          |                                                    | API key for TON Center (optional, for higher rate limits)                                                                                    |
-| `TON_CONFIG_PATH`            | `~/.config/ton/config.json`                        | Config path for registry mode                                                                                                                |
-| `AGENTIC_CALLBACK_BASE_URL`  |                                                    | Optional public base URL for agentic onboarding callbacks                                                                                    |
-| `AGENTIC_CALLBACK_HOST`      | `127.0.0.1`                                        | Host for the local callback server in stdio mode                                                                                             |
-| `AGENTIC_CALLBACK_PORT`      | random free port                                   | Port for the local callback server in stdio mode                                                                                             |
+// A key for higher RPS limits
+const TONCENTER_API_KEY = process.env.TONCENTER_API_KEY!;
+
+// Create the MCP server object
+const server = await createTonWalletMCP({
+  networks: {
+    mainnet: { apiKey: TONCENTER_API_KEY },
+  },
+});
+```
+
+## See also
+
+- [Agentic wallets][wallets]
+- [`@ton/mcp` on GitHub][mcp-repo]
+
+[mcp-repo]: https://github.com/ton-connect/kit/tree/main/packages/mcp
+[mcp-npm]: https://www.npmjs.com/package/@ton/mcp?activeTab=versions
+[mcp-spec]: https://modelcontextprotocol.io/
+[wallets]: /ecosystem/ai/wallets
+[wallets-comparison]: /standard/wallets/comparison#comparison-table
+[changelog]: https://github.com/ton-connect/kit/blob/main/packages/mcp/CHANGELOG.md
