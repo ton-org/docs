@@ -8,9 +8,22 @@
  *   target?: '_self' | '_blank' | '_parent' | '_top' | '_unfencedTop',
  *   height?: string | number,
  *   width?: string | number,
+ *   noZoom?: string | boolean,
+ *   center?: string | boolean,
  * }} props
  */
-export const Image = ({ src, darkSrc, alt = "", darkAlt, href, target, height = 342, width = 608 }) => {
+export const Image = ({
+  src,
+  darkSrc,
+  alt = '',
+  darkAlt,
+  href,
+  target,
+  height = 342,
+  width = 608,
+  noZoom = false,
+  center = false,
+}) => {
   const isSVG = src.match(/\.svg(?:[#?].*?)?$/i) !== null;
   const shouldInvert = isSVG && !darkSrc;
   const shouldCreateLink = href !== undefined;
@@ -75,6 +88,10 @@ export const Image = ({ src, darkSrc, alt = "", darkAlt, href, target, height = 
   const heightPx = Number(height);
   const widthPx = Number(width);
 
+  // Typecast string | boolean values to boolean-only
+  const shouldCenter = center === "true" || center === true ? true : false;
+  const shouldNotZoom = noZoom === "true" || noZoom === true ? true : false;
+
   // Resulting images
   const images = (
     <>
@@ -85,7 +102,7 @@ export const Image = ({ src, darkSrc, alt = "", darkAlt, href, target, height = 
         {...(height && { height: heightPx })}
         {...(width && { width: widthPx })}
         // @ts-ignore
-        {...((shouldCreateLink || shouldInvert) && { noZoom: "true" })}
+        {...((shouldCreateLink || shouldInvert || shouldNotZoom) && { noZoom: "true" })}
       />
       <img
         className={`hidden dark:block ${shouldInvert ? "invert" : ""}`}
@@ -94,13 +111,24 @@ export const Image = ({ src, darkSrc, alt = "", darkAlt, href, target, height = 
         {...(height && { height: heightPx })}
         {...(width && { width: widthPx })}
         // @ts-ignore
-        {...((shouldCreateLink || shouldInvert) && { noZoom: "true" })}
+        {...((shouldCreateLink || shouldInvert || shouldNotZoom) && { noZoom: "true" })}
       />
     </>
   );
 
   // Is a clickable link
   if (shouldCreateLink) {
+    // Centered horizontally
+    if (shouldCenter) {
+      return (
+        <div style={{ display: "flex", justifyContent: "center" }}>
+          <a href={href} target={target ?? "_self"}>
+            {images}
+          </a>
+        </div>
+      );
+    }
+
     return (
       <a href={href} target={target ?? "_self"}>
         {images}
@@ -108,6 +136,11 @@ export const Image = ({ src, darkSrc, alt = "", darkAlt, href, target, height = 
     );
   }
 
-  // Not a link
+  // Not a link, centered horizontally
+  if (shouldCenter) {
+    return <div style={{ display: "flex", justifyContent: "center" }}>{images}</div>;
+  }
+
+  // Not a link, placed as is
   return images;
 };
