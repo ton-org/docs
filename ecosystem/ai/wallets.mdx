@@ -5,31 +5,47 @@ sidebarTitle: "Agentic wallets"
 
 import { Aside } from '/snippets/aside.jsx';
 
-Agentic wallets are self-custody wallets designed for autonomous AI agents on TON. They provide a split-key architecture: the user retains the owner (master) key, while the agent holds an operator key. This separation allows agents to perform on-chain operations, such as transfers, swaps, and DNS lookups, without exposing the user's root credentials.
+Agentic wallets are self-custody wallets designed for autonomous AI agents on TON.
 
 <Aside
   type="caution"
   title="Developer preview"
 >
-  The agentic wallet contracts have not been audited. Use testnet for experiments.
+  Agentic wallet contracts have not been audited. Use testnet for experiments.
 </Aside>
 
 ## Split-key architecture
 
-Each agentic wallet is a smart contract deployed as [Soulbound Token (SBT)](/standard/tokens/nft/comparison#sbt) within a shared NFT collection. Internally, each agentic wallet retains full [wallet v5](/standard/wallets/comparison#comparison-table) functionality. It stores the owner address (user's main wallet), the operator public key (agent's key), and a nonce for protection from replay attacks.
+Each agentic wallet is a smart contract deployed as [Soulbound Token (SBT)](/standard/tokens/nft/comparison#sbt) within a shared NFT collection. Internally, each agentic wallet retains full [wallet v5](/standard/wallets/comparison#comparison-table) functionality. It stores the user's address (owner), the agent's (operator) public key, and a nonce to protect against replay attacks.
 
-The contract has two roles:
+The deployment process goes as follows:
 
-- Owner - the user who created the wallet. Holds the owner (master) key and can withdraw funds, rotate the operator key, or deactivate the agent at any time by setting the operator key to zero.
-- Operator - the AI agent. Holds a separate operator key and can initiate transactions within the permissions granted by the owner.
+1. The agent creates a pair of keys (public and private), keeping the private key in the local config registry.
+2. User deploys an agentic wallet from their regular TON wallet by providing the operator's public key and wallet address (owner address).
+3. The contract checks that the sender's address matches the stored owner's address. If it doesn't match, the wallet will be deployed in an uninitialized state and will not appear in explorers, preventing the creation of unwanted wallets without the user's consent.
+4. If deployment is successful, the agent receives the address of the new wallet.
 
-Transactions initiated by the operator must be signed with the operator key. Because the operator key is separate from the owner key, the agent never has full custody of user funds. However, an agent with an active operator key has complete control of its own wallet balance and assets.
+With a private operator key and a new wallet address, the agent can sign and send transactions from that wallet. Alas, the user can withdraw funds, rotate the operator key, or deactivate the agent at any time by setting the operator key to zero.
+
+This split-key design gives agents access to transfers, swaps, and other on-chain operations without exposing the user's root credentials or violating the user's ownership and control.
+
+## Funding
+
+Transactions initiated by the agent (operator) must be signed with the operator key. Because the operator key is separate from the user's key (owner's key), the agent never controls the owner's main wallet. However, an agent with an active operator key has complete control of the balance and assets held in its own agentic wallet.
 
 <Aside
   type="caution"
 >
   Only fund agentic wallets with amounts and assets that they are allowed to risk.
 </Aside>
+
+## Sub-wallets
+
+An agent that already has at least one user-created wallet can create additional child wallets from that wallet. In that case, sender verification uses the original operator public key of the parent user-root wallet.
+
+Child wallets created by an agent cannot create additional child wallets. Thus, agents can only create child wallets from the user-created wallets. If a deploy request comes from an agent-created wallet, the contract rejects it.
+
+On the other hand, users can indefinitely deploy new wallets and form child wallet chains. Further, users can revoke access or withdraw funds from any deployed wallet at any time using the dashboard.
 
 ## Dashboard
 
@@ -53,7 +69,7 @@ The recommended way to create and use agentic wallets is through [`@ton/mcp`](/e
   <Accordion
     title="Is this safe?"
   >
-    The owner (master) key is never shared with agents. The agent has its own operator key that can only be used to spend from its own wallet. All operations are performed on-chain with no intermediaries.
+    The owner key is never shared with agents. The agent has its own operator key that can only be used to spend from its own agentic wallet, and any balance in that wallet is fully under the agent's control. All operations are performed on-chain with no intermediaries.
   </Accordion>
 
   <Accordion
