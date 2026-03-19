@@ -43,21 +43,11 @@ Retrieve current values with `get stake` or `get stakePercent`.
 
 MyTonCtrl evaluates stake sources in a fixed priority order. The first rule that produces a value wins; later rules are skipped.
 
-### Priority 1: Explicit argument
-
-When the operator passes a stake value directly (for example, through an election entry command), MyTonCtrl uses it as-is.
-
-- **Percentage form** (e.g., `75%`): computes `stake = balance * 75 / 100`.
-- **Absolute form** (e.g., `500000`): uses the number directly.
-- **Invalid input**: logs an error and aborts the election entry.
-
-After parsing, a safety clamp applies: if the computed stake exceeds `balance - 10`, MyTonCtrl reduces it to `balance - 10` to reserve 10 TON for transaction fees.
-
-### Priority 2: Saved fixed stake
+### Priority 1: Saved fixed stake
 
 If the operator previously ran `set stake <VALUE>`, MyTonCtrl uses that stored amount directly. No additional fee reserve is subtracted at this stage; the value passes straight to the validation guards.
 
-### Priority 3: Nominator pool mode
+### Priority 2: Nominator pool mode
 
 When the node operates through a standard nominator pool (not a single nominator pool), MyTonCtrl sets:
 
@@ -68,10 +58,10 @@ stake = balance - 20
 The 20 TON reserve covers the higher fee overhead of pool operations (deploy, process, and distribute messages).
 
 <Aside type="note">
-  Single nominator pools are excluded from this rule. They fall through to the percentage-based calculation (Priority 5) because single nominator pools behave like direct staking economically.
+  Single nominator pools are excluded from this rule. They fall through to the percentage-based calculation (Priority 4) because single nominator pools behave like direct staking economically.
 </Aside>
 
-### Priority 4: Liquid staking controller mode
+### Priority 3: Liquid staking controller mode
 
 When the node uses a liquid staking controller, MyTonCtrl sets:
 
@@ -81,7 +71,7 @@ stake = balance - 50
 
 The 50 TON reserve is the largest of all modes. Liquid staking controllers perform complex multi-step transactions (minting, burning, and balance adjustments), requiring a bigger fee cushion.
 
-### Priority 5: Percentage-based calculation (default)
+### Priority 4: Percentage-based calculation (default)
 
 If none of the above rules produce a value, MyTonCtrl falls back to percentage-based calculation using `stakePercent`. This is the most common path for single nominator pools and direct staking.
 
@@ -125,8 +115,7 @@ Each staking mode reserves a different amount for transaction fees:
 
 | Mode                               | Reserve (TON) | Reason                                                        |
 | ---------------------------------- | ------------- | ------------------------------------------------------------- |
-| Direct staking (explicit argument) | 10            | Minimal fees for a single stake transaction.                  |
-| Direct staking (saved fixed stake) | 0             | The stored value is used as-is; only validation guards apply. |
+| Saved fixed stake                  | 0             | The stored value is used as-is; only validation guards apply. |
 | Nominator pool                     | 20            | Multiple messages for pool lifecycle operations.              |
 | Liquid staking controller          | 50            | Complex multi-step DeFi transactions.                         |
 | Percentage at 100% (default mode)  | 20            | General safety margin when no non-staked remainder exists.    |
@@ -137,8 +126,8 @@ Each staking mode reserves a different amount for transaction fees:
 
 Settings: `stakePercent = 99`, no fixed `stake`, single nominator pool mode.
 
-1. No explicit argument, no saved fixed stake, not a standard nominator pool, not a controller.
-1. Falls through to percentage-based calculation (Priority 5).
+1. No saved fixed stake, not a standard nominator pool, not a controller.
+1. Falls through to percentage-based calculation (Priority 4).
 1. No active validators detected (new node): halving applies.
 1. `stake = 800,000 * 99 / 100 / 2 = 396,000`.
 1. `396,000 > minStake` (300,000): halving is kept.
@@ -172,19 +161,17 @@ Settings: `stakePercent = 100`, single nominator pool mode.
 1. `250,000 < minStake` (300,000): halving is abandoned.
 1. Full percentage is used: `500,000`.
 1. `stakePercent == 100`: 20 TON fee deduction: `500,000 - 20 = 499,980`.
-1. Result: **499,980 TON** is submitted. The node participates in this round but may miss the next one because all funds are locked.
+1. Result: **499,980 TON** is submitted.
 
-<Aside
-  type="caution"
->
-  When halving is abandoned due to minimum stake constraints, the node stakes nearly its entire balance. This means no funds remain for the next election round. The node will rejoin automatically once the elector returns the stake at the end of the validation round.
+<Aside type="note">
+  When halving is abandoned due to minimum stake constraints, the node participates only in every second validation round until the balance grows enough to cover both rounds.
 </Aside>
 
 ### Nominator pool with 2,000,000 TON balance
 
 Settings: standard nominator pool mode (not single nominator).
 
-1. Pool mode detected (Priority 3).
+1. Pool mode detected (Priority 2).
 1. `stake = 2,000,000 - 20 = 1,999,980`.
 1. Result: **1,999,980 TON** is submitted.
 
