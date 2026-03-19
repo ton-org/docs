@@ -1,0 +1,116 @@
+---
+title: "Apps communication"
+---
+
+The Telegram client and a Mini App communicate through a message-passing interface. The exact transport depends on the platform, but the protocol is the same: the Mini App sends **methods** to the Telegram client, and the Telegram client sends **events** back to the Mini App.
+
+## Methods and events
+
+Two terms describe the communication directions:
+
+- **Methods** — calls sent from the Mini App to the Telegram client. A method triggers an action in the native app (for example, showing a popup or expanding the viewport).
+- **Events** — signals sent from the Telegram client to the Mini App. An event notifies the Mini App that something happened (for example, the viewport changed or a button was pressed).
+
+Internally both are messages, but "methods" and "events" distinguish the direction throughout the Mini Apps platform.
+
+## Transport by platform
+
+The transport mechanism varies by Telegram client:
+
+| Platform | Transport | Details |
+|----------|-----------|---------|
+| Web (Telegram Web A, Web K) | `window.parent.postMessage` | The Mini App runs in an `<iframe>`. Messages are JSON strings passed between frames. |
+| Desktop and mobile (Android, iOS, macOS, tdesktop) | `window.TelegramWebviewProxy.postEvent` | Telegram injects a global function into the WebView. |
+| Windows Phone | `window.external.notify` | Same JSON format as the web version. |
+
+## Calling methods
+
+### Web
+
+The web version displays the Mini App in an `<iframe>`. Communication uses `window.parent.postMessage` with a JSON string:
+
+```typescript
+const data = JSON.stringify({
+  eventType: 'web_app_setup_back_button',
+  eventData: { is_visible: true },
+});
+
+window.parent.postMessage(data, 'https://web.telegram.org');
+```
+
+Pass a [target origin](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage#targetorigin) to restrict which parent frame can receive the message. Use `https://web.telegram.org` as the default.
+
+### Desktop and mobile
+
+Desktop and mobile clients inject `window.TelegramWebviewProxy.postEvent` into the WebView:
+
+```typescript
+window.TelegramWebviewProxy.postEvent(
+  'web_app_setup_back_button',
+  JSON.stringify({ is_visible: true })
+);
+```
+
+### Windows Phone
+
+The Windows Phone client provides `window.external.notify` with the same JSON format as the web version:
+
+```typescript
+window.external.notify(JSON.stringify({
+  eventType: 'web_app_setup_back_button',
+  eventData: { is_visible: true },
+}));
+```
+
+## Listening to events
+
+### Web
+
+The parent iframe sends events via `window.postMessage`. Add a `message` listener:
+
+```typescript
+window.addEventListener('message', ({ data }) => {
+  const { eventType, eventData } = JSON.parse(data);
+  console.log(eventType, eventData);
+});
+```
+
+<Aside type="caution">
+In production, validate that the `message` event originates from the Telegram application and that `data` is a string before parsing.
+</Aside>
+
+### Desktop, mobile, and Windows Phone
+
+These platforms deliver events by calling a globally defined function:
+
+| Platform | Function path |
+|----------|--------------|
+| Telegram Desktop | `window.TelegramGameProxy.receiveEvent` |
+| Telegram for iOS and Android | `window.Telegram.WebView.receiveEvent` |
+| Windows Phone | `window.TelegramGameProxy_receiveEvent` |
+
+All functions share the same signature:
+
+```typescript
+type ReceiveEvent = (eventType: string, eventData: unknown) => void;
+```
+
+To handle events on all platforms, assign a handler function to all three paths.
+
+## Using the SDK
+
+The [@tma.js/sdk](https://www.npmjs.com/package/@tma.js/sdk) package abstracts away platform differences and provides a unified API for calling methods and listening to events:
+
+```typescript
+import { postEvent, on } from '@tma.js/sdk';
+
+// Call a method
+postEvent('web_app_set_header_color', { color_key: 'bg_color' });
+
+// Listen to an event
+const removeListener = on('viewport_changed', payload => {
+  console.log('Viewport changed:', payload);
+});
+```
+
+For the full list of available methods and events, see the [@tma.js/sdk documentation](https://docs.telegram-mini-apps.com/packages/tma-js-sdk).
