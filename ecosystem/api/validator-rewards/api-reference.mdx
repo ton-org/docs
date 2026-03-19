@@ -1,0 +1,194 @@
+---
+title: "Validator Rewards API reference"
+sidebarTitle: "API reference"
+mode: "wide"
+---
+
+import { Aside } from "/snippets/aside.jsx";
+
+Self-hosted HTTP endpoints for validator stake, validation round metadata, and
+finished round reward distribution.
+
+<Aside type="note">
+  Replace `<BASE_URL>` with the address of a running deployment, for example
+  `http://localhost:8080`.
+</Aside>
+
+## Formats and conventions
+
+- All balance, stake, and reward fields are decimal strings in nanoTON.
+  `1 TON = 1,000,000,000 nanoTON`.
+- `seqno` and `block` values are masterchain block sequence numbers.
+- `election_id` is the validation round `electAt` timestamp.
+- `election_id` and `block` are mutually exclusive on endpoints that accept
+  both parameters.
+- Error responses use HTTP `400` for invalid query parameters and HTTP `500`
+  for service-side failures.
+
+Define placeholders:
+`<BASE_URL>`: base URL of the running service.
+`<SEQNO>`: masterchain block sequence number.
+`<BLOCK>`: masterchain block sequence number inside the target round.
+`<ELECTION_ID>`: election ID of the target round.
+
+## Service routes
+
+| Endpoint                | Response | Description                               |
+| ----------------------- | -------- | ----------------------------------------- |
+| `GET /health`           | JSON     | Return `{"status":"ok"}`.                 |
+| `GET /swagger`          | HTML     | Return the local Swagger UI.              |
+| `GET /api/openapi.yaml` | YAML     | Return the embedded OpenAPI 3.0 document. |
+
+## Common objects
+
+### Validator entry
+
+`validators` in `GET /api/validators` and `GET /api/round-rewards` use the same
+object shape.
+
+| Field                    | Description                                                                                                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `rank`                   | Position in the validator list, sorted by `effective_stake` in descending order.                                                                                                     |
+| `pubkey`                 | Validator public key encoded as lowercase hex.                                                                                                                                       |
+| `effective_stake`        | Effective stake locked in the elector contract.                                                                                                                                      |
+| `weight`                 | Share of total effective stake in the selected response, from `0` to `1`.                                                                                                            |
+| `reward`                 | Reward amount. In `GET /api/validators`, this is the per-block estimate for the target block. In `GET /api/round-rewards`, this is the total reward for the selected finished round. |
+| `pool`                   | Pool smart contract address in bounceable base64url form, when available.                                                                                                            |
+| `pool_type`              | Detected pool type: `nominator-pool-v1.0`, `single-nominator-pool-v1.0`, `single-nominator-pool-v1.1`, or `other`.                                                                   |
+| `validator_address`      | Validator wallet or control address, when available.                                                                                                                                 |
+| `owner_address`          | Owner address for a single nominator pool, when available.                                                                                                                           |
+| `validator_stake`        | Validator's own deposited funds. Present for `nominator-pool-v1.0`.                                                                                                                  |
+| `nominators_stake`       | Sum of nominator deposits. Present for `nominator-pool-v1.0`.                                                                                                                        |
+| `total_stake`            | Total pool funds computed as `effective_stake + credit`, where `credit` is the returned stake still held in the elector contract.                                                    |
+| `validator_reward_share` | Fraction of rewards kept by the validator, for example `0.3` for `30%`. Present for `nominator-pool-v1.0`.                                                                           |
+| `nominators_count`       | Number of nominators. Present for `nominator-pool-v1.0`.                                                                                                                             |
+| `nominators`             | Array of nominator entries. Present for `nominator-pool-v1.0`.                                                                                                                       |
+
+Pool type background:
+
+- [Nominator pool contracts](/ecosystem/staking/nominator-pools)
+- [Single nominator pool contracts](/ecosystem/staking/single-nominator)
+
+### Nominator entry
+
+| Field             | Description                                                     |
+| ----------------- | --------------------------------------------------------------- |
+| `address`         | Nominator wallet address in bounceable base64url form.          |
+| `weight`          | Share of total nominator deposits in the pool, from `0` to `1`. |
+| `reward`          | Reward amount assigned to the nominator.                        |
+| `effective_stake` | Nominator share of the validator's effective stake.             |
+| `stake`           | Raw nominator deposit in the pool contract.                     |
+
+## `GET /api/validators`
+
+Return the active validator set for a target masterchain block. If `seqno` is
+not provided, the service uses the latest masterchain block.
+
+```bash
+curl "<BASE_URL>/api/validators?seqno=<SEQNO>"
+```
+
+Query parameters:
+
+| Parameter | Type     | Description                                         |
+| --------- | -------- | --------------------------------------------------- |
+| `seqno`   | `uint32` | Target masterchain block sequence number. Optional. |
+
+Response fields:
+
+| Field                          | Description                                                                                                                                         |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `response_time_ms`             | Server-side response time in milliseconds.                                                                                                          |
+| `block.seqno`                  | Resolved masterchain block sequence number.                                                                                                         |
+| `block.time`                   | Target block time in UTC, RFC 3339 format.                                                                                                          |
+| `validation_round.start`       | Validation round start time for the target block.                                                                                                   |
+| `validation_round.end`         | Validation round end time for the target block.                                                                                                     |
+| `validation_round.start_block` | First masterchain block of the round, when resolved.                                                                                                |
+| `validation_round.end_block`   | Last masterchain block of the round, when the round has already finished.                                                                           |
+| `election_id`                  | Election ID of the round active at the target block.                                                                                                |
+| `prev_election_id`             | Election ID of the previous round, when resolved.                                                                                                   |
+| `next_election_id`             | Election ID of the next round, when the selected round has already finished.                                                                        |
+| `elector_balance`              | Elector contract balance at the target block.                                                                                                       |
+| `total_stake`                  | Sum of effective stakes across the active validator set.                                                                                            |
+| `reward_per_block`             | Estimated total reward for the target block, computed as the change in the elector `bonuses` value between the target block and the previous block. |
+| `validators`                   | Array of validator entries.                                                                                                                         |
+
+## `GET /api/validation-rounds`
+
+Return metadata for the round selected by `election_id`, `block`, or the latest
+masterchain block.
+
+```bash
+curl "<BASE_URL>/api/validation-rounds?block=<BLOCK>"
+```
+
+<Aside type="note">
+  The current implementation returns one selected round inside the `rounds`
+  array, even though the route name is plural.
+</Aside>
+
+Query parameters:
+
+| Parameter     | Type     | Description                                                                                             |
+| ------------- | -------- | ------------------------------------------------------------------------------------------------------- |
+| `election_id` | `int64`  | Return the round that matches this election ID. Optional. Mutually exclusive with `block`.              |
+| `block`       | `uint32` | Return the round that contains this masterchain block. Optional. Mutually exclusive with `election_id`. |
+
+Response fields:
+
+| Field              | Description                                                       |
+| ------------------ | ----------------------------------------------------------------- |
+| `response_time_ms` | Server-side response time in milliseconds.                        |
+| `rounds`           | Array of validation round entries.                                |
+| `error`            | Optional top-level error string when round traversal stops early. |
+
+Validation round entry fields:
+
+| Field              | Description                                                          |
+| ------------------ | -------------------------------------------------------------------- |
+| `election_id`      | Election ID of the selected round.                                   |
+| `start`            | Validation round start time in UTC, RFC 3339 format.                 |
+| `end`              | Validation round end time in UTC, RFC 3339 format.                   |
+| `start_block`      | First masterchain block of the round.                                |
+| `end_block`        | Last masterchain block of the round, when the round has finished.    |
+| `finished`         | `true` when the round has finished.                                  |
+| `prev_election_id` | Election ID of the previous round, when resolved.                    |
+| `next_election_id` | Election ID of the next round, when the selected round has finished. |
+| `error`            | Optional per-round error string.                                     |
+
+## `GET /api/round-rewards`
+
+Return per-validator and per-nominator reward distribution for a finished
+validation round.
+
+```bash
+curl "<BASE_URL>/api/round-rewards?election_id=<ELECTION_ID>"
+```
+
+Exactly one of `election_id` or `block` is required.
+
+Query parameters:
+
+| Parameter     | Type     | Description                                                                                                 |
+| ------------- | -------- | ----------------------------------------------------------------------------------------------------------- |
+| `election_id` | `int64`  | Election ID of a finished round. Optional. Mutually exclusive with `block`.                                 |
+| `block`       | `uint32` | Masterchain block sequence number inside a finished round. Optional. Mutually exclusive with `election_id`. |
+
+Response fields:
+
+| Field              | Description                                             |
+| ------------------ | ------------------------------------------------------- |
+| `response_time_ms` | Server-side response time in milliseconds.              |
+| `election_id`      | Election ID of the selected finished round.             |
+| `prev_election_id` | Election ID of the previous round, when resolved.       |
+| `next_election_id` | Election ID of the next round.                          |
+| `round_start`      | Validation round start time in UTC, RFC 3339 format.    |
+| `round_end`        | Validation round end time in UTC, RFC 3339 format.      |
+| `start_block`      | First masterchain block of the round.                   |
+| `end_block`        | Last masterchain block of the round.                    |
+| `total_bonuses`    | Total bonuses paid by the elector for the round.        |
+| `total_stake`      | Total stake recorded for the round in `past_elections`. |
+| `validators`       | Array of validator entries.                             |
+
+If the selected round has not finished yet, the service returns HTTP `500` with
+an error message in the response body.
