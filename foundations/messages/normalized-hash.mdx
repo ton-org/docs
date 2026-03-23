@@ -5,7 +5,7 @@ sidebarTitle: "Normalized hash"
 
 import { Aside } from "/snippets/aside.jsx";
 
-The normalized message hash is a consistent identifier for [external-in](/foundations/messages/external-in) messages. It remains constant regardless of variations in the `src`, `import_fee`, and `init` fields, which can change without affecting the validity of the message. This hash is particularly useful for tracking transactions.
+The normalized message hash is a canonical identifier used to look up [external-in](/foundations/messages/external-in) messages across APIs and SDKs. It is computed from a standardized external-in representation so different serializers produce the same lookup key.
 
 <Aside type="note">
   For the canonical specification, refer to [TEP-467: Normalized Message Hash](https://github.com/ton-blockchain/TEPs/blob/master/text/0467-normalized-message-hash.md).
@@ -13,11 +13,11 @@ The normalized message hash is a consistent identifier for [external-in](/founda
 
 ## Why normalization is needed
 
-In TON, an external-in message can be constructed and packed in different ways that are all logically identical. Fields such as the source address (`src`), the `import_fee`, and the state initialization (`init`) can vary depending on the sender's implementation or the API provider processing the message.
+In TON, clients and providers can serialize external-in messages with structural differences that lead to different raw hashes for the same lookup intent. This affects fields and layout choices used in hashing, such as `src`, `import_fee`, `init`, and whether the body is embedded or referenced.
 
-Because these non-essential fields are included when computing the standard cell hash, functionally identical messages can produce different message hashes. This variability complicates transaction tracking and deduplication, as highlighted in the [TON Console transaction tracking guide](https://docs.tonconsole.com/academy/transaction-tracking).
+Providers usually do not rewrite message content. The mismatch appears because systems may hash slightly different structural representations. For example, `init` is meaningful in message semantics, but normalization sets it to `nothing$0` when building a canonical lookup form.
 
-By applying normalization rules before calculating the hash, the variable fields are removed or zeroed out, ensuring that the same logical message always produces the exact same hash.
+Apply normalization rules only to compute a lookup key. This process builds a canonical external-in representation for hashing and does not mutate an already sent message.
 
 ## Calculate the normalized hash
 
@@ -30,16 +30,16 @@ According to TEP-467, apply the following rules:
 1. **InitState (`init`)**: Set to `nothing$0`.
 1. **Body (`body:(Either X ^X)`)**: Always store as a reference (`^X`). The content of the body itself is included without modification.
 
-After constructing the cell with these standardized values, calculate its standard [cell hash](/foundations/serialization/cells) (the SHA-256 of the root cell).
+After constructing the canonical external-in message cell, compute its standard [cell hash](/foundations/serialization/cells).
 
 ### Low-level construction example
 
-The following TypeScript example demonstrates the raw cell construction. This logic illustrates the underlying TL-B serialization and can be adapted to any programming language or SDK.
+The following TypeScript example builds the canonical external-in cell used for normalized hash calculation. This logic illustrates the underlying TL-B serialization and can be adapted to any programming language or SDK.
 
 ```typescript
 import { beginCell, Cell, Address } from "@ton/core";
 
-function normalizeExternalMessage(destAddress: Address, bodyCell: Cell): Cell {
+function buildNormalizedExtInMessage(destAddress: Address, bodyCell: Cell): Cell {
   return beginCell()
     .storeUint(0b10, 2)         // external-in message prefix
     .storeUint(0b00, 2)         // src: addr_none$00
@@ -52,7 +52,7 @@ function normalizeExternalMessage(destAddress: Address, bodyCell: Cell): Cell {
 }
 
 // Compute the standard cell hash
-const normalizedExtMessage = normalizeExternalMessage(destAddress, bodyCell);
+const normalizedExtMessage = buildNormalizedExtInMessage(destAddress, bodyCell);
 const normalizedHash = normalizedExtMessage.hash().toString("hex");
 ```
 
@@ -81,6 +81,10 @@ However, the normalized message hash serves as a unique identifier for a specifi
 - The message includes an instruction to send an internal message with the `IGNORE_ERRORS=+2` flag (this is standard behavior for [TON Connect](/ecosystem/ton-connect/overview) and for wallets starting from v5).
 - The wallet contract is never deleted.
 
-<Aside type="note">
-  For dApps interacting with user wallets via TON Connect, or for exchanges controlling their outbound external messages, it is safe to reference traces using the normalized hash. This applies even before the transactions are finalized.
+### What to use for global uniqueness
+
+Use normalized hash as a lookup correlation key before confirmation. After a transaction is found, use the transaction identifier for global uniqueness, such as account address + transaction LT (or transaction hash, when available in your integration).
+
+<Aside type="tip">
+  Read more about external message tracking from the TONAPI side in [TONAPI docs](https://docs.tonconsole.com/academy/transaction-tracking).
 </Aside>
