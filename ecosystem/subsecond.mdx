@@ -5,152 +5,133 @@ sidebarTitle: Sub-second finality
 
 import { Aside } from '/snippets/aside.jsx';
 
-Sub-second finality is a mode where transactions are processed and finalized in under 1 second. It combines faster block production and low-latency APIs.
+Sub-second finality is an upgrade in which transactions are processed and finalized in under 1 second. It combines faster block production with low-latency APIs. _The goal of this upgrade_ is to enable end-to-end user interactions to complete in under 1 second.
 
-To deliver this performance to users, ecosystem products must adapt their indexers and UX layers to surface transaction updates in real time.
+However, upgrading the blockchain does not automatically improve _the user experience_. To deliver this performance to users, ecosystem projects must adapt their apps to surface transaction updates in real time.
 
 ## Current status
 
 <Aside type="note">
-  Mainnet validators were updated on 2026-02-12 with Catchain 2.0. Sub-second mode is not yet enabled and will be activated after testnet validation. No activation date has been announced.
+  Mainnet validators were updated on February 12, 2026 with Catchain 2.0. Sub-second upgrade is not yet enabled and will be activated after testnet validation. No activation date has been announced.
 </Aside>
 
-The testnet has been running stably since the 2026-01-23 update with sub-second mode active.
+The testnet has been running stably since the January 23, 2026 update with sub-second upgrade active.
 
 | Network         | Block interval | Blocks per second (BPS) | Pending lag | Finalization lag |
 | --------------- | -------------- | ----------------------- | ----------- | ---------------- |
-| Current mainnet | \~2.5 s        | \~0.4 BPS               | \~30–100 ms | \~10 s           |
-| Current testnet | \~450 ms       | \~2.2 BPS               | \~30–100 ms | \~4 s            |
-| Target mainnet  | 200–400 ms     | \~2.5–5 BPS             | \~30–100 ms | \~1 s            |
+| Current mainnet | \~2.5s         | \~0.4 BPS               | \~30–100ms  | \~10s            |
+| Current testnet | \~450ms        | \~2.2 BPS               | \~30–100ms  | \~1-2s           |
+| Target mainnet  | 200–400ms      | \~2.5–5 BPS             | \~30–100ms  | \~1s             |
 
 Testnet operates close to the target speed (200–400ms block finality)  and is the primary environment for testing.
 
-## Wallets and apps
+Example:
+
+<video
+  autoPlay
+  muted
+  loop
+  src="/resources/videos/subsecond-example.mov"
+  alt="Sub-second UI example"
+/>
+
+_[The video source](https://t.me/anatolii_makosov/110)._
+
+MyTonWallet and [tonscan.org](https://tonscan.org) have already switched to Streaming API v2 on both mainnet and testnet. This improves how quickly transaction updates appear in the UI by delivering events in real time, even though sub-second upgrade is not yet enabled on mainnet.
+
+## What projects need to do
+
+### For wallets and apps
 
 A faster chain alone does not improve user experience if the application continues to use HTTP polling. In this case, users still observe delays of 10+ seconds. To support sub-second UX, transaction updates must be delivered in real time.
 
-### Transaction flow in sub-second mode
+#### Requirements
 
-Applications that rely on polling typically behave as follows:
+1. Switch to [TON Center Streaming API v2](#ton-center-streaming-api-v2) or TonAPI Streaming API to receive transaction status updates with 30–100ms latency.
+1. Handle all four transaction statuses: `"pending"`, `"confirmed"`, `"finalized"`, `"trace_invalidated"`.
 
-1. 0s – user initiates a transaction;
+If Streaming API cannot be used, reduce polling intervals and adjust assumptions about transaction timing. Interfaces should be designed to expect results in under 1 second.
+
+### For self-hosted nodes, liteservers, and TON Center instances
+
+#### Requirements
+
+1. Update all self-hosted components to the versions that include Catchain 2.0 support:
+
+   - TON node and liteserver – update to the latest release before mainnet activation.
+   - Self-hosted TON Center – update to the version with Streaming API v2 support.
+
+1. After updating, connect each component to testnet and verify that it operates correctly under the higher block rate. Do not wait for mainnet activation; issues identified late are harder to resolve.
+
+### For indexers
+
+Indexers must process up to 10x more blocks per second without accumulating lag. If the indexer is tuned for 2.5s block intervals, it will fall behind under 200–400ms intervals.
+
+#### Requirements
+
+1. Connect the indexer to testnet.
+
+1. Run for 30+ minutes.
+
+1. Measure lag continuously.
+
+   1. If lag increases, identify the bottleneck, including database writes, network, parsing.
+   1. Resolve bottlenecks before mainnet activation.
+
+1. Generate the typical mainnet load profile on testnet, following the guidance in [Expected user experience](#expected-user-experience) and [Test on testnet](#test-on-testnet).
+
+## Expected user experience
+
+### Current behavior
+
+Even if the blockchain produces blocks up to 10x faster, apps that do not use streaming APIs still:
+
+- Poll HTTP endpoints at fixed intervals.
+- Wait for full block finalization before updating the UI.
+- Show delays of 10+ seconds to users.
+
+A typical sequence for polling-based integrations:
+
+1. 0s – user clicks "Send";
 1. \~0.4s – transaction included in a shard block;
 1. \~0.8s – shard block committed to masterchain;
 1. \~10s – UI updates on the next polling request.
 
-With real-time updates, transaction status should appear as it progresses:
+User perception: "The blockchain is fast, but the transfer still takes 10 seconds."
 
-1. 0s – user initiates a transaction;
-1. \~0.1s – `pending` status is displayed;
+### Expected behavior
+
+1. 0s – user clicks "Send";
+1. \~0.1s – `pending` status with expected outcome is displayed;
 1. \~0.4s – transaction included in a shard block and `confirmed` status is displayed;
 1. \~0.8s – shard block committed to masterchain and `finalized` status is displayed.
 
-Applications must update the UI as soon as new status information becomes available.
+Key question:
 
-### Use Streaming API v2
+Does the UI update fast enough to reflect transactions that complete in under 1 second? If not, users will not experience any improvement despite the chain upgrade.
 
-Switch to [TON Center Streaming API v2](#ton-center-streaming-api-v2) or TonAPI Streaming API to receive transaction status updates with 30–100 ms latency.
+### Why this matters
 
-MyTonWallet and [tonscan.org](https://tonscan.org) have already switched to Streaming API v2 on both mainnet and testnet. This improves how quickly transaction updates appear in the UI by delivering events in real time, even though sub-second mode is not yet enabled on mainnet.
+The sub-second finality rollout requires coordinated changes across the ecosystem:
 
-If Streaming API cannot be used, reduce polling intervals and adjust assumptions about transaction timing. Interfaces should be designed to expect results in under 1 second.
+- TON Core delivers faster block production and low-latency APIs.
+- Ecosystem projects must adapt indexers and UI layers to surface this speed.
 
-### Handle transaction status flow
+If apps do not adapt, the upgrade appears ineffective, even when the underlying system operates correctly. Projects that are ready before the mainnet rollout demonstrate the intended behavior and user experience.
 
-Handle all transaction statuses:
-
-- `"pending"` – show a processing state immediately
-- `"confirmed"` – optionally show optimistic success
-- `"finalized"` – confirm success and update state
-- `"trace_invalidated"` – discard cached data and re-check transaction status
-
-### Subscribe to transaction events
-
-Subscribe to the sender or recipient address before or immediately after sending a transaction.
-
-```json
-{
-  "accounts": ["<ADDRESS>"],
-  "min_finality": "pending"
-}
-```
-
-### Configure `min_finality`
-
-The `min_finality` parameter controls which transaction status events are delivered. The default value is `"finalized"`. If not set, only `"finalized"` events are received.
-
-- Use `"pending"` for send flows to receive all status updates.
-- Use `"finalized"` for balances and transaction history to work only with settled data.
+## How to integrate
 
 ### Recommended stack
 
 For projects building on TON:
 
-- Data layer: TON Center Streaming API v2 with 30–100 ms latency.
-
-- SDK: [AppKit](/ecosystem/appkit/overview) for balances, tokens, NFTs, and contract interactions. For frontend applications, AppKit reduces integration complexity and removes the need for custom logic. It handles out of the box:
-
-  - TON balance for any address;
-  - Jetton balances and metadata;
-  - NFT holdings;
-  - Contract state reads;
-  - Transaction sending, including jetton transfers.
-
+- Data layer: TON Center Streaming API v2 with 30–100ms latency.
+- SDK: [AppKit](/ecosystem/appkit/overview) for balances, tokens, NFTs, and contract interactions.
 - Finality: wait `"finalized"` status for critical flows.
-
-<Aside type="note">
-  AppKit support for Streaming API v2 is in development. WalletKit support is also in development. Projects using AppKit or WalletKit should follow this guide in the meantime.
-</Aside>
 
 For API reference, see the [API overview](/ecosystem/api/overview).
 
-### Test on testnet
-
-To ensure correct UX and wallet behavior, perform the following tests.
-
-- For UX and app teams:
-
-1. Connect to testnet endpoints.
-1. Initiate a TON transfer.
-1. Observe all four statuses in sequence: `"pending"` → `"confirmed"` → `"finalized"`.
-1. Measure time from transaction send to `"finalized"`. It should be under 1 second on testnet.
-1. Test `"trace_invalidated"` path: intentionally send a malformed transaction and confirm that UI handles it correctly.
-
-- For wallet teams:
-
-1. Verify balance updates reflect within 1 second of `"finalized"` status.
-1. Verify transaction history updates in real time.
-
-## Indexers
-
-Indexers must process up to 10x more blocks per second without accumulating lag. If the indexer is tuned for 2.5s block intervals, it will fall behind under 200–400ms intervals.
-
-### Test on testnet
-
-1. Connect the indexer to testnet.
-
-1. Run for at least 30 minutes under normal conditions.
-
-1. Measure lag continuously as the time between block production and indexer processing.
-
-   Target:
-
-   - lag \< 500ms
-   - no growing backlog
-
-   If lag increases, identify the source of delay:
-
-   - database writes
-   - network
-   - parsing
-
-   Resolve bottlenecks before mainnet activation.
-
-1. After that generate the typical mainnet load profile on testnet.
-
-## Node, liteserver, or self-hosted TON Center
-
-### Connect to a liteserver
+### Liteserver connection
 
 Public liteservers are available for both mainnet and testnet. Use global config files to discover and connect to them:
 
@@ -163,36 +144,28 @@ Public liteservers are available for both mainnet and testnet. Use global config
   Public liteservers are suitable for testing only. Use private liteservers in production.
 </Aside>
 
-### Update components
-
-All self-hosted components must be updated to versions that support Catchain 2.0.
-
-- TON node and liteserver – update to the latest release before mainnet activation.
-- Self-hosted TON Center – update to a version with Streaming API v2 support.
-
 ### Self-hosted liteserver updates
 
-- If a liteserver node is self-hosted, ensure it is updated before mainnet rollout.
-- Confirm that the node version supports the new consensus.
+If a liteserver node is self-hosted, ensure it is updated before mainnet rollout.
 
-### Test on testnet
+#### Requirements
 
-After updating, connect each component to testnet and verify that it operates correctly under increased block rate. Do not wait for mainnet activation; issues identified on mainnet are harder to resolve.
+Confirm that the node version supports the new consensus.
 
-## TON Center Streaming API v2
+### TON Center Streaming API v2
 
 [TON Center Streaming API v2](https://gist.github.com/dungeon-master-666/98db8d73e9cd9a1b7802bc06ded5b155) provides:
 
 - Real-time push of transaction status changes.
 - Four statuses: `"pending"`, `"confirmed"`, `"finalized"`, `"trace_invalidated"`.
-- Latency: 30–100 ms from chain event to the client.
+- Latency: 30–100ms from chain event to the client.
 
-### API token
+#### API token
 
 - For testing purposes, any valid token for TON Center allows for 2 concurrent streaming connections.
 - For production usage only enterprise plan allows for higher connection limits.
 
-### Endpoints
+#### Endpoints
 
 SSE and WebSocket are available. Choose based on the stack:
 
@@ -204,26 +177,106 @@ SSE and WebSocket are available. Choose based on the stack:
 | SSE       | `https://testnet.toncenter.com/api/streaming/v2/sse` | `https://toncenter.com/api/streaming/v2/sse` |
 | WebSocket | `wss://testnet.toncenter.com/api/streaming/v2/ws`    | `wss://toncenter.com/api/streaming/v2/ws`    |
 
-#### SSE known limitations
+<Aside
+  type="caution"
+  title={"SSE known limitations"}
+>
+  1. Rate limit on reconnect (429 error).
 
-1. Rate limit on reconnect (429 error).
+     If a client reconnects immediately after a disconnect, the previous connection may still be open for \~1 minute. The reconnect attempt receives a 429 error. Use exponential backoff or an enterprise API key.
 
-   If a client reconnects immediately after a disconnect, the previous connection may still be open for \~1 minute. The reconnect attempt receives a 429 error. Use exponential backoff or an enterprise API key.
+  1. POST-only subscription.
 
-1. POST-only subscription.
+     Despite SSE typically using `GET`, this endpoint requires a `POST` with the subscription JSON in the request body. `GET` is not supported yet.
 
-   Despite SSE typically using `GET`, this endpoint requires a `POST` with the subscription JSON in the request body. `GET` is not supported yet.
+  1. No invalidation signal for `account_state_change` / `jettons_change`.
 
-1. No invalidation signal for `account_state_change` / `jettons_change`.
+     If a `confirmed` account state or jetton balance update is later rolled back, no `"trace_invalidated"` notification is sent for these event types. Teams using `account_state_change` or `jettons_change` at `"confirmed"` finality should be aware of this gap and consider waiting for `"finalized"` for balance-critical flows.
+</Aside>
 
-   If a `confirmed` account state or jetton balance update is later rolled back, no `"trace_invalidated"` notification is sent for these event types. Teams using `account_state_change` or `jettons_change` at `"confirmed"` finality should be aware of this gap and consider waiting for `"finalized"` for balance-critical flows.
+#### Transaction status flow to implement
 
-### WebSocket keepalive
+1. User initiates transaction.
+1. Subscribe to the sender/recipient address through Streaming API before or immediately after sending.
+1. Receive `pending` → show "processing" indicator.
+1. Receive `confirmed` → optionally show optimistic success.
+1. Receive `finalized` → show confirmed success, update state.
+1. Receive `trace_invalidated` → discard cached trace, check status manually.
+
+#### Configure `min_finality`
+
+The `min_finality` parameter controls the earliest status is received. The default value is `"finalized"`. If not set, only `"finalized"` events are received and never see `"pending"` or `"confirmed"`.
+
+| Use case                       | `min_finality` value                          |
+| ------------------------------ | --------------------------------------------- |
+| Send flow (real-time feedback) | `"pending"` to receive four status updates.   |
+| History and balance display    | `"finalized"` to work only with settled data. |
+
+Example subscription (send flow):
+
+```json
+{
+  "accounts": ["<ADDRESS>"],
+  "min_finality": "pending"
+}
+```
+
+#### WebSocket keepalive
 
 - Send a `ping` every 15 seconds to keep the connection alive.
 - SSE connections receive automatic server-side keepalive (`: keepalive`) every 15 seconds; no client action required.
 
-## See also
+### AppKit for app developers
 
-- [TON API overview and endpoints](/ecosystem/api/overview)
-- [How to get coins on testnet](/ecosystem/wallet-apps/get-coins)
+For frontend applications, not a raw indexer, AppKit reduces integration complexity and removes the need for custom logic. It handles out of the box:
+
+- TON balance for any address;
+- Jetton balances and metadata;
+- NFT holdings;
+- Contract state reads;
+- Transaction sending, including jetton transfers.
+
+<Aside type="note">
+  AppKit support for Streaming API v2 is in development. [WalletKit](/ecosystem/walletkit/overview) support is also in development. Projects using AppKit or WalletKit should follow this guide in the meantime.
+</Aside>
+
+## Test on testnet
+
+Testnet is already running at sub-second speed (200–400ms block finality). Test before mainnet rollout.
+
+### Testnet endpoints
+
+Use [full list](/ecosystem/api/overview) of public testnet endpoints, including TON Center v2, TON Center v3, TonAPI.
+
+### How to get test tokens
+
+- For standard faucet up to 2 TON per hour, [use Telegram Testgiver TON bot](/ecosystem/wallet-apps/get-coins#how-to-get-coins-on-testnet).
+- For larger allocations up to 5,000 TON, [use the request form](/ecosystem/wallet-apps/get-coins#use-request-form).
+
+### What to test
+
+To ensure correct UX and wallet behavior, perform the following tests.
+
+#### For indexer teams
+
+1. Connect indexer to testnet.
+1. Run for 30+ minutes under normal conditions.
+1. Measure indexer lag as the time between block production and indexer processing.
+1. Target: lag \< 500ms sustained, no growing backlog.
+
+#### For UX and app teams
+
+1. Connect to testnet endpoints.
+1. Initiate a TON transfer.
+1. Observe three statuses in sequence: `"pending"` → `"confirmed"` → `"finalized"`.
+1. Measure time from transaction send to `"finalized"`. It should be under 1 second on testnet.
+1. Test `"trace_invalidated"` path: intentionally send a malformed transaction and confirm that UI handles it correctly.
+
+#### For wallet teams
+
+1. Verify balance updates reflect within 1 second of `"finalized"` status.
+1. Verify transaction history updates in real time.
+
+## Get support
+
+- [Public support chat](https://t.me/subsecond_upgrade) for sub-second update
