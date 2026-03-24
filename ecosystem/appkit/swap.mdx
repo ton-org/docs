@@ -1,0 +1,282 @@
+---
+title: "How to swap tokens using AppKit"
+sidebarTitle: "Swap tokens"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+<Aside>
+  [Initialize the AppKit](/ecosystem/appkit/init) before using examples on this page. Swap functionality requires a configured [swap provider](/ecosystem/appkit/init#providers).
+</Aside>
+
+AppKit supports on-chain token swaps through [pluggable swap providers](#create-a-custom-swap-provider). Supported swap kinds are Toncoin to jetton and jetton to jetton.
+
+The swap flow has two steps: [get a quote](#get-a-swap-quote) for the desired trade, then [build and send the swap transaction](#build-and-send-the-swap-transaction).
+
+<Aside
+  type="caution"
+  title="Funds at risk"
+>
+  Token swaps are irreversible on-chain operations. Verify the quote details — including token addresses, amounts, and slippage — before confirming. Start with small amounts on testnet.
+
+  Mitigation: Double-check the `from` and `to` token addresses against official sources. Review the returned quote before building the transaction.
+</Aside>
+
+## Get a swap quote
+
+A swap quote estimates how many tokens are received for a given input amount. The quote requires the source token, destination token, and the amount to swap.
+
+<CodeGroup>
+  ```tsx title="React" icon="react"
+  import { useSwapQuote } from '@ton/appkit-react';
+
+  export const SwapQuoteCard = ({ fromAddress, toAddress, amount }) => {
+    const {
+      data: quote,
+      isLoading,
+      error,
+    } = useSwapQuote({
+      // Source token: what to swap
+      from: {
+        // Either a source jetton master (minter) contract address
+        // or a Toncoin identifier in its stead
+        address: fromAddress ?? 'ton',
+
+        // Decimal precision of the token to calculate raw unit amounts
+        // For example, Toncoin = 9, USDT (jetton) = 6
+        decimals: 9,
+      },
+
+      // Target token: what to receive
+      to: {
+        address: toAddress ?? 'ton',
+        decimals: 9,
+      }
+
+      // Amount to swap in fractional units
+      // For example, '0.1' or '1'
+      amount,
+
+      // Direction of the swap
+      // If true, `amount` sets the target amount of tokens to receive (buy)
+      // If false, `amount` sets the source amount of tokens to spend (sell)
+      // Defaults to false
+      isReverseSwap: false,
+    });
+
+    if (isLoading) {
+      return <div>Loading quote...</div>;
+    }
+
+    if (error) {
+      return <div>Error: {error.message}</div>;
+    }
+
+    return (
+      <div>
+        <p><em>Swap quote</em></p>
+        {quote && (
+          <div>
+            <p>From: {quote.from.address}</p>
+            <p>To: {quote.to.address}</p>
+            <p>Expected output: {quote.toAmount}</p>
+            <p>Price impact: {quote.priceAmount}</p>
+          </div>
+        )}
+      </div>
+    );
+  };
+  ```
+
+  ```ts title="TypeScript" icon="globe"
+  import { type AppKit, getSwapQuote } from '@ton/appkit';
+
+  async function fetchSwapQuote(
+    /** Initialized AppKit instance */
+    kit: AppKit,
+    /** Source token address */
+    fromToken: string,
+    /** Destination token address */
+    toToken: string,
+    /** Amount to swap in raw units */
+    amount: string,
+  ) {
+    const quote = await getSwapQuote(kit, {
+      from: fromToken,
+      to: toToken,
+      amount,
+    });
+    console.log('Swap quote:', quote);
+    return quote;
+  }
+  ```
+</CodeGroup>
+
+## Build and send the swap transaction
+
+After obtaining a quote, build the swap transaction and send it through TON Connect:
+
+<CodeGroup>
+  ```tsx title="React" icon="react"
+  import {
+    useSwapQuote,
+    useBuildSwapTransaction,
+    useSelectedWallet,
+    sendTransaction,
+    useAppKit,
+  } from '@ton/appkit-react';
+
+  export const SwapForm = ({ fromToken, toToken, amount }) => {
+    const appKit = useAppKit();
+    const [wallet, _] = useSelectedWallet();
+    const { data: quote } = useSwapQuote({ from: fromToken, to: toToken, amount });
+    const { mutateAsync: buildTransaction, isPending: isBuilding } = useBuildSwapTransaction();
+
+    const handleSwap = async () => {
+      if (!quote || !wallet) return;
+
+      // Build the swap transaction from the quote
+      const transaction = await buildTransaction({
+        quote,
+        userAddress: wallet.getAddress(),
+      });
+
+      // Sign and send via TON Connect
+      const result = await sendTransaction(appKit, { transaction });
+      console.log('Swap transaction sent:', result.boc);
+    };
+
+    return (
+      <div>
+        {quote && (
+          <div>
+            <p>Output amount: {quote.toAmount}</p>
+            <button onClick={handleSwap} disabled={isBuilding}>
+              {isBuilding ? 'Building...' : 'Swap'}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+  ```
+
+  ```ts title="TypeScript" icon="globe"
+  import {
+    type AppKit,
+    getSwapQuote,
+    buildSwapTransaction,
+    sendTransaction,
+    getSelectedWallet,
+  } from '@ton/appkit';
+
+  async function executeSwap(
+    /** Initialized AppKit instance */
+    kit: AppKit,
+    /** Source token address */
+    fromToken: string,
+    /** Destination token address */
+    toToken: string,
+    /** Amount to swap in raw units */
+    amount: string,
+  ) {
+    // Step 1: Get a quote
+    const quote = await getSwapQuote(kit, {
+      from: fromToken,
+      to: toToken,
+      amount,
+    });
+
+    // Step 2: Build the swap transaction
+    const selectedWallet = getSelectedWallet(kit);
+    const transaction = await buildSwapTransaction(kit, {
+      quote,
+      userAddress: selectedWallet?.getAddress() ?? '<TON_WALLET_ADDRESS>',
+    });
+
+    // Step 3: Sign and send via TON Connect
+    const result = await sendTransaction(kit, { transaction });
+    console.log('Swap transaction sent:', result.boc);
+  }
+  ```
+</CodeGroup>
+
+## Create a custom swap provider
+
+AppKit ships with the [Omniston](https://ston.fi/omniston) swap provider, but custom providers can be added to integrate other DEXes or aggregators.
+
+A swap provider implements the `SwapProvider` interface — two methods for quoting and transaction building:
+
+```ts title="TypeScript"
+import type {
+  SwapProvider,
+  SwapQuote,
+  SwapQuoteParams,
+  SwapParams,
+} from '@ton/appkit';
+import type { TransactionRequest } from '@ton/appkit';
+
+class CustomSwapProvider implements SwapProvider {
+  // Unique identifier for this provider
+  readonly id = 'custom-dex';
+
+  async getQuote<T = unknown>(
+    params: SwapQuoteParams<T>,
+  ): Promise<SwapQuote> {
+    // Fetch a quote from the DEX API
+    const response = await fetch(
+      `https://api.example-dex.com/quote?from=${params.from}&to=${params.to}&amount=${params.amount}`,
+    );
+    const data = await response.json();
+    return {
+      from: params.from,
+      to: params.to,
+      fromAmount: params.amount,
+      toAmount: data.outputAmount,
+      providerData: data,
+    };
+  }
+
+  async buildSwapTransaction<T = unknown>(
+    params: SwapParams<T>,
+  ): Promise<TransactionRequest> {
+    // Build the transaction payload using the quote data
+    const response = await fetch('https://api.example-dex.com/build', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        quote: params.quote,
+        userAddress: params.userAddress,
+      }),
+    });
+    return response.json();
+  }
+}
+```
+
+### Register the provider
+
+Register the custom provider during [AppKit initialization](/ecosystem/appkit/init#providers) or [dynamically](/ecosystem/appkit/init#add-new-providers) at runtime:
+
+<CodeGroup>
+  ```ts title="At initialization"
+  import { AppKit } from '@ton/appkit';
+
+  const kit = new AppKit({
+    providers: [new CustomSwapProvider()],
+  });
+  ```
+
+  ```ts title="At runtime"
+  kit.swapManager.registerProvider(new CustomSwapProvider());
+  ```
+</CodeGroup>
+
+### Specify the provider
+
+Once registered, the provider is available through `getSwapQuote` and `buildSwapTransaction`. Target it by passing `providerId: 'custom-dex'` when fetching quotes.
+
+## See also
+
+- [AppKit overview](/ecosystem/appkit/overview)
+- [TON Connect overview](/ecosystem/ton-connect)
