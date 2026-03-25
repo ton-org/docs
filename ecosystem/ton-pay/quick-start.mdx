@@ -7,7 +7,7 @@ import { Aside } from '/snippets/aside.jsx';
 
 ## TON Connect manifest
 
-Before installing and setting up the TON Pay SDK, the application must provide a TON Connect manifest, which is a JSON file that defines application metadata. Wallets use [this manifest](/ecosystem/ton-connect/manifest) to discover the application.
+Before installing and setting up the TON Pay SDK, the application must provide a TON Connect manifest, which is a JSON file that defines application metadata. Wallets use the [TON Connect manifest](/ecosystem/ton-connect/manifest) to discover the application.
 
 ## First payment
 
@@ -81,9 +81,22 @@ Before installing and setting up the TON Pay SDK, the application must provide a
 
     The returned `{ message }` is a TON Connect transaction message. `useTonPay` forwards it to the wallet through TON Connect and initiates the transaction send; direct calls to the wallet SDK are not required.
 
+    In the examples below, replace `<WALLET_ADDRESS>` with the recipient wallet address, `<TONPAY_API_KEY>` with an optional dashboard API key, and `<ORDER_REFERENCE>` with an order label or ID.
+
     ```tsx
     import { TonPayButton, useTonPay } from "@ton-pay/ui-react";
     import { createTonPayTransfer } from "@ton-pay/api";
+
+    const recipientAddr = "<WALLET_ADDRESS>";
+    const orderReference = "<ORDER_REFERENCE>";
+
+    // Set chain to "mainnet" in production.
+    const options = {
+      chain: "testnet",
+
+      // Pass an API key from the dashboard when available.
+      apiKey: "<TONPAY_API_KEY>",
+    } as const;
 
     export default function PayButton() {
       const { pay } = useTonPay();
@@ -93,14 +106,11 @@ Before installing and setting up the TON Pay SDK, the application must provide a
           {
             amount: 12.34,
             asset: "TON",
-            recipientAddr: "<WALLET_ADDRESS>",
+            recipientAddr,
             senderAddr,
-            commentToSender: "<THE_ORDER>",
+            commentToSender: orderReference,
           },
-          {
-            chain: "testnet", // use "mainnet" for production
-            apiKey: "<TONPAY_API_KEY>", // optional
-          }
+          options
         );
         return { message, reference };
       }
@@ -115,33 +125,45 @@ Before installing and setting up the TON Pay SDK, the application must provide a
       type="danger"
       title="Client-only processing is fragile"
     >
-      Users can close the tab before transaction results are persisted, which breaks tracking and confirmation logic. Build messages and track transactions on the [server side](/ecosystem/ton-pay/payment-integration/payments-react).
+      Users can close the tab before transaction results are persisted, which breaks tracking and confirmation logic. Build messages and track transactions in the [Send payments using React](/ecosystem/ton-pay/payment-integration/payments-react) guide.
     </Aside>
 
-    <AccordionGroup>
+    <AccordionGroup
+
+    >
       <Accordion
-        title="Minimal server-side flow quick sample"
+        title="Minimal server-side flow example"
       >
         ```ts
         // Backend: POST /api/create-payment
         import { createTonPayTransfer, TON } from "@ton-pay/api";
 
+        const recipientAddr = "<WALLET_ADDRESS>";
+
+        // Set chain to "mainnet" in production.
+        const options = {
+          chain: "testnet",
+
+          // Pass an API key from the dashboard when available.
+          apiKey: "<TONPAY_API_KEY>",
+        } as const;
+
         app.post("/api/create-payment", async (req, res) => {
           const { productId, senderAddr } = req.body;
 
-          // Use the backend to create an order and calculate the amount using productId price
-          const amount = 12.23; // order amount
-          const orderId = 1; // ID of a new order
+          // Create an order and calculate the amount from the product price.
+          const amount = 12.23;
+          const orderId = 1;
 
-          // 1) Create transfer + get tracking identifiers
+          // Create the transfer and get tracking identifiers.
           const { message, reference, bodyBase64Hash } = await createTonPayTransfer(
-            { amount, asset: TON, recipientAddr: "<WALLET_ADDRESS>", senderAddr },
-            { chain: "testnet", apiKey: "<TONPAY_API_KEY>" } // API key is optional
+            { amount, asset: TON, recipientAddr, senderAddr },
+            options
           );
 
-          // 2) Persist identifiers in the DB (orderId, reference, bodyBase64Hash) immediately
+          // Persist identifiers in the database immediately.
 
-          // 3) Return only the message to the client
+          // Return only the message to the client.
           res.json({ message });
         });
         ```
@@ -175,9 +197,11 @@ Before installing and setting up the TON Pay SDK, the application must provide a
   </Step>
 
   <Step
-    title="Loading state and result handling"
+    title="Handle loading state and results"
   >
     Wallet approval does not mean the payment is finalized yet. After `pay(createMessage)` resolves, use the `reference` returned by `createTonPayTransfer` to query TON Pay until the transfer leaves the `pending` state.
+
+    The example below uses React. The same flow applies in other clients: keep the `reference`, poll status, and update the UI when the transfer leaves `pending`.
 
     Use the SDK flow below:
 
@@ -188,7 +212,7 @@ Before installing and setting up the TON Pay SDK, the application must provide a
     1. When the status becomes `success`, show the confirmation UI and store `txHash`, `traceId`, and any other result fields needed by the application.
     1. When the status becomes `error`, show the failure state and log `errorCode` or `errorMessage` for diagnostics.
 
-    Persist the `reference` as soon as it is available. If the user reloads the page or returns later, `reference` is the simplest way to resume status checks.
+    Store the `reference` as soon as `createTonPayTransfer` returns it. To resume status checks after a reload, persist it outside component state, for example on the server.
 
     <Aside
       type="note"
@@ -208,9 +232,15 @@ Before installing and setting up the TON Pay SDK, the application must provide a
 
     type PaymentState = "idle" | "sending" | "pending" | "success" | "error";
 
+    const amount = 12.34;
+    const recipientAddr = "<WALLET_ADDRESS>";
+
+    // Set chain to "mainnet" in production.
     const options = {
       chain: "testnet",
-      apiKey: "<TONPAY_API_KEY>", // optional
+
+      // Pass an API key from the dashboard when available.
+      apiKey: "<TONPAY_API_KEY>",
     } as const;
 
     export default function Checkout() {
@@ -223,14 +253,15 @@ Before installing and setting up the TON Pay SDK, the application must provide a
       async function createMessage(senderAddr: string) {
         const { message, reference } = await createTonPayTransfer(
           {
-            amount: 12.34,
+            amount,
             asset: "TON",
-            recipientAddr: "<WALLET_ADDRESS>",
+            recipientAddr,
             senderAddr,
           },
           options
         );
 
+        setReference(reference);
         return { message, reference };
       }
 
@@ -250,11 +281,11 @@ Before installing and setting up the TON Pay SDK, the application must provide a
       async function handlePay() {
         setPaymentState("sending");
         setErrorMessage(null);
+        setReference(null);
         setResult(null);
 
         try {
           const { reference } = await pay(createMessage);
-          setReference(reference);
           setPaymentState("pending");
 
           const transfer = await waitForTransferResult(reference);
@@ -302,7 +333,7 @@ Before installing and setting up the TON Pay SDK, the application must provide a
     }
     ```
 
-    See also: [Check status and retrieve info](/ecosystem/ton-pay/payment-integration/status-info).
+    The [status lookup guide](/ecosystem/ton-pay/payment-integration/status-info) describes the response fields and lookup methods used in this step.
   </Step>
 </Steps>
 
@@ -322,6 +353,17 @@ import { TonConnectUIProvider } from "@tonconnect/ui-react";
 import { TonPayButton, useTonPay } from "@ton-pay/ui-react";
 import { createTonPayTransfer } from "@ton-pay/api";
 
+const recipientAddr = "<WALLET_ADDRESS>";
+const commentToSender = "Order #123";
+
+// Set chain to "mainnet" in production.
+const options = {
+  chain: "testnet",
+
+  // Pass an API key from the dashboard when available.
+  apiKey: "<TONPAY_API_KEY>",
+} as const;
+
 function AppContent() {
   const { pay } = useTonPay();
 
@@ -330,14 +372,11 @@ function AppContent() {
       {
         amount: 12.34,
         asset: "TON",
-        recipientAddr: "<WALLET_ADDRESS>",
+        recipientAddr,
         senderAddr,
-        commentToSender: "Order #123",
+        commentToSender,
       },
-      {
-        chain: "testnet",
-        apiKey: "<TONPAY_API_KEY>", // optional
-      }
+      options
     );
     return { message, reference };
   }
