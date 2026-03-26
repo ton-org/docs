@@ -1,0 +1,211 @@
+---
+title: "Monitoring"
+sidebarTitle: "Monitoring"
+---
+
+import { Aside } from "/snippets/aside.jsx";
+
+## Objective
+
+Set up Prometheus and Grafana for TON node metrics. `kube-prometheus-stack` is recommended because the chart includes a `ServiceMonitor` template for automatic scrape discovery.
+
+## Prerequisites
+
+1. Enable the metrics HTTP server in node config (`config.json`):
+
+   ```json
+   {
+     "metrics": {
+       "address": "0.0.0.0:9100",
+       "global_labels": {
+         "network": "mainnet",
+         "node_id": "my-node-0"
+       }
+     }
+   }
+   ```
+
+   The server exposes `/metrics` (Prometheus format), `/healthz` (liveness), and `/readyz` (readiness). If `metrics` is absent, the server is not started.
+
+   <Aside
+     type="note"
+     title="Required labels"
+   >
+     `global_labels` with `network`, and `node_id` are required for the bundled Grafana dashboard. Without them, dashboard variables are empty and panels show no data.
+   </Aside>
+
+1. Set `ports.metrics` in Helm values:
+
+   ```yaml
+   ports:
+     metrics: 9100
+   ```
+
+   The port must match the `metrics.address` port in [node config](/ecosystem/nodes/rust/node-config-ref).
+
+## Network security
+
+The metrics port is never exposed on public per-replica `LoadBalancer` services. The chart creates a dedicated internal `<release>-metrics` `ClusterIP` service instead, accessible only inside the cluster.
+
+External metrics access can be added with a custom `LoadBalancer` service that targets the metrics port. The recommended approach is an ingress with authentication (basic auth, OAuth2 proxy, and similar) that proxies to `<release>-metrics`.
+
+## Quick start
+
+Minimal values to enable metrics, probes, and `ServiceMonitor`:
+
+Not runnable
+
+```yaml
+ports:
+  metrics: 9100
+
+probes:
+  startup:
+    httpGet:
+      path: /healthz
+      port: metrics
+    failureThreshold: 60
+    periodSeconds: 10
+  liveness:
+    httpGet:
+      path: /healthz
+      port: metrics
+    periodSeconds: 30
+    failureThreshold: 3
+  readiness:
+    httpGet:
+      path: /readyz
+      port: metrics
+    periodSeconds: 10
+    failureThreshold: 3
+
+metrics:
+  serviceMonitor:
+    enabled: true
+```
+
+## ServiceMonitor configuration
+
+Enable `ServiceMonitor` so `kube-prometheus-stack` discovers and scrapes node metrics automatically:
+
+Not runnable
+
+```yaml
+metrics:
+  serviceMonitor:
+    enabled: true
+```
+
+### Label matching
+
+Some Prometheus Operator installations filter `ServiceMonitor` resources by labels (`serviceMonitorSelector` in the Prometheus custom resource). If a Prometheus instance requires labels:
+
+Not runnable
+
+```yaml
+metrics:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: kube-prometheus-stack
+```
+
+### Scrape interval
+
+By default, `ServiceMonitor` inherits the global Prometheus scrape interval (typically `30s`). To override:
+
+Not runnable
+
+```yaml
+metrics:
+  serviceMonitor:
+    enabled: true
+    interval: "15s"
+    scrapeTimeout: "10s"
+```
+
+### Cross-namespace monitoring
+
+If Prometheus runs in a different namespace, set the `ServiceMonitor` namespace to the namespace where Prometheus looks:
+
+Not runnable
+
+```yaml
+metrics:
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+```
+
+A `namespaceSelector` is added automatically so Prometheus can discover services in the release namespace.
+
+## Alternative: Prometheus annotations
+
+If Prometheus Operator is not used and services are scraped through `prometheus.io/*` annotations:
+
+Not runnable
+
+```yaml
+metrics:
+  annotations:
+    enabled: true
+```
+
+This adds `prometheus.io/scrape`, `prometheus.io/port`, and `prometheus.io/path` to the `<release>-metrics` `ClusterIP` service.
+
+## Alternative: static scrape config
+
+For other Prometheus setups, the metrics endpoint is available through the internal `ClusterIP` service:
+`<release>-metrics.<namespace>.svc.cluster.local`
+
+## Grafana dashboard
+
+The Grafana dashboard is authored as TypeScript with [Grafana Foundation SDK](https://grafana.com/docs/grafana/latest/as-code/observability-as-code/foundation-sdk/) and generated to JSON. Dashboard source is available in [TON Rust Node Grafana source](https://github.com/RSquad/ton-rust-node/blob/e8bd0451b326099146a90a913beedaebd952fa56/grafana/src/index.ts). Generated output file name is `ton-node-overview.json`.
+
+The dashboard uses two multi-select template variables:
+
+- `network`
+- `node_id`
+
+These correspond to `global_labels` in node metrics config.
+
+Dashboard sections:
+
+- Node Status
+- Build Info
+- Transactions per second
+- Sync and Block Progress
+- Validation and Collation
+- Outbound Message Queue
+- Network
+- Database and Storage
+
+### Generate dashboard JSON
+
+Run from the TON Rust Node repository root.
+
+```bash
+cd grafana
+bun install
+bun run generate
+```
+
+`bun run generate` writes `ton-node-overview.json`.
+
+### Import into Grafana
+
+1. Open <kbd>Dashboards</kbd> > <kbd>New</kbd> > <kbd>Import</kbd>.
+1. Upload `ton-node-overview.json`.
+1. Select a Prometheus data source.
+1. Click <kbd>Import</kbd>.
+
+### Edit workflow
+
+1. Edit dashboard TypeScript source files.
+1. Run `bun run generate`.
+1. Import the generated JSON and verify panels.
+1. Commit TypeScript source files. The generated JSON file is ignored by Git.
+
+## Alert rules
+
+`PrometheusRule` resources can be created to trigger alerts based on TON node [metrics](/ecosystem/nodes/rust/metrics).
