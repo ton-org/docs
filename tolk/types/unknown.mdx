@@ -1,0 +1,101 @@
+---
+title: "The Unknown type"
+sidebarTitle: "Unknown"
+---
+
+`unknown` literally means "any value" — any [TVM](/tvm/overview) primitive with contents unknown at compile time.
+
+## Primary usage: a tuple is "an array of unknowns"
+
+`tuple` is an alias for `array<unknown>`:
+
+```tolk
+// declared in stdlib
+type tuple = array<unknown>
+```
+
+This is exactly what a TVM tuple is. Since `tuple` is an `array<unknown>`, it has all array methods: `push`, `size`, etc. Because every type is implicitly assignable to `unknown`, `push` accepts anything:
+
+```tolk
+var t = [];   // array<unknown>
+t.push(1);
+t.push(null);
+t.push(Point { x: 10, y: 20 });
+```
+
+Read more: [arrays and tuples](/languages/tolk/types/tuples).
+
+## Casting to and from with `as` operator
+
+Any type `T` can be cast to `unknown` using the `as` operator. If `T` is a primitive that fits in a single stack slot, the cast is a no-op. Otherwise, the object is packed into a sub-tuple:
+
+```tolk
+var u = 5 as unknown;
+// stack: 5
+u as int;
+// stack: 5
+
+var u2 = (10, 20) as unknown;
+// stack: [ 10 20 ] (a TVM tuple)
+u2 as (int, int);
+// stack: 10 20 (two integers)
+```
+
+To perform meaningful operations on an `unknown` value, cast it to a known type with `as`.
+
+## Exception arguments: also `unknown`
+
+In TVM, an exception can carry some value (arbitrary stack slot). The syntax `throw (code, arg)` allows attaching an argument — which actually has `unknown` type:
+
+```tolk
+fun load(id) {
+    // ...
+    throw (NOT_FOUND, id)
+}
+
+fun demo() {
+    try {
+        load(456);
+    } catch (ex, arg) {
+        // `arg` is `unknown`
+        if (ex == NOT_FOUND) {
+            arg as int;   // 456
+        }
+    }
+}
+```
+
+Even `throw (code, Point { ... })` will work: it will be packed to a single slot, and `arg as Point` will unpack that `unknown` back.
+
+## Be extremely careful using `unknown`
+
+Using `unknown` incorrectly may lead to runtime errors or stack corruption. Be sure that you extract a value of the exact type you've written.
+
+For example, this usage is invalid (although seems correct at first glance):
+
+```tolk
+fun demoInvalid() {
+    var x: int | slice = 123;
+    var t = array<unknown> [x];
+    t.get(0) as int|slice;   // runtime error
+}
+```
+
+Why is there a runtime error? Because `x` at the moment of putting into a tuple was not `int|slice` — it was `int` due to a smart cast:
+
+```tolk
+// explanation of a runtime error
+fun demoInvalid() {
+    var x: int | slice = 123;
+    // `x` is smart-casted to `int`
+    var t = array<unknown> [x];
+    // that's why `t` is `[123]` (contains int)
+    // t.get(0) returns `123` (a TVM INT)
+    // trying to extract `int|slice` (tagged union) from `123` fails
+    t.get(0) as int|slice;   // runtime error
+}
+```
+
+## Stack layout and serialization
+
+`unknown` is a single TVM slot with any valid value at runtime. It cannot be serialized.
