@@ -3,9 +3,11 @@ title: "The unknown type"
 sidebarTitle: "Unknown"
 ---
 
-`unknown` literally means "any value" — any [TVM](/tvm/overview) primitive with contents unknown at compile time.
+import { Aside } from '/snippets/aside.jsx';
 
-## Primary usage: a tuple is "an array of unknowns"
+`unknown` represents any single-slot [TVM](/tvm/overview) value with contents unknown at compile-time.
+
+## Primary use
 
 `tuple` is an alias for `array<unknown>`:
 
@@ -14,7 +16,7 @@ sidebarTitle: "Unknown"
 type tuple = array<unknown>
 ```
 
-This is exactly what a TVM tuple is. Since `tuple` is an `array<unknown>`, it has all array methods: `push`, `size`, etc. Because every type is implicitly assignable to `unknown`, `push` accepts anything:
+Because of that, `tuple` has all the array methods: `push`, `size`, and others. Such arrays are opaque, so the `push` method accepts values of any type:
 
 ```tolk
 var t = [];   // array<unknown>
@@ -23,9 +25,9 @@ t.push(null);
 t.push(Point { x: 10, y: 20 });
 ```
 
-Read more: [arrays and tuples](/languages/tolk/types/tuples).
+Read more about [arrays and tuples](/languages/tolk/types/tuples).
 
-## Casting to and from with `as` operator
+## Manual type casts with `as` operator
 
 Any type `T` can be cast to `unknown` using the `as` operator. If `T` is a primitive that fits in a single stack slot, the cast is a no-op. Otherwise, the object is packed into a sub-tuple:
 
@@ -41,11 +43,11 @@ u2 as (int, int);
 // stack: 10 20 (two integers)
 ```
 
-To perform meaningful operations on an `unknown` value, cast it to a known type with `as`.
+To perform meaningful operations on an `unknown` value, [cast it to a known type with `as`](#be-extremely-careful-using-unknown).
 
-## Exception arguments: also `unknown`
+## Exception arguments
 
-In TVM, an exception can carry some value (arbitrary stack slot). The syntax `throw (code, arg)` allows attaching an argument — which actually has `unknown` type:
+In TVM, an exception can carry some value in an arbitrary stack slot. The syntax `throw (code, arg)` allows attaching an argument `arg` of `unknown` type:
 
 ```tolk
 fun load(id: int) {
@@ -65,13 +67,13 @@ fun demo() {
 }
 ```
 
-Even `throw (code, Point { ... })` will work: it will be packed to a single slot, and `arg as Point` will unpack that `unknown` back.
+Composite argument values are allowed. For example, the structure `Point` in `throw (code, Point { ... })` will be packed to a single slot of `unknown` type. Casting `arg as Point` will unpack that `unknown` back.
 
 ## Be extremely careful using `unknown`
 
-Using `unknown` incorrectly may lead to runtime errors or stack corruption. Be sure that you extract a value of the exact type you've written.
+Using `unknown` incorrectly may lead to runtime errors or stack corruption. Always extract a value of the exact type it was originally stored in.
 
-For example, this usage is invalid (although seems correct at first glance):
+For example, this usage is invalid:
 
 ```tolk
 fun demoInvalid() {
@@ -81,21 +83,21 @@ fun demoInvalid() {
 }
 ```
 
-Why is there a runtime error? Because `x` at the moment of putting into a tuple was not `int|slice` — it was `int` due to a smart cast:
+There, a runtime error occurs because the `x` has been smart cast to `int` when it was placed into the array `t`:
 
 ```tolk
-// explanation of a runtime error
 fun demoInvalid() {
     var x: int | slice = 123;
-    // `x` is smart-casted to `int`
+    // `x` is smart-cast to `int`
     var t = array<unknown> [x];
-    // that's why `t` is `[123]` (contains int)
-    // t.get(0) returns `123` (a TVM INT)
-    // trying to extract `int|slice` (tagged union) from `123` fails
-    t.get(0) as int | slice;   // runtime error
+    // As such, `t` is [123], containing an integer.
+    // Because of the unsafe type cast,
+    // `t.get(0)` is viewed as a tagged union `int|slice` and not an `int`,
+    // triggering a runtime error.
+    t.get(0) as int | slice;
 }
 ```
 
 ## Stack layout and serialization
 
-`unknown` is a single TVM slot with any valid value at runtime. It cannot be serialized.
+A value of type `unknown` takes a single TVM slot with any valid value at runtime. It cannot be serialized because the exact value type is not known.
