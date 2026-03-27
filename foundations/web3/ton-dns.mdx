@@ -3,6 +3,8 @@ title: "TON DNS"
 description: "On-chain hierarchical domain name service for TON Network"
 ---
 
+import { Aside } from '/snippets/aside.jsx';
+
 TON DNS is a service for translating human-readable domain names (such as `example.ton` or `mysite.temp.ton`) into TON smart contract addresses, ADNL addresses used by services on the TON Network, and other network entities.
 
 ## What TON DNS resolves
@@ -77,6 +79,564 @@ When querying a DNS contract, the caller specifies a category to select which re
 | `storage`           | TON Storage Bag ID (`dns_storage_address`) |
 
 Passing category `0` retrieves all records stored for the domain.
+
+## Smart contract interactions
+
+The `.ton` DNS collection contract address is stored in blockchain configuration parameter #4. Each registered domain is an NFT item contract deployed by the collection. All operations (registration, bidding, record updates, and renewal) are performed by sending messages to these contracts.
+
+### Minimum price by domain length
+
+The minimum price to register or re-auction a domain depends on the domain name length.
+
+| Domain length  | Minimum price |
+| -------------- | ------------- |
+| 4 characters   | 100 TON       |
+| 5 characters   | 50 TON        |
+| 6 characters   | 40 TON        |
+| 7 characters   | 30 TON        |
+| 8 characters   | 20 TON        |
+| 9 characters   | 10 TON        |
+| 10 characters  | 5 TON         |
+| 11+ characters | 1 TON         |
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/en/download) 22+
+- Packages: [`@ton/ton`](https://github.com/ton-org/ton), [`@ton/core`](https://github.com/ton-org/ton-core), [`@ton/crypto`](https://github.com/ton-org/ton-crypto)
+- A funded Testnet wallet mnemonic in the `MNEMONIC` environment variable for write operations
+- The sending wallet must be the domain NFT owner for record updates; any account can send a renewal
+
+<Aside
+  type="danger"
+  title="Funds and secrets"
+>
+  Write operations spend funds and use a wallet mnemonic. Pass the mnemonic through an environment variable, never hard-code it. Run on Testnet first to verify the desired behavior.
+</Aside>
+
+### Register a domain
+
+To register an unclaimed `.ton` domain, send a text comment message (op `0`) to the collection contract with the domain name as the comment body. The attached TON value must meet the minimum price for the domain length. The collection contract deploys an NFT item contract and opens a one-hour auction with the sender as the initial bidder.
+
+```ts expandable
+import { Address, beginCell, internal, toNano } from "@ton/core";
+import { TonClient, WalletContractV5R1, SendMode } from "@ton/ton";
+import { mnemonicToPrivateKey } from "@ton/crypto";
+
+const collectionAddress = Address.parse("<COLLECTION_ADDRESS>");
+const domainName = "<DOMAIN_NAME>";
+
+async function main() {
+    const client = new TonClient({
+        endpoint: "https://testnet.toncenter.com/api/v2/jsonRPC",
+    });
+
+    // Text comment: op=0 followed by domain name as UTF-8
+    const body = beginCell()
+        .storeUint(0, 32)
+        .storeBuffer(Buffer.from(domainName))
+        .endCell();
+
+    const msg = internal({
+        to: collectionAddress,
+        value: toNano("<BID_AMOUNT>"),
+        bounce: true,
+        body,
+    });
+
+    const mnemonic = process.env.MNEMONIC;
+    if (!mnemonic) {
+        throw new Error("Set MNEMONIC");
+    }
+    const keyPair = await mnemonicToPrivateKey(mnemonic.split(" "));
+    const walletContract = client.open(
+        WalletContractV5R1.create({
+            workchain: 0,
+            publicKey: keyPair.publicKey,
+        }),
+    );
+
+    const seqno = await walletContract.getSeqno();
+    await walletContract.sendTransfer({
+        seqno,
+        secretKey: keyPair.secretKey,
+        sendMode: SendMode.IGNORE_ERRORS | SendMode.PAY_GAS_SEPARATELY,
+        messages: [msg],
+    });
+}
+
+void main();
+```
+
+Where
+
+- `<COLLECTION_ADDRESS>`: the `.ton` DNS collection contract address, stored in blockchain configuration parameter #4.
+- `<DOMAIN_NAME>`: the bare domain label to register, for example `example` (without the `.ton` suffix). Must be 4–126 characters, lowercase letters, digits, and hyphens only. Hyphens cannot appear at the start or end of the name.
+- `<BID_AMOUNT>`: the initial bid in TON. Must meet the minimum price for the domain length.
+
+### Bid on an active auction
+
+To place a bid on a domain with an active auction, send a simple transfer (op `0`) to the domain NFT item contract. The attached TON value must be at least 5% higher than the current highest bid. The previous highest bidder receives a refund via an `outbid_notification` message. If a bid arrives within the last hour of the auction, the end time extends by one hour to allow counter-bids.
+
+```ts expandable
+import { Address, beginCell, internal, toNano } from "@ton/core";
+import { TonClient, WalletContractV5R1, SendMode } from "@ton/ton";
+import { mnemonicToPrivateKey } from "@ton/crypto";
+
+const domainNftAddress = Address.parse("<DOMAIN_NFT_ADDRESS>");
+
+async function main() {
+    const client = new TonClient({
+        endpoint: "https://testnet.toncenter.com/api/v2/jsonRPC",
+    });
+
+    // Simple transfer with op=0
+    const body = beginCell()
+        .storeUint(0, 32)
+        .endCell();
+
+    const msg = internal({
+        to: domainNftAddress,
+        value: toNano("<BID_AMOUNT>"),
+        bounce: true,
+        body,
+    });
+
+    const mnemonic = process.env.MNEMONIC;
+    if (!mnemonic) {
+        throw new Error("Set MNEMONIC");
+    }
+    const keyPair = await mnemonicToPrivateKey(mnemonic.split(" "));
+    const walletContract = client.open(
+        WalletContractV5R1.create({
+            workchain: 0,
+            publicKey: keyPair.publicKey,
+        }),
+    );
+
+    const seqno = await walletContract.getSeqno();
+    await walletContract.sendTransfer({
+        seqno,
+        secretKey: keyPair.secretKey,
+        sendMode: SendMode.IGNORE_ERRORS | SendMode.PAY_GAS_SEPARATELY,
+        messages: [msg],
+    });
+}
+
+void main();
+```
+
+Where
+
+- `<DOMAIN_NFT_ADDRESS>`: the address of the domain NFT item contract with an active auction. Obtain it by calling `get_nft_address_by_index(slice_hash("<DOMAIN_NAME>"))` on the collection contract.
+- `<BID_AMOUNT>`: the bid in TON. Must be at least 5% higher than the current highest bid.
+
+### Release an expired domain
+
+A domain that has not been renewed for more than one year can be released by sending a `dns_balance_release` message (op `0x4ed14b65`) to the domain NFT item contract. The attached TON value must meet the minimum price for the domain length. The sender becomes the initial bidder in a new one-week auction. The previous owner receives the remaining contract balance.
+
+```ts expandable
+import { Address, beginCell, internal, toNano } from "@ton/core";
+import { TonClient, WalletContractV5R1, SendMode } from "@ton/ton";
+import { mnemonicToPrivateKey } from "@ton/crypto";
+
+const domainNftAddress = Address.parse("<DOMAIN_NFT_ADDRESS>");
+
+async function main() {
+    const client = new TonClient({
+        endpoint: "https://testnet.toncenter.com/api/v2/jsonRPC",
+    });
+
+    // dns_balance_release#4ed14b65
+    const body = beginCell()
+        .storeUint(0x4ed14b65, 32)
+        // query_id
+        .storeUint(0, 64)
+        .endCell();
+
+    const msg = internal({
+        to: domainNftAddress,
+        value: toNano("<BID_AMOUNT>"),
+        bounce: true,
+        body,
+    });
+
+    const mnemonic = process.env.MNEMONIC;
+    if (!mnemonic) {
+        throw new Error("Set MNEMONIC");
+    }
+    const keyPair = await mnemonicToPrivateKey(mnemonic.split(" "));
+    const walletContract = client.open(
+        WalletContractV5R1.create({
+            workchain: 0,
+            publicKey: keyPair.publicKey,
+        }),
+    );
+
+    const seqno = await walletContract.getSeqno();
+    await walletContract.sendTransfer({
+        seqno,
+        secretKey: keyPair.secretKey,
+        sendMode: SendMode.IGNORE_ERRORS | SendMode.PAY_GAS_SEPARATELY,
+        messages: [msg],
+    });
+}
+
+void main();
+```
+
+Where
+
+- `<DOMAIN_NFT_ADDRESS>`: the address of the expired domain NFT item contract.
+- `<BID_AMOUNT>`: the bid in TON. Must meet the minimum price for the domain length.
+
+### Resolve a domain
+
+The following example resolves a `.ton` domain to a DNS record by following the `dnsresolve` chain from the root contract. Domain names are encoded by reversing labels and null-terminating each one: `example.ton` becomes `ton\0example\0`.
+
+```ts expandable
+import { Address, beginCell, Cell } from "@ton/core";
+import { TonClient } from "@ton/ton";
+import { sha256_sync } from "@ton/crypto";
+
+const rootDnsAddress = Address.parse("<ROOT_DNS_ADDRESS>");
+const domain = "<DOMAIN>";
+const category = "<CATEGORY>";
+
+function encodeDomain(name: string): Buffer {
+    return Buffer.from(
+        name.split(".").reverse().join("\0") + "\0",
+        "ascii",
+    );
+}
+
+async function main() {
+    const client = new TonClient({
+        endpoint: "https://toncenter.com/api/v2/jsonRPC",
+    });
+
+    const categoryKey = BigInt(
+        "0x" + sha256_sync(Buffer.from(category)).toString("hex"),
+    );
+
+    let contractAddress = rootDnsAddress;
+    let remaining = encodeDomain(domain);
+    let record: Cell | null = null;
+
+    for (let depth = 0; depth < 10; depth++) {
+        const { stack } = await client.runMethod(
+            contractAddress,
+            "dnsresolve",
+            [
+                { type: "slice", cell: beginCell().storeBuffer(remaining).endCell() },
+                { type: "int", value: categoryKey },
+            ],
+        );
+
+        const bitsConsumed = stack.readNumber();
+        const cell = stack.readCellOpt();
+
+        if (!cell || bitsConsumed === 0) break;
+
+        const bytesConsumed = bitsConsumed / 8;
+        if (bytesConsumed >= remaining.length) {
+            // Fully resolved: cell is the final DNS record value
+            record = cell;
+            break;
+        }
+
+        // Partial match: follow dns_next_resolver#ba93
+        const cs = cell.beginParse();
+        if (cs.loadUint(16) !== 0xba93) break;
+        contractAddress = cs.loadAddress();
+        remaining = remaining.subarray(bytesConsumed);
+    }
+
+    console.log(record);
+}
+
+void main();
+```
+
+Where
+
+- `<ROOT_DNS_ADDRESS>`: the root DNS contract address, stored in blockchain configuration parameter #4.
+- `<DOMAIN>`: the domain to resolve, for example `example.ton`.
+- `<CATEGORY>`: the record category name, for example `wallet` or `site`. The returned cell is a raw `DNSRecord` value. Parse it according to the TL-B type for the requested category.
+
+### Set a wallet address record
+
+The following example writes a `dns_smc_address` value for the `wallet` category, linking a wallet address to the domain.
+
+```ts expandable
+import { Address, beginCell, internal, toNano } from "@ton/core";
+import { TonClient, WalletContractV5R1, SendMode } from "@ton/ton";
+import { mnemonicToPrivateKey, sha256_sync } from "@ton/crypto";
+
+const domainNftAddress = Address.parse("<DOMAIN_NFT_ADDRESS>");
+const walletToLink = Address.parse("<WALLET_TO_LINK>");
+
+async function main() {
+    const client = new TonClient({
+        endpoint: "https://testnet.toncenter.com/api/v2/jsonRPC",
+    });
+
+    // Category key: SHA-256 of "wallet"
+    const categoryKey = BigInt(
+        "0x" + sha256_sync(Buffer.from("wallet")).toString("hex"),
+    );
+
+    // DNS record value: dns_smc_address#9fd3
+    const recordValue = beginCell()
+        // dns_smc_address tag
+        .storeUint(0x9fd3, 16)
+        .storeAddress(walletToLink)
+        // flags = 0, no capability list
+        .storeUint(0, 8)
+        .endCell();
+
+    // change_dns_record#4eb1f0f9
+    const body = beginCell()
+        // op::change_dns_record
+        .storeUint(0x4eb1f0f9, 32)
+        // query_id
+        .storeUint(0, 64)
+        // record key
+        .storeUint(categoryKey, 256)
+        // record value cell
+        .storeRef(recordValue)
+        .endCell();
+
+    const msg = internal({
+        to: domainNftAddress,
+        value: toNano("0.05"),
+        bounce: true,
+        body,
+    });
+
+    const mnemonic = process.env.MNEMONIC;
+    if (!mnemonic) {
+        throw new Error("Set MNEMONIC");
+    }
+    const keyPair = await mnemonicToPrivateKey(mnemonic.split(" "));
+    const walletContract = client.open(
+        WalletContractV5R1.create({
+            workchain: 0,
+            publicKey: keyPair.publicKey,
+        }),
+    );
+
+    const seqno = await walletContract.getSeqno();
+    await walletContract.sendTransfer({
+        seqno,
+        secretKey: keyPair.secretKey,
+        sendMode: SendMode.IGNORE_ERRORS | SendMode.PAY_GAS_SEPARATELY,
+        messages: [msg],
+    });
+}
+
+void main();
+```
+
+Where
+
+- `<DOMAIN_NFT_ADDRESS>`: the address of the `.ton` domain NFT item contract. Obtain it by calling `get_nft_address_by_index(slice_hash("<DOMAIN_NAME>"))` on the `.ton` collection contract, whose address is stored in blockchain configuration parameter #4.
+- `<WALLET_TO_LINK>`: the wallet address the domain should resolve to.
+
+### Set a site ADNL address record
+
+The following example writes a `dns_adnl_address` value for the `site` category, linking an ADNL address to the domain.
+
+```ts expandable
+import { Address, beginCell, internal, toNano } from "@ton/core";
+import { TonClient, WalletContractV5R1, SendMode } from "@ton/ton";
+import { mnemonicToPrivateKey, sha256_sync } from "@ton/crypto";
+
+const domainNftAddress = Address.parse("<DOMAIN_NFT_ADDRESS>");
+const adnlAddress = "<ADNL_ADDRESS_HEX>";
+
+async function main() {
+    const client = new TonClient({
+        endpoint: "https://testnet.toncenter.com/api/v2/jsonRPC",
+    });
+
+    // Category key: SHA-256 of "site"
+    const categoryKey = BigInt(
+        "0x" + sha256_sync(Buffer.from("site")).toString("hex"),
+    );
+
+    // DNS record value: dns_adnl_address#ad01
+    const recordValue = beginCell()
+        // dns_adnl_address tag
+        .storeUint(0xad01, 16)
+        // adnl_addr:bits256
+        .storeUint(BigInt("0x" + adnlAddress), 256)
+        // flags = 0, no proto list
+        .storeUint(0, 8)
+        .endCell();
+
+    // change_dns_record#4eb1f0f9
+    const body = beginCell()
+        .storeUint(0x4eb1f0f9, 32)
+        .storeUint(0, 64)
+        .storeUint(categoryKey, 256)
+        .storeRef(recordValue)
+        .endCell();
+
+    const msg = internal({
+        to: domainNftAddress,
+        value: toNano("0.05"),
+        bounce: true,
+        body,
+    });
+
+    const mnemonic = process.env.MNEMONIC;
+    if (!mnemonic) {
+        throw new Error("Set MNEMONIC");
+    }
+    const keyPair = await mnemonicToPrivateKey(mnemonic.split(" "));
+    const walletContract = client.open(
+        WalletContractV5R1.create({
+            workchain: 0,
+            publicKey: keyPair.publicKey,
+        }),
+    );
+
+    const seqno = await walletContract.getSeqno();
+    await walletContract.sendTransfer({
+        seqno,
+        secretKey: keyPair.secretKey,
+        sendMode: SendMode.IGNORE_ERRORS | SendMode.PAY_GAS_SEPARATELY,
+        messages: [msg],
+    });
+}
+
+void main();
+```
+
+Where
+
+- `<DOMAIN_NFT_ADDRESS>`: the address of the `.ton` domain NFT item contract.
+- `<ADNL_ADDRESS_HEX>`: a 64-character hex string representing the 256-bit ADNL address of the target TON Site.
+
+### Delete a DNS record
+
+To remove a record, send `change_dns_record` without a value cell reference. The contract interprets the absence of the reference as a deletion.
+
+```ts expandable
+import { Address, beginCell, internal, toNano } from "@ton/core";
+import { TonClient, WalletContractV5R1, SendMode } from "@ton/ton";
+import { mnemonicToPrivateKey, sha256_sync } from "@ton/crypto";
+
+const domainNftAddress = Address.parse("<DOMAIN_NFT_ADDRESS>");
+const categoryName = "<CATEGORY_NAME>";
+
+async function main() {
+    const client = new TonClient({
+        endpoint: "https://testnet.toncenter.com/api/v2/jsonRPC",
+    });
+
+    const categoryKey = BigInt(
+        "0x" + sha256_sync(Buffer.from(categoryName)).toString("hex"),
+    );
+
+    // No storeRef: absence of value cell deletes the record
+    const body = beginCell()
+        .storeUint(0x4eb1f0f9, 32)
+        .storeUint(0, 64)
+        .storeUint(categoryKey, 256)
+        .endCell();
+
+    const msg = internal({
+        to: domainNftAddress,
+        value: toNano("0.05"),
+        bounce: true,
+        body,
+    });
+
+    const mnemonic = process.env.MNEMONIC;
+    if (!mnemonic) {
+        throw new Error("Set MNEMONIC");
+    }
+    const keyPair = await mnemonicToPrivateKey(mnemonic.split(" "));
+    const walletContract = client.open(
+        WalletContractV5R1.create({
+            workchain: 0,
+            publicKey: keyPair.publicKey,
+        }),
+    );
+
+    const seqno = await walletContract.getSeqno();
+    await walletContract.sendTransfer({
+        seqno,
+        secretKey: keyPair.secretKey,
+        sendMode: SendMode.IGNORE_ERRORS | SendMode.PAY_GAS_SEPARATELY,
+        messages: [msg],
+    });
+}
+
+void main();
+```
+
+Where
+
+- `<DOMAIN_NFT_ADDRESS>`: the address of the `.ton` domain NFT item contract.
+- `<CATEGORY_NAME>`: the category to delete, for example `wallet` or `site`.
+
+### Renew a domain
+
+To extend a domain for one year, send a `fill_up` message with 0.015 TON to the domain NFT item contract. Any account can send this message.
+
+```ts expandable
+import { Address, beginCell, internal, toNano } from "@ton/core";
+import { TonClient, WalletContractV5R1, SendMode } from "@ton/ton";
+import { mnemonicToPrivateKey } from "@ton/crypto";
+
+const domainNftAddress = Address.parse("<DOMAIN_NFT_ADDRESS>");
+
+async function main() {
+    const client = new TonClient({
+        endpoint: "https://testnet.toncenter.com/api/v2/jsonRPC",
+    });
+
+    // fill_up#370fec51
+    const body = beginCell()
+        .storeUint(0x370fec51, 32)
+        .endCell();
+
+    const msg = internal({
+        to: domainNftAddress,
+        value: toNano("0.015"),
+        bounce: true,
+        body,
+    });
+
+    const mnemonic = process.env.MNEMONIC;
+    if (!mnemonic) {
+        throw new Error("Set MNEMONIC");
+    }
+    const keyPair = await mnemonicToPrivateKey(mnemonic.split(" "));
+    const walletContract = client.open(
+        WalletContractV5R1.create({
+            workchain: 0,
+            publicKey: keyPair.publicKey,
+        }),
+    );
+
+    const seqno = await walletContract.getSeqno();
+    await walletContract.sendTransfer({
+        seqno,
+        secretKey: keyPair.secretKey,
+        sendMode: SendMode.IGNORE_ERRORS | SendMode.PAY_GAS_SEPARATELY,
+        messages: [msg],
+    });
+}
+
+void main();
+```
+
+Where
+
+- `<DOMAIN_NFT_ADDRESS>`: the address of the `.ton` domain NFT item contract to renew.
 
 ## Domain lifecycle
 
