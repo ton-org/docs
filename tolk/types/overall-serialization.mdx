@@ -346,11 +346,46 @@ struct WithUnion {
 
 ## Tensors `(T1, T2, ...)`
 
-Tensor components are serialized sequentially, in the same manner as `struct` fields.
+Tensor components are serialized sequentially, akin to `struct` fields.
 
-## `tuple` and typed tuples
+## `string`
 
-Tuples are not serializable. However, tuples can be returned from [get methods](/tvm/get-method#get-methods), since contract getters operate on the TVM stack rather than using serialization.
+- Serialized as a reference: a string is a snake-encoded cell
+- TL-B: `^Cell`
+- Stored using `STREF`
+- Loaded using `LDREF`
+
+## `array<T>`
+
+- Serializable when `T` is serializable, e.g., `array<int8>` or `array<bool?>`.
+- Binary format: `uint8` length, followed by chained cell references (snake refs), each containing a `bool` flag for the next reference and serialized elements.
+
+For example, `array<uint8> [1, 2, 3, 4, 5]` can be packed into a single chunk with all 5 elements in a single reference, resulting in the following bitcode:
+
+- `uint8` is 5 (length)
+- `bool` is `true` (has ref)
+- ref `cell`:
+  - `bool` is `false` (no next ref)
+  - `0x0102030405` (1, 2, 3, 4, 5)
+
+This is not the only option. The data can be packed as `ref 1 ref 2345`, or `ref 12 + ref 34 + ref 5`, and so on. For example, `ref 123 + ref 45` produces:
+
+- `uint8` is 5 (length)
+- `bool` is `true` (has ref)
+- ref `cell`:
+  - `bool` is `true` (has next ref)
+  - `0x010203`
+  - ref `cell`:
+    - `bool` is `false` (no next ref)
+    - `0x0405`
+
+An empty array is `uint8` = 0, followed by a `bool` = `false`, which equates to nine zero bits.
+
+The compiler precalculates chunk size to fit as many elements into a cell as possible. Client-side libraries can follow a simpler strategy — for example, write into a cell until there is space, then create a nested reference, repeating the process.
+
+## Shaped tuples `[T1, T2, ...]`
+
+Shaped components are serialized sequentially: serialization is identical to tensors. But their nature is different: `[T1, ...]` are stored in a TVM tuple, whereas `(T1, ...)` act like N variables on a stack.
 
 ## `map<K, V>`
 
@@ -363,3 +398,7 @@ Tuples are not serializable. However, tuples can be returned from [get methods](
 
 - Callables cannot be serialized.
 - Lambdas can be used within contract logic but cannot be serialized for off‑chain responses.
+
+## `unknown`
+
+- Cannot be serialized. Prefer using [`array<T>`](#array\<t>) with serializable `T` instead of `array<unknown>` (`tuple`).
