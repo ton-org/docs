@@ -199,7 +199,7 @@ def find_repo_root() -> Path:
     current = Path(__file__).resolve().parent
 
     for parent in [current] + list(current.parents):
-        if (parent / 'mint.json').exists():
+        if (parent / 'docs.json').exists():
             return parent
 
     return current.parent
