@@ -190,13 +190,29 @@ fun demo(t: MyTensor) {
 }
 ```
 
-## `tuple`
+## `string`
 
-- Type `tuple` is backed by TVM `TUPLE` and occupies a single stack slot, regardless of the number of elements; up to 255.
+Type `string` is backed by the TVM `CELL` containing character data in snake format: a chain of cells where each cell holds a portion of the string and a reference to the next.
 
-## Typed tuple `[T1, T2, ...]`
+For example, a string `"abcd"` can be stored as a single chunk — `cell(data: "abcd")`, with 32 bits inside. The same string can also use nested chunks: `cell(data: "ab", ref: cell(data: "cd"))`. Either way, a `string` is a `cell` that may contain chained refs.
 
-A typed tuple is backed by TVM `TUPLE`. Its structure is known at compile time; at runtime it is an ordinary TVM `tuple`.
+## `unknown`
+
+The `unknown` type is an opaque type that represents a single TVM stack slot.
+
+Any type `T` can be cast to `unknown`. When cast, primitives remain as-is, while multi-slot types are packed into a sub-tuple.
+
+For example, `5 as unknown` remains as `5` on the stack, whereas `(10, 20) as unknown` is converted to a 2-element tuple `[10 20]`.
+
+## `array<T>` and `tuple`
+
+An array of any `T` is backed by the TVM `TUPLE` and occupies a single stack slot, regardless of the number of elements within. The TVM `TUPLE` limit is 255 inner elements. The `tuple` is an alias for `array<unknown>`.
+
+For example, `array<int> [1,2,3]` is a TVM tuple `[1 2 3]`, whereas for `array<Point> [ {x:10,y:20}, {x:30,y:40} ]` each sub-element is a 2-component tuple itself: `[ [10 20] [30 40] ]`. Under the hood, `T` is converted to `unknown` on write and reversed back on read: `points.get(0)` returns `{x:10,y:20}`.
+
+## Shaped tuple `[T1, T2, ...]`
+
+A shaped tuple is a fixed-size array backed by the TVM `TUPLE`, whose structure is known at compile-time:
 
 ```tolk
 fun demo(t: [int, [int, int]]) {

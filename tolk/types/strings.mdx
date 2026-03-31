@@ -1,166 +1,218 @@
 ---
-title: "Strings as slices"
+title: "Strings"
 sidebarTitle: "Strings"
 ---
 
-[TVM](/tvm/overview) does not have a dedicated string type. Instead, [slices](/languages/tolk/types/cells#slices) are used to encode string-like data.
+import { Aside } from '/snippets/aside.jsx';
 
-## Raw string literals
+Tolk provides a dedicated `string` type. At the TVM level, a string is a [cell](/languages/tolk/types/cells) that stores data in snake format: a chain of cells where each cell holds a portion of the string and a reference to the next.
 
-String literals produce a binary slice where each character is encoded with its [ASCII](https://en.wikipedia.org/wiki/ASCII) character number:
+## String literals
+
+Every string literal produces a value of type `string`:
 
 ```tolk
-// `slice` with 4 bytes: 97,98,99,100 (0x61626364)
-const SLICE1 = "abcd"
+// string
+val str = "hello";
+
+// array<string>
+val arr = ["one", "two"];
 ```
 
-Literals cannot exceed 127 ASCII characters because a cell can contain up to 1023 bits.
-
-## Compile-time functions
-
-[Several functions](/languages/tolk/features/standard-library#compile-time-calculations-and-embedding) operate on constant strings and string literals at compile time. The produced values are embedded in the contract as constants.
+However, on the TVM, each literal is a cell:
 
 ```tolk
-// `int` with a CRC32 checksum
-stringCrc32("some_str") // 4013618352 = 0xEF3AF4B0
-
-// `int` with a CRC16 checksum
-stringCrc16("some_str") // 53407 = 0xD09F
-
-// `int` with a full SHA256 checksum
-stringSha256("some_crypto_key")
-
-// `int` with first 32 bits of a SHA256 checksum
-stringSha256_32("some_crypto_key")
-
-// `int` with N-chars ASCII in base 256
-stringToBase256("AB") // 16706 (65*256 + 66)
+// a cell with 40 bits of data
+val str = "hello";
 ```
 
-### Embed hexadecimal data
+A literal cell is created at compile-time, there is no expensive 500-gas cell creation at runtime.
 
-To embed hexadecimal binary data, use `stringHexToSlice("...")`:
+## Snake format
+
+Since a single cell can hold at most 1023 bits (127 bytes), longer strings use the snake format: the start of the string is placed in the root cell, with its continuation in a referenced cell, recursively:
 
 ```tolk
-// `slice` with 2 bytes: 16,32 (0x1020)
-const SLICE2 = stringHexToSlice("1020")
+val str = "very1 very2 ... very99 long";
+// stored approximately as:
+// "very1 ... very30"
+//   -> ref "very31 ... very60"
+//     -> ref "very61 ... very89"
+//       -> ref "very90 ... very99 long"
 ```
 
-### Embed human-readable address strings
+Short strings may also be stored in snake format — for example, after concatenation. The logical value `"abcd"` and the snaked `"ab" -> ref "cd"` are treated identically.
 
-The `address("...")` function inserts a constant slice containing a standard internal contract address:
+<Aside
+  type="caution"
+>
+  Because the same logical string can have different low-level representations, comparing strings via cell hashes is incorrect. Use the [`string.hash` method](#string-hash) instead.
+</Aside>
+
+## Traversing
+
+To manually traverse contents of a string, call a `beginParse()` method that returns `slice`:
 
 ```tolk
-const REFUND_ADDR = address("EQCRDM9h4k3UJdOePPuyX40mCgA4vxge5Dc5vjBR8djbEKC5")
+val bin = str.beginParse();  // slice
+bin.remainingBitsCount();    // 40
 ```
 
-Such slices hold 267 bits of data and have no refs.
+<Aside
+  type="caution"
+>
+  Be careful traversing the string manually. Strings are stored in snake format, so longer strings span multiple cells linked by references.
+</Aside>
 
-## Concatenate string literals
+## String methods
 
-There are no compile-time means to concatenate string literals. Instead, concatenation can be performed at runtime via a [builder](/languages/tolk/types/cells#builders):
+Standard library methods for strings require an explicit import:
 
 ```tolk
-val concat: slice = beginCell()
-    .storeSlice("ab")
-    .storeSlice("cd")
-    .asSlice();
+import "@stdlib/strings"
 ```
 
-## Serialization
+### `string.calculateLength`
 
-Plain slices cannot be serialized directly: they require a fixed-width type or custom serialization rules. Similarly, string-like data must use an explicit encoding to be stored on-chain or returned from contracts.
-
-### Fixed-size strings via `bitsN`
-
-If a string size is fixed and does not exceed 1023 bits, use fixed-size encodings: `bitsN` or `bytesN`, where `N` cannot go beyond 1023 or 127, respectively.
+Loops over all references and returns the total number of characters:
 
 ```tolk
-struct Response1 {
-    someData: uint8
-    str: bits32
-}
-
-fun generateResponse(): Response1 {
-    return {
-        someData: 0xFF,
-        str: "abcd" as bits32,
-    }
-}
+val len = someStr.calculateLength();
 ```
 
-### Snake strings
+Both `"abcd"` and `"a" -> ref "bc" -> ref "d"` return 4.
 
-For arbitrary strings, the so-called _snake string_ or tail string encoding is often used.
+### `string.equalTo`
 
-Snake encoding works by storing a portion of data in the current cell and storing the rest in the first ref cell, recursively. The process repeats until all the data is stored in a chain of cells.
-
-For instance, a string `xxxxyyyyzzzz` can be split into three parts and stored as a snake string:
+Compares two strings for equality, accounting for their snaked internals:
 
 ```tolk
-"xxxx".ref("yyyy".ref("zzzz"))
-```
-
-Such chaining can be implemented as follows:
-
-```tolk
-type MyTailString = RemainingBitsAndRefs
-
-struct Response2 {
-    someData: int8
-    str: MyTailString
-}
-
-fun slice.ref(self, other: slice): slice {
-    return beginCell()
-        .storeSlice(self)
-        .storeSlice(other)
-        .asSlice();
-}
-
-fun generateResponse(): Response2 {
-    return {
-        someData: 0xFF,
-        str: "xxxx".ref("yyyy".ref("zzzz")),
-    }
+if (option.equalTo("--disable")) {
+    // ...
 }
 ```
 
-There, `MyTailString` is a type alias to `RemainingBitsAndRefs`, which is a slice that holds the [remainder of the data when read](/languages/tolk/types/cells#remaining-slice-when-reading). On-chain decoding of such strings does not require iteration over nested references.
+For instance, `"--disable"` equals `"--dis" -> ref "able"`.
 
-### Variable-length encoding
+### `string.hash`
 
-Encoding of variable-length strings can also be implemented manually using a type alias over `slice` and its custom serializers.
+Returns a hash of the string regardless of its internal representation. The hash of `"abcd"` and `"a" -> ref "bcd"` is identical.
 
-For example, short strings like `"abcd"` can be stored as 8 bits for `N`, where `N` is the string length, followed by `N` bits of data:
+### Compile-time methods
+
+Several methods operate on [string literals](#string-literals) at compile-time. Such strings are evaluated during compilation and embedded into the contract as constants.
 
 ```tolk
-type ShortString = slice
+// calculates crc32 of a string
+const crc32 = "some_str".crc32() // = 4013618352 = 0xEF3AF4B0
 
-fun ShortString.packToBuilder(self, mutate b: builder) {
-    val nBits = self.remainingBitsCount();
-    b.storeUint(nBits, 8);
-    b.storeSlice(self);
-}
+// calculates crc16 (XMODEM) of a string
+const crc16 = "some_str".crc16() // = 53407 = 0xD09F
 
-fun ShortString.unpackFromSlice(mutate s: slice) {
-    val nBits = s.loadUint(8);
-    return s.loadBits(nBits);
+// calculates sha256 of a string and returns 256-bit integer
+const hash = "some_crypto_key".sha256()
+
+// calculates sha256 of a string and takes the first 32 bits
+const minihash = "some_crypto_key".sha256_32()
+
+// interprets an N-chars ascii string as a number in base 256
+const base256 = "AB".toBase256() // = 16706 (65*256 + 66)
+
+// a slice with 2 bytes: 16, 32 (constructed from hex)
+const hexSlice = "1020".hexToSlice()
+
+// a slice with 4 bytes: 97, 98, 99, 100
+const rawSlice = "abcd".literalSlice()
+```
+
+These methods work only on constant strings: calling them on variables produces a compilation error.
+
+## `StringBuilder`
+
+`StringBuilder` from `@stdlib/strings` concatenates several strings into one snake-encoded string:
+
+```tolk
+import "@stdlib/strings"
+
+fun build() {
+    var sb = StringBuilder.create();
+    sb.append("ab");
+    sb.append("cd");
+    // "abcd", stored as "ab" -> ref "cd"
+    var str = sb.build();
 }
 ```
 
-Then, `ShortString` can be used as a regular type and enjoy auto-serialization:
+### `StringBuilder.append`
+
+The method `StringBuilder.append` returns `self` and can be chained:
 
 ```tolk
-struct Response3 {
-    someData: int8
-    str: ShortString
-}
+var str = StringBuilder.create()
+         .append("ab")
+         .append("cd")
+         .build();
+```
 
-fun generateResponse(): Response3 {
-    return {
-        someData: 0xFF,
-        str: "abcd",
-    }
+A practical example: an NFT collection with common content and per-item content:
+
+```tolk
+get fun get_nft_content(itemIndex: int, individualLink: string) {
+    // ...
+    var link = StringBuilder.create()
+              .append(commonContent)
+              .append(individualLink)
+              .build();
+    // ...
 }
 ```
+
+The method `StringBuilder.append` always concatenates strings in the snake format. This does not affect the final representation, since both `"abcd"` and `"ab" -> ref "cd"` are the same logical string.
+
+### `StringBuilder.appendInt`
+
+Stores an integer in decimal format. This method is gas-expensive. It is suitable for contract getters executed off-chain, but should be avoided in on-chain production environments:
+
+```tolk
+var link = StringBuilder.create()
+           .append("/images/")
+           .appendInt(itemIndex)
+           .append(".png")
+           .build();
+```
+
+## TEP-compliant encoding
+
+Per the [token metadata standard](/standard/tokens/metadata), strings returned from get-methods must contain prefixes for off-chain explorers and APIs:
+
+- `0x00` + `"<STRING>"` — a regular snake-encoded string
+- `0x01` + `"<STRING>"` — an off-chain content URL
+
+Prefixing does not create a new entity — the result remains a `string`, a concatenation of one character and the original content.
+
+Standard library contains an alias: `type string_prefixed0x = string`. Use this alias to indicate that a string is intentionally prefixed. Because it is an alias, the value remains a string (a TVM cell) at runtime and stays opaque to clients.
+
+Use specialized methods `string.prefixWith00` and `string.prefixWith01` for prefixing metadata strings:
+
+<CodeGroup>
+  ```tolk title="NFT example" wrap lines
+  get fun get_nft_content(itemIndex: int, individualLink: string): string_prefixed0x {
+      // ...
+      return StringBuilder.create()
+          .append(content.commonContent)
+          .append(individualLink)
+          .build()
+          // to comply with TEPs off-chain content layout
+          .prefixWith01()
+  }
+  ```
+
+  ```tolk title="Jetton example" wrap lines
+  metadata.contentDict.set("uri".sha256(), storage.metadataUri.prefixWith00());
+  metadata.contentDict.set("decimals".sha256(), "9".prefixWith00());
+  ```
+</CodeGroup>
+
+## Stack layout and serialization
+
+A string is backed by the snake-encoded TVM `CELL`. Serialized as a single cell reference.
