@@ -1,0 +1,115 @@
+---
+title: "TON Sites"
+description: "Web services accessible through TON Network via ADNL and RLDP"
+---
+
+TON Sites are web services that support an HTTP interface. They use RLDP datagrams over the ADNL protocol to transfer HTTP queries and responses, residing entirely within the TON Network. A TON Site is identified by its ADNL address rather than an IP address, so no IP address appears in the URL or at the HTTP layer.
+
+## How TON Sites work
+
+When a user visits a TON Site:
+
+1. The TON Proxy client accepts an HTTP request from an ordinary web browser.
+1. The proxy resolves the target address, either through TON DNS (for human-readable `.ton` domains) or directly from a known ADNL address.
+1. The HTTP request is encapsulated in RLDP datagrams and sent through the ADNL network to the TON Site's abstract address.
+1. The TON Site processes the request and returns an HTTP response.
+
+## ADNL address as identity
+
+Every TON Site is identified by a 256-bit ADNL abstract address derived from its public key. Because the ADNL address is independent of the server's IP address, a site is not tied to any particular server location.
+
+## Host a TON Site
+
+A TON Site requires a reverse proxy that accepts inbound ADNL connections and forwards them to a local web server. Two implementations are available.
+
+### Use `rldp-http-proxy`
+
+`rldp-http-proxy` is the reverse proxy from the official TON monorepo. Key generation is manual.
+
+**Step 1.** Generate a persistent ADNL address:
+
+```bash
+mkdir keyring
+utils/generate-random-id -m adnlid
+```
+
+The command prints two values to stdout: the hex address and its user-friendly form:
+
+```text
+45061C1D4EC44A937D0318589E13C73D151D1CEF5D3C0E53AFBCF56A6C2FE2BD vcqmha5j3ceve35ammfrhqty46rkhi455otydstv66pk2tmf7rl25f3
+```
+
+It also writes the private key to a file named after the hex address. Move it into the keyring directory:
+
+```bash
+mv 45061C1D* keyring/
+```
+
+**Step 2.** Start the reverse proxy, using the user-friendly ADNL address from step 1:
+
+```bash
+rldp-http-proxy -a <ip>:3333 -L '*' -C global.config.json -A <adnl-address> -d -l tonsite.log
+```
+
+| Flag                                  | Description                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------------ |
+| `-a <ip>:<port>`                      | Public IP and UDP port for inbound ADNL connections (published to the TON DHT) |
+| `-A <adnl-address>`                   | ADNL address generated in step 1                                               |
+| `-L <hostname>[:<ports>]`             | Forward requests for `<hostname>` to `127.0.0.1` (default ports: 80, 443)      |
+| `-R <hostname>[:<ports>]@<ip>:<port>` | Forward requests for `<hostname>` to a remote HTTP server at `<ip>:<port>`     |
+| `-C <file>`                           | Path to the TON global network configuration file                              |
+| `-D <path>`                           | Database root path                                                             |
+| `-d`                                  | Daemonize the process                                                          |
+| `-l <file>`                           | Log file path                                                                  |
+
+### Use `tonutils-reverse-proxy`
+
+`tonutils-reverse-proxy` is a Go implementation that handles key generation and domain linking automatically.
+
+**Install on Linux:**
+
+```bash
+wget https://github.com/tonutils/reverse-proxy/releases/latest/download/tonutils-reverse-proxy-linux-amd64
+chmod +x tonutils-reverse-proxy-linux-amd64
+```
+
+To build from source:
+
+```bash
+git clone https://github.com/tonutils/reverse-proxy
+cd reverse-proxy && make build
+```
+
+Run with the target `.ton` domain:
+
+```bash
+./tonutils-reverse-proxy --domain <domain>.ton
+```
+
+On first run, the proxy generates a persistent ADNL key pair and displays a QR code. Scan it with a compatible TON wallet (such as Tonkeeper) to confirm domain ownership and link the ADNL address to the domain.
+
+The web server must listen on `http://127.0.0.1:80`. The proxy adds two headers to each forwarded request:
+
+- `X-Adnl-Ip`: the IP address of the connecting client as seen by the ADNL network.
+- `X-Adnl-Id`: the ADNL node ID of the connecting client.
+
+### Domain assignment
+
+To assign the ADNL address to a `.ton` domain, open the domain in the TON DNS management interface, paste the ADNL address into the "Site" field, and confirm the transaction with the domain owner's wallet. For record types and resolution details, see [TON DNS](/foundations/web3/ton-dns).
+
+## Domain name resolution
+
+### TON DNS
+
+A `dns_adnl_address` record in TON DNS maps a `.ton` domain name to the ADNL address of the TON Site. The proxy client resolves this record and connects to the correct ADNL address. See [TON DNS](/foundations/web3/ton-dns) for the full record type specification.
+
+### Direct access via ADNL address
+
+TON Sites can also be accessed directly by their ADNL address, without DNS resolution.
+
+## Related components
+
+- **ADNL**: the abstract datagram network layer providing transport for TON Sites.
+- **RLDP**: the reliable large datagram protocol over ADNL for HTTP transfer.
+- [TON Proxy](/foundations/web3/ton-proxy): bridges HTTP requests from a conventional browser to the ADNL network.
+- [TON DNS](/foundations/web3/ton-dns): maps `.ton` domains to ADNL addresses.
