@@ -136,6 +136,23 @@ def generate_table(endpoints: list, link_base: str) -> str:
     return "\n".join(lines)
 
 
+def add_jsonrpc_endpoints(spec: dict, endpoints: list) -> None:
+    """
+    Optionally add JSON-RPC endpoints from the OpenAPI spec to the endpoints list.
+    """
+    paths = spec.get("paths", {})
+    for rpc_path in ["/api/v2/jsonRPC", "/api/v3/jsonRPC"]:
+        if rpc_path in paths:
+            jsonrpc = paths[rpc_path].get("post", {})
+            endpoints.append({
+                "path": rpc_path,
+                "method": "POST",
+                "tag": "JSON-RPC",
+                "summary": jsonrpc.get("summary", "JSON-RPC endpoint"),
+                "operationId": jsonrpc.get("operationId", "jsonRPC_post"),
+            })
+
+
 def process_spec(config: dict, repo_root: Path) -> str:
     """Process a single OpenAPI spec and generate table."""
     spec_path = repo_root / config["spec_path"]
@@ -150,19 +167,9 @@ def process_spec(config: dict, repo_root: Path) -> str:
 
     endpoints = extract_endpoints(spec, config.get("exclude_tags", []))
 
-    # Optionally add JSON-RPC endpoint
-    # if config.get('include_jsonrpc'):
-    #     paths = spec.get('paths', {})
-    #     for rpc_path in ['/api/v2/jsonRPC', '/api/v3/jsonRPC']:
-    #         if rpc_path in paths:
-    #             jsonrpc = paths[rpc_path].get('post', {})
-    #             endpoints.append({
-    #                 'path': rpc_path,
-    #                 'method': 'POST',
-    #                 'tag': 'JSON-RPC',
-    #                 'summary': jsonrpc.get('summary', 'JSON-RPC endpoint'),
-    #                 'operationId': jsonrpc.get('operationId', 'jsonRPC_post'),
-    #             })
+    # Optionally add JSON-RPC endpoints if configured
+    if config.get("include_jsonrpc"):
+        add_jsonrpc_endpoints(spec, endpoints)
 
     return generate_table(endpoints, config["link_base"])
 
