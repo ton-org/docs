@@ -195,7 +195,7 @@ def inject_table_into_mdx(mdx_path: Path, marker: str, table: str) -> bool:
 
 
 def find_repo_root() -> Path:
-    """Find the repository root (where mint.json is located)."""
+    """Find the repository root (where docs.json is located)."""
     current = Path(__file__).resolve().parent
 
     for parent in [current] + list(current.parents):
