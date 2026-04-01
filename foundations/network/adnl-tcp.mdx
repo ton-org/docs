@@ -1,0 +1,232 @@
+---
+title: "ADNL TCP - liteserver communication"
+description: "Practical guide to ADNL over TCP: handshake, packet encoding, and interacting with liteservers"
+sidebarTitle: "ADNL TCP"
+---
+
+import { Aside } from "/snippets/aside.jsx";
+
+ADNL over TCP is the transport used for communication with liteservers. This page walks through the protocol step by step, from establishing a connection to calling smart contract methods.
+
+For the underlying protocol specification, see [ADNL](/foundations/network/adnl).
+
+## Packet structure
+
+Each ADNL TCP packet (except the handshake) has the following structure:
+
+| Field      | Size                | Description                                            |
+| ---------- | ------------------- | ------------------------------------------------------ |
+| `size`     | 4 bytes (LE)        | Total packet size `N`, excluding this field             |
+| `nonce`    | 32 bytes            | Random bytes protecting against checksum attacks        |
+| `payload`  | `N - 64` bytes      | Actual data                                            |
+| `checksum` | 32 bytes            | SHA-256 of `nonce \|\| payload`                         |
+
+The entire packet, including the size field, is encrypted with AES-CTR.
+
+After decryption, verify that the checksum matches by computing it independently. The handshake is an exception and is detailed in the [ADNL specification](/foundations/network/adnl#handshake).
+
+## Establishing a connection
+
+Prerequisites:
+
+- Server IP, port, and public key (from the [global config](https://ton-blockchain.github.io/global.config.json))
+- A freshly generated ed25519 private/public keypair
+
+<Aside type="tip">
+  The IP address in the config is a decimal integer. Convert it to dotted-decimal IPv4 format, for example using [this tool](https://www.browserling.com/tools/dec-to-ip). The public key is base64-encoded.
+</Aside>
+
+The client generates 160 random bytes. These bytes serve as the basis for two permanent AES-CTR ciphers:
+
+| Cipher   | Key (bytes) | IV (bytes) | Used for                                |
+| -------- | ----------- | ---------- | --------------------------------------- |
+| Cipher A | 0-31        | 64-79      | Server encrypts, client decrypts        |
+| Cipher B | 32-63       | 80-95      | Client encrypts, server decrypts        |
+
+The client sends a handshake packet:
+
+| Field                       | Size      |
+| --------------------------- | --------- |
+| Server key ID               | 32 bytes  |
+| Client ed25519 public key   | 32 bytes  |
+| SHA-256 of the 160 bytes    | 32 bytes  |
+| Encrypted 160 bytes         | 160 bytes |
+
+The server derives the same ECDH key, decrypts the 160 bytes, and creates the same two ciphers. If everything succeeds, the server responds with an empty ADNL packet.
+
+After this exchange the connection is established. Data is serialized using [TL](/languages/tl-b/overview).
+
+## Ping and pong
+
+Send a ping packet every 5 seconds to keep the connection alive. Without pings, the server will terminate the connection during idle periods.
+
+The ping TL schema: `tcp.ping random_id:long = tcp.Pong`, with schema ID `9a2b084d` (CRC32 of the schema string, little-endian).
+
+An ADNL ping packet:
+
+| Field      | Size     | Value                    |
+| ---------- | -------- | ------------------------ |
+| `size`     | 4 bytes  | 76 (64 + 4 + 8)         |
+| `nonce`    | 32 bytes | random                   |
+| schema ID  | 4 bytes  | `9a2b084d`               |
+| request ID | 8 bytes  | random uint64            |
+| `checksum` | 32 bytes | SHA-256(nonce + payload) |
+
+Wait for [tcp.pong](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/tl/generate/scheme/ton_api.tl#L23) with matching `random_id`.
+
+## Querying a liteserver
+
+All blockchain queries are wrapped in two layers:
+
+- **ADNL query**: `adnl.message.query query_id:int256 query:bytes = adnl.Message` (ID `7af98bb4`)
+- **Lite query**: `liteServer.query data:bytes = Object` (ID `df068c79`)
+
+The specific liteserver method is serialized inside `data:bytes` of the lite query, which is itself serialized inside `query:bytes` of the ADNL query.
+
+### getMasterchainInfo
+
+The masterchain block is required as an input for many subsequent requests.
+
+TL schema: `liteServer.getMasterchainInfo = liteServer.MasterchainInfo` (ID `2ee6b589`).
+
+Packet layout:
+
+```text
+74000000                                                             -> packet size (116)
+5fb13e11977cb5cff0fbf7f23f674d734cb7c4bf01322c5e6b928c5d8ea09cfd     -> nonce
+  7af98bb4                                                           -> adnl.message.query
+  77c1545b96fa136b8e01cc08338bec47e8a43215492dda6d4d7e286382bb00c4   -> query_id
+    0c                                                               -> array size (12)
+    df068c79                                                         -> liteServer.query
+      04                                                             -> array size (4)
+      2ee6b589                                                       -> getMasterchainInfo
+      000000                                                         -> padding (align to 8)
+    000000                                                           -> padding (align to 16)
+ac2253594c86bd308ed631d57a63db4ab21279e9382e416128b58ee95897e164     -> sha256
+```
+
+The response is wrapped in `adnl.message.answer` (ID `1684ac0f`) and contains [liteServer.masterchainInfo](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/tl/generate/scheme/lite_api.tl#L30), which includes `last:tonNode.blockIdExt`, `state_root_hash:int256`, and `init:tonNode.zeroStateIdExt`.
+
+Example response:
+
+```text
+20010000                                                                  -> packet size (288)
+5558b3227092e39782bd4ff9ef74bee875ab2b0661cf17efdfcd4da4e53e78e6          -> nonce
+  1684ac0f                                                                -> adnl.message.answer
+  77c1545b96fa136b8e01cc08338bec47e8a43215492dda6d4d7e286382bb00c4        -> query_id
+    b8                                                                    -> array size
+    81288385                                                              -> liteServer.masterchainInfo
+        ffffffff                                                          -> workchain (int)
+        0000000000000080                                                  -> shard (long)
+        27405801                                                          -> seqno (int)
+        e585a47bd5978f6a4fb2b56aa2082ec9deac33aaae19e78241b97522e1fb43d4  -> root_hash
+        876851b60521311853f59c002d46b0bd80054af4bce340787a00bd04e0123517  -> file_hash
+      8b4d3b38b06bb484015faf9821c3ba1c609a25b74f30e1e585b8c8e820ef0976    -> state_root_hash
+        ffffffff                                                          -> workchain (int)
+        17a3a92992aabea785a7a090985a265cd31f323d849da51239737e321fb05569  -> root_hash
+        5e994fcf4d425c0a6ce6a792594b7173205f740a39cd56f537defd28b48a0f6e  -> file_hash
+    000000                                                                -> padding
+520c46d1ea4daccdf27ae21750ff4982d59a30672b3ce8674195e8a23e270d21          -> sha256
+```
+
+### runSmcMethod
+
+Call a smart contract get method using:
+
+```tlb
+liteServer.runSmcMethod mode:# id:tonNode.blockIdExt account:liteServer.accountId method_id:long params:bytes = liteServer.RunMethodResult
+```
+
+Fields:
+
+- `mode` — uint32 bitmask controlling which response fields are present. Set bit 2 to receive `result`.
+- `id` — masterchain block from `getMasterchainInfo`.
+- `account` — [liteServer.accountId](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/tl/generate/scheme/lite_api.tl#L27) with workchain and address.
+- `method_id` — CRC16 (XMODEM table) of the method name, with bit 17 set. See [calculation example](https://github.com/xssnick/tonutils-go/blob/88f83bc3554ca78453dd1a42e9e9ea82554e3dd2/ton/runmethod.go#L16).
+- `params` — [Stack](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/crypto/block/block.tlb#L783) serialized in [BoC](/foundations/serialization/cells#bag-of-cells), containing arguments.
+
+With `mode = 4` (only `result`), the response includes:
+
+- `exit_code` — 0 on success, exception code otherwise.
+- `result` — Stack in BoC format containing returned values.
+
+The stack is parsed according to the [VmStackValue TL-B schema](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/crypto/block/block.tlb#L766). Stack elements are stored in reverse order using `vm_stk_cons`, where the first reference points to the rest of the stack and the second contains the current value.
+
+<Aside type="note">
+  Arguments must be passed in reverse order from what appears in the FunC source code. Return values are also in reverse order.
+</Aside>
+
+### getAccountState
+
+Retrieve account data (balance, code, storage) using [getAccountState](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/tl/generate/scheme/lite_api.tl#L68):
+
+```tlb
+liteServer.accountState id:tonNode.blockIdExt shardblk:tonNode.blockIdExt shard_proof:bytes proof:bytes state:bytes = liteServer.AccountState;
+```
+
+The `state` field contains a [BoC](/foundations/serialization/cells#bag-of-cells) with the account's [TL-B structure](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/crypto/block/block.tlb#L232):
+
+```tlb
+account_none$0 = Account;
+account$1 addr:MsgAddressInt storage_stat:StorageInfo storage:AccountStorage = Account;
+```
+
+Parse it by reading prefix bits to determine the variant (`account_none$0` vs `account$1`), then read fields sequentially: address, storage info, and the balance from `AccountStorage > CurrencyCollection > grams:Grams`, which is a `VarUInteger 16`.
+
+For a complete parsing walkthrough, see [TL-B documentation](/languages/tl-b/overview).
+
+## Key ID calculation
+
+The key ID is the SHA-256 hash of the serialized TL schema. For ed25519 keys:
+
+```tlb
+pub.ed25519 key:int256 = PublicKey -- ID c6b41348
+```
+
+The key ID is `SHA-256([0xC6, 0xB4, 0x13, 0x48] || public_key)` — a 36-byte input (4-byte TL prefix + 32-byte key).
+
+Other key types:
+
+```tlb
+pub.aes key:int256 = PublicKey     -- ID d4adbc2d
+pub.overlay name:bytes = PublicKey -- ID cb45ba34
+pub.unenc data:bytes = PublicKey   -- ID 0a451fb6
+pk.aes key:int256 = PrivateKey     -- ID 3751e8a5
+```
+
+[Implementation example](https://github.com/xssnick/tonutils-go/blob/2b5e5a0e6ceaf3f28309b0833cb45de81c580acc/liteclient/crypto.go#L16).
+
+## Handshake encryption
+
+The 160-byte session parameters are encrypted using an AES-CTR cipher derived from the SHA-256 hash of the 160 bytes and the [ECDH shared key](#ecdh-shared-key):
+
+```text
+key = shared_key[0..16] || hash[16..32]
+iv  = hash[0..4] || shared_key[20..32]
+```
+
+[Implementation example](https://github.com/xssnick/tonutils-go/blob/2b5e5a0e6ceaf3f28309b0833cb45de81c580acc/liteclient/connection.go#L361).
+
+## ECDH shared key
+
+The shared key is computed from one party's private key and the other party's public key using Elliptic Curve Diffie-Hellman.
+
+Simplified example of the DH principle:
+
+1. Client generates secret **6** and public **7**. Server generates secret **5** and public **15**.
+1. They exchange public numbers.
+1. Client computes 7^6 mod 15 = **4**. Server computes 7^5 mod 15 = **7**.
+1. They exchange results.
+1. Client computes 7^6 mod 15 = **4**. Server computes 4^5 mod 15 = **4**.
+1. Shared key = **4**.
+
+In practice, ECDH uses curve25519 to find a common point on the elliptic curve.
+
+[Implementation example](https://github.com/xssnick/tonutils-go/blob/2b5e5a0e6ceaf3f28309b0833cb45de81c580acc/liteclient/crypto.go#L32).
+
+## See also
+
+- [ADNL specification](/foundations/network/adnl)
+- [ADNL UDP](/foundations/network/adnl-udp)
+- [TL-B documentation](/languages/tl-b/overview)
+- [Cell and BoC serialization](/foundations/serialization/cells)

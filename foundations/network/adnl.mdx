@@ -1,0 +1,130 @@
+---
+title: "Abstract Datagram Network Layer"
+description: "Core peer-to-peer protocol of the TON network, providing encrypted communication using 256-bit addresses"
+sidebarTitle: "ADNL"
+---
+
+import { Aside } from "/snippets/aside.jsx";
+
+The Abstract Datagram Network Layer (ADNL) is the core networking protocol of the TON network. It is a peer-to-peer, unreliable datagram protocol that operates over both UDP and TCP.
+
+Higher-level protocols such as [RLDP](/foundations/network/rldp) and [DHT](/foundations/network/dht) are built on top of ADNL.
+
+## ADNL address
+
+Each participant in the network has a 256-bit ADNL address. ADNL allows sending and receiving datagrams using only these addresses, hiding the underlying IP addresses and ports.
+
+An ADNL address is derived as:
+
+```text
+address = SHA-256(type_id || public_key)
+```
+
+where `type_id` is a little-endian uint32 indicating the key type (the TL-serialized key object ID). The corresponding private key must be known to receive and decrypt messages sent to a given address.
+
+## Public-key cryptosystems
+
+| `type_id`    | Cryptosystem          |
+| ------------ | --------------------- |
+| `0x4813b4c6` | ed25519               |
+
+<Aside type="note">
+  To perform x25519, the keypair must be generated in x25519 format. The public key is transmitted over the network in ed25519 format, so conversion from x25519 to ed25519 is required. See [this example](https://github.com/andreypfau/curve25519-kotlin/blob/f008dbc2c0ebc3ed6ca5d3251ffb7cf48edc91e2/src/commonMain/kotlin/curve25519/MontgomeryPoint.kt#L39) for Kotlin.
+</Aside>
+
+## Peer identity
+
+Each peer must have at least one identity, consisting of a keypair for the Diffie-Hellman exchange. An abstract network address is derived from the public key as described above.
+
+## Encryption and security
+
+ADNL packets can be signed and encrypted. When signatures are present, recipients verify integrity and authenticity.
+
+## Neighbor tables
+
+A TON ADNL node maintains a _neighbor table_ containing information about known nodes: their abstract addresses, public keys, IP addresses, and UDP ports. The table is updated over time as new entries are discovered from query responses and outdated records are removed.
+
+## Client-server protocol (ADNL over TCP)
+
+The client connects to the server using TCP and sends a handshake packet containing a server abstract address, a client public key, and encrypted AES-CTR session parameters.
+
+### Handshake
+
+1. The client performs a key agreement protocol (x25519) using its private key and the server's public key to derive a `secret`.
+
+1. The client generates AES-CTR session parameters (16-byte nonce and 32-byte key for both TX and RX directions) and serializes them into a 160-byte buffer:
+
+   | Parameter  | Size     |
+   | ---------- | -------- |
+   | `rx_key`   | 32 bytes |
+   | `tx_key`   | 32 bytes |
+   | `rx_nonce` | 16 bytes |
+   | `tx_nonce` | 16 bytes |
+   | `padding`  | 64 bytes |
+
+   Fill the entire 160-byte buffer with random bytes. Otherwise, an attacker may perform an active MitM attack using compromised AES-CTR session parameters.
+
+1. The client encrypts the session parameters using AES-256-CTR with a key and nonce derived from the `secret` and the SHA-256 hash of the parameters:
+
+   ```cpp
+   hash = SHA-256(aes_params)
+   key = secret[0..16] || hash[16..32]
+   nonce = hash[0..4] || secret[20..32]
+   ```
+
+1. The client sends the 256-byte handshake packet:
+
+   | Parameter               | Size      | Description                             |
+   | ----------------------- | --------- | --------------------------------------- |
+   | `receiver_address`      | 32 bytes  | Server peer identity                    |
+   | `sender_public`         | 32 bytes  | Client public key                       |
+   | `SHA-256(aes_params)`   | 32 bytes  | Integrity proof of session parameters   |
+   | `E(aes_params)`         | 160 bytes | Encrypted session parameters            |
+
+1. The server decrypts the session parameters and verifies:
+   - It possesses the private key for `receiver_address`.
+   - `SHA-256(aes_params) == SHA-256(D(E(aes_params)))`.
+
+   If any check fails, the server drops the connection. If all checks pass, the server sends an empty datagram to prove private key ownership.
+
+### Datagram
+
+Both sides initialize two AES-CTR instances (TX and RX) using the session parameters from the handshake.
+
+Each datagram has the following structure:
+
+| Parameter | Size                 | Description                                        |
+| --------- | -------------------- | -------------------------------------------------- |
+| `length`  | 4 bytes (LE)         | Total datagram length, excluding this field         |
+| `nonce`   | 32 bytes             | Random value                                       |
+| `buffer`  | `length - 64` bytes  | Payload                                            |
+| `hash`    | 32 bytes             | `SHA-256(nonce \|\| buffer)` for integrity          |
+
+The entire structure is encrypted using the corresponding AES-CTR instance. The receiver decrypts the first 4 bytes to get the length, reads exactly that many bytes, and verifies the hash. On failure, the connection must be dropped.
+
+The first datagram always goes from the server to the client after a successful handshake, with an empty buffer.
+
+For practical examples of ADNL over TCP, including liteserver communication, ping/pong, and smart contract method calls, see [ADNL TCP](/foundations/network/adnl-tcp).
+
+### Security considerations
+
+**Handshake padding**: The 64-byte padding field in the handshake is unused by current implementations. It may have been intended to support future migration to alternative encryption primitives.
+
+**Session key derivation**: The encryption key is derived from both the static `secret` and `SHA-256(aes_params)`. Since `aes_params` is random per session, this ensures a unique encryption key for each connection. However, the concatenation-based key derivation algorithm (mixing subarrays of secret and hash) is considered suboptimal by modern standards.
+
+**Datagram nonce**: In CTR mode, AES functions as a stream cipher, making bit-flipping attacks possible if an attacker knows the plaintext. The nonce field prevents this: even if an attacker can reconstruct the key stream and compute a valid `SHA-256(buffer)`, they cannot forge the hash without knowing the random nonce.
+
+## P2P protocol (ADNL over UDP)
+
+In the UDP variant, the connection is established simultaneously with sending initial data. If the initiator sends a _create channel_ message, a channel key is calculated and creation is confirmed by the peer.
+
+Unlike TCP, the UDP implementation uses channels for ongoing communication. Encryption keys are derived from the client's private key and the peer's public key (known from configuration or discovered from other nodes).
+
+For the full protocol walkthrough with packet examples, see [ADNL UDP](/foundations/network/adnl-udp).
+
+## See also
+
+- [ADNL TCP - liteserver communication](/foundations/network/adnl-tcp)
+- [ADNL UDP - internode communication](/foundations/network/adnl-udp)
+- [ADNL implementation in TON](https://github.com/ton-blockchain/ton/tree/master/adnl)
+- [The Open Network Whitepaper, p. 80](https://ton.org/whitepaper.pdf)
