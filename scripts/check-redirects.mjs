@@ -458,7 +458,7 @@ const main = async () => {
     if (allowNet) {
       handleCheckResult(await checkUpstream(config), 'Full coverage.');
     } else {
-      console.log('Skipped: ALLOW_NET env variable is not set to true.');
+      console.log('Skipped: ALLOW_NET env variable is unset or empty.');
     }
   }
 
