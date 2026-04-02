@@ -275,35 +275,22 @@ const checkExist = (config) => {
  * Check redirects against the previous TON Documentation URLs.
  * Ensures that old routes point to new files or even anchors.
  *
- * @param td {string} Temporary directory path
  * @param config {Readonly<DocsConfig>} Parsed docs.json configuration
  * @return {Promise<CheckResult>}
  */
-const checkPrevious = async (td, config) => {
-  // 1. Clone previous TON Docs in a temporary directory
-  //    in order to obtain the sidebars.js module
-  const tonDocsPath = join(td, 'ton-docs');
-  const cloneRes = spawnSync('git', ['clone', '--depth=1', 'https://github.com/ton-community/ton-docs', tonDocsPath], {
-    encoding: 'utf8',
-    timeout: 1_000 * 60 * 10,
-  });
-  if (cloneRes.status != 0) {
+const checkPrevious = async (config) => {
+  // 1. Take the sidebars.js module from the previous TON Docs,
+  const sidebarsPath = join('scripts', 'sidebars');
+  const sidebarsFile = join(sidebarsPath, 'sidebars.js');
+  if (!existsSync(sidebarsFile)) {
     return {
       ok: false,
-      error: `${cloneRes.error ?? cloneRes.stdout}`,
-    };
-  }
-
-  // 2. Process sidebars.js and extract all URLs
-  const sidebarsPath = join(tonDocsPath, 'sidebars.js');
-  if (!existsSync(sidebarsPath)) {
-    return {
-      ok: false,
-      error: composeError(`sidebars.js was not found in ${tonDocsPath}`),
+      error: composeError(`sidebars.js was not found in ${sidebarsPath}`),
     };
   }
   /** @type Readonly<Sidebars> */
-  const sidebarsModule = Object.freeze((await import(sidebarsPath)).default);
+  const sidebarsModule = Object.freeze((await import(sidebarsFile)).default);
+  // 2. Process sidebars.js and extract all URLs
   const sidebarsKeys = Object.keys(sidebarsModule);
   /** @type string[] */
   const prevLinks = [];
@@ -425,8 +412,8 @@ const main = async () => {
   const config = getConfig();
   console.log(); // intentional break
 
-  // Creating the temporary directory
-  const td = mkdtempSync(join(tmpdir(), 'td'));
+  // Environment variables
+  const allowNet = Boolean(process.env.ALLOW_NET ?? false);
 
   // Running either one check or all checks
   const rawArgs = process.argv.slice(2);
@@ -466,16 +453,13 @@ const main = async () => {
 
   if (shouldRunAll || argPrevious) {
     console.log('🏁 Checking redirects against the previous TON Documentation...');
-    handleCheckResult(await checkPrevious(td, config), 'Full coverage.');
+    handleCheckResult(await checkPrevious(config), 'Full coverage.');
   }
 
-  if (shouldRunAll || argUpstream) {
+  if (allowNet && (shouldRunAll || argUpstream)) {
     console.log('🏁 Checking redirects against the upstream docs.json structure...');
     handleCheckResult(await checkUpstream(config), 'Full coverage.');
   }
-
-  // Removing the temporary directory
-  rmSync(td, { recursive: true });
 
   // In case of errors, exit with code 1
   if (errored) {
