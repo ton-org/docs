@@ -16,10 +16,8 @@
 ╚─────────────────────────────────────────────────────────────────────────────*/
 
 // Node.js
-import { existsSync, statSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { spawnSync } from 'node:child_process';
 
 // Common utils
 import {
@@ -279,17 +277,16 @@ const checkExist = (config) => {
  * @return {Promise<CheckResult>}
  */
 const checkPrevious = async (config) => {
-  // 1. Take the sidebars.js module from the previous TON Docs,
+  // 1. Take the sidebars.js module from the previous TON Docs
   const sidebarsPath = join('scripts', 'sidebars');
-  const sidebarsFile = join(sidebarsPath, 'sidebars.js');
-  if (!existsSync(sidebarsFile)) {
+  if (!existsSync(join(sidebarsPath, 'sidebars.js'))) {
     return {
       ok: false,
       error: composeError(`sidebars.js was not found in ${sidebarsPath}`),
     };
   }
   /** @type Readonly<Sidebars> */
-  const sidebarsModule = Object.freeze((await import(sidebarsFile)).default);
+  const sidebarsModule = Object.freeze((await import('./sidebars/sidebars.js')).default);
   // 2. Process sidebars.js and extract all URLs
   const sidebarsKeys = Object.keys(sidebarsModule);
   /** @type string[] */
@@ -456,9 +453,13 @@ const main = async () => {
     handleCheckResult(await checkPrevious(config), 'Full coverage.');
   }
 
-  if (allowNet && (shouldRunAll || argUpstream)) {
+  if (shouldRunAll || argUpstream) {
     console.log('🏁 Checking redirects against the upstream docs.json structure...');
-    handleCheckResult(await checkUpstream(config), 'Full coverage.');
+    if (allowNet) {
+      handleCheckResult(await checkUpstream(config), 'Full coverage.');
+    } else {
+      console.log('Skipped: ALLOW_NET env variable is not set to true.');
+    }
   }
 
   // In case of errors, exit with code 1
