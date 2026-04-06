@@ -1,0 +1,202 @@
+---
+title: "Assembler functions"
+---
+
+Functions in Tolk can be defined using assembler code. It's a low-level feature that requires understanding of stack layout, [Fift](/languages/fift/overview), and [TVM](/tvm/overview).
+
+## Standard functions
+
+Standard functions are `asm` wrappers. Many functions from the [standard library](/languages/tolk/features/standard-library) are translated to the Fift assembler directly. For example, TVM has a `HASHCU` instruction, which is "calculate hash of a cell". It pops a cell from the stack and pushes an integer in the range 0 to 2<sup>256</sup>-1. Therefore, the method `cell.hash` is defined:
+
+```tolk
+@pure
+fun cell.hash(self): uint256
+    asm "HASHCU"
+```
+
+The type system guarantees that when this method is invoked, a TVM `CELL` will be the topmost element (`self`).
+
+## Custom functions
+
+```tolk
+@pure
+fun incThenNegate(v: int): int
+    asm "INC" "NEGATE"
+```
+
+Custom functions are declared in the same way. A call `incThenNegate(10)` is translated into those commands.
+
+Specify `@pure` if the body does not modify TVM state or throw exceptions.
+
+The return type for `asm` functions is mandatory. For regular functions, it's inferred from `return` statements.
+
+## Multi-line `asm`
+
+To embed a multi-line command, use triple quotes:
+
+```tolk
+fun hashStateInit(code: cell, data: cell): uint256 asm """
+    DUP2
+    HASHCU
+    // ...
+    ONE HASHEXT_SHA256
+"""
+```
+
+It is treated as a single string and inserted as-is into Fift output. It can contain `//` comments valid for Fift.
+
+## Stack order for multiple slots
+
+When calling a function, arguments are pushed in the declared order. The last parameter becomes the topmost stack element.
+
+If an instruction produces several slots, the resulting type should be a tensor or a struct.
+
+For example, write a function `abs2` that calculates `abs()` for two values at once: `abs2(-5, -10)` = `(5, 10)`. The comments show the stack layout for each step. The rightmost value represents the top of the stack.
+
+```tolk
+fun abs2(v1: int, v2: int): (int, int)
+    asm             // v1 v2
+        "ABS"       // v1 v2_abs
+        "SWAP"      // v2_abs v1
+        "ABS"       // v2_abs v1_abs
+        "SWAP"      // v1_abs v2_abs
+```
+
+## Stack-based argument reordering
+
+Sometimes a function accepts parameters in an order different from what a TVM instruction expects. For example, `GETSTORAGEFEE` expects the parameters in the order cells, bits, seconds, and workchain. For a clearer API, the function should take the workchain as its first argument. To reorder stack positions, use the `asm(<INPUT_ORDER>)` syntax:
+
+```tolk
+fun calculateStorageFee(workchain: int8, seconds: int, bits: int, cells: int): coins
+    asm(cells bits seconds workchain) "GETSTORAGEFEE"
+```
+
+Similarly for return values. If multiple slots are returned and must be reordered to match typing, use the `asm(-> <RETURN_ORDER>)` syntax:
+
+```tolk
+fun asmLoadCoins(s: slice): (slice, int)
+    asm(-> 1 0) "LDVARUINT16"
+```
+
+Both the input and output sides can be combined: `asm(<INPUT_ORDER> -> <RETURN_ORDER>)`. Reordering is mostly used with `mutate` variables.
+
+## `mutate` and `self` in assembler functions
+
+The `mutate` keyword, which makes a parameter [mutable](/languages/tolk/syntax/mutability), implicitly returns updated values through the stack in both regular and `asm` functions.
+
+Consider regular functions first. The compiler applies all transformations automatically.
+
+```tolk
+// transformed to: "returns (int, void)"
+fun increment(mutate x: int): void {
+    x += 1;
+    // a hidden "return x" is inserted
+}
+
+fun demo() {
+    // transformed to: (newX, _) = increment(x); x = newX
+    increment(mutate x);
+}
+```
+
+To implement `increment()` using `asm`:
+
+```tolk
+fun increment(mutate x: int): void
+    asm "INC"
+```
+
+The function returns type `void`. The type system treats it as returning no value. However, `INC` leaves a number on the stack — that's a hidden "return x" from a manual implementation.
+
+Similarly, it works for `mutate self`. An `asm` function should place `newSelf` on the stack before the actual result:
+
+```tolk
+// "TPUSH" pops (tuple) and pushes (newTuple);
+// so, newSelf = newTuple, and return `void` (syn. "unit")
+fun tuple.push<X>(mutate self, value: X): void
+    asm "TPUSH"
+
+// "LDU" pops (slice) and pushes (int, newSlice);
+// with `asm(-> 1 0)`, make it (newSlice, int);
+// so, newSelf = newSlice, and return `int`
+fun slice.loadMessageFlags(mutate self): int
+    asm(-> 1 0) "4 LDU"
+```
+
+To return `self` for chaining, specify a return type:
+
+```tolk
+// "STU" pops (int, builder) and pushes (newBuilder);
+// with `asm(op self)`, put arguments to correct order;
+// so, newSelf = newBuilder, and return `void`;
+// but to make it chainable, `self` instead of `void`
+fun builder.storeMessageOp(mutate self, op: int): self
+    asm(op self) "32 STU"
+```
+
+## `asm` is compatible with structures
+
+Methods on structures can be declared in `asm` when their field layout is known. Fields are placed sequentially. For example, a structure with a single field is equivalent to that field.
+
+```tolk
+struct MyCell {
+    private c: cell
+}
+
+@pure
+fun MyCell.hash(self): uint256
+    asm "HASHCU"
+```
+
+Structures can also be used instead of tensors as return types. It appears in `map<K, V>` methods on TVM dictionaries:
+
+```tolk
+struct MapLookupResult<TValue> {
+    private readonly rawSlice: slice?
+    isFound: bool
+}
+
+@pure
+fun map<K, V>.get(self, key: K): MapLookupResult<V>
+    builtin
+// it produces `DICTGET` and similar, which push
+// (slice -1) or (null 0) — the shape of MapLookupResult
+```
+
+## Generics in `asm` should be single-slot
+
+Consider `tuple.push`. The `TPUSH` instruction pops `(tuple, someVal)` and pushes `(newTuple)`. It works with any `T` that occupies a single stack slot, such as `int`, `int8`, or `slice`.
+
+```tolk
+fun tuple.push<T>(mutate self, value: T): void
+    asm "TPUSH"
+```
+
+How does `t.push(somePoint)` work? It does not compile, because `Point { x, y }` occupies two stack slots rather than one, which breaks the expected the stack.
+
+```ansi
+dev.tolk:6:5: error: can not call `tuple.push<T>` with T=Point, because it occupies 2 stack slots in TVM, not 1
+
+    // in function `main`
+   6 |     t.push(somePoint);
+     |     ^^^^^^
+```
+
+Only regular and built-in generics support variadic type arguments. `asm` do not.
+
+## Do not use `asm` for micro-optimizations
+
+Use `asm` only for rarely used TVM instructions that are not covered by the standard library, such as manual merkle-proof parsing or extended hash calculations.
+
+Using `asm` for micro-optimizations is discouraged. The compiler already produces bitcode from clear, structured logic. For example, it automatically inlines simple functions, so one-line helper methods do not add gas overhead.
+
+```tolk
+fun builder.storeFlags(mutate self, flags: int): self {
+    return self.storeUint(32, flags);
+}
+```
+
+A manual `32 STU` sequence provides no advantage in this case. The compiler:
+
+- inlines the function;
+- merges constant `flags` with subsequent stores into `STSLICECONST`.

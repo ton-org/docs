@@ -1,0 +1,272 @@
+---
+title: "Compiler optimizations"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+The Tolk compiler generates bitcode from clear, idiomatic code. Extracting variables or simple methods should not increase gas consumption.
+
+## Constant folding
+
+Tolk compiler evaluates constant variables and conditions at compile-time:
+
+```tolk
+fun calcSecondsInAYear() {
+    val days = 365;
+    val minutes = 60 * 24 * days;
+    return minutes * 60;
+}
+```
+
+All these computations are done statically, resulting in:
+
+```fift
+31536000 PUSHINT
+```
+
+It works for conditions as well.
+
+- If an `if` condition is statically known to be `false`, only the `else` body remains.
+- If an `assert` is statically proven to fail, the corresponding `throw` remains.
+
+```tolk
+fun demo(s: slice) {
+    var flags = s.loadUint(32);   // definitely >= 0
+    if (flags < 0) {              // always false
+        // ...
+    }
+    return s.remainingBitsCount();
+}
+```
+
+The compiler removes the entire `IF` construct — both the condition evaluation and its bodies — when the branch is provably unreachable.
+
+During compile-time evaluation, arithmetic operations are emulated as they would be at runtime. The compiler also tracks flags such as "this value is even or non-positive", which allows it to remove unreachable code.
+
+This applies not only to plain variables but also to struct fields, tensor items, and across inlining. It runs after the high-level syntax tree is transformed to a low-level intermediate representation.
+
+## Merging constant `builder.storeInt`
+
+When building cells manually, there is no need to group the constant `storeUint` into a single number.
+
+```tolk
+// no need for manual grouping anymore
+b.storeUint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1);
+```
+
+`builder.storeInt` are merged automatically:
+
+```tolk
+b.storeUint(0, 1)  // prefix
+ .storeUint(1, 1)  // ihr_disabled
+ .storeUint(1, 1)  // bounce
+ .storeUint(0, 1)  // bounced
+ .storeUint(0, 2)  // addr_none
+```
+
+Compiles to:
+
+```fift
+b{011000} STSLICECONST
+```
+
+It works together with constant folding — with variables and conditions  —  when they turn out to be constant:
+
+```tolk
+fun demo() {
+    var x = 0;
+    var b = beginCell();
+    b.storeUint(x, 4);
+    x += 12;
+    if (x > 0) {
+        x += x;
+    }
+    b.storeUint(x + 2, 8);
+    return b;
+}
+```
+
+Compiles to:
+
+```fift
+NEWC
+x{01a} STSLICECONST
+```
+
+The same applies to structures and their fields:
+
+```tolk
+struct Point {
+    x: uint32
+    y: uint32
+}
+
+fun demo() {
+    var p: Point = { x: 10, y: 20 };
+    return p.toCell();
+}
+```
+
+Compiles to:
+
+```fift
+NEWC
+x{0000000a00000014} STSLICECONST
+ENDC
+```
+
+For unions, [createMessage](/languages/tolk/features/message-sending) is lightweight. The compiler generates all `IF-ELSE` and `STU`, but during compile-time analysis, these instructions resolve to constants because all types are known at compile time. The resulting code flattens into `PUSHINT` and `STSLICECONST`.
+
+## Auto-inline functions
+
+Tolk inlines functions at the compiler level:
+
+```tolk
+fun Point.create(x: int, y: int): Point {
+    return {x, y}
+}
+
+fun Point.getX(self) {
+    return self.x
+}
+
+fun sum(a: int, b: int) {
+    return a + b
+}
+
+fun main() {
+    var p = Point.create(10, 20);
+    return sum(p.getX(), p.y);
+}
+```
+
+Compiles to:
+
+```fift
+main PROC:<{
+    30 PUSHINT
+}>
+```
+
+The compiler automatically determines which functions to inline and also provides manual control.
+
+### How does auto-inline work?
+
+- Simple, small functions are always inlined.
+- Functions called only once are always inlined.
+
+For every function, the compiler calculates a "weight" and the number of usages:
+
+- if `weight < THRESHOLD`, the function is always inlined.
+- if `usages == 1`, the function is always inlined.
+- otherwise, an empirical formula determines inlining.
+
+Inlining works with stack operations and supports arguments of any width. It applies to functions and methods, except recursive functions or functions with `return` in the middle.
+
+Utility methods can be created without affecting gas consumption, they are zero-cost.
+
+### How to control inlining manually?
+
+- `@inline` forces inlining for large functions.
+- `@noinline` prevents inlining.
+- `@inline_ref` preserves an inline reference, suitable for rarely executed paths.
+
+### What cannot be auto-inlined?
+
+A function is NOT inlined, even if marked with `@inline`, if:
+
+- contains `return` in the middle; multiple return points are unsupported;
+- participates in a recursive call chain, e.g., `f -> g -> f`;
+- is used as a non-call; e.g., as a reference `val callback = f`.
+
+Example of function that cannot be inlined due to `return` in the middle:
+
+```tolk
+fun executeForPositive(userId: int) {
+    if (userId <= 0) {
+        return;
+    }
+    // ...
+}
+```
+
+Check preconditions out of the function and keep body linear.
+
+## Peephole and stack optimizations
+
+After the code is analyzed and transformed into [IR](https://en.wikipedia.org/wiki/Intermediate_representation), the compiler repeatedly replaces some assembler combinations with equivalent, cheaper ones. Examples include:
+
+- stack permutations: `DUP + DUP` -> `2DUP`, `SWAP + OVER` -> `TUCK`;
+- `N LDU + NIP` -> `N PLDU`;
+- `SWAP + N STU` -> `N STUR`, `SWAP + STSLICE` -> `STSLICER`;
+- `SWAP + EQUAL` -> `EQUAL` and other symmetric like `MUL`, `OR`;
+- `0 EQINT + N THROWIF` -> `N THROWIFNOT` and vice versa;
+- `N EQINT + NOT` -> `N NEQINT` and other `xxx + NOT`.
+
+Other transformations occur semantically in advance when safe:
+
+- replace a ternary operator to `CONDSEL`;
+- evaluate arguments of `asm` functions in the desired stack order;
+- evaluate struct fields of a shuffled object literal to fit stack order.
+
+## `lazy` loading
+
+The [`lazy` keyword](/languages/tolk/features/lazy-loading) loads only the required fields from a cell or slice:
+
+```tolk
+struct Storage {
+    // ...
+}
+
+get fun publicKey() {
+    val st = lazy Storage.load();
+    // fields before are skipped; publicKey preloaded
+    return st.publicKey
+}
+```
+
+The compiler tracks exactly which fields are accessed and unpacks only those fields, skipping the rest.
+
+## Manual optimizations
+
+The compiler does substantial work automatically, but the gas usage can be reduced.
+
+To do it, change the evaluation order to minimize stack manipulations. The compiler does not reorder code blocks unless they're constant expressions or pure calls.
+
+Example:
+
+```tolk
+fun demo() {
+    // variable initialization, grouped
+    val v1 = someFormula1();
+    val v2 = someFormula2();
+    val v3 = someFormula3();
+
+    // use them in calls, assertions, etc.
+    someUsage(v1);
+    anotherUsage(v2);
+    assert(v3) throw 123;
+}
+```
+
+After the first block, the stack is `(v1 v2 v3)`. Since `v1` is used first, the stack must be rearranged with `SWAP`, `ROT`, `XCPU`, etc. Reordering assignments or usages—for example, moving `assert(v3)` upper—will pop the topmost element. Automatic reordering is unsafe and prohibited, but in some cases business logic might be still valid.
+
+Another option is using bitwise `&` and `|` instead of logical `&&` and `||`. Logical operators are short-circuit: the right operand is evaluated only if required. They are implemented using runtime conditional branches. In some cases, evaluating both operands directly uses fewer runtime instructions than a dynamic `IF`.
+
+The last option is using low-level Fift code for certain independent tasks that cannot be expressed imperatively. This includes using TVM instructions such as `NULLROTRIFNOT` or `IFBITJMP`, and overriding the top-level Fift dictionary for `method_id` routing. These techniques are applicable only in a limited set of scenarios, primarily for specialized exercises rather than for real-world use.
+
+<Aside
+  type="caution"
+>
+  Avoid micro-optimizations. Small manual attempts to reduce gas typically yield minimal gains and can reduce code readability. Use Tolk as intended.
+</Aside>
+
+## Fift assembler
+
+The Tolk compiler outputs the Fift assembler. Fift generates the bitcode. Projects built on [Blueprint](/contract-dev/blueprint/overview) use `tolk-js`, which invokes Tolk and then Fift.
+
+- For command-line users, the Fift assembler is the compiler output.
+- For Blueprint users, it is an intermediate result that can be accessed in the build directory.
+
+  To view Fift assembler in Blueprint, run `npx blueprint build` in the project.
+  After compilation, the `build/` directory is created, containing a folder `build/ContractName/` with a `.fif` file.

@@ -1,0 +1,185 @@
+---
+title: "How to configure global JSON file"
+sidebarTitle: "Global configuration"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+The global config is a JSON file that specifies the configuration required for a node to connect to a TON network. All nodes in the same network use the same file.
+
+- [global.config.json](https://ton-blockchain.github.io/global.config.json) contains the configuration for the TON mainnet. It is included with the chart and used by default unless an override is provided.
+- [testnet-global.config.json](https://ton-blockchain.github.io/testnet-global.config.json) contains the configuration for the TON Testnet.
+
+## Configuration structure
+
+The global config contains three top-level sections:
+
+| Section       | Purpose                                                            |
+| ------------- | ------------------------------------------------------------------ |
+| `dht`         | Bootstrap DHT nodes used to discover and connect to network peers. |
+| `liteservers` | Public liteserver endpoints used by lite clients.                  |
+| `validator`   | Network identity: zero state, init block, and hardfork references. |
+
+<Aside type="note">
+  The global config is not templated or modified by Helm values. The file is passed to the node without changes.
+</Aside>
+
+### `dht`
+
+`dht` defines properties for bootstrap [distributed hash table (DHT)](https://en.wikipedia.org/wiki/Distributed_hash_table) servers used to find peers during initial node setup. It contains three parameters:
+
+- `k` and `a` – DHT configuration parameters. In a [Kademlia-based DHT](/foundations/whitepapers/ton#3-2-ton-dht-kademlia-like-distributed-hash-table):
+  - `k` – the maximum number of nodes stored in a routing bucket.
+  - `a` – parallel lookup parameter specifying the number of nodes queried concurrently during a DHT lookup operation.
+- `static_nodes` – an array of node objects. Each node includes:
+  - `@type` – node type; `dht.node`;
+  - `id` – node identifier;
+  - `addr_list` – address list object containing:
+    - `addrs` – array of address objects with `@type`, `ip`, and `port`;
+    - `version`, `reinit_date`, `priority`, `expire_at` – addresses version and lifecycle data.
+  - `version` – node version;
+  - `signature` – base64-encoded cryptographic signature of the node.
+
+```json
+ "dht": {
+    "@type": "dht.config.global",
+    "k": 6,
+    "a": 3,
+    "static_nodes": {
+      "@type": "dht.nodes",
+      "nodes": [
+        {
+          "@type": "dht.node",
+          "id": {
+            "@type": "pub.ed25519",
+            "key": "6PGkPQSbyFp12esf1NqmDOaLoFA8i9+Mp5+cAx5wtTU="
+          },
+          "addr_list": {
+            "@type": "adnl.addressList",
+            "addrs": [
+              {
+                "@type": "adnl.address.udp",
+                "ip": -1185526007,
+                "port": 22096
+              }
+            ],
+            "version": 0,
+            "reinit_date": 0,
+            "priority": 0,
+            "expire_at": 0
+          },
+          "version": -1,
+          "signature": "L4N1+dzXLlkmT5iPnvsmsixzXU0L6kPKApqMdcrGP5d9ssMhn69SzHFK+yIzvG6zQ9oRb4TnqPBaKShjjj2OBg=="
+        }
+      ]
+    }
+  }
+```
+
+### `liteservers`
+
+`liteservers` defines an array of public endpoints used by lite clients (not by the node itself) to retrieve blockchain data, including balances, transactions, blocks, and [network configuration](/foundations/config). Each server object has three properties:
+
+- `ip` – IP address of the server, represented as a signed 32-bit integer;
+- `port` – port number on which the server operates;
+- `id` – object representing the server’s identifier, with two properties:
+  - `@type` – type of the public key; `pub.ed25519`;
+  - `key` – server public key, represented as a base64-encoded string.
+
+```json
+"liteservers": [
+    {
+      "ip": 84478511,
+      "port": 19949,
+      "id": {
+        "@type": "pub.ed25519",
+        "key": "n4VDnSCUuSpjnCyUk9e3QOOd6o0ItSWYbTnW3Wnn8wk="
+      }
+    },
+  ]
+```
+
+### `validator`
+
+`validator` defines global validator configuration parameters. It contains:
+
+- `@type` – configuration type; `validator.config.global`;
+- `zero_state` – reference to the zero blockchain state;
+- `init_block` – reference to the initial block used to start synchronization;
+- `hardforks` – array of hardfork reference points.
+
+The `zero_state`, `init_block`, and each entry in `hardforks` include:
+
+- `workchain` – workchain identifier;
+- `shard` – shard identifier;
+- `seqno` – sequence number of the block;
+- `root_hash` – base64-encoded root hash of the block;
+- `file_hash` – base64-encoded file hash of the block.
+
+```json
+ "validator": {
+    "@type": "validator.config.global",
+    "zero_state": {
+      "workchain": -1,
+      "shard": -9223372036854775808,
+      "seqno": 0,
+      "root_hash": "F6OpKZKqvqeFp6CQmFomXNMfMj2EnaUSOXN+Mh+wVWk=",
+      "file_hash": "XplPz01CXAps5qeSWUtxcyBfdAo5zVb1N979KLSKD24="
+    },
+    "init_block": {
+      "workchain": -1,
+      "shard": -9223372036854775808,
+      "seqno": 46894135,
+      "root_hash": "MEjmmhLPlG68mbTPnKYcP/Sz/MiMQBV2OsASBOzBv58=",
+      "file_hash": "u9rAtFQ+kUFEnOs3w8Y7punMTiyQTXf1bRfkSs8dG+0="
+    },
+    "hardforks": [
+      {
+        "workchain": -1,
+        "shard": -9223372036854775808,
+        "seqno": 8536841,
+        "root_hash": "08Kpc9XxrMKC6BF/FeNHPS3MEL1/Vi/fQU/C9ELUrkc=",
+        "file_hash": "t/9VBPODF7Zdh4nsnA49dprO69nQNMqYL+zk5bCjV/8="
+      }
+    ]
+  }
+```
+
+## When to override
+
+In most deployments, the global config does not require modification. A custom config is required only in the following cases:
+
+1. When using a testnet instead of mainnet, download the testnet config from [the official source](https://ton-blockchain.github.io/).
+1. When running a private network with custom DHT nodes and overlays, provide a custom config.
+1. When the bundled config becomes outdated, fetch a fresh copy. The official config may change over time, for example, updated DHT nodes or init blocks.
+
+## How to override
+
+1. Download the latest mainnet config:
+   ```bash
+   curl -o global.config.json https://ton-blockchain.github.io/global.config.json
+   ```
+1. Pass it to the Helm chart:
+
+   ```bash
+   helm install my-node ./helm/ton-rust-node \
+     --set-file globalConfig=./global.config.json \
+     ...
+   ```
+
+Or provide it inline in `values.yaml`:
+
+```yaml title=values.yaml
+globalConfig: |
+  {"@type": "config.global", "dht": {...}, ...}
+```
+
+Or reference an existing ConfigMap:
+
+```yaml title=values.yaml
+existingGlobalConfigMapName: my-global-config
+```
+
+## See also
+
+- [Configuration repository](https://ton-blockchain.github.io/)

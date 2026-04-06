@@ -4,164 +4,109 @@ title: "Transaction fees"
 
 import { Aside } from '/snippets/aside.jsx';
 
-## Transaction fees
+Fees in TON align with the [execution phases](/foundations/phases) of a transaction:
 
-Fees on TON are calculated using this formula:
+- Storage fees are charged in the [storage phase](/foundations/phases#storage-phase).
+- Compute fees are charged in the [compute phase](/foundations/phases#compute-phase).
+- Forward and action fees are charged in the [action](/foundations/phases#action-phase) and [bounce phases](/foundations/phases#bounce-phase).
+- Import fees apply at the start of smart contract execution, not a specific phase.
 
-```cpp title="FORMULAS"
-transaction_fee = storage_fees
-                + in_fwd_fees // also called import fee
-                + computation_fees
-                + action_fees
-                + out_fwd_fees
+The total transaction fee is the sum of these components.
+
+Validators set fee levels through voting:
+
+- Storage fees are set in [config parameter 18](/foundations/config#param-18:-storage-prices).
+- Compute fees are set in [config parameters 20 and 21](/foundations/config#param-20-and-21:-gas-prices).
+- Forward, import, and action fees are set in [config parameters 24 and 25](/foundations/config#param-24-and-25:-message-price).
+
+## Storage fees
+
+```cpp
+basic_price = (account.bits * bit_price +
+              account.cells * cell_price)
+storage_fee = ceil(basic_price * time_delta / 2^16)
 ```
 
-All fees are denominated in nanotons (often scaled by `2^16` for precision) and come from network configuration:
+The storage fee uses `account.bits` and `account.cells` from `AccountStorage`, excluding `ExtraCurrencyCollection` stored in the `other` field. The `other` field is replaced with a single `0` bit that represents an empty `HashmapE`.
 
-- `storage_fees`: param [18](https://tonviewer.com/config#18)
+```tlb
+extra_currencies$_ dict:(HashmapE 32 (VarUInteger 32))
+                 = ExtraCurrencyCollection;
+currencies$_ grams:Grams other:ExtraCurrencyCollection
+           = CurrencyCollection;
 
-- `in_fwd_fees`: params [24](https://tonviewer.com/config#24) and [25](https://tonviewer.com/config#25)
-
-- `computation_fees`: params [20](https://tonviewer.com/config#20) and [21](https://tonviewer.com/config#21)
-
-- `action_fees`: params [24](https://tonviewer.com/config#24) and [25](https://tonviewer.com/config#25)
-
-- `out_fwd_fees`: params [24](https://tonviewer.com/config#24) and [25](https://tonviewer.com/config#25)
-
-- `storage_fees` is the amount you pay for storing a smart contract on the blockchain. In fact, you pay for every second the smart contract is stored on the blockchain.
-  - _Example_: your TON wallet is also a smart contract, and it pays a storage fee every time you receive or send a transaction.
-
-- `in_fwd_fees` is a charge for importing messages only from outside the blockchain, for example, `external` messages. Every time you make a transaction, it must be delivered to the validators who will process it. For ordinary messages from contract to contract, this fee does not apply. Read [the TON Blockchain paper](/resources/pdfs/tblkch.pdf) to learn more about inbound messages.
-  - _Example_: each transaction you make with your wallet app (like Tonkeeper) must first be distributed among validators.
-
-- `computation_fees` is the amount you pay for executing code in the virtual machine. Computation fees depend on executed operations (gas used), not code size.
-  - _Example_: each time you send a transaction with your wallet (which is a smart contract), you execute the code of your wallet contract and pay for it.
-
-- `action_fees` is a charge for sending outgoing messages made by a smart contract, updating the smart contract code, updating libraries, etc.
-
-- `out_fwd_fees` is a charge for forwarding outgoing internal messages within TON between shardchains; it depends on message size.
-
-## Storage fee
-
-Storage fee for smart contracts is calculated using the following formula, values are defined in network config param [`18`](https://tonviewer.com/config#18):
-
-```cpp title="FORMULAS"
-storage_fee = ceil(
-                   (account.bits * bit_price
-                   + account.cells * cell_price)
-                * time_delta / 2^16)
+account_storage$_ last_trans_lt:uint64
+    balance:CurrencyCollection state:AccountState
+  = AccountStorage;
 ```
-
-```ts title="TypeScript example"
-import { Cell, beginCell } from '@ton/core';
-
-// Read latest storage prices (config param 18)
-const storage = getStoragePrices(configCell);
-
-// Account state as a Cell (e.g., code+data root)
-const accountRoot: Cell = /* load from blockchain */;
-const stats = collectCellStats(accountRoot, []);
-
-// Charge for one hour
-const fee = shr16ceil(
-  (stats.bits * storage.bit_price_ps + stats.cells * storage.cell_price_ps) *
-    3600n
-);
-```
-
-> See [Helper functions appendix](/foundations/fees#helper-functions) for full implementations.
 
 <Aside
   type="note"
   title="Deduplication"
 >
-  The system counts only unique hash cells for storage and forward fees. For example, it counts three identical hash cells as one. This mechanism deduplicates data by storing the content of multiple equivalent sub-cells only once, even if they are referenced across different branches. [Read more about deduplication](/foundations/serialization/library).
+  Storage and forward fees treat identical subtrees referenced in multiple branches as one cell. Reused subtrees share a single stored copy and do not accrue additional charges.
 </Aside>
 
-## Gas fee
+## Compute fees
 
-All computation is measured in gas units; each TVM operation has a fixed gas cost.\
-The gas price is defined by network configuration and **can not be set by users**.
+All computation is measured in gas units. A TVM operation typically has a fixed gas cost, but that is [not always the case](/tvm/gas). Network configuration defines gas prices; users cannot override them.
 
-- Basechain: 1 gas = `26214400 / 2^16` nanotons = 0.0000004 TON
-- Masterchain: 1 gas = `655360000 / 2^16` nanotons = 0.00001 TON
+### Flat gas limit
 
-See config parameters [`20`](https://tonviewer.com/config#20) and [`21`](https://tonviewer.com/config#21) for current gas prices.\
-The values can change through validator governance.
+A contract invocation pays for at least `flat_gas_limit` gas units. Spending up to that limit costs `flat_gas_price` TON. If the contract spends `gasUsed` gas units, the fee is:
 
-```ts title="TypeScript example"
+```ts
 const gasUsed = 50_000n;
-const prices = getGasPrices(configCell, 0); // 0 = basechain
+// 0 = basechain, -1 = masterchain
+const prices = getGasPrices(configCell, 0);
 const gasFee =
-  gasUsed <= prices.flat_gas_limit
+    gasUsed <= prices.flat_gas_limit
     ? prices.flat_gas_price
     : prices.flat_gas_price +
-      (prices.gas_price * (gasUsed - prices.flat_gas_limit)) / 65536n;
+    (prices.gas_price * (gasUsed - prices.flat_gas_limit)) / 65536n;
 ```
-
-> See [Helper functions appendix](/foundations/fees#helper-functions) for full implementations.
 
 ## Forward fee
 
-Forward fee for message size (`msg.bits`, `msg.cells`) per params [`24`](https://tonviewer.com/config#24)/[`25`](https://tonviewer.com/config#25):
-
-```cpp title="FORMULAS"
-// bits in the root cell of a message are not included in msg.bits (lump_price pays for them)
-msg_fwd_fees = (lump_price
-             + ceil(
-                (bit_price * msg.bits + cell_price * msg.cells) / 2^16)
-             );
+Forward fee is calculated with this formula:
 
 ```
+bodyFwdFee = priceForCells * (msgSizeInCells - 1)
+           + priceForBits * (msgSizeInBits - bitsInRoot)
 
-```ts title="TypeScript example"
-const msgPrices = getMsgPrices(configCell, 0);
-const total =
-  msgPrices.lumpPrice +
-  shr16ceil(
-    msgPrices.bitPrice * BigInt(bits) +
-      msgPrices.cellPrice * BigInt(cells)
-  );
-const actionFee = (total * msgPrices.firstFrac) >> 16n;
-const forwardFee = total - actionFee;
-
-// From a Cell or Message:
-const fwdFromCell = computeCellForwardFees(msgPrices, messageRootCell);
-// For a full internal Message object (validates default lump case, handles init):
-const details = computeMessageForwardFees(msgPrices, internalMessage);
+fwdFee = lumpPrice + ceil(bodyFwdFee / 2^16)
 ```
 
-<Aside
-  type="note"
-  title="Action fee relation"
->
-  `msg_fwd_fees` already includes the action fee for the corresponding `SENDRAWMSG`. For a basic internal message with `lump_price = 400000` and `first_frac = 21845`, `action_fee ≈ 133331` nanotons and `fwd_fee ≈ 266669` nanotons.
-</Aside>
+where:
 
-### Import fee
+- `lumpPrice` is the fixed value [from config](/foundations/config#param-24-and-25%3A-message-price) paid once for the message.
+- `msgSizeInCells` is the number of cells in the message.
+- `msgSizeInBits` is the number of bits in all the cells of the message.
+- `bitsInRoot` is the number of bits in the root cell of the message.
 
-Import fee is the same as forward fee for inbound external messages.
+The formula excludes the message root cell because it mainly contains headers. `lumpPrice` covers that root cell.
 
-## Action fee
+### Action fee
 
-Action fee is charged in the Action phase and is the sender’s share of the forward fee.\
-You pay it for `SENDRAWMSG`; actions like `RAWRESERVE`, `SETCODE` do not incur the fees.
+Action fee is the portion of `fwdFee` granted to the validator of the message's source [shard](/foundations/shards#blockchain-sharding). The remaining `fwdFee - actionFee` amount goes to the validator of the destination shard.
 
-```cpp title="FORMULAS"
-action_fee = floor((msg_fwd_fees * first_frac)/ 2^16);  // internal
+Action fee exists only for [internal messages](/foundations/messages/internal#internal-messages).
 
-action_fee = msg_fwd_fees;  // external
+```cpp
+action_fee = floor(fwd_fee * first_frac / 2^16)
 ```
 
-`first_frac` (params [`24`](https://tonviewer.com/config#24)/[`25`](https://tonviewer.com/config#25)) divided by `2^16` ≈ 1/3 of `msg_fwd_fees`.
+Starting with Global Version 4, a failed [SENDMSG action](/foundations/actions/send#send-message) incurs a penalty proportional to the attempted message size. It is calculated as:
 
-Action fine (failed send): Starting with Global Version 4, a failed "send message" action incurs a penalty proportional to the attempted message size. It is calculated as:
-
-```cpp title="FORMULAS"
+```cpp
 fine_per_cell = floor((cell_price >> 16) / 4)
 max_cells = floor(remaining_balance / fine_per_cell)
 action_fine = fine_per_cell * min(max_cells, cells_in_msg);
 ```
+
+## Import fee
+
+Import fee mirrors forward fee for inbound external messages. The root cell and its contents are covered by `lumpPrice` in the same way as internal messages.
 
 ## Helper functions (full code)
 

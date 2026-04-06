@@ -1,0 +1,175 @@
+---
+title: "Structures and fields"
+---
+
+Tolk supports [structures](/languages/tolk/types/structures) — similar to TypeScript classes.
+
+## Structure syntax
+
+```tolk
+struct Demo {
+    allowExotic: bool = false
+    customData: tuple
+}
+```
+
+- Every field has a required type and an optional default value.
+- Fields are separated by newlines, which are preferred, or by commas or semicolons.
+- Fields can be `private` and `readonly`.
+
+## Object creation
+
+Use `{ ... }` when the type is clear, or `StructName { ... }` explicitly.
+
+```tolk
+fun demo() {
+    // the type is clear from the assignment
+    var o1: Demo = { customData: someTuple };
+    o1.someMethod();
+
+    // alternatively, `Demo { ... }`
+    Demo{customData: someTuple}.someMethod();
+}
+```
+
+## Shorthand object syntax
+
+The shorthand `{ a, b }` expands to `{ a: a, b: b }`. This syntax is similar to object shorthand in TypeScript.
+
+```tolk
+fun createDemo(allowExotic: bool, customData: tuple) {
+    return Demo { allowExotic, customData }
+}
+```
+
+## Methods for structures
+
+[Methods](/languages/tolk/syntax/functions-methods) are declared separately as extension functions:
+
+```tolk
+fun Demo.hasData(self): bool {
+    return self.customData.size() != 0
+}
+```
+
+## Empty structures
+
+A structure without fields is used as a grouping construct for static methods. For example, standard functions such as `blockchain.now()` are declared this way:
+
+```tolk
+struct blockchain
+
+fun blockchain.now(): int
+    asm "NOW"
+
+fun blockchain.logicalTime(): int
+    asm "LTIME"
+```
+
+These methods are static because they do not accept `self`.
+
+## Default values for fields
+
+Fields with default values may be missed out of a literal:
+
+```tolk
+struct DefDemo {
+    f1: int = 0
+    f2: int? = null
+    f3: (int, coins) = (0, ton("0.05"))
+}
+
+fun demo() {
+    var d: DefDemo = {};         // ok
+    var d: DefDemo = { f2: 5 };  // ok
+}
+```
+
+## Private and readonly fields
+
+- `private` – accessible only within methods.
+- `readonly` – immutable after object creation.
+
+```tolk
+struct PositionInTuple {
+    private readonly t: tuple
+    currentIndex: int
+}
+
+fun PositionInTuple.create(t: tuple): PositionInTuple {
+    return { t, currentIndex: 0 }
+}
+
+fun PositionInTuple.next(mutate self) {
+    // self.t cannot be modified: it is readonly
+    self.currentIndex += 1;
+}
+
+fun demo() {
+    var p = PositionInTuple.create(someTuple);
+    // p.t is unavailable here: it is private
+}
+```
+
+An object with a private field can only be constructed by a static method or an assembler function.
+
+## Generic structs
+
+[Generics](/languages/tolk/types/generics) exist only at the type level and incur no runtime cost.
+
+```tolk
+struct Nullable<T> {
+    value: T?
+}
+```
+
+## Methods for generic structs
+
+When parsing the receiver in `fun <receiver>.f()`, the compiler treats unknown symbols as type parameters:
+
+```tolk
+fun Nullable<T>.isNull(self) {
+    return self.value == null
+}
+```
+
+It's a generalization. For example, `fun T.copy()` is valid for any receiver.
+
+Method overloading or partial specialization is also allowed:
+
+```tolk
+fun Nullable<map<K, V>>.isNull(self) {
+    return self.value.isEmpty()
+}
+```
+
+## Serialization prefixes and opcodes
+
+The syntax `struct (PREFIX) Name { ... }` specifies a [serialization prefix for the structure](/languages/tolk/types/overall-serialization#structures). For messages, 32-bit prefixes are typically called opcodes.
+
+```tolk
+struct (0x7362d09c) TransferNotification {
+    queryId: uint64
+    // ...
+}
+```
+
+An outgoing message starts with the hex number:
+
+```tolk
+// message will be '0x7362d09c0000000000000000' + ...
+createMessage({
+    // ...
+    body: TransferNotification {
+        queryId: 0,
+        // ...
+    }
+});
+```
+
+Prefixes are not restricted to 32 bits:
+
+- `0x000F` — 16-bit hexadecimal prefix, value 15.
+- `0b010` — 3-bit binary prefix, value 2.
+
+Non‑32‑bit prefixes are useful for controlling union types when expressing TL‑B's multiple constructors.

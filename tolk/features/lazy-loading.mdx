@@ -1,0 +1,229 @@
+---
+title: "Lazy loading"
+---
+
+Tolk uses the `lazy` keyword – the compiler tracks which fields are accessed and loads only those fields, skipping the rest.
+In practice, prefer `lazy T.fromCell()` over `T.fromCell()`.
+
+## `lazy` usage
+
+Consider a `Storage` struct in a wallet:
+
+```tolk
+struct Storage {
+    isSignatureAllowed: bool
+    seqno: uint32
+    subwalletId: uint32
+    publicKey: uint256
+    extensions: cell?
+}
+
+fun Storage.load() {
+    return Storage.fromCell(contract.getData())
+}
+```
+
+`Storage.load()` unpacks the cell, loads all fields, performs consistency checks, etc.
+
+`lazy Storage.load()` does not load all fields. Unused fields are skipped:
+
+```tolk
+get fun publicKey() {
+    val st = lazy Storage.load();
+    // <-- here "skip 65 bits, preload uint256" is inserted
+    return st.publicKey
+}
+```
+
+The compiler tracks all control-flow paths, inserts load points when required, and groups unused fields to skip. This works for any type and any combination of fields.
+
+## `lazy` usage of referenced cells
+
+Consider the NFT collection:
+
+```tolk
+struct NftCollectionStorage {
+    adminAddress: address
+    nextItemIndex: uint64
+    content: Cell<CollectionContent>
+    // ...
+}
+
+struct CollectionContent {
+    metadata: cell
+    minIndex: int32
+    commonKey: uint256
+}
+```
+
+To read `content` and then get `commonKey` from it:
+
+```tolk
+val storage = lazy NftCollectionStorage.load();
+// <-- here just "preload ref" is inserted
+val contentCell = storage.content;
+```
+
+1. Skipping `address` and `uint64` is unnecessary. Accessing a reference does not require skipping preceding fields.
+1. To read `commonKey` from `content`, load the cell with `lazy`.
+
+```tolk
+val storage = lazy NftCollectionStorage.load();
+
+// <-- "preload ref" inserted — to get `content`
+// Cell<T>.load() unpacks a cell and returns T
+val content = lazy storage.content.load();
+
+// <-- "skip 32 bits, preload uint256" - to get commonKey
+return content.commonKey;
+```
+
+`p: Cell<Point>` does not allow direct access to `p.x`. The cell must be loaded first using either `Point.fromCell(p)` or `p.load()`. Both work with `lazy`.
+
+## `lazy` matching
+
+A union type such as an incoming message can be read with `lazy`:
+
+```tolk
+struct (0x12345678) CounterIncrement { /* ... */ }
+struct (0x23456789) CounterReset     { /* ... */ }
+
+type MyMessage = CounterIncrement | CounterReset
+
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy MyMessage.fromSlice(in.body);
+    match (msg) {
+        CounterReset => {
+            assert (something) throw 403;
+            // <-- here "load msg.initial" is inserted
+            storage.counter = msg.initial;
+        }
+        // ...
+    }
+}
+```
+
+With `lazy` applied to unions:
+
+1. No union is allocated on the stack upfront; matching and loading are deferred until needed.
+1. `match` operates by inspecting the slice prefix (opcode).
+1. Within each branch, the compiler inserts loading points and skips unused fields, as it does for structs.
+
+`lazy` matching avoids unnecessary stack operations.
+
+## `lazy` matching and `else`
+
+`match` with `lazy` on a union operates by inspecting the prefix. Any unmatched case falls into the `else` branch.
+
+```tolk
+val msg = lazy MyMessage.fromSlice(in.body);
+match (msg) {
+    CounterReset => { /* ... */ }
+    // ... handle all variants of the union
+
+    // else - when nothing matched;
+    // even input less than 32 bits, no "underflow" thrown
+    else => {
+        // for example
+        throw 0xFFFF
+    }
+}
+```
+
+Without an explicit `else`, unpacking throws `error 63` by default, which is controlled by the `throwIfOpcodeDoesNotMatch` option in `fromSlice`. The `else` branch allows inserting any custom logic.
+
+`else` in a type-based `match` is allowed only with `lazy` because matching uses prefixes. Without `lazy`, the union is matched normally and an `else` branch is not allowed.
+
+## Partial updating
+
+The `lazy` keyword also applies when writing data back.
+
+Example:
+
+Load a storage, use its fields for assertions, update one field, and save it back:
+
+```tolk
+var storage = lazy Storage.load();
+
+assert (storage.validUntil > blockchain.now()) throw 123;
+assert (storage.seqno == msg.seqno) throw 456;
+// ...
+
+storage.seqno += 1;
+contract.setData(storage.toCell());   // <-- magic
+```
+
+`toCell()` does not save all fields of the storage since only `seqno` is modified. Instead, after loading `seqno`, the compiler saves an immutable tail and reuses it when writing back:
+
+```tolk
+var storage = lazy Storage.load();
+// actually, what was done:
+// - load isSignatureAllowed, seqno
+// - save immutable tail
+// - load validUntil, etc.
+
+// ... use all fields for reading
+
+storage.seqno += 1;
+storage.toCell();
+// actually, what was done:
+// - store isSignatureAllowed, seqno
+// - store immutable tail
+```
+
+The compiler can also group unmodified fields located in the middle, load them as a slice, and preserve that slice on write-back.
+
+## How does `lazy` skip unused fields?
+
+When several consecutive fields are unused, the compiler tries to group them. This works for fixed-size types such as `intN` or `bitsN`:
+
+```tolk
+struct Demo {
+    isAllowed: bool     // always 1 bit
+    queryId: uint64     // always 64 bits
+    crc: bits32         // always 32 bits
+    next: RemainingBitsAndRefs
+}
+
+fun demo() {
+    val obj = lazy Demo.fromSlice(someSlice);
+    // <-- skip 1+64+32 = 97 bits
+    obj.next;
+}
+```
+
+In Fift assembler, “skip 97 bits” becomes:
+
+```fift
+97 LDU
+NIP
+```
+
+Variable-width fields, such as `coins`, cannot be grouped and cannot be skipped with one instruction – TVM has no instruction for that. The only option is to load the value and ignore it.
+
+The same applies to `address`. Even though it occupies 267 bits, the value should be validated even when unused; otherwise, binary data could be decoded incorrectly.
+
+For these types, `lazy` does only "load and ignore".
+
+In practice, `intN` types are common, so grouping has an effect. The trick "access a ref without skipping any data" also works.
+
+## What are the disadvantages of `lazy`?
+
+In terms of gas consumption, `lazy fromSlice` is equal to or cheaper than regular `fromSlice`. When all fields are accessed, it loads them one by one, the same way as the non-lazy version. There is a difference unrelated to gas consumption:
+
+- If a slice is small or contains extra data, `fromSlice` throws.
+- `lazy` picks only the requested fields and handles partially invalid input. For example:
+
+```tolk
+struct Point {
+    x: int8
+    y: int8
+}
+
+fun demo(s: slice) {
+    val p = lazy Point.fromSlice(s);
+    return p.x;
+}
+```
+
+Since only `p.x` is accessed, an input of `FF` (8 bits) is acceptable even though `y` is missing. Similarly, `FFFF0000` (16 bits of extra data) is also acceptable, as `lazy` ignores any data that is not requested.

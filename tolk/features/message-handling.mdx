@@ -1,0 +1,242 @@
+---
+title: "Handling messages"
+---
+
+Each Tolk contract has special entrypoints – reserved functions that handle different message types. Handling an incoming message uses ordinary language constructs.
+
+## `onInternalMessage`
+
+Contracts primarily handle [internal messages](/foundations/messages/internal#internal-messages). Users interact with contracts through their wallets, which send internal messages to the contract. The entrypoint is declared as follows:
+
+```tolk
+fun onInternalMessage(in: InMessage) {
+    // internal non-bounced messages arrive here
+}
+```
+
+The basic guidelines are:
+
+- For each incoming message, declare a `struct` with a unique 32-bit prefix, opcode.
+- Declare a union type that represents all supported messages.
+- Parse this union from `in.body` and `match` over structures.
+
+```tolk
+struct (0x12345678) CounterIncrement {
+    incBy: uint32
+}
+
+struct (0x23456789) CounterReset {
+    initialValue: int64
+}
+
+type AllowedMessage = CounterIncrement | CounterReset
+
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy AllowedMessage.fromSlice(in.body);
+    match (msg) {
+        CounterIncrement => {
+            // use `msg.incBy`
+        }
+        CounterReset => {
+            // use `msg.initialValue`
+        }
+        else => {
+            // invalid input; a typical reaction is:
+            // ignore empty messages, "wrong opcode" if not
+            assert (in.body.isEmpty()) throw 0xFFFF
+        }
+    }
+}
+```
+
+### Example breakdown
+
+- [`struct`](/languages/tolk/types/structures) declares business data, including messages and storage.
+- `(0x12345678)` defines a message opcode, 32-bit. Unique prefixes are used to route binary data in `in.body`.
+- `AllowedMessage` is a type alias for a [union type](/languages/tolk/types/unions).
+- `in: InMessage` provides access to message properties such as `in.body` and `in.senderAddress`.
+- `T.fromSlice` [parses binary data into `T`](/languages/tolk/features/auto-serialization). When combined with [`lazy`](/languages/tolk/features/lazy-loading), parsing is performed on demand.
+- [`match`](/languages/tolk/syntax/pattern-matching) routes a union type. Within each branch, the type of `msg` is narrowed, smart cast.
+- `throw 0xFFFF` is a standard reaction to an unrecognized message. Contracts typically ignore empty messages, which represent balance top-ups with an empty body. For this reason, `throw` is guarded by [`if`](/languages/tolk/syntax/conditions-loops) or `assert`.
+
+Bounced messages are not handled by `onInternalMessage`.
+
+### Define and modify contract storage
+
+[Contract storage](/languages/tolk/features/contract-storage) is defined as a regular structure. Storage types commonly define `load` and `save` methods to access persistent contract data:
+
+```tolk
+struct Storage {
+    counterValue: int64
+}
+
+fun Storage.load() {
+    return Storage.fromCell(contract.getData())
+}
+
+fun Storage.save(self) {
+    contract.setData(self.toCell())
+}
+```
+
+Then, in `match` cases, invoke those methods:
+
+```tolk
+match (msg) {
+    CounterIncrement => {
+        var storage = lazy Storage.load();
+        storage.counterValue += msg.incBy;
+        storage.save();
+    }
+    // ...
+}
+```
+
+Storage may also be loaded once before the `match` statement and reused across branches.
+
+### Legacy `onInternalMessage`
+
+In FunC, a handler is declared as:
+
+```func
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    ;; manually parse in_msg_full to retrieve sender_address and others
+}
+```
+
+Tolk continues to support this style of declaration. Code produced by a [converter](https://github.com/ton-blockchain/convert-func-to-tolk) results in:
+
+```tolk
+fun onInternalMessage(myBalance: coins, msgValue: coins, msgFull: cell, msgBody: slice) {
+    // manually parse msgFull to retrieve senderAddress and others
+}
+```
+
+The modern approach uses the `InMessage` type. It simplifies message handling and reduces gas consumption. Migrating from the legacy code is:
+
+- `myBalance` -> `contract.getOriginalBalance()`, contract state, not a message property
+- `msgValue` -> `in.valueCoins`
+- `msgFull` -> use `in.senderAddress` etc., without manual parsing
+- `msgBody` -> `in.body`
+
+## `onBouncedMessage`
+
+`onBouncedMessage` is a special entrypoint for handling [bounced messages](/foundations/messages/internal#bounces).
+
+```tolk
+fun onBouncedMessage(in: InMessageBounced) {
+    // messages sent with BounceMode != NoBounce arrive here
+}
+```
+
+`InMessageBounced` is similar to `InMessage`. The difference is that `in.bouncedBody` has a different layout, depending on how the original message is sent.
+
+### `BounceMode` in `createMessage`
+
+When [sending a message](/languages/tolk/features/message-sending) using `createMessage`, the `bounce` behavior must be specified:
+
+```tolk
+val msg1 = createMessage({
+    bounce: BounceMode.NoBounce,
+    body: TransferMessage { ... },
+    // ...
+});
+msg1.send(mode); // will not be bounced on error
+
+val msg2 = createMessage({
+    bounce: BounceMode.RichBounce,
+    body: TransferMessage { ... },
+    // ...
+});
+msg2.send(mode); // may be bounced
+```
+
+`BounceMode` is an enum with the following options:
+
+- `BounceMode.NoBounce`.
+- `BounceMode.Only256BitsOfBody` — `in.bouncedBody` contains `0xFFFFFFFF` followed by the first 256 bits; lowest gas cost, often sufficient.
+- `BounceMode.RichBounce` — provides access to the entire `originalBody`; `gasUsed`, `exitCode`, and other failure-related properties are also available; highest gas cost.
+- `BounceMode.RichBounceOnlyRootCell` — similar to `RichBounce`, but `originalBody` contains only the root cell.
+
+### Handle `in.bouncedBody`
+
+The structure of `in.bouncedBody` depends on the `BounceMode`.
+
+When all bounceable messages are sent using `Only256BitsOfBody`:
+
+```tolk
+fun onBouncedMessage(in: InMessageBounced) {
+    // in.bouncedBody is 0xFFFFFFFF + 256 bits
+    in.bouncedBody.skipBouncedPrefix();
+    // handle the rest, keep the 256-bit limit in mind
+}
+```
+
+When `RichBounce` is used:
+
+```tolk
+fun onBouncedMessage(in: InMessageBounced) {
+    val rich = lazy RichBounceBody.fromSlice(in.bouncedBody);
+    // handle rich.originalBody
+    // use rich.xxx to get exitCode, gasUsed, and so on
+}
+```
+
+Mixing different modes, where some messages use a minimal body and others use a full body, complicates handling and is discouraged. The binary body of an outgoing message, such as `TransferMessage`, is returned either as `in.bouncedBody` with a 256-bit limit or as `rich.originalBody`, which contains the full slice. To handle this consistently:
+
+- define a union type that includes all message types that may be bounced;
+- handle it using `lazy` in `onBouncedMessage`.
+
+```tolk
+struct (0x98765432) TransferMessage {
+    // ...
+}
+// ... and other messages
+
+// some of them are bounceable (send not with NoBounce)
+type TheoreticallyBounceable = TransferMessage // | ...
+
+// example for BounceMode.Only256BitsOfBody
+fun onBouncedMessage(in: InMessageBounced) {
+    in.bouncedBody.skipBouncedPrefix();   // skips 0xFFFFFFFF
+
+    val msg = lazy TheoreticallyBounceable.fromSlice(in.bouncedBody);
+    match (msg) {
+        TransferMessage => {
+            // revert changes using `msg.xxx`
+        }
+        // ...
+    }
+}
+```
+
+## `onExternalMessage`
+
+In addition to internal messages, a contract can handle [external messages](/foundations/messages/external-in) originating off-chain.
+For example, [wallet contracts](/standard/wallets/how-it-works) process external messages and perform signature validation using a public key.
+
+```tolk
+fun onExternalMessage(inMsg: slice) {
+    // external messages arrive here
+}
+```
+
+When a contract accepts an external message, it has limited gas for execution. After validating the request, the contract must call `acceptExternalMessage()` to increase the available gas. The `commitContractDataAndActions()` function can also be used. Both functions are part of the standard library and are documented inline.
+
+## Additional reserved entrypoints
+
+Tolk defines several reserved entrypoints:
+
+- `fun onTickTock` is invoked on tick-tock transactions;
+- `fun onSplitPrepare` and `fun onSplitInstall` are reserved for split and install transactions; currently not used by the blockchain;
+- `fun main` is used for simple snippets and demos.
+
+The following program is valid:
+
+```tolk
+fun main() {
+    return 123
+}
+```
+
+It compiles and runs, pushing value 123 onto the stack. The corresponding TVM `method_id` is `0`.

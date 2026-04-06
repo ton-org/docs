@@ -1,0 +1,121 @@
+---
+title: "Callables"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Tolk supports first-class functions. Function values have callable types of the form `(...ArgsT) -> ReturnT`.
+
+## First-class functions
+
+Pass a function as a callback:
+
+```tolk
+fun invokeMath(fn: (int, int) -> int) {
+    return fn(10, 20);
+}
+
+fun myPlus(a: int, b: int) {
+    return a + b;
+}
+
+fun demo() {
+    invokeMath(myPlus);   // 30
+}
+```
+
+A function `myPlus` has the type `(int, int) -> int`. A function `demo`, for example, has the type `() -> void`.
+
+Functions can be assigned to variables:
+
+```tolk
+fun demo() {
+    val callback = myPlus;
+    callback(5, 5);   // 10
+
+    // or, with explicit type:
+    val fn: (int, int) -> int = myPlus;
+}
+```
+
+<Aside
+  type="caution"
+>
+  Functions with `mutate` parameters cannot be assigned to variables or passed around. Mutation is not part of the type system.
+</Aside>
+
+## Lambda functions
+
+Tolk supports [lambda functions](/languages/tolk/syntax/functions-methods):
+
+```tolk
+fun demo() {
+    invokeMath(fun(a, b) {
+        return a * b
+    });    // 200
+}
+```
+
+Lambda parameter types may be omitted when they can be inferred. In the example above, both `a` and `b` are inferred as `int` from the `invokeMath` declaration. When parameter types cannot be inferred, they must be specified:
+
+```tolk
+// error: param's type cannot be inferred here:
+val doubleFn = fun(param) { return param * 2 };
+
+// correct is:
+val doubleFn = fun(param: int) { return param * 2 };
+```
+
+As first-class functions, lambdas can also be returned:
+
+```tolk
+fun createFinalizer() {
+    return fun(b: builder) {
+        b.storeUint(0xFFFFFFFF, 32);
+        return b.toSlice();
+    }
+}
+
+fun demo() {
+    val f = createFinalizer();    // (builder) -> slice
+    f(beginCell());               // slice with 32 bits
+}
+```
+
+Lambdas are primarily used in general-purpose tooling. They can be combined with generic types and used as nested expressions without restrictions.
+
+```tolk
+struct HasCallback<TResult> {
+    arg: int
+    fn: (int -> TResult)?
+}
+
+fun HasCallback<TResult>.invoke(self): TResult {
+    assert (self.fn != null) throw ERR_CALLBACK_UNSET;
+    return self.fn(self.arg)
+}
+```
+
+Lambdas are not closures. Capturing variables from an outer scope is not supported:
+
+```tolk
+fun outer(x: int) {
+    return fun(y: int) {
+        return x + y;    // error: undefined symbol `x`
+    }
+}
+```
+
+## Low-level TVM continuations
+
+Continuations are executable cells representing TVM bitcode. A callable is a typed `continuation`.
+
+Tolk provides the low-level type `continuation`. For example, the TVM register [`c3`](/tvm/registers) contains the smart contract code. Some functions are available in the standard library:
+
+```tolk
+import "@stdlib/tvm-lowlevel"
+```
+
+## Stack layout and serialization
+
+A callable is backed by the [TVM `CONT`](/languages/tolk/types/overall-tvm-stack). Callable values cannot be [serialized](/languages/tolk/types/overall-serialization).
