@@ -1,0 +1,410 @@
+---
+title: "How to stake tokens using AppKit"
+sidebarTitle: "Stake tokens"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+<Aside type="note">
+  [Initialize the AppKit](/ecosystem/appkit/init) before using examples on this page.
+</Aside>
+
+<Aside type="note">
+  This page covers retail staking flows, such as letting a wallet user stake TON through a staking provider. It does not cover validator operations, institutional custody, or custom pool management. Refer to the [staking overview](/ecosystem/staking/overview) page for other solutions.
+</Aside>
+
+AppKit staking is [provider-based](/ecosystem/appkit/init#providers). For most user-facing apps, the flow is:
+
+1. Register a staking provider.
+1. Show the current provider terms and quote.
+1. Build a transaction from that quote.
+1. Send the transaction from the connected wallet.
+1. Display the user's staked balance.
+
+## Available providers
+
+[Tonstakers](https://tonstakers.com) is the primary liquid staking provider. It is configured per network, similar to API clients:
+
+```ts
+// Or @ton/appkit-react for React
+import { AppKit } from '@ton/appkit';
+import { createTonstakersProvider } from '@ton/appkit/staking/tonstakers';
+
+const kit = new AppKit({
+  providers: [
+    // Optional provider configuration options.
+    createTonstakersProvider({
+      [Network.mainnet().chainId]: {
+        // Defaults to a known pool when available.
+        contractAddress: 'EQ...TON_WALLET_ADDRESS',
+
+        // Optional TON API key, get it at https://tonapi.io/
+        // TON API is an alternative API client to TON Center.
+        tonApiToken: '<TONAPI_TOKEN>',
+      }
+    }),
+  ],
+});
+```
+
+## Set up a staking provider
+
+Before requesting quotes or building transactions, register at least one staking provider:
+
+<CodeGroup>
+  ```tsx title="React" icon="react" wrap lines
+  import {
+    AppKit,
+    Network,
+    createTonConnectConnector,
+  } from '@ton/appkit-react';
+  import { createTonstakersProvider } from '@ton/appkit/staking/tonstakers';
+  import '@ton/appkit-react/styles.css';
+
+  const kit = new AppKit({
+    networks: {
+      [Network.mainnet().chainId]: {
+        apiClient: {
+          url: 'https://toncenter.com',
+          key: '<MAINNET_API_KEY>',
+        },
+      },
+    },
+    connectors: [
+      createTonConnectConnector({
+        tonConnectOptions: {
+          manifestUrl: 'https://tonconnect-sdk-demo-dapp.vercel.app/tonconnect-manifest.json',
+        },
+      }),
+    ],
+    providers: [createTonstakersProvider()],
+  });
+
+  export function App() {
+    return <AppKitProvider appKit={kit}>{/* ...app... */}</AppKitProvider>;
+  }
+  ```
+
+  ```ts title="TypeScript" icon="globe" wrap lines
+  import {
+    AppKit,
+    Network,
+    createTonConnectConnector,
+  } from '@ton/appkit';
+  import { createTonstakersProvider } from '@ton/appkit/staking/tonstakers';
+
+  const kit = new AppKit({
+    networks: {
+      [Network.mainnet().chainId]: {
+        apiClient: {
+          url: 'https://toncenter.com',
+          key: '<MAINNET_API_KEY>',
+        },
+      },
+    },
+    connectors: [
+      createTonConnectConnector({
+        tonConnectOptions: {
+          manifestUrl: 'https://tonconnect-sdk-demo-dapp.vercel.app/tonconnect-manifest.json',
+        },
+      }),
+    ],
+    providers: [createTonstakersProvider()],
+  });
+  ```
+</CodeGroup>
+
+## Show provider terms and a quote
+
+Retail staking UIs should display the provider and an up-to-date quote before asking the user to confirm the transaction.
+
+<Aside
+  type="caution"
+>
+  Refresh staking quotes shortly before building the transaction. Quotes, APY, and available liquidity can change.
+</Aside>
+
+<CodeGroup>
+  ```tsx title="React" icon="react"
+  import {
+    useAddress,
+    useStakingProviderInfo,
+    useStakingProviders,
+    useStakingQuote,
+  } from '@ton/appkit-react';
+
+  export const StakingQuoteCard = () => {
+    const address = useAddress();
+    const { data: providers } = useStakingProviders();
+    const providerId = providers?.[0];
+
+    const { data: providerInfo } = useStakingProviderInfo({ providerId });
+    const { data: quote, isLoading, error } = useStakingQuote({
+      providerId,
+
+      // Quote direction: 'stake' or 'unstake'
+      direction: 'stake',
+
+      // Staking user's TON wallet address
+      userAddress: address ?? '<TON_WALLET_ADDRESS>',
+
+      // NanoToncoin amount string.
+      // For example, '100000000' nanoToncoin is 0.1 Toncoin.
+      amount: '100000000',
+    });
+
+    if (!providerId) {
+      return <p>No staking providers configured.</p>;
+    }
+
+    if (isLoading) {
+      return <p>Loading quote...</p>;
+    }
+
+    if (error) {
+      return <p>Error: {error.message}</p>;
+    }
+
+    return (
+      <div>
+        <p>Provider: {providerId}</p>
+        <p>APY: {providerInfo ? providerInfo.apy / 100 : 0}%</p>
+        <p>Stake amount: {quote?.amountIn} TON</p>
+        <p>Estimated output: {quote?.amountOut}</p>
+      </div>
+    );
+  };
+  ```
+
+  ```ts title="TypeScript" icon="globe"
+  import {
+    type Appkit,
+    getSelectedWallet,
+    getStakingProviderInfo,
+    getStakingProviders,
+    getStakingQuote,
+  } from '@ton/appkit';
+
+  async function getStakeQuote(
+    /** Initialized AppKit instance */
+    kit: AppKit,
+    /** NanoToncoin amount string */
+    amount: string,
+  ) {
+    const providerId = getStakingProviders(kit)[0];
+    const userAddress = getSelectedWallet(kit)?.getAddress();
+    if (!providerId || !userAddress) {
+      return null;
+    }
+
+    const providerInfo = await getStakingProviderInfo(kit, { providerId });
+    const quote = await getStakingQuote(kit, {
+      providerId,
+
+      // Quote direction: 'stake' or 'unstake'
+      direction: 'stake',
+
+      // Staking user's TON wallet address
+      userAddress,
+
+      // NanoToncoin amount string.
+      // For example, '100000000' nanoToncoin is 0.1 Toncoin.
+      amount,
+    });
+
+    console.log('Provider:', providerId);
+    console.log('APY:', providerInfo.apy / 100, '%');
+    console.log('Stake amount:', quote.amountIn, 'TON');
+    console.log('Estimated output:', quote.amountOut);
+
+    return quote;
+  }
+  ```
+</CodeGroup>
+
+## Build and send the staking transaction
+
+Build the transaction from the quote, then send it through the connected wallet:
+
+<CodeGroup>
+  ```tsx title="React" icon="react"
+  import {
+    useAddress,
+    useBuildStakeTransaction,
+    useSendTransaction,
+    useStakingProviders,
+    useStakingQuote,
+  } from '@ton/appkit-react';
+
+  export const StakeButton = () => {
+    const address = useAddress();
+    const { data: providers } = useStakingProviders();
+    const providerId = providers?.[0];
+    const { data: quote } = useStakingQuote({
+      providerId,
+
+      // Quote direction: 'stake' or 'unstake'
+      direction: 'stake',
+
+      // Staking user's TON wallet address
+      userAddress: address ?? '<TON_WALLET_ADDRESS>',
+
+      // NanoToncoin amount string.
+      // For example, '100000000' nanoToncoin is 0.1 Toncoin.
+      amount: '100000000',
+    });
+    const {
+      mutateAsync: buildTransaction,
+      isPending: isBuilding,
+    } = useBuildStakeTransaction();
+    const {
+      mutateAsync: sendTransaction,
+      isPending: isSending,
+    } = useSendTransaction();
+
+    const handleStake = async () => {
+      if (!quote || !address || !providerId) {
+        return;
+      }
+
+      const transaction = await buildTransaction({
+        providerId,
+        quote,
+        userAddress: address,
+      });
+
+      await sendTransaction(transaction);
+    };
+
+    return (
+      <button
+        onClick={() => void handleStake()}
+        disabled={!quote || !address || isBuilding || isSending}
+      >
+        {isBuilding || isSending ? 'Submitting...' : 'Stake 1 TON'}
+      </button>
+    );
+  };
+  ```
+
+  ```ts title="TypeScript" icon="globe"
+  import {
+    type Appkit,
+    getSelectedWallet,
+    getStakingProviders
+    getStakingQuote,
+    buildStakeTransaction,
+    sendTransaction,
+  } from '@ton/appkit';
+
+  async function stakeTon(
+    /** Initialized AppKit instance */
+    kit: AppKit,
+    /** NanoToncoin amount string */
+    amount: string,
+  ) {
+    const providerId = getStakingProviders(kit)[0];
+    const userAddress = getSelectedWallet(kit)?.getAddress();
+    if (!providerId || !userAddress) {
+      return null;
+    }
+    const quote = await getStakingQuote(kit, {
+      providerId,
+
+      // Quote direction: 'stake' or 'unstake'
+      direction: 'stake',
+
+      // Staking user's TON wallet address
+      userAddress,
+
+      // NanoToncoin amount string.
+      // For example, '100000000' nanoToncoin is 0.1 Toncoin.
+      amount,
+    });
+
+    const transaction = await buildStakeTransaction(kit, {
+      providerId, quote, userAddress,
+    });
+
+    const result = await sendTransaction(kit, transaction);
+    console.log('Transaction sent:', result.boc);
+  }
+  ```
+</CodeGroup>
+
+## Display the staked balance
+
+After the transaction is sent, query the staking balance for the connected wallet:
+
+<CodeGroup>
+  ```tsx title="React" icon="react"
+  import {
+    useAddress,
+    useStakingProviders,
+    useStakedBalance,
+  } from '@ton/appkit-react';
+
+  export const StakedBalanceCard = () => {
+    const address = useAddress();
+    const { data: providers } = useStakingProviders();
+    const providerId = providers?.[0];
+    const { data: balance, isLoading, error } = useStakedBalance({
+      providerId,
+
+      // Staking user's TON wallet address
+      userAddress: address ?? '<TON_WALLET_ADDRESS>',
+    });
+
+    if (!providerId) {
+      return <p>No staking providers configured.</p>;
+    }
+
+    if (isLoading) {
+      return <p>Loading staked balance...</p>;
+    }
+
+    if (error) {
+      return <p>Error: {error.message}</p>;
+    }
+
+    return <p>Staked balance: {balance?.stakedBalance ?? '0'}</p>;
+  };
+  ```
+
+  ```ts title="TypeScript" icon="globe"
+  import {
+    type Appkit,
+    getSelectedWallet,
+    getStakingProviders,
+    getStakedBalance,
+  } from '@ton/appkit';
+
+  async function getUserStakedBalance(
+    /** Initialized AppKit instance */
+    kit: AppKit,
+  ) {
+    const providerId = getStakingProviders(kit)[0];
+    const userAddress = getSelectedWallet(kit)?.getAddress();
+    if (!providerId || !userAddress) {
+      return null;
+    }
+
+    const balance = await getStakedBalance(kit, {
+      providerId,
+
+      // Staking user's TON wallet address
+      userAddress,
+    });
+
+    console.log('Staked balance:', balance.stakedBalance);
+    return balance;
+  }
+  ```
+</CodeGroup>
+
+## See also
+
+- [Tonstakers documentation, external](https://docs.tonstakers.com)
+- [Transaction fees](/foundations/fees)
+- [AppKit overview](/ecosystem/appkit/overview)
+- [TON Connect overview](/ecosystem/ton-connect/overview)
