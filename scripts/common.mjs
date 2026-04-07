@@ -13,11 +13,11 @@ import { visitParents } from 'unist-util-visit-parents';
 
 /**
  * Docusaurus
- * @typedef {import('./docusaurus-sidebars-types.d.ts').SidebarsConfig} Sidebars
- * @typedef {import('./docusaurus-sidebars-types.d.ts').SidebarItemConfig} SidebarItem
- * @typedef {import('./docusaurus-sidebars-types.d.ts').SidebarItemDoc} ItemDoc
- * @typedef {import('./docusaurus-sidebars-types.d.ts').SidebarItemLink} ItemLink
- * @typedef {import('./docusaurus-sidebars-types.d.ts').SidebarItemCategoryBase} ItemCat
+ * @typedef {import('./sidebars/sidebars.d.ts').SidebarsConfig} Sidebars
+ * @typedef {import('./sidebars/sidebars.d.ts').SidebarItemConfig} SidebarItem
+ * @typedef {import('./sidebars/sidebars.d.ts').SidebarItemDoc} ItemDoc
+ * @typedef {import('./sidebars/sidebars.d.ts').SidebarItemLink} ItemLink
+ * @typedef {import('./sidebars/sidebars.d.ts').SidebarItemCategoryBase} ItemCat
  */
 
 /**
