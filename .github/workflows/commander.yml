@@ -3,7 +3,7 @@ name: 📡 Commander
 
 env:
   HUSKY: 0
-  NODE_VERSION: 20
+  NODE_VERSION: 22
 
 on:
   issue_comment:
@@ -40,11 +40,11 @@ jobs:
         env:
           FROM_PR: ${{ github.event.pull_request.number }}
           FROM_ISSUE: ${{ github.event.issue.number }}
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
             const fs = require('node:fs');
-            const prNumRaw = process.env.FROM_PR ?? process.env.FROM_ISSUE ?? '';
+            const prNumRaw = process.env.FROM_PR || process.env.FROM_ISSUE || '';
             const prNum = Number(prNumRaw);
             if (isNaN(prNum) || prNum <= 0 || prNum >= 1e20) {
               console.error(`PR number was not provided or is invalid: ${prNumRaw}`);
@@ -60,7 +60,7 @@ jobs:
             core.exportVariable('HEAD_REF', pr.head.ref);
             const headRepo = pr.head.repo?.full_name ?? '';
             const thisRepo = `${context.repo.owner}/${context.repo.repo}`;
-            if (headRepo === '' && headRepo !== thisRepo) {
+            if (headRepo === '' || headRepo !== thisRepo) {
               core.exportVariable('IS_FORK', 'true');
               core.notice('This job does not run in forks for a vast number of reasons. Please, apply the necessary fixes yourself.');
             } else {
@@ -69,14 +69,15 @@ jobs:
 
       - name: Checkout the PR branch
         if: env.IS_FORK != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ env.HEAD_REF }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Node.js
         if: env.IS_FORK != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
@@ -90,7 +91,7 @@ jobs:
       - name: Get changed MDX and Markdown files
         if: env.IS_FORK != 'true'
         id: changed-files
-        uses: tj-actions/changed-files@24d32ffd492484c1d75e0c0b894501ddb9d30d62 # v47
+        uses: tj-actions/changed-files@22103cc46bda19c2b464ffe86db46df6922fd323 # v47.0.5
         with:
           files: |
             **.md
@@ -103,8 +104,9 @@ jobs:
         id: fix-fmt
         env:
           ALL_CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
+          # language=JavaScript
           script: |
             const files = (process.env.ALL_CHANGED_FILES ?? '')
               .trim().split(' ').filter(Boolean).filter((it) => it.match(/\.mdx?$/) !== null);
@@ -128,7 +130,7 @@ jobs:
 
       - name: Commit changes, if any
         if: env.IS_FORK != 'true' && steps.fix-fmt.outputs.changes == 'true'
-        uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3 # v7.0.0
+        uses: stefanzweifel/git-auto-commit-action@04702edda442b2e678b25b537cec683a1493fcb9 # v7.1.0
         with:
           commit_message: "fix: formatting"
           branch: ${{ env.HEAD_REF }}
