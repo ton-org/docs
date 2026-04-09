@@ -1,0 +1,162 @@
+---
+title: "Streaming API: Server-Sent Events"
+sidebarTitle: "Server-Sent Events"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+[Server-Sent Events (SSE)](https://en.wikipedia.org/wiki/Server-sent_events) transport of the [Streaming API](/ecosystem/api/toncenter/streaming/overview) uses a single `POST` request to establish the connection and specify the subscription. No further messages are sent by the client on this connection.
+
+## Usage
+
+Send one `POST` request to the SSE endpoint with a JSON body that defines the subscription.
+
+### Endpoints
+
+- Mainnet: `https://toncenter.com/api/streaming/v2/sse`
+- Testnet: `https://testnet.toncenter.com/api/streaming/v2/sse`
+
+### Request fields
+
+<ParamField
+  path="types"
+  type="string[]"
+  required="true"
+>
+  One or more event types to receive: `transactions`, `actions`, `trace`, `trace_invalidated`, `account_state_change`, `jettons_change`. The [event types section](/ecosystem/api/toncenter/streaming/reference#event-types) and [notification schemas section](/ecosystem/api/toncenter/streaming/reference#notification-schemas) provide the exact payload structure for each event.
+</ParamField>
+
+<ParamField
+  path="addresses"
+  type="string[]"
+>
+  Wallet or contract addresses to monitor. Accepts [valid TON address formats](/foundations/addresses/formats). Optional when subscribing only to a `"trace"`, otherwise required.
+</ParamField>
+
+<ParamField
+  path="trace_external_hash_norms"
+  type="string[]"
+>
+  Optional list of normalized external message hashes to monitor. Required when subscribing to a `"trace"`.
+</ParamField>
+
+<ParamField
+  path="min_finality"
+  type="string"
+  default="finalized"
+>
+  Optional minimum finality: `"pending"`, `"confirmed"`, or `"finalized"`. Defaults to `"finalized"`.
+</ParamField>
+
+<ParamField
+  path="include_address_book"
+  type="boolean"
+>
+  Optional. If `true`, includes address book data in supported notifications.
+</ParamField>
+
+<ParamField
+  path="include_metadata"
+  type="boolean"
+>
+  Optional. If `true`, includes token metadata (jetton or NFT) in supported notifications.
+</ParamField>
+
+<ParamField
+  path="action_types"
+  type="string[]"
+>
+  Optional action type filter. Applies only to `"actions"`. Refer to a list of [available action types in API v3](/ecosystem/api/toncenter/v3/actions-and-traces/get-actions#parameter-action-type).
+</ParamField>
+
+<ParamField
+  path="supported_action_types"
+  type="string[]"
+  default={`["latest"]`}
+>
+  Optional list of action classification types supported by the client. Defaults to `["latest"]`.
+</ParamField>
+
+<Aside
+  type="note"
+  title="SSE subscription rules"
+>
+  Streaming API does not expose separate `"pending_transactions"` or `"pending_actions"` event types. Subscribe to `"transactions"` or `"actions"`, then use `min_finality` to control delivery timing.
+</Aside>
+
+- Include `"trace"` in `types` and provide `trace_external_hash_norms` to subscribe to a specific trace.
+- Omit `addresses` when subscribing only to a `"trace"`.
+
+### Examples
+
+Lowest-latency stream of `"pending"` → `"confirmed"` → `"finalized"` finality levels:
+
+```http
+POST https://toncenter.com/api/streaming/v2/sse
+Content-Type: application/json
+Accept: text/event-stream
+
+{
+  "types": ["transactions", "actions"],
+  "addresses": ["EQC...ACCOUNT_ADDRESS", "0:abc...RAW_ADDRESS"],
+  "min_finality": "pending",
+  "include_address_book": true,
+  "include_metadata": false,
+  "action_types": ["jetton_transfer", "ton_transfer"]
+}
+```
+
+Subscribing to a specific trace:
+
+```http
+POST https://toncenter.com/api/streaming/v2/sse
+Content-Type: application/json
+Accept: text/event-stream
+
+{
+  "types": ["trace"],
+  "trace_external_hash_norms": ["E7...NORMALIZED_EXTERNAL_MSG_HASH"],
+  "min_finality": "pending",
+  "include_address_book": true,
+  "include_metadata": true
+}
+```
+
+Successful SSE subscriptions receive the following message from the server:
+
+```json
+{"status": "subscribed"}
+```
+
+To keep the subscription alive, the server sends the following `keepalive` line every 15 seconds:
+
+```text
+: keepalive\n\n
+```
+
+Ignore SSE lines that begin with `:`.
+
+## Known limitations
+
+### Rate limit on reconnect (429 error)
+
+If a client reconnects immediately after a disconnect, the previous connection may still be open for \~1 minute. The reconnect attempt receives a 429 error. Use exponential backoff or [an enterprise plan API key](/ecosystem/api/toncenter/get-api-key).
+
+### POST-only subscription
+
+Despite SSE typically using `GET` requests, Streaming API endpoints require a `POST` with the subscription JSON in the request body.
+
+<Aside type="note">
+  `GET` requests are not supported yet.
+</Aside>
+
+### No invalidation signal for `account_state_change` or `jettons_change`
+
+If a `"confirmed"` account state or jetton balance update is later rolled back, no `"trace_invalidated"` notification is sent for these event types.
+
+When using `"account_state_change"` or `"jettons_change"` at `"confirmed"` finality, consider waiting for `"finalized"` for balance-critical flows.
+
+## Next steps
+
+- Skim the server [notification reference](/ecosystem/api/toncenter/streaming/reference)
+- [Get an API key](/ecosystem/api/toncenter/get-api-key)
