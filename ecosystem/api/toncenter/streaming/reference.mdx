@@ -1,0 +1,240 @@
+---
+title: "Streaming API notification reference"
+sidebarTitle: "Notification reference"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+## Event types
+
+Once a subscription is established, the server sends event messages (notifications) matching the selected `types` and `min_finality`. Each message is a JSON object representing a single event.
+
+The `type` field in each notification identifies the notification schema:
+
+- `"transactions"` — subscribe to transactions and their finality levels.
+- `"actions"` — subscribe to certain actions by setting `action_types`.
+- `"trace"` — subscribe to a transaction trace.
+- `"account_state_change"` — emitted for each matching confirmed or finalized account transaction.
+- `"jettons_change"` — emitted for each matching confirmed or finalized jetton wallet transaction.
+- `"trace_invalidated"` — emitted when earlier trace data becomes invalid.
+
+## Notification schemas
+
+Trace-related notifications, such as `"transactions"`, `"actions"`, and `"trace"` are grouped by the trace. They use the same `trace_external_hash_norm` value across all events generated from one external message.
+
+Transactions and actions in the same trace are ordered by logical time (LT) in descending order. The `"trace"` event includes the full trace tree and a map of all transactions in that trace.
+
+### `"transactions"`
+
+Subscriptions that include `"transactions"` can receive multiple notifications for the same trace as finality increases.
+
+Trace is determined by its `trace_external_hash_norm`.
+
+| Field                      | Type            | Description                                                              |
+| -------------------------- | --------------- | ------------------------------------------------------------------------ |
+| `type`                     | `string`        | Always `"transactions"`.                                                 |
+| `finality`                 | `string`        | `"pending"`, `"confirmed"`, or `"finalized"`.                            |
+| `trace_external_hash_norm` | `string`        | Normalized external message hash for the trace.                          |
+| `transactions`             | `Transaction[]` | Transactions in the trace, ordered by descending logical time.           |
+| `address_book`             | `object`        | Optional mapping of addresses to a friendly format and a TON DNS domain. |
+| `metadata`                 | `object`        | Optional mapping of token addresses to metadata (jetton or NFT).         |
+
+```jsonc title="Notification example"
+{
+  "type": "transactions",
+  "finality": "pending",
+  "trace_external_hash_norm": "E7...NORMALIZED_EXTERNAL_MSG_HASH",
+  "transactions": [ /* transaction objects */ ],
+  "address_book": { /* mapping of known addresses */ },
+  "metadata": { /* mapping of known token addresses to metadata */ }
+}
+```
+
+### `"actions"`
+
+Subscriptions that include `"actions"` can receive multiple notifications for the same trace as finality increases.
+
+<Aside type="note">
+  Unlike [traces](#traces) and [transactions](#transactions), actions do not exist on-chain and in blockchain history. Instead, actions are aggregated based on the internal logic of TON Center's [API v3](/ecosystem/api/toncenter/v3/overview).
+</Aside>
+
+Trace is determined by its `trace_external_hash_norm`.
+
+| Field                      | Type       | Description                                                              |
+| -------------------------- | ---------- | ------------------------------------------------------------------------ |
+| `type`                     | `string`   | Always `"actions"`.                                                      |
+| `finality`                 | `string`   | `"pending"`, `"confirmed"`, or `"finalized"`.                            |
+| `trace_external_hash_norm` | `string`   | Normalized external message hash for the trace.                          |
+| `actions`                  | `Action[]` | Classified actions for the trace.                                        |
+| `address_book`             | `object`   | Optional mapping of addresses to a friendly format and a TON DNS domain. |
+| `metadata`                 | `object`   | Optional mapping of token addresses to metadata (jetton or NFT).         |
+
+<Aside type="note">
+  Use `action_types` when subscribing via [SSE](/ecosystem/api/toncenter/streaming/sse) or a [WebSocket](/ecosystem/api/toncenter/streaming/wss) to filter received `actions`. Refer to a list of [available action types in API v3](/ecosystem/api/toncenter/v3/actions-and-traces/get-actions#parameter-action-type).
+</Aside>
+
+```jsonc title="Notification example"
+{
+  "type": "actions",
+  "finality": "confirmed",
+  "trace_external_hash_norm": "E7...NORMALIZED_EXTERNAL_MSG_HASH",
+  "actions": [ /* action objects */ ],
+  "address_book": { /* mapping of known addresses */ },
+  "metadata": { /* mapping of known token addresses to metadata */ }
+}
+```
+
+### `"trace"`
+
+Subscriptions that include `"trace"` receive trace-wide payloads. These payloads are not filtered by account address and include all transactions and actions in the trace.
+
+Trace is determined by its `trace_external_hash_norm`.
+
+| Field                      | Type        | Description                                                              |
+| -------------------------- | ----------- | ------------------------------------------------------------------------ |
+| `type`                     | `string`    | Always `"trace"`.                                                        |
+| `finality`                 | `string`    | `"pending"`, `"confirmed"`, or `"finalized"`.                            |
+| `trace_external_hash_norm` | `string`    | Normalized external message hash for the trace.                          |
+| `trace`                    | `TraceNode` | Trace tree.                                                              |
+| `transactions`             | `object`    | Map of transaction hash to transaction object.                           |
+| `actions`                  | `Action[]`  | Optional classified actions for the trace.                               |
+| `address_book`             | `object`    | Optional mapping of addresses to a friendly format and a TON DNS domain. |
+| `metadata`                 | `object`    | Optional mapping of token addresses to metadata (jetton or NFT).         |
+
+```jsonc title="Notification example"
+{
+  "type": "trace",
+  "finality": "confirmed",
+  "trace_external_hash_norm": "E7...NORMALIZED_EXTERNAL_MSG_HASH",
+  "trace": {},
+  "transactions": { /* mappings */ },
+  "actions": [ /* action objects */ ],
+  "address_book": { /* mapping of known addresses */ },
+  "metadata": { /* mapping of known token addresses to metadata */ }
+}
+```
+
+### `"account_state_change"`
+
+Subscriptions that include `"account_state_change"` receive notifications for each transaction executed on a subscribed account address.
+
+This event is emitted only for `"confirmed"` and `"finalized"` finality levels.
+
+| Field      | Type           | Description                                                                                                                                                                                                                        |
+| ---------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`     | `string`       | Always `"account_state_change"`.                                                                                                                                                                                                   |
+| `finality` | `string`       | `"confirmed"` or `"finalized"`.                                                                                                                                                                                                    |
+| `account`  | `string`       | Account address in raw format, e.g., `0:abc...RAW_ADDRESS`.                                                                                                                                                                        |
+| `state`    | `AccountState` | Account state without full code and data [BoCs](/foundations/serialization/boc). Includes state hash, nanoToncoin balance, [account status](/foundations/status), data and code hashes. All hashes are given in the Base64 format. |
+
+```jsonc title="Notification example"
+{
+  "type": "account_state_change",
+  "finality": "finalized",
+  "account": "0:18AA...RAW_ADDRESS",
+  "state": {
+    "hash": "P0Gc...BASE64_HASH",
+    "balance": "42...NANOTON_BALANCE",
+    "account_status": "active",
+    "data_hash": "7qNe...BASE64_HASH",
+    "code_hash": "ow8E...BASE64_HASH"
+  }
+}
+```
+
+### `"jettons_change"`
+
+Subscriptions that include `"jettons_change"` receive notifications for each transaction on a jetton wallet contract when the subscribed address is its own address or its owner's TON wallet address.
+
+This event is emitted only for `"confirmed"` and `"finalized"` finality levels.
+
+| Field          | Type           | Description                                                                                                                                                      |
+| -------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`         | `string`       | Always `"jettons_change"`.                                                                                                                                       |
+| `finality`     | `string`       | `"confirmed"` or `"finalized"`.                                                                                                                                  |
+| `jetton`       | `JettonWallet` | Jetton wallet data. Includes its raw address, jetton balance, owner's raw address, jetton master (minter) raw address, and logical time of its last transaction. |
+| `address_book` | `object`       | Optional mapping of addresses to a friendly format and a TON DNS domain.                                                                                         |
+| `metadata`     | `object`       | Optional mapping of token addresses to metadata (jetton or NFT).                                                                                                 |
+
+```jsonc title="Notification example"
+{
+  "type": "jettons_change",
+  "finality": "finalized",
+  "jetton": {
+    "address": "0:88DA...RAW_ADDRESS",
+    "balance": "42...JETTON_BALANCE",
+    "owner": "0:18AA...RAW_ADDRESS",
+    "jetton": "0:B113...RAW_ADDRESS",
+    "last_transaction_lt": "61664...LT_UNIX_TIME",
+  },
+  "address_book": { /* mapping of known addresses */ },
+  "metadata": { /* mapping of known token addresses to metadata */ }
+}
+```
+
+### `"trace_invalidated"`
+
+The `"trace_invalidated"` notification signals that previously emitted speculative or intermediate trace data is no longer valid.
+
+Typical causes include:
+
+- external message was not accepted by the blockchain;
+- later state change invalidated previous emulation result;
+- confirmed shard block was replaced by another block, and the trace did not end up in the finalized block.
+
+Trace in the notification is determined by its `trace_external_hash_norm`.
+
+| Field                      | Type     | Description                                                 |
+| -------------------------- | -------- | ----------------------------------------------------------- |
+| `type`                     | `string` | Always `"trace_invalidated"`.                               |
+| `trace_external_hash_norm` | `string` | Normalized external message hash for the invalidated trace. |
+
+```jsonc title="Notification example"
+{
+  "type": "trace_invalidated",
+  "trace_external_hash_norm": "E7...NORMALIZED_EXTERNAL_MSG_HASH"
+}
+```
+
+Upon receiving this notification, remove any stored `"trace"`, `"transactions"`, and `"actions"` data for the affected `trace_external_hash_norm`.
+
+The `"trace_invalidated"` notification cannot be sent for the `"finalized"` finality level of the trace.
+
+## Delivery semantics
+
+| Type                   | Finality values                           | Delivery behavior                                                             |
+| ---------------------- | ----------------------------------------- | ----------------------------------------------------------------------------- |
+| `transactions`         | `"pending"`, `"confirmed"`, `"finalized"` | Emitted per trace as finality increases.                                      |
+| `actions`              | `"pending"`, `"confirmed"`, `"finalized"` | Emitted per trace as action classification and finality progress.             |
+| `trace`                | `"pending"`, `"confirmed"`, `"finalized"` | Emitted per trace with the full trace payload.                                |
+| `account_state_change` | `"confirmed"`, `"finalized"`              | Emitted for each matching confirmed or finalized account transaction.         |
+| `jettons_change`       | `"confirmed"`, `"finalized"`              | Emitted for each matching confirmed or finalized jetton wallet transaction.   |
+| `trace_invalidated`    | Not applicable                            | Emitted when earlier trace-based data [becomes invalid](#event-invalidation). |
+
+### `min_finality` behavior
+
+For trace-based events:
+
+- `min_finality = "pending"` returns `"pending"`, `"confirmed"`, and `"finalized"` snapshots.
+- `min_finality = "confirmed"` skips pure emulation and starts at `"confirmed"` or later.
+- `min_finality = "finalized"` returns only finalized trace-based events.
+
+For non-trace events:
+
+- `"account_state_change"` and `"jettons_change"` are emitted only with `"confirmed"` and `"finalized"` finality levels.
+
+## Event invalidation
+
+Subscriptions that allow speculative states can later receive `"trace_invalidated"`. If the finality level reaches `"finalized"`, the server is guaranteed not to emit `"trace_invalidated"` for the trace.
+
+<Aside type="note">
+  The current API does not expose a separate invalidation signal for `"account_state_change"` or `"jettons_change"` emitted at the `"confirmed"` finality level.
+</Aside>
+
+## See also
+
+- [Streaming API overview](/ecosystem/api/toncenter/streaming/overview)
+- [SSE](/ecosystem/api/toncenter/streaming/sse)
+- [WebSocket](/ecosystem/api/toncenter/streaming/wss)
+- [API key](/ecosystem/api/toncenter/get-api-key)
+- [API authentication](/ecosystem/api/toncenter/v3-authentication)
