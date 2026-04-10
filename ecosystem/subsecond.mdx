@@ -6,25 +6,24 @@ tag: "take action"
 
 import { Aside } from '/snippets/aside.jsx';
 
-The TON Core team is [releasing Catchain 2.0](https://t.me/toncore/99), a consensus upgrade targeting sub-second finality to bring the on-chain experience closer to Web2 responsiveness.
+The TON Core team has [released Catchain 2.0](https://t.me/toncore/104) on mainnet. This consensus upgrade enables sub-second block finality, reducing the block interval from about 2.5s to about 400ms.
 
-However, a faster blockchain does not automatically improve user experience. This upgrade delivers the speed — projects must adapt their apps to surface it to users.
+However, faster block production does not automatically reduce end-to-end latency for users. Projects must adapt their applications so transaction status updates and UI changes use the new timing guarantees.
 
 ## Current status
 
-The upgrade targets a block interval of 400ms (down from \~2.5s on current mainnet), roughly 6.25x throughput in blocks per second, and a finalization lag of \~1s versus the current \~10s.
+<Aside type="note">Sub-second finality is live on TON mainnet.</Aside>
 
-<Aside type="note">Mainnet activation is targeting early April 2026.</Aside>
+As of April 9th 2026, mainnet runs with a block interval of about 400 ms instead of \~2.5 s before the upgrade, producing roughly 6.25x more blocks per second. Target finalization lag is reduced from \~10 s to about 1 s.
 
-| Network        | Block interval | Blocks per second | Finalization lag |
-| -------------- | -------------- | ----------------- | ---------------- |
-| Mainnet today  | \~2.5s         | \~0.4             | \~10s            |
-| Testnet today  | \~450ms        | \~2.2             | \~1–2s           |
-| Mainnet target | 400ms          | \~2.5             | \~1s             |
+| Network                      | Block interval | Blocks per second | Finalization lag |
+| ---------------------------- | -------------- | ----------------- | ---------------- |
+| Mainnet                      | \~400ms        | \~2.5             | \~1s             |
+| Testnet                      | \~450ms        | \~2.2             | \~1–2s           |
+| Mainnet before Apr 9th, 2026 | \~2.5s         | \~0.4             | \~10s            |
 
-Together with consensus update, there is a Streaming API v2 from TON Center to receive transaction status updates with 30–100ms latency.
-
-Testnet operates close to the target speed and is the primary environment for testing projects.
+- Together with the consensus update, the [Streaming API v2](#ton-center-streaming-api-v2) delivers status updates with 30 to 100ms latency.
+- Testnet remains the primary environment for project testing.
 
 ## Example of sub-second user experience in action
 
@@ -36,8 +35,7 @@ Testnet operates close to the target speed and is the primary environment for te
   alt="Example of sub-second user experience"
 />
 
-[MyTonWallet](https://mytonwallet.io/) and [tonscan.org](https://tonscan.org) already use Streaming API v2 on both mainnet and testnet to deliver transaction status updates with low latency.
-This has already nearly halved the reaction time in these products, even though sub-second finality is not yet enabled on mainnet.
+[MyTonWallet](https://mytonwallet.io/) and [tonscan.org](https://tonscan.org) already use Streaming API v2 on both mainnet and testnet to deliver transaction status updates with low latency. These projects have nearly halved interface delays, and the mainnet upgrade will further reduce them.
 
 ## What projects need to do
 
@@ -47,8 +45,8 @@ A faster chain alone does not reduce end-to-end latency if the application conti
 
 #### Actions
 
-- Switch to [TON Center Streaming API v2](#ton-center-streaming-api-v2).
-  Handle all four transaction statuses: `"pending"`, `"confirmed"`, `"finalized"`, `"trace_invalidated"`.
+- Switch to a streaming API such as [TON Center Streaming API v2](#ton-center-streaming-api-v2) or [TonAPI Streaming API](#tonapi-streaming-api).
+  Handle all four transaction statuses: `"pending"`, `"confirmed"`, `"finalized"`, and `"trace_invalidated"`.
 
 - If Streaming API cannot be used, reduce polling intervals and adjust assumptions about transaction timing.
   Interfaces should be designed to expect results in under 1 second.
@@ -59,26 +57,24 @@ A faster chain alone does not reduce end-to-end latency if the application conti
 
 1. Update all self-hosted components to the versions that include Catchain 2.0 support:
 
-   - TON node and liteserver – update to the latest release before mainnet activation.
-   - Self-hosted TON Center – update to the version with Streaming API v2 support.
+   - TON node and liteserver – update to a release that supports the live mainnet consensus.
+   - Self-hosted TON Center – update to a version with Streaming API v2 support.
 
-1. After updating, connect each component to testnet and verify that it operates correctly under the higher block rate.
-   Do not wait for mainnet activation; issues identified late are harder to resolve.
+1. After updating, verify each component on testnet and confirm that it operates correctly under the higher block rate. If any component still runs a pre-upgrade version, update it before relying on it in production.
 
 ### Indexers
 
-Indexers must process up to 6x more blocks per second without accumulating lag.
-If it was tuned for 2.5s block intervals, it will fall behind under 400ms intervals.
+Indexers must process about 6.25x more blocks per second without accumulating lag. If an indexer was tuned for 2.5s block intervals, it can fall behind under 400ms intervals.
 
 #### Actions
 
 1. Connect the indexer to testnet.
 
-1. Run for 30+ minutes.
+1. Run for 30 or more minutes.
 
 1. Measure lag continuously.
 
-1. If lag increases, identify and resolve bottlenecks (e.g., database writes, network, parsing) before mainnet activation.
+1. If lag increases, identify and resolve bottlenecks such as database writes, network latency, and parsing throughput.
 
 1. Generate the typical mainnet load profile on testnet and verify that the indexer keeps up.
    See [Expected user experience](#expected-user-experience) and [Test on testnet](#test-on-testnet) for guidance.
@@ -87,7 +83,7 @@ If it was tuned for 2.5s block intervals, it will fall behind under 400ms interv
 
 ### Behavior without Streaming APIs
 
-Even if the blockchain produces blocks up to 6x faster, apps that do not use Streaming APIs still:
+Even with blocks produced about 6.25x faster, applications that do not use the Streaming API would still:
 
 - Poll HTTP endpoints at fixed intervals.
 - Wait for full block finalization before updating the UI.
@@ -100,7 +96,7 @@ A typical sequence for polling-based integrations:
 1. \~0.8s – shard block committed to masterchain;
 1. \~10s – UI updates on the next HTTP polling request.
 
-User perception: "You said the blockchain is fast. Why does my transfer still take 10 seconds?"
+User perception: "You said the blockchain is fast. Why does my transfer still take 10 seconds?". In this model, the blockchain is fast, but the user interface still appears slow.
 
 ### Behavior with Streaming APIs
 
@@ -112,18 +108,17 @@ User perception: "You said the blockchain is fast. Why does my transfer still ta
 <Aside
   type="caution"
 >
-  If your UI does not update fast enough, users will not notice any improvement despite the blockchain upgrade.
+  If the interface does not update quickly, users will not notice any improvement despite the blockchain upgrade.
 </Aside>
 
 ### Why this matters
 
-The sub-second finality update rollout requires coordinated changes across the ecosystem:
+The sub-second finality upgrade is enabled on mainnet, but coordinated ecosystem changes are still required:
 
 - TON Core delivers faster block production and low-latency APIs.
 - Ecosystem projects must adapt indexers and UI layers to surface this speed.
 
-If apps do not adapt, the upgrade appears ineffective, even when the underlying system operates correctly.
-Projects that are ready before the mainnet rollout will demonstrate the intended behavior and user experience.
+If applications do not adapt, the upgrade will not become apparent. Projects that have adapted will showcase the intended behavior and user experience.
 
 ## How to integrate
 
@@ -131,10 +126,10 @@ Projects that are ready before the mainnet rollout will demonstrate the intended
 
 For projects building on TON:
 
-- Streaming API: [TON Center Streaming API v2](#ton-center-streaming-api-v2).
-- Data layer: [TON Center v3][toncenter].
+- Streaming API: [TON Center](#ton-center-streaming-api-v2) or [TonAPI](#tonapi-streaming-api).
+- Data layer: [TON Center API v3](/ecosystem/api/toncenter/v3/overview) or TonAPI v2.
 - SDK: [AppKit][appkit] for balances, tokens, NFTs, and contract interactions.
-- Finality: wait `"finalized"` status for critical flows.
+- Finality: wait for `"finalized"` in critical flows.
 
 ### Public liteserver
 
@@ -181,6 +176,17 @@ SSE and WebSocket are available. Choose based on the stack:
 | --------- | ---------------------------------------------------- | -------------------------------------------- |
 | SSE       | `https://testnet.toncenter.com/api/streaming/v2/sse` | `https://toncenter.com/api/streaming/v2/sse` |
 | WebSocket | `wss://testnet.toncenter.com/api/streaming/v2/ws`    | `wss://toncenter.com/api/streaming/v2/ws`    |
+
+<Aside type="note">
+  TonAPI also exposes Streaming API endpoints with the same SSE and WebSocket interface. Use the TON Center's [Streaming API v2 documentation][streaming] as the protocol reference.
+
+  | Protocol  | Testnet URL                                  | Mainnet URL                          |
+  | --------- | -------------------------------------------- | ------------------------------------ |
+  | SSE       | `https://testnet.tonapi.io/streaming/v2/sse` | `https://tonapi.io/streaming/v2/sse` |
+  | WebSocket | `wss://testnet.tonapi.io/streaming/v2/ws`    | `wss://tonapi.io/streaming/v2/ws`    |
+
+  Authentication uses a [Ton Console API key](https://tonconsole.com/tonapi/api-keys).
+</Aside>
 
 <Aside
   type="caution"
@@ -234,6 +240,10 @@ Example subscription (send flow):
 - Send a `ping` every 15 seconds to keep the connection alive.
 - SSE connections receive automatic server-side keepalive (`: keepalive`) every 15 seconds; no client action required.
 
+### TonAPI Streaming API
+
+TonAPI Streaming API's interface is fully compatible and can be used interchangeably with TON Center's [Streaming API v2][streaming].
+
 ### AppKit for app developers
 
 [AppKit][appkit] provides ready-to-use components for frontend applications. It handles out of the box:
@@ -244,18 +254,13 @@ Example subscription (send flow):
 - Contract state reads;
 - Transaction sending, including jetton transfers.
 
-<Aside type="note">
-  AppKit and [WalletKit](/ecosystem/walletkit/overview) support for Streaming API v2 is in development and will be available soon.
-  Projects using these SDKs should follow this guide for Streaming API integration until native support is available.
-</Aside>
-
 ## Test on testnet
 
-Testnet runs at sub-second speed (400ms block finality). Run tests here before enabling sub-second changes on mainnet.
+Testnet runs at sub-second block generation speed. Use it for testing projects before shipping production changes on mainnet.
 
 ### Testnet endpoints
 
-Use the [public API endpoints overview](/ecosystem/api/overview) for testnet endpoints, including TON Center v2 and v2.
+Use the [public API endpoints overview](/ecosystem/api/overview) for testnet endpoints, including TON Center and TonAPI streaming endpoints.
 
 ### How to get test tokens
 
@@ -293,7 +298,7 @@ Perform the following tests to validate UX and wallet behavior.
 - [TON Core R\&D technical overview, Telegram channel](https://t.me/toncore/98)
 - [UX approaches for sub-second finality, Telegraph](https://telegra.ph/New-Approaches-to-Blockchain-User-Experience-08-02)
 - [TON Center Streaming API v2][streaming]
-- [TON Center overview and endpoints][toncenter]
+- [API overview and public endpoints](/ecosystem/api/overview)
 - [AppKit documentation][appkit]
 
 ## Get support
@@ -301,5 +306,4 @@ Perform the following tests to validate UX and wallet behavior.
 Use the [sub-second finality support chat](https://t.me/subsecond_upgrade) for questions about this upgrade.
 
 [appkit]: /ecosystem/appkit/overview
-[toncenter]: /ecosystem/api/overview
 [streaming]: /ecosystem/api/toncenter/streaming/overview
