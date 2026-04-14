@@ -38,13 +38,13 @@ A TON ADNL node maintains a "neighbor table" with information about known nodes,
 
 ## Client-server protocol (ADNL over TCP)
 
-The client connects to the server using TCP and sends a handshake packet containing a server abstract address, a client public key, and encrypted AES-CTR session parameters.
+The client connects to the server using TCP and sends an ADNL handshake packet containing a server abstract address, a client public key, and encrypted AES-CTR session parameters.
 
 ### Handshake
 
-1. The client performs a key agreement protocol (x25519) using its private key and the server's public key to derive a `secret`.
+1. The client performs a key agreement protocol (x25519) using its private key and the server's public key, selecting the key representation based on its `type_id`, to derive a `secret`.
 
-1. The client generates AES-CTR session parameters for both transmit and receive directions. Each direction uses a 32-byte key and a 16-byte nonce. The parameters are serialized into a 160-byte buffer:
+1. The client generates AES-CTR session parameters for both transmit (client -> server) and receive (server -> client)  directions. Each direction uses a 32-byte key and a 16-byte nonce. The parameters are serialized into a 160-byte buffer:
 
    | Parameter  | Size     |
    | ---------- | -------- |
@@ -56,14 +56,15 @@ The client connects to the server using TCP and sends a handshake packet contain
 
     Fill the entire 160-byte buffer with random bytes. If any part is predictable, an attacker can perform an active man-in-the-middle attack using compromised AES-CTR session parameters.
 
-1. The client encrypts the session parameters using AES-256-CTR. The encryption key and nonce are derived from the `secret` and the SHA-256 hash of the parameters:
+1. The client encrypts the session parameters (`aes_params`) using AES-256-CTR with a 128-bit big-endian counter. To do this, it first computes a hash and derives the encryption key and nonce:
 
+    First, a SHA-256 hash of the 160-byte `aes_params` buffer is computed:
 
-   ```cpp
-   hash = SHA-256(aes_params)
-   key = secret[0..16] || hash[16..32] // 16 bytes each
-   nonce = hash[0..4] || secret[20..32] // 4 + 12 bytes
-   ```
+    ```cpp
+    hash = SHA-256(aes_params)
+    key = secret[0..16] || hash[16..32] // 16 bytes each
+    nonce = hash[0..4] || secret[20..32] // 4 + 12 bytes
+    ```
 
 1. The client sends a 256-byte handshake packet with the following structure:
 
@@ -119,12 +120,9 @@ After a successful handshake, the server sends the first datagram to the client 
 
 ## P2P protocol (ADNL over UDP)
 
-In the UDP variant, the connection is established simultaneously with sending initial data. If the initiator sends a _create channel_ message, a channel key is calculated and creation is confirmed by the peer.
+[In the UDP variant](/foundations/network/adnl-udp), communication begins simultaneously with sending initial data. If the initiator sends a _create channel_ message, a channel key is calculated, and the peer confirms creation.
 
-Unlike TCP, the UDP implementation uses channels for ongoing communication. Encryption keys are derived from the client's private key and the peer's public key (known from configuration or discovered from other nodes).
-
-For the full protocol walkthrough with packet examples, see [ADNL UDP](/foundations/network/adnl-udp).
-
+Unlike TCP, the UDP implementation uses channels for ongoing communication. Encryption keys are derived from the client's private key and the peer's public key, which is obtained from configuration or discovered from other nodes.
 
 ## See also
 
