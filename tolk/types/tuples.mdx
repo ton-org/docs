@@ -1,0 +1,331 @@
+---
+title: "Arrays and tuples"
+sidebarTitle: "Arrays"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+In [TVM](/tvm/overview), a tuple is a dynamic container that stores from 0 to 255 elements in a [single stack slot](/languages/tolk/types/overall-tvm-stack). Tolk provides several types built on top of TVM tuples:
+
+- `array<T>` — a dynamically sized array of elements of type `T`.
+- `[T1, T2, ...]` — a shaped tuple with a fixed number of elements of known types.
+- `tuple` — an alias for `array<unknown>`, a legacy name for an untyped dynamic container.
+
+<Aside
+  type="caution"
+>
+  In many general-purpose languages, syntax `[A, B, C, ...]` is used for array or list literals, while syntax `(A, B, C, ...)` is used for tuples. However, in TON, there are no traditional arrays or lists. The `[A, B, C, ...]` syntax creates arrays or shaped tuples, while `(A, B, C, ...)` is used by [tensors](/languages/tolk/types/tensors): a distinct type that represents ordered collections of values that occupy multiple TVM stack entries.
+
+  For example, `array<int>` is a single stack entry containing multiple integers. In contrast, a tensor `(int, int, int)` signifies three separate integers that occupy individual stack entries or are serialized sequentially.
+</Aside>
+
+## Arrays
+
+`array<T>` is a dynamically sized container that holds elements of type `T`:
+
+```tolk
+array<int>
+array<int?>
+array<Point>
+array<int | slice>
+array<array<bool>>
+```
+
+### Creating arrays with `[...]`
+
+Use `[...]` to create an array:
+
+```tolk
+// array<int>
+var numbers = [1, 2, 3];
+
+// array<unknown>
+var empty = [];
+
+// array<int?>
+var optionals = [1, null, 3];
+
+// array<array<int>>
+var matrix = [
+    [1, 2, 3],
+    [4, 5, 6],
+    [7, 8, 9],
+];
+```
+
+To force a certain type `T` over `unknown` for empty arrays, specify it manually:
+
+```tolk
+var nums: array<int> = [];
+// or
+var nums = array<int> [];
+```
+
+The syntax `array<int> [...]` is similar to the syntax of object creation with `Point {...}`, where a type hint may be omitted if clear from context.
+
+If types within `[...]` are incompatible, a compilation error is reported:
+
+```tolk
+// invalid:
+var arr = [1, "aba"];
+// error: type of `[...]` is `array<int | string>`;
+//        probably, it's not what you expected
+
+// valid:
+var arr: array<unknown> = [1, "aba"];
+// or
+var arr: array<int | string> = [1, "aba"];
+```
+
+### Array methods
+
+Arrays have several commonly-named methods. An IDE suggests them after a dot:
+
+```tolk
+var nums = [] as array<int>;
+nums.push(10);
+nums.push(20);
+nums.push(30);
+nums.get(1);   // 20
+nums.first();  // 10
+nums.pop();    // 30
+nums.size();   // 2 (pop removed the last element)
+
+[1, 2, 3].last();  // 3
+```
+
+Additional methods such as `array.set` and others are [available in the standard library](/languages/tolk/features/standard-library#arrays).
+
+### `T` can be any type
+
+An array supports any element type, including structures and unions:
+
+```tolk
+struct Point {
+    x: int
+    y: int
+}
+
+fun getArr(): array<Point> {
+    return [
+        { x: 10, y: 20 },
+        { x: 50, y: 60 },
+    ];
+}
+```
+
+The compiler automatically packs complex items into sub-tuples. At the TVM level:
+
+```tolk
+var arr = getArr();
+// stack: [ [ 10 20 ] [ 50 60 ] ]
+
+arr.get(0);
+// stack: 10 20 (automatically un-tupled)
+
+arr.get(0).y;
+// stack: 20
+```
+
+The limit of 255 elements does not change regardless of `T`.
+
+### Internally backed by TVM tuples
+
+An array can contain from 0 to 255 elements. It occupies one stack slot regardless of its inner size. Accessing the first 16 elements consumes less gas than greater indices, because for `i >= 16` an additional instruction is required.
+
+### Arrays are assignable to each other
+
+An `array<T1>` can be assigned to `array<T2>` when `T1` is assignable to `T2`. The compiler handles all runtime transitions if required:
+
+```tolk
+fun demo(in: array<int>) {
+    // ok, no runtime transitions needed
+    var a1: array<int?> = in;
+
+    // ok, but with runtime transitions
+    var a2: array<int | slice> = in;
+}
+```
+
+As a result, any `array<T>` can be assigned to `array<unknown>` directly.
+
+## The `unknown` type
+
+`unknown` represents one TVM primitive with contents unknown at compile time. Any type `T` can be cast to `unknown` and back using the `as` operator. If `T` is a primitive itself, this is a type-only cast. Otherwise, the object is packed into a sub-tuple and stored as a single slot:
+
+```tolk
+var u1 = 5 as unknown;
+// stack: 5
+u1 as int;
+// stack: 5
+
+var u2 = (10, 20) as unknown;
+// stack: [ 10 20 ] (a TVM tuple)
+u2 as (int, int);
+// stack: 10 20 (two integers)
+```
+
+Storing an element inside `array<T>` is effectively converting `T` to `unknown` followed by writing that slot into a TVM tuple.
+
+## The `tuple` type
+
+`tuple` is an alias for `array<unknown>`:
+
+```tolk
+// declared in stdlib
+type tuple = array<unknown>
+```
+
+Because of that, `tuple` has all the array methods: `push`, `size`, and others. Such arrays are opaque, so the `push` method accepts values of any type:
+
+```tolk
+var t = [];   // array<unknown>
+t.push(1);
+t.push(null);
+t.push(Point { x: 10, y: 20 });
+// stack: [ 1 null [ 10 20 ] ]
+```
+
+Getter methods like `t.get()` and `t.first()` return `unknown`. To perform meaningful operations, cast the result to a known type:
+
+```tolk
+var one = t.first();  // unknown
+one + 123;            // error, can not apply operator `+`
+
+// cast at reading
+var one = t.first() as int;
+one + 123;            // ok, 124
+```
+
+## Shaped tuples
+
+Besides `array<T>` with a dynamic size, Tolk has fixed-size containers with a known shape, called _shaped tuples_: `[T1, T2, ...]`.
+
+```tolk
+var intAndStr: [int, string] = [1, "aba"];
+// or
+var intAndStr = [1, "aba"] as [int, string];
+```
+
+Shaped tuples differ from arrays:
+
+- They do not have methods like `push`, `get`, or `pop`.
+- They support indexed access: `value.0`, `value.1`, etc.
+- Each element can have a different type.
+
+```tolk
+var pair: [int32, Point] = [1, { x: 10, y: 20 }];
+// stack: [ 1 [ 10 20 ] ]
+
+var point = pair.1;
+// stack: 10 20
+```
+
+A shaped tuple may be destructured into multiple variables:
+
+```tolk
+fun sumFirstTwo(t: [int, int, builder]) {
+    val [first, second, _] = t;
+    return first + second;
+}
+```
+
+## The `[...]` constructor
+
+The literal `[...]` is a universal constructor that creates different types depending on context. By default, it creates an array. If the target type is known, it creates that type:
+
+```tolk
+// no hint — infer `array<int>`
+var arr = [1, 2, 3];
+
+// explicit array types
+var tuple: array<unknown> = [1, 2, 3];
+var optionals: array<int?> = [1, 2, 3];
+
+// shaped tuple
+var shape: [int, int, int?] = [1, 2, 3];
+
+// lisp list
+var list: lisp_list<int> = [1, 2, 3];
+
+// empty map
+var m: map<int32, address> = [];
+```
+
+The behavior is identical to creating an object with `{ ... }`: a type hint may exist on the variable, or the `Type [...]` syntax may be used:
+
+```tolk
+// analogy between {...} and [...]
+var p: Point = { ... };
+var a: array<int> = [ ... ];
+
+// the same — but on the right
+var p = Point { ... };
+var a = array<int> [ ... ];
+```
+
+This also works in function parameters, struct fields, and assignments.
+
+## Lisp-style lists
+
+`lisp_list<T>` is a set of nested two-element TVM tuples. For instance, `[1, [2, [3, null]]]` represents the list `[1, 2, 3]`.
+
+Unlike `array<T>`, a lisp list can store more than 255 elements, because TVM tuples are not limited in depth. This is typically the only reason to use them: when output from a get method may grow unpredictably.
+
+To use lists, import the `@stdlib/lisp-lists` file:
+
+```tolk
+import "@stdlib/lisp-lists"
+```
+
+Lisp lists allow accessing only the front element (head). There is no `array.get(i)` or cheap `array.size`:
+
+```tolk
+var list = lisp_list<int> [];
+list.prependHead(1);
+list.prependHead(2);
+list.prependHead(3);
+// list is now "3 2 1"
+// stack: [3 [2 [1 null]]]
+
+var front = list.popHead();  // 3
+// list is now "2 1"
+```
+
+Similarly, `T` can be any type: complex types like `Point` are represented as a single slot with an intermediate conversion to `unknown`.
+
+Several helper methods are available in the standard library, such as `array.calculateSize` and `array.calculateConcatenation`. These have O(N) complexity: the longer the list, the higher the gas consumption.
+
+```tolk
+val depth = list.calculateSize();
+```
+
+If there is a clear upper bound on the number of elements, prefer [arrays](/languages/tolk/types/tuples#arrays) or [maps](/languages/tolk/types/maps). Otherwise, consider [contract sharding](/contract-dev/contract-sharding).
+
+## Conversion between arrays and composites
+
+For composite types, generic built-in methods `T.toTuple()` and `T.fromTuple()` convert composites to and from tuples. The length of the resulting tuple equals the number of stack slots occupied by the converted type:
+
+```tolk
+struct Point3d {
+    x: int
+    y: int
+    z: int
+}
+
+fun demo(p: Point3d) {
+    val t = p.toTuple();       // a tuple with 3 elements
+    t.get(2) as int;           // z
+    p = Point3d.fromTuple(t);  // back to a struct
+}
+```
+
+## Stack layout and serialization
+
+- `array<T>` and `tuple` occupy a single stack slot: a TVM `TUPLE`.
+- Shaped tuples `[T1, T2, ...]` also occupy a single TVM `TUPLE` slot.
+- `unknown` occupies a single stack slot.
+
+Arrays can be [serialized to cells](/languages/tolk/types/overall-serialization) when `T` is serializable. The binary format uses snake references: a `uint8` length followed by chained cell references containing the elements.
+
+Raw tuples are not serializable to cells, because `unknown` is unserializable. But they can be returned from [get methods](/tvm/get-method#get-methods), since contract getters operate directly on the stack.
