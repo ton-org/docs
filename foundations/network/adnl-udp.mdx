@@ -1,10 +1,7 @@
 ---
 title: "ADNL UDP - internode communication"
-description: "P2P protocol used by TON nodes for peer communication, channel establishment, and data exchange"
 sidebarTitle: "ADNL UDP"
 ---
-
-import { Aside } from "/snippets/aside.jsx";
 
 ADNL over UDP is the protocol used by TON nodes to communicate with each other. It serves as the foundation for higher-level protocols such as [DHT](https://old-docs.ton.org/v3/documentation/network/protocols/dht/overview) and [RLDP](https://old-docs.ton.org/v3/documentation/network/protocols/rldp).
 
@@ -12,7 +9,7 @@ Unlike [ADNL over TCP](/foundations/network/adnl-tcp), the UDP implementation us
 
 ## Connection initialization
 
-To connect to a node, obtain its public key and address from the [global config](https://ton-blockchain.github.io/global.config.json) (for example, from the `dht.nodes` section):
+To connect to a node, obtain its public key and address from the [global config](https://ton-blockchain.github.io/global.config.json). For example, from the `dht.nodes` section:
 
 ```json
 {
@@ -33,21 +30,26 @@ To connect to a node, obtain its public key and address from the [global config]
 }
 ```
 
-Decode the ed25519 key from base64 and convert the IP integer to dotted-decimal format (for example, `1091897261` becomes `65.21.7.173`).
+Then:
+
+- Decode the Ed25519 public key from base64.
+- Convert the IP value to dotted-decimal format; for example, `1091897261` → `65.21.7.173`.
+- Combine the IP address with the port: `65.21.7.173:15813`.
+- Establish a UDP connection to the resulting address.
 
 ## Channel creation
 
 To establish a communication channel, send two messages in the initial packet:
 
-1. **Create channel** (`adnl.message.createChannel`):
+1. First message is to create a channel (`adnl.message.createChannel`):
 
    ```tl
    adnl.message.createChannel key:int256 date:int = adnl.Message
    ```
 
-   Generate a new ed25519 keypair specifically for the channel. Use the public key as the `key` parameter and the current Unix timestamp as `date`. Store the private key for later use.
+   Generate a new Ed25519 keypair specifically for the channel. Use the public key as the `key` parameter and the current Unix timestamp as `date`. Store the private key for later use.
 
-1. **Query** (`adnl.message.query`):
+1. Query (`adnl.message.query`):
 
    ```tl
    adnl.message.query query_id:int256 query:bytes = adnl.Message
@@ -57,7 +59,7 @@ To establish a communication channel, send two messages in the initial packet:
 
 ## Packet structure
 
-All communication uses the `adnl.packetContents` TL structure:
+All communication uses `adnl.packetContents` packets with the following TL structure:
 
 ```tl
 adnl.packetContents
@@ -80,13 +82,13 @@ adnl.packetContents
         = adnl.PacketContents
 ```
 
-### Building the initial packet
+### Build the initial packet
 
-For the first packet (before channel is established):
+For the first packet (before the channel is established):
 
 1. Serialize `adnl.packetContents` with the messages, address list, seqno, and other fields.
-1. Sign the serialized bytes with the client's ed25519 private key.
-1. Re-serialize with the signature included (set flag bit 11).
+1. Sign the serialized bytes with the client's Ed25519 private key.
+1. Re-serialize the packet with the signature and set flag bit 11 to indicate its presence.
 1. Compute SHA-256 of the serialized content.
 1. Encrypt the content using the [ECDH shared key](/foundations/network/adnl-tcp#ecdh-shared-key) derived from the client's private key and the peer's public key.
 
@@ -94,33 +96,33 @@ The final packet sent over UDP:
 
 | Field                | Size     | Description                                                                            |
 | -------------------- | -------- | -------------------------------------------------------------------------------------- |
-| Peer key ID          | 32 bytes | [Key ID](/foundations/network/adnl-tcp#key-id-calculation) of the server's ed25519 key |
-| Client public key    | 32 bytes | Client's ed25519 public key                                                            |
+| Peer key ID          | 32 bytes | [Key ID](/foundations/network/adnl-tcp#key-id-calculation) of the server's Ed25519 key |
+| Client public key    | 32 bytes | Client's Ed25519 public key                                                            |
 | SHA-256 content hash | 32 bytes | Hash of content before encryption                                                      |
 | Encrypted content    | variable | Encrypted `adnl.packetContents`                                                        |
 
-### Processing the response
+### Process the response
 
 The response has a similar structure:
 
-| Field                | Size     | Description                            |
-| -------------------- | -------- | -------------------------------------- |
-| Client key ID        | 32 bytes | Key ID of our key (confirms recipient) |
-| Server public key    | 32 bytes | For shared key derivation              |
-| SHA-256 content hash | 32 bytes | Hash of content before encryption      |
-| Encrypted content    | variable | Encrypted `adnl.packetContents`        |
+| Field                | Size     | Description                                 |
+| -------------------- | -------- | ------------------------------------------- |
+| Client key ID        | 32 bytes | Key ID of client's key (confirms recipient) |
+| Server public key    | 32 bytes | For shared key derivation                   |
+| SHA-256 content hash | 32 bytes | Hash of content before encryption           |
+| Encrypted content    | variable | Encrypted `adnl.packetContents`             |
 
 Deserialization steps:
 
-1. Verify the key ID matches one of our keys.
-1. Derive the shared key from the server's public key and our private key.
-1. Decrypt and verify the SHA-256 hash.
-1. Deserialize using the `adnl.packetContents` schema.
+1. Verify the key ID matches one of the client's keys.
+1. Derive the shared key from the server's public key and the client's private key to decrypt the packet's content.
+1. Verify the SHA-256 hash of the decrypted data; they must match.
+1. Deserialize the content using the `adnl.packetContents` schema.
 
 The server responds with two messages:
 
-- `adnl.message.confirmChannel` — confirms channel creation and provides the server's channel public key.
-- `adnl.message.answer` — the response to the query.
+- `adnl.message.confirmChannel` confirms channel creation and provides the server's channel public key.
+- `adnl.message.answer` is the response to the query.
 
 ## Channel key derivation
 
@@ -133,7 +135,7 @@ Key 1: shared_key (as-is)
 Key 2: shared_key (reversed byte order)
 ```
 
-To determine which key encrypts outgoing messages and which decrypts incoming messages, compare the [key IDs](/foundations/network/adnl-tcp#key-id-calculation) of both parties' public keys as uint256:
+To determine which key encrypts outgoing messages and which decrypts incoming messages, compare the [key IDs](/foundations/network/adnl-tcp#key-id-calculation) of both parties' public keys as `uint256`:
 
 | Condition                        | Outgoing encryption | Incoming decryption |
 | -------------------------------- | ------------------- | ------------------- |
@@ -145,7 +147,7 @@ To determine which key encrypts outgoing messages and which decrypts incoming me
 
 ## Communication in a channel
 
-Channel packets use the same `adnl.packetContents` structure but are simpler — they contain only the message, seqno, and confirm\_seqno (no signature, no public keys, no address lists).
+Channel packets use the same `adnl.packetContents` structure but include only `message`, `seqno`, and `confirm_seqno` (no signature, public keys, or address lists).
 
 The packet sent over UDP:
 
@@ -159,7 +161,7 @@ The packet sent over UDP:
 
 ### `adnl.message.part`
 
-Used to send messages that are too large for a single UDP datagram:
+Use to send messages that are too large for a single UDP datagram:
 
 ```tl
 adnl.message.part
@@ -178,12 +180,8 @@ Collect all parts, concatenate by offset, and process the result as a regular me
 adnl.message.custom data:bytes = adnl.Message;
 ```
 
-Used when higher-level protocol logic does not fit the request-response pattern. Processing is entirely delegated to the higher level. For example, [RLDP](https://old-docs.ton.org/v3/documentation/network/protocols/rldp) uses custom messages because a single response may correspond to multiple requests.
+Use when higher-level protocol logic does not fit the request-response pattern. Processing is entirely delegated to the higher level. For example, [RLDP](https://old-docs.ton.org/v3/documentation/network/protocols/rldp) uses custom messages because a single response may correspond to multiple requests.
 
 ## See also
 
-- [ADNL specification](/foundations/network/adnl)
-- [ADNL TCP](/foundations/network/adnl-tcp)
-- [DHT](https://old-docs.ton.org/v3/documentation/network/protocols/dht/overview)
-- [RLDP](https://old-docs.ton.org/v3/documentation/network/protocols/rldp)
 - [Original article by Oleg Baranov](https://github.com/xssnick/ton-deep-doc/blob/master/ADNL-UDP-Internal.md)

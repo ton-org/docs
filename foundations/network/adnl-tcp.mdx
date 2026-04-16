@@ -1,14 +1,11 @@
 ---
 title: "ADNL TCP - liteserver communication"
-description: "Practical guide to ADNL over TCP: handshake, packet encoding, and interacting with liteservers"
 sidebarTitle: "ADNL TCP"
 ---
 
 import { Aside } from "/snippets/aside.jsx";
 
-ADNL over TCP is the transport used for communication with liteservers. This page walks through the protocol step by step, from establishing a connection to calling smart contract methods.
-
-For the underlying protocol specification, see [ADNL](/foundations/network/adnl).
+ADNL over TCP is used for communication with liteservers.
 
 ## Packet structure
 
@@ -25,12 +22,12 @@ The entire packet, including the size field, is encrypted with AES-CTR.
 
 After decryption, verify that the checksum matches by computing it independently. The handshake is an exception and is detailed in the [ADNL specification](/foundations/network/adnl#handshake).
 
-## Establishing a connection
+## Connection establishment
 
 Prerequisites:
 
-- Server IP, port, and public key (from the [global config](https://ton-blockchain.github.io/global.config.json))
-- A freshly generated ed25519 private/public keypair
+- Server IP, port, and public key from the [global config](https://ton-blockchain.github.io/global.config.json);
+- A freshly generated Ed25519 private and public key pair.
 
 <Aside type="tip">
   The IP address in the config is a decimal integer. Convert it to dotted-decimal IPv4 format, for example using [this tool](https://www.browserling.com/tools/dec-to-ip). The public key is base64-encoded.
@@ -45,12 +42,12 @@ The client generates 160 random bytes. These bytes serve as the basis for two pe
 
 The client sends a handshake packet:
 
-| Field                     | Size      |
-| ------------------------- | --------- |
-| Server key ID             | 32 bytes  |
-| Client ed25519 public key | 32 bytes  |
-| SHA-256 of the 160 bytes  | 32 bytes  |
-| Encrypted 160 bytes       | 160 bytes |
+| Field                                        | Size      |
+| -------------------------------------------- | --------- |
+| Server key ID                                | 32 bytes  |
+| Client Ed25519 public key                    | 32 bytes  |
+| SHA-256 of the 160 bytes                     | 32 bytes  |
+| [Encrypted 160 bytes](#handshake-encryption) | 160 bytes |
 
 The server derives the same ECDH key, decrypts the 160 bytes, and creates the same two ciphers. If everything succeeds, the server responds with an empty ADNL packet.
 
@@ -58,11 +55,11 @@ After this exchange the connection is established. Data is serialized using [TL 
 
 ## Ping and pong
 
-Send a ping packet every 5 seconds to keep the connection alive. Without pings, the server will terminate the connection during idle periods.
+Send a ping packet every 5 seconds to keep the connection alive. Without pings, the server terminates the connection during idle periods.
 
-The ping TL schema: `tcp.ping random_id:long = tcp.Pong`, with schema ID `9a2b084d` (CRC32 of the schema string, little-endian).
+Ping TL schema: `tcp.ping random_id:long = tcp.Pong` with schema ID `9a2b084d`, derived as the CRC32 of the schema string, little-endian.
 
-An ADNL ping packet:
+Example ADNL ping packet:
 
 | Field      | Size     | Value                    |
 | ---------- | -------- | ------------------------ |
@@ -74,12 +71,12 @@ An ADNL ping packet:
 
 Wait for [`tcp.pong`](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/tl/generate/scheme/ton_api.tl#L23) with matching `random_id`.
 
-## Querying a liteserver
+## Liteserver queries
 
 All blockchain queries are wrapped in two layers:
 
-- **ADNL query**: `adnl.message.query query_id:int256 query:bytes = adnl.Message` (ID `7af98bb4`)
-- **Lite query**: `liteServer.query data:bytes = Object` (ID `df068c79`)
+- ADNL query: `adnl.message.query query_id:int256 query:bytes = adnl.Message` (ID `7af98bb4`)
+- Lite query: `liteServer.query data:bytes = Object` (ID `df068c79`)
 
 The specific liteserver method is serialized inside `data:bytes` of the lite query, which is itself serialized inside `query:bytes` of the ADNL query.
 
@@ -134,23 +131,24 @@ Example response:
 Call a smart contract get method using:
 
 ```tl
-liteServer.runSmcMethod mode:# id:tonNode.blockIdExt account:liteServer.accountId method_id:long params:bytes = liteServer.RunMethodResult
+liteServer.runSmcMethod mode:# id:tonNode.blockIdExt account:liteServer.accountId method_id:long params:bytes
+  = liteServer.RunMethodResult
 ```
 
 Fields:
 
-- `mode` — uint32 bitmask controlling which response fields are present. Set bit 2 to receive `result`.
-- `id` — masterchain block from `getMasterchainInfo`.
-- `account` — [`liteServer.accountId`](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/tl/generate/scheme/lite_api.tl#L27) with workchain and address.
-- `method_id` — CRC16 (XMODEM table) of the method name, with bit 17 set. See [calculation example](https://github.com/xssnick/tonutils-go/blob/88f83bc3554ca78453dd1a42e9e9ea82554e3dd2/ton/runmethod.go#L16).
-- `params` — [Stack](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/crypto/block/block.tlb#L783) serialized in [BoC](/foundations/serialization/cells#bag-of-cells), containing arguments.
+- `mode` – `uint32` bitmask controlling which response fields are present. Set bit 2 to receive `result`.
+- `id` – masterchain block from `getMasterchainInfo`.
+- `account` – [`liteServer.accountId`](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/tl/generate/scheme/lite_api.tl#L27) with workchain and address.
+- `method_id` – CRC16 (XMODEM table) of the method name, with bit 17 set. See [calculation example](https://github.com/xssnick/tonutils-go/blob/88f83bc3554ca78453dd1a42e9e9ea82554e3dd2/ton/runmethod.go#L16).
+- `params` – [stack](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/crypto/block/block.tlb#L783) serialized in [BoC](/foundations/serialization/cells#bag-of-cells), containing arguments.
 
 With `mode = 4` (only `result`), the response includes:
 
-- `exit_code` — 0 on success, exception code otherwise.
-- `result` — Stack in BoC format containing returned values.
+- `exit_code` – `0` on success, or an exception code otherwise.
+- `result` – stack in BoC format with returned values.
 
-The stack is parsed according to the [VmStackValue TL-B schema](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/crypto/block/block.tlb#L766). Stack elements are stored in reverse order using `vm_stk_cons`, where the first reference points to the rest of the stack and the second contains the current value.
+The stack is parsed according to the [`VmStackValue` TL-B schema](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/crypto/block/block.tlb#L766). Stack elements are stored in reverse order using `vm_stk_cons`, where the first reference points to the rest of the stack and the second contains the current value.
 
 <Aside type="note">
   Arguments must be passed in reverse order from what appears in the FunC source code. Return values are also in reverse order.
@@ -161,7 +159,8 @@ The stack is parsed according to the [VmStackValue TL-B schema](https://github.c
 Retrieve account data (balance, code, storage) using [`getAccountState`](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/tl/generate/scheme/lite_api.tl#L68):
 
 ```tl
-liteServer.accountState id:tonNode.blockIdExt shardblk:tonNode.blockIdExt shard_proof:bytes proof:bytes state:bytes = liteServer.AccountState;
+liteServer.accountState id:tonNode.blockIdExt shardblk:tonNode.blockIdExt shard_proof:bytes proof:bytes state:bytes
+  = liteServer.AccountState;
 ```
 
 The `state` field contains a [BoC](/foundations/serialization/cells#bag-of-cells) with the account's [TL-B structure](https://github.com/ton-blockchain/ton/blob/ad736c6bc3c06ad54dc6e40d62acbaf5dae41584/crypto/block/block.tlb#L232):
@@ -177,13 +176,13 @@ For a complete parsing walkthrough, see [TL-B documentation](/languages/tl-b/ove
 
 ## Key ID calculation
 
-The key ID is the SHA-256 hash of the serialized TL schema. For ed25519 keys:
+The key ID is the SHA-256 hash of the serialized TL schema. For Ed25519 keys:
 
 ```tl
 pub.ed25519 key:int256 = PublicKey -- ID c6b41348
 ```
 
-The key ID is `SHA-256([0xC6, 0xB4, 0x13, 0x48] || public_key)` — a 36-byte input (4-byte TL prefix + 32-byte key).
+The key ID is computed as `SHA-256([0xC6, 0xB4, 0x13, 0x48] || public_key)`, where the input consists of the 4-byte TL constructor ID and the 32-byte public key.
 
 Other key types:
 
