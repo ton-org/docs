@@ -5,7 +5,7 @@ sidebarTitle: "Pagination"
 
 import { Aside } from '/snippets/aside.jsx';
 
-The v2 API uses cursor-based pagination to retrieve large result sets in batches. Instead of specifying a page number, the identifier of the last record received is passed to the API, which returns the next batch starting from that point. This ensures consistent results even when new data is being added.
+The v2 API uses cursor-based pagination to retrieve large result sets in batches. Instead of specifying a page number, the identifier of the last record received is passed to the API, which returns the next batch starting from that point. Because the cursor points at an existing record instead of a page number, new data inserted at the head of the list does not shift already-seen pages.
 
 Three endpoints support pagination:
 
@@ -150,7 +150,9 @@ All pagination parameters are optional. They are omitted for the first request a
   <Step
     title="Repeat until the last page"
   >
-    Continue extracting the cursor from the last transaction and fetching the next page. When the response returns fewer transactions than the `limit`, all results have been retrieved.
+    Continue extracting the cursor from the last transaction and fetching the next page.
+
+    All results have been retrieved when the response returns fewer transactions than the `limit`. Because the cursor is inclusive, a full subsequent page delivers `limit - 1` new transactions (the first item is the cursor duplicate), so a response containing only the cursor transaction (1 item) also counts as an end signal.
   </Step>
 </Steps>
 
@@ -159,6 +161,7 @@ All pagination parameters are optional. They are omitted for the first request a
 >
   ```javascript
   const address = "EQDtFpEwcFAEcRe5mLVh2N6C0x-_hJEM7W61_JLnSF74p4q2";
+  const LIMIT = 5;
 
   async function main() {
     let allTransactions = [];
@@ -168,7 +171,7 @@ All pagination parameters are optional. They are omitted for the first request a
 
     while (true) {
       page++;
-      const params = new URLSearchParams({ address, limit: "5" });
+      const params = new URLSearchParams({ address, limit: String(LIMIT) });
       if (lt && hash) {
         params.set("lt", lt);
         params.set("hash", hash);
@@ -198,13 +201,15 @@ All pagination parameters are optional. They are omitted for the first request a
         }
       }
 
+      const isLastPage = result.length < LIMIT;
+
       if (lt && hash) {
         result.shift();
       }
 
       allTransactions.push(...result);
 
-      if (result.length < 5) break;
+      if (isLastPage) break;
 
       const last = result[result.length - 1];
       lt = last.transaction_id.lt;
@@ -470,20 +475,7 @@ Returns full transaction details for all transactions in a given block. Paginati
 
 ### Pagination parameters
 
-All pagination parameters are optional. They are omitted for the first request and included on subsequent pages.
-
-| Parameter    | Type    | Description                                                                  |
-| ------------ | ------- | ---------------------------------------------------------------------------- |
-| `after_lt`   | integer | Return transactions after this logical time. Must be sent with `after_hash`. |
-| `after_hash` | string  | Return transactions after this hash. Must be sent with `after_lt`.           |
-| `count`      | integer | Maximum number of transactions to return per request.                        |
-
-<Aside
-  type="note"
-  title="Full parameter list"
->
-  This table only lists pagination-related parameters. See the [`getBlockTransactionsExt` reference](/ecosystem/api/toncenter/v2/blocks/list-block-transactions-extended-details) for all available parameters.
-</Aside>
+Pagination parameters are identical to [`getBlockTransactions`](#getblocktransactions). See the [`getBlockTransactionsExt` reference](/ecosystem/api/toncenter/v2/blocks/list-block-transactions-extended-details) for all available parameters.
 
 ### Paginating through extended block transactions
 
@@ -595,15 +587,15 @@ All pagination parameters are optional. They are omitted for the first request a
     ```
 
     The `incomplete` field is `false`. All transactions in this block have been retrieved.
-
-    <Aside
-      type="note"
-      title="Exclusive cursor"
-    >
-      The cursor for `getBlockTransactionsExt` is exclusive. The transaction passed as `after_lt`/`after_hash` is not included in the next response. No deduplication is needed.
-    </Aside>
   </Step>
 </Steps>
+
+<Aside
+  type="note"
+  title="Exclusive cursor"
+>
+  The cursor for `getBlockTransactionsExt` is exclusive. The transaction passed as `after_lt`/`after_hash` is not included in the next response. No deduplication is needed.
+</Aside>
 
 <Accordion
   title="Full pagination script"
