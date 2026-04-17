@@ -1,6 +1,5 @@
 ---
 title: "Reliable Large Datagram Protocol"
-description: "Protocol for transferring large data blocks over ADNL UDP using Forward Error Correction"
 sidebarTitle: "RLDP"
 ---
 
@@ -18,7 +17,7 @@ RLDP was used throughout the TON infrastructure: downloading blocks from other n
 
 RLDP used the following TL structures:
 
-```tlb
+```tl
 fec.raptorQ data_size:int symbol_size:int symbols_count:int = fec.Type;
 fec.roundRobin data_size:int symbol_size:int symbols_count:int = fec.Type;
 fec.online data_size:int symbol_size:int symbols_count:int = fec.Type;
@@ -41,7 +40,7 @@ All structures were serialized, wrapped in `adnl.message.custom`, and transmitte
 1. Wrap each symbol in `rldp.messagePart` and send to the peer.
 1. Continue sending until the peer responds with `rldp.complete` or a timeout occurs.
 
-The receiver collects `rldp.messagePart` messages, and once enough symbols are gathered, decodes them via FEC and deserializes the result into `rldp.query` or `rldp.answer`.
+The receiver collects `rldp.messagePart` messages, and once enough symbols are gathered, concatenates and decodes them via FEC. The result is then deserialized into `rldp.query` or `rldp.answer`, depending on the TL prefix ID.
 
 ## Forward Error Correction
 
@@ -51,7 +50,7 @@ Three FEC algorithms were supported: RoundRobin, Online, and RaptorQ. [RaptorQ](
 
 RaptorQ divided data into fixed-size symbols (blocks). These symbols were organized into matrices where discrete mathematical operations produced an effectively unlimited number of encoded symbols from the same source data.
 
-This allowed the receiver to recover lost packets without requesting retransmission — fewer packets were needed than if raw data segments were simply resent.
+This allowed the receiver to recover lost packets without requesting retransmission, meaning that fewer packets were needed than if raw data segments were resent.
 
 Symbols were transmitted until the peer confirmed that all data had been received and successfully decoded.
 
@@ -59,11 +58,11 @@ Symbols were transmitted until the peer confirmed that all data had been receive
 
 ## RLDP-HTTP
 
-[TON Sites](/foundations/web3/ton-sites) used RLDP to wrap HTTP traffic. The host ran a standard HTTP web server with `rldp-http-proxy` alongside it. Incoming requests from the TON network arrived via RLDP, the proxy converted them to HTTP and called the local web server. On the client side, a local proxy (such as [Tonutils Proxy](https://github.com/xssnick/TonUtils-Proxy)) converted outgoing HTTP requests into RLDP.
+[TON Sites](/foundations/web3/ton-sites) used RLDP (Reverse Lightweight Data Protocol) to wrap HTTP traffic. The host ran a standard HTTP web server with `rldp-http-proxy` alongside it. Incoming requests from the TON network arrived via RLDP, the proxy converted them to HTTP and called the local web server. On the client side, a local proxy, such as [Tonutils Proxy](https://github.com/xssnick/TonUtils-Proxy), converted outgoing HTTP requests into RLDP.
 
 HTTP over RLDP used these TL structures:
 
-```tlb
+```tl
 http.header name:string value:string = http.Header;
 http.payloadPart data:bytes trailer:(vector http.header) last:Bool = http.PayloadPart;
 http.response http_version:string status_code:int reason:string headers:(vector http.header) no_payload:Bool = http.Response;
@@ -82,11 +81,17 @@ The request-response flow:
 1. Client checks `Content-Length`:
    - If non-zero (`no_payload` is false), client sends `http.getNextPayloadPart` requests to the server using the same chunked mechanism.
 
-## Example: requesting a TON Site
+## Example: request a TON Site
 
 This example demonstrates requesting `foundation.ton`, assuming the ADNL address has been resolved via DNS and a connection has been established over [ADNL UDP](https://old-docs.ton.org/v3/documentation/network/protocols/adnl/udp).
 
-### Sending a GET request
+### Send a GET request
+
+To accomplish this, complete the following structure:
+
+```tl
+http.request id:int256 method:string url:string http_version:string headers:(vector http.header) = http.Response;
+```
 
 Serialize `http.request`:
 
@@ -101,7 +106,7 @@ e191b161                                                           -- TL ID http
    0e 666f756e646174696f6e2e746f6e 00                              -- value = "foundation.ton"
 ```
 
-Wrap in `rldp.query`:
+Then, wrap in `rldp.query`:
 
 ```text
 694d798a                                                              -- TL ID rldp.query
@@ -111,28 +116,32 @@ Wrap in `rldp.query`:
 34 ...                                                                -- data (serialized http.request)
 ```
 
-### Encoding with RaptorQ
+### Encode with RaptorQ
 
-1. Choose a symbol size (typically 768 bytes).
+1. Choose a symbol size; typically 768 bytes.
 1. Pad the data to a multiple of the symbol size with zero bytes. For 156 bytes of data, add 612 zero bytes to reach 768.
 1. Create a RaptorQ encoder ([example](https://github.com/xssnick/tonutils-go/blob/46dbf5f820af066ab10c5639a508b4295e5aa0fb/adnl/rldp/raptorq/encoder.go#L15)).
 
-### Sending packets
+### Send packets
 
 Send encoded symbols in `rldp.messagePart`:
 
-- `transfer_id` — random int256, same for all parts of this transfer.
-- `fec_type` — `fec.raptorQ` with `data_size = 156`, `symbol_size = 768`, `symbols_count = 1`.
-- `part` — 0 (used for very large transfers that exceed size limits).
-- `total_size` — 156 (actual data size).
-- `seqno` — starts at 0, incremented for each packet.
-- `data` — encoded symbol (768 bytes).
+```tl
+rldp.messagePart transfer_id:int256 fec_type:fec.Type part:int total_size:long seqno:int data:bytes = rldp.MessagePart;
+```
+
+- `transfer_id` – random `int256`, same for all parts of this transfer.
+- `fec_type` – `fec.raptorQ` with `data_size = 156`, `symbol_size = 768`, `symbols_count = 1`.
+- `part` – 0 (used for very large transfers that exceed size limits).
+- `total_size` – 156 (actual data size).
+- `seqno` – starts at 0, incremented for each packet.
+- `data` – encoded symbol (768 bytes).
 
 Wrap each in `adnl.message.custom` and send over ADNL UDP. Send symbols in round-robin order, continuing until `rldp.complete` is received. After sending one full round of symbols, slow down to one packet per 10 milliseconds — extra packets serve as FEC recovery data.
 
 [Implementation example](https://github.com/xssnick/tonutils-go/blob/be3411cf412f23e6889bf0b648904306a15936e7/adnl/rldp/rldp.go#L249).
 
-### Processing the response
+### Process the response
 
 The response arrives as `rldp.messagePart` messages inside `adnl.message.custom`. The `transfer_id` is the original transfer ID with each byte XORed with `0xFF`.
 
