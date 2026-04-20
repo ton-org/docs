@@ -202,11 +202,18 @@ const patchedShardState = rebuild(newShardState, path, accountState) // And repl
 
 Another interesting point is how we access the hash of the last known `ShardBlock`.
 
-```tact title="Tact"
-inline fun findShardInBinTree(root: Cell, address: Address, shardBitLen: Int): ShardDescr {
-    let curCs = root.beginParse();
-    // It's std address, but we parse it as VarAddress to get hash part as Slice, not as Int
-    let accountId = myParseVarAddress(address.asSlice()).address;
+```tolk title="Tolk"
+@pure
+fun slice.preloadIthRef(self, idx: int): cell
+    asm "PLDREFVAR"
+
+@inline
+fun findShardInBinTree(root: cell, addr: address, shardBitLen: int): ShardDescr {
+    var curCs = root.beginParse();
+    // Cast the address to a slice and skip the 11-bit prefix
+    // (3 tag bits + 8 workchain bits) to reach the account ID bits.
+    var accountId = addr as slice;
+    accountId.skipBits(11);
     repeat (shardBitLen) {
         if (accountId.loadBool()) {
             // If the bit is 1, we go to the right child
@@ -222,12 +229,12 @@ inline fun findShardInBinTree(root: Cell, address: Address, shardBitLen: Int): S
 
 // ...
 
-let mcBlockExtra = McBlockExtra.fromCell(blockHeader.extra.loadRef().beginParse().preloadIthRef(3));
-// shardHashes is a hashmap (workchain -> ShardDescr)
-// Therefore, we only need to retrieve the ShardDescr for workchain 0, as we are working in basechain.
-// We can use a non-null assertion, as we already proved that it is a valid block, and a valid masterchain block must have a ShardDescr for workchain 0.
-let binTreeWithShardDescr: Cell = mcBlockExtra.shardHashes.get(0)!!;
-let shardDescr = findShardInBinTree(binTreeWithShardDescr, jettonMaster, shardBitLen);
+val mcBlockExtra = McBlockExtra.fromCell(blockHeader.extra.loadRef().beginParse().preloadIthRef(3));
+// shardHashes is a hashmap (workchain -> ShardDescr).
+// We only need to retrieve the ShardDescr for workchain 0, since we are working in basechain.
+// `mustGet` is safe here, as we already proved that it is a valid block, and a valid masterchain block must have a ShardDescr for workchain 0.
+val binTreeWithShardDescr: cell = mcBlockExtra.shardHashes.mustGet(0);
+val shardDescr = findShardInBinTree(binTreeWithShardDescr, jettonMaster, shardBitLen);
 ```
 
 ```tlb
