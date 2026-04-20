@@ -64,8 +64,8 @@ Define variables for limits and initialize them with zero. We will set them to a
 
 Use descriptive names for the operation and the contract. It's best to store them in a dedicated file with constants.
 
-```tact
-const GasSwapRequest: Int = 0;
+```tolk
+const GasSwapRequest = 0;
 ```
 
 - Run tests covering all execution paths. Missing a path might hide the most expensive one.
@@ -94,8 +94,8 @@ Expected: <= 0n
 Received:    11578n
 ```
 
-```tact
-const GasSwapRequest: Int = 12000;
+```tolk
+const GasSwapRequest = 12000;
 ```
 
 ### Compute fees
@@ -104,8 +104,8 @@ There are two kinds of values: gas units and Toncoin. The price of contract exec
 
 Conversion of gas to Toncoin on-chain using currently set blockchain config parameters can be performed with
 
-```tact
-let fee = getComputeFee(hardcodedGasValue, isAccountInMasterchain);
+```tolk
+val fee = calculateGasFee(workchain, hardcodedGasValue);
 ```
 
 This function uses the [`GETGASFEE`](/tvm/instructions#f836-getgasfee) TVM opcode.
@@ -130,16 +130,14 @@ In Tolk, `cell.calculateSizeStrict()` can be used to compute `msgSizeInCells` an
 
 In Tolk, the formula above is implemented in `calculateForwardFee()`. In TVM, it's implemented as [`GETFORWARDFEE`](/tvm/instructions#f838-getforwardfee) instruction.
 
-```tact
-let sizeMsg = computeDataSize(
-    msg.toCell(),
-    8192
-);
+```tolk
+val msgCell = msg.toCell();
+val (cells, bits, _) = msgCell.calculateSizeStrict(8192);
 
-let fwdFee = getForwardFee(
-    sizeMsg.cells - 1,
-    sizeMsg.bits - msg.toCell().bits(),
-    isAccountInMasterchain
+val fwdFee = calculateForwardFee(
+    workchain,
+    bits - msgCell.beginParse().remainingBitsCount(),
+    cells - 1,
 );
 ```
 
@@ -210,50 +208,53 @@ This approach affects code of internal contracts.
   It is the developer's decision for how long the storage fees should be reserved. Popular options are 5 and 10 years.
 </Aside>
 
-```tact
-const secondsInFiveYears: Int = 5 * 365 * 24 * 60 * 60;
-receive(msg: Transfer) {
-    let minTonsForStorage: Int = getStorageFee(
-        maxCells,
-        maxBits,
+```tolk
+const secondsInFiveYears = 5 * 365 * 24 * 60 * 60;
+
+fun onInternalMessage(in: InMessage) {
+    val msg = Transfer.fromSlice(in.body);
+    val minTonsForStorage = calculateStorageFee(
+        workchain,
         secondsInFiveYears,
-        isAccountInMasterchain
+        maxBits,
+        maxCells,
     );
-    nativeReserve(
+    val oldBalance = contract.getOriginalBalance() - in.valueCoins;
+    reserveToncoinsOnBalance(
         max(oldBalance, minTonsForStorage),
-        ReserveAtMost
+        RESERVE_MODE_AT_MOST,
     );
     // Process operation with remaining value...
 }
-// Also this contract probably will require some code, that will allow owner to withdraw TONs from this contract.
+// This contract probably also requires some code allowing the owner to withdraw TONs from it.
 ```
 
 In this approach, a receiver contract should calculate maximum possible storage fees for all contracts in trace.
 
-```tact
-const secondsInFiveYears: Int = 5 * 365 * 24 * 60 * 60;
-receive(msg: UserIn) {
-    // Suppose trace will be
+```tolk
+const secondsInFiveYears = 5 * 365 * 24 * 60 * 60;
+
+fun onInternalMessage(in: InMessage) {
+    val msg = UserIn.fromSlice(in.body);
+    // Suppose the trace is:
     // receiver -> A -> B
-    let storageForA = getStorageFee(
-        maxCellsInA,
+    val storageForA = calculateStorageFee(
+        workchain,
+        secondsInFiveYears,
         maxBitsInA,
-        secondsInFiveYears,
-        isAccountInMasterchain
+        maxCellsInA,
     );
-    let storageForB = getStorageFee(
-        maxCellsInB,
+    val storageForB = calculateStorageFee(
+        workchain,
+        secondsInFiveYears,
         maxBitsInB,
-        secondsInFiveYears,
-        isAccountInMasterchain
+        maxCellsInB,
     );
-    let totalStorageFees = storageForA + storageForB;
+    val totalStorageFees = storageForA + storageForB;
     // compute compute + forward fees here
-    let otherFees = 0;
-    require(
-        messageValue() >= totalStorageFees + otherFees,
-        "Not enough TONs"
-    );
+    val otherFees = 0;
+    assert (in.valueCoins >= totalStorageFees + otherFees)
+        throw ERR_NOT_ENOUGH_TONS;
 }
 ```
 
@@ -273,35 +274,36 @@ This pattern can be generalized to both bounceable and unbounceable messages wit
 
 This approach affects code of internal contracts.
 
-```tact
-receive(msg: Operation) {
-    // Reserve original balance plus any storage debt
-    nativeReserve(
-        myStorageDue(),
-        ReserveAddOriginalBalance | ReserveExact
+```tolk
+fun onInternalMessage(in: InMessage) {
+    val msg = Operation.fromSlice(in.body);
+    // Reserve the original balance plus any storage debt
+    reserveToncoinsOnBalance(
+        contract.getStorageDuePayment(),
+        RESERVE_MODE_INCREASE_BY_ORIGINAL_BALANCE | RESERVE_MODE_EXACT_AMOUNT,
     );
 
     // Send remaining value onward
-    send(SendParameters{
+    createMessage({
+        bounce: false,
+        dest: nextHop,
         value: 0,
-        mode: SendRemainingBalance,
         // ...
-    });
+    }).send(SEND_MODE_CARRY_ALL_BALANCE);
 }
 ```
 
 If we expect that the rest of trace uses `n` unique contracts, then it won't take more than `n` freeze limits to pay their storage fees. So, in the receiver contract, the check should be:
 
-```tact
-receive(msg: Operation) {
+```tolk
+fun onInternalMessage(in: InMessage) {
+    val msg = Operation.fromSlice(in.body);
     // The trace is still receiver -> A -> B
-    let freezeLimit = getFreezeLimit(isAccountsInMasterchain);
-    let otherFees = ...;
+    val freezeLimit = getFreezeLimit(workchain);
+    val otherFees = ...;
     // n equals 3 because receiver -> A -> B
-    require(
-        messageValue() >= freezeLimit * 3 + otherFees,
-        "Not enough TONs"
-    );
+    assert (in.valueCoins >= freezeLimit * 3 + otherFees)
+        throw ERR_NOT_ENOUGH_TONS;
 }
 ```
 
@@ -324,37 +326,35 @@ This confirms that all incoming value was consumed or forwarded, with none left 
 
 The final code in the receiver contract could look like this:
 
-```tact
-receive(msg: SwapRequest) {
-    let ctx = context();
-    let fwdFee = ctx.readForwardFee();
+```tolk
+fun onInternalMessage(in: InMessage) {
+    val msg = SwapRequest.fromSlice(in.body);
+    val fwdFee = in.originalForwardFee;
 
-    // Count all messages in the operation chain
-    // IMPORTANT: We know that each of messages is
-    // less or equal to `SwapRequest`.
-    let messageCount = 3;  // receiver -> vault → pool → vault
+    // Count all messages in the operation chain.
+    // IMPORTANT: we know that each of these messages is
+    // less than or equal to `SwapRequest`.
+    val messageCount = 3;  // receiver -> vault -> pool -> vault
 
-    // Calculate minimum required
-    let minFees =
+    // Calculate the minimum required value
+    val minFees =
         messageCount * fwdFee +
-        // Operation in first vault
-        getComputeFee(GasSwapRequest, isInMasterchain) +
-        // Operation in pool
-        getComputeFee(GasPoolSwap, isInMasterchain) +
-        // Operation in second vault
-        getComputeFee(GasVaultPayout, isInMasterchain) +
-        3 * getFreezeLimit();
+        // Operation in the first vault
+        calculateGasFee(workchain, GasSwapRequest) +
+        // Operation in the pool
+        calculateGasFee(workchain, GasPoolSwap) +
+        // Operation in the second vault
+        calculateGasFee(workchain, GasVaultPayout) +
+        3 * getFreezeLimit(workchain);
 
-    require(
-        ctx.value >= msg.amount + minFees,
-        "Insufficient TON attached"
-    );
+    assert (in.valueCoins >= msg.amount + minFees)
+        throw ERR_INSUFFICIENT_TON_ATTACHED;
 
     // Send remaining value for fees...
 
     // It may also be necessary to handle fees on this exact
     // contract if it is not supposed to hold users' TONs.
-    // That can be done in either of the two approaches
+    // That can be done using either of the two approaches
     // described above.
 }
 ```
