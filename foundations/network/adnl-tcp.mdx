@@ -20,7 +20,7 @@ Each ADNL TCP packet (except the handshake) has the following structure:
 
 The entire packet, including the size field, is encrypted with AES-CTR.
 
-After decryption, verify that the checksum matches by computing it independently. The handshake is an exception and is detailed in the [ADNL specification](/foundations/network/adnl#handshake).
+After decryption, verify that the checksum matches by computing it independently. The handshake is an exception — see [Handshake](#handshake) below.
 
 ## Connection establishment
 
@@ -33,25 +33,56 @@ Prerequisites:
   The IP address in the config is a decimal integer. Convert it to dotted-decimal IPv4 format, for example using [this tool](https://www.browserling.com/tools/dec-to-ip). The public key is base64-encoded.
 </Aside>
 
-The client generates 160 random bytes. These bytes serve as the basis for two permanent AES-CTR ciphers:
+### Handshake
+
+1. The client performs a key agreement protocol (x25519) using its private key and the server's public key, selecting the key representation based on its `type_id`, to derive a `secret`.
+
+1. The client generates AES-CTR session parameters for both transmit (client -> server) and receive (server -> client) directions. Each direction uses a 32-byte key and a 16-byte nonce. The parameters are serialized into a 160-byte buffer:
+
+   | Parameter  | Size     |
+   | ---------- | -------- |
+   | `rx_key`   | 32 bytes |
+   | `tx_key`   | 32 bytes |
+   | `rx_nonce` | 16 bytes |
+   | `tx_nonce` | 16 bytes |
+   | `padding`  | 64 bytes |
+
+   Fill the entire 160-byte buffer with random bytes. If any part is predictable, an attacker can perform an active man-in-the-middle attack using compromised AES-CTR session parameters.
+
+1. The client encrypts the session parameters (`aes_params`) using AES-256-CTR with a 128-bit big-endian counter. The encryption key and nonce are derived from the SHA-256 hash of `aes_params` and the ECDH `secret` — see [Handshake encryption](#handshake-encryption) for the exact derivation.
+
+1. The client sends a 256-byte handshake packet with the following structure:
+
+   | Field                                       | Size      | Description                           |
+   | ------------------------------------------- | --------- | ------------------------------------- |
+   | Server key ID (`receiver_address`)          | 32 bytes  | Server peer identity                  |
+   | Client Ed25519 public key (`sender_public`) | 32 bytes  | Client public key                     |
+   | `SHA-256(aes_params)`                       | 32 bytes  | Integrity proof of session parameters |
+   | [`E(aes_params)`](#handshake-encryption)    | 160 bytes | Encrypted session parameters          |
+
+1. The server decrypts the session parameters and performs these checks:
+
+   - It possesses the private key corresponding to `receiver_address`.
+   - `SHA-256(aes_params) == SHA-256(D(E(aes_params)))`.
+
+   If any check fails, the server drops the connection. If all checks pass, the server sends an empty datagram to confirm ownership of the private key.
+
+After this exchange the connection is established. Data is serialized using [TL (Type Language)](https://core.telegram.org/mtproto/TL).
+
+### Cipher assignment
+
+Both sides derive two permanent AES-CTR ciphers from the 160-byte session parameters:
 
 | Cipher   | Key (bytes) | Initialization vector (bytes) | Used for                         |
 | -------- | ----------- | ----------------------------- | -------------------------------- |
 | Cipher A | 0-31        | 64-79                         | Server encrypts, client decrypts |
 | Cipher B | 32-63       | 80-95                         | Client encrypts, server decrypts |
 
-The client sends a handshake packet:
+## Security considerations
 
-| Field                                        | Size      |
-| -------------------------------------------- | --------- |
-| Server key ID                                | 32 bytes  |
-| Client Ed25519 public key                    | 32 bytes  |
-| SHA-256 of the 160 bytes                     | 32 bytes  |
-| [Encrypted 160 bytes](#handshake-encryption) | 160 bytes |
-
-The server derives the same ECDH key, decrypts the 160 bytes, and creates the same two ciphers. If everything succeeds, the server responds with an empty ADNL packet.
-
-After this exchange the connection is established. Data is serialized using [TL (Type Language)](https://core.telegram.org/mtproto/TL).
+- **Handshake padding.** The 64-byte padding field in `aes_params` is unused in current implementations. It may have been intended to support future migration to alternative encryption primitives.
+- **Session key derivation.** The encryption key is derived from both the static `secret` and `SHA-256(aes_params)`. Since `aes_params` is random for each session, this results in a unique encryption key per connection. However, the concatenation-based derivation combines subarrays of the secret and the hash, which is considered suboptimal by modern standards.
+- **Datagram nonce.** In CTR mode, AES operates as a stream cipher, making bit-flipping attacks possible if the plaintext is known. The per-packet `nonce` mitigates this: even if an attacker reconstructs the key stream and computes a valid `SHA-256(buffer)`, they cannot forge a valid hash without knowing the random nonce.
 
 ## Ping and pong
 
@@ -208,17 +239,7 @@ nonce = hash[0..4] || secret[20..32] // 4 + 12 bytes
 
 ## ECDH shared key
 
-The shared key is computed from one party's private key and the other party's public key using Elliptic Curve Diffie-Hellman.
-
-Simplified example of the Diffie-Hellman principle (using small numbers):
-
-1. Both sides agree on public parameters: base `g = 5`, modulus `p = 23`.
-1. Client picks secret `a = 6`, computes `A = 5^6 mod 23 = 8`. Server picks secret `b = 15`, computes `B = 5^15 mod 23 = 19`.
-1. They exchange `A` and `B`.
-1. Client computes `B^a mod p = 19^6 mod 23 = 2`. Server computes `A^b mod p = 8^15 mod 23 = 2`.
-1. Shared key = **2**.
-
-In practice, ECDH uses curve25519 to find a common point on the elliptic curve.
+The shared key is computed from one party's private key and the other party's public key using Elliptic-curve Diffie-Hellman. In practice, ADNL uses x25519 (ECDH over Curve25519).
 
 [Implementation example](https://github.com/xssnick/tonutils-go/blob/2b5e5a0e6ceaf3f28309b0833cb45de81c580acc/liteclient/crypto.go#L32).
 
