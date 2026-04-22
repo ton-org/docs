@@ -1,0 +1,86 @@
+---
+title: "TON Payments"
+description: "Off-chain payment channels for instant value transfers between two parties"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+TON Payments enables instant off-chain value transfers between two parties through payment channels. A payment channel is a smart contract that holds a shared pool of funds. The two parties exchange signed balance updates off-chain, without submitting transactions to the blockchain, and only settle on-chain when the channel closes.
+
+## Payment channels
+
+A payment channel involves two parties, A and B, who deploy a shared smart contract and each deposit funds into it. Once funded, the parties can transfer value by exchanging signed messages. These off-chain updates are instant and cost no gas.
+
+## Channel flow
+
+### Open
+
+Both parties deploy the channel contract with a configuration that contains their public keys, payout addresses, and timeout parameters. Each party then sends a deposit transaction to the contract. The contract tracks how much each party deposited and waits for both signatures before activating.
+
+If only one party deposits and the `init_timeout` expires, either party can reclaim the deposited funds.
+
+### Transfer
+
+Transfers happen entirely off-chain through signed promises.
+
+A promise is a small signed message containing three fields: the `channel_id`, `promise_A` (cumulative total that A owes B), and `promise_B` (cumulative total that B owes A). Both parties keep a copy of the latest signed promise.
+
+To transfer 5 TON from A to B, party A creates a new promise where `promise_A` is increased by 5, signs it, and sends it to B. Party B verifies the signature and stores the updated promise. To transfer in the other direction, B increases `promise_B` and signs.
+
+Promises are monotonically increasing. Each new promise can only raise the amounts, never lower them. This prevents either party from rolling back a previous transfer. The net balance shift at any point is `promise_B - promise_A`, clamped to the funds available in the channel.
+
+### Signing
+
+Both public keys are stored in `ChanConfig` at deployment (`a_key` and `b_key`, 256 bits each). To sign a promise, a party serializes the promise content into a cell, hashes it with SHA-256 (`slice_hash()`), and signs the hash with its Ed25519 private key. The resulting signature is 512 bits.
+
+```tlb
+chan_signed_promise#_ sig:(Maybe ^bits512) promise:ChanPromise = ChanSignedPromise;
+```
+
+The `Maybe` field means the signature is optional, which allows unilateral close with only one party's signature. On-chain, the contract calls the TVM primitive `check_signature(hash, sig, key)` to verify Ed25519 signatures natively. Invalid signatures produce error 31 (`wrong_a_signature`) or 32 (`wrong_b_signature`).
+
+### Close
+
+When both parties agree to close the channel, they jointly sign a close message containing the latest promise. The contract verifies the signatures, computes the final balances, and distributes funds to both parties.
+
+## Dispute resolution
+
+If one party attempts to cheat or becomes unresponsive, the contract enforces resolution on-chain.
+
+### Unilateral close
+
+If party B stops responding, party A can submit a close message with only its own signature and the latest promise. The contract records the submitted state and starts a countdown of `close_timeout` seconds.
+
+During this window, party B can submit its own version of the promise. The contract keeps whichever promise is higher for each side, since promises can only increase.
+
+If party B responds and both signatures are collected, the channel settles immediately with the final balances.
+
+### Timeout expiry
+
+If the `close_timeout` expires without a response from party B, either party can send a timeout message. The contract then computes the final balances using whichever promises were submitted and distributes the funds.
+
+An unresponsive party can delay settlement by at most `close_timeout` seconds, but cannot prevent it.
+
+### Init timeout
+
+The same mechanism protects the opening phase. If the channel configuration specifies an `init_timeout` and only one party has deposited by that deadline, a timeout message returns the deposited funds to their owner.
+
+## Final balance computation
+
+When the channel settles, the contract computes balances from the accumulated promises:
+
+```
+diff = promise_B - promise_A
+diff = max(diff, -A)
+diff = min(diff, B)
+final_A = A + diff
+final_B = B - diff
+```
+
+Where `A` and `B` are the on-chain deposited amounts. The clamping ensures that neither party can owe more than what is available in the channel.
+
+<Aside
+  type="caution"
+>
+  The reference payment channel contract in the TON monorepo (`crypto/smartcont/payment-channel-code.fc`) contains the note "NOT READY FOR A PRODUCTION". The contract is functional but has not been audited for production use.
+</Aside>
