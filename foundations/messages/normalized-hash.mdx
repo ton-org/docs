@@ -1,0 +1,90 @@
+---
+title: "Normalized message hash"
+sidebarTitle: "Normalized hash"
+---
+
+import { Aside } from "/snippets/aside.jsx";
+
+The normalized message hash is a canonical identifier used to look up [external-in](/foundations/messages/external-in) messages across APIs and SDKs. It is computed from a standardized external-in representation so different serializers produce the same lookup key.
+
+<Aside type="note">
+  This page documents the canonical normalized message hash used across TON tooling. The underlying proposal is formalized in [TEP-467: Normalized Message Hash](https://github.com/ton-blockchain/TEPs/blob/master/text/0467-normalized-message-hash.md).
+</Aside>
+
+## Why normalization is needed
+
+In TON, clients and providers can serialize external-in messages with structural differences that lead to different raw hashes for the same lookup intent. This affects fields and layout choices used in hashing, such as `src`, `import_fee`, `init`, and whether the body is embedded or referenced.
+
+Providers usually do not rewrite message content. The mismatch appears because systems may hash slightly different structural representations. For example, `init` is meaningful in message semantics, but normalization sets it to `nothing$0` when building a canonical lookup form.
+
+Apply normalization rules only to compute a lookup key. This process builds a canonical external-in representation for hashing and does not mutate an already sent message.
+
+## Calculate the normalized hash
+
+The normalized hash is computed by standardizing the `ext_in_msg_info$10` fields before serializing the message. This approach is independent of any specific SDK and can be implemented in any language.
+
+According to TEP-467, apply the following rules:
+
+1. **Source Address (`src`)**: Set to `addr_none$00`.
+1. **Import Fee (`import_fee`)**: Set to `0`.
+1. **InitState (`init`)**: Set to `nothing$0`.
+1. **Body (`body:(Either X ^X)`)**: Always store as a reference (`^X`). The content of the body itself is included without modification.
+
+After constructing the canonical external-in message cell, compute its standard [cell hash](/foundations/serialization/cells).
+
+### Low-level construction example
+
+The following TypeScript example builds the canonical external-in cell used for normalized hash calculation. This logic illustrates the underlying TL-B serialization and can be adapted to any programming language or SDK.
+
+```typescript
+import { beginCell, Cell, Address } from "@ton/core";
+
+function buildNormalizedExtInMessage(destAddress: Address, bodyCell: Cell): Cell {
+  return beginCell()
+    .storeUint(0b10, 2)         // external-in message prefix
+    .storeUint(0b00, 2)         // src: addr_none$00
+    .storeAddress(destAddress)  // dest: MsgAddressInt
+    .storeCoins(0)              // import_fee: 0
+    .storeBit(false)            // init: nothing$0
+    .storeBit(true)             // body: stored as a reference (^X)
+    .storeRef(bodyCell)         // The actual body cell
+    .endCell();
+}
+
+// Compute the standard cell hash
+const normalizedExtMessage = buildNormalizedExtInMessage(destAddress, bodyCell);
+const normalizedHash = normalizedExtMessage.hash().toString("hex");
+```
+
+## Tools and SDK support
+
+Many tools and libraries in the TON ecosystem support the normalized message hash either natively or through API integration.
+
+| Tool                   | Details                                                                                                   |
+| ---------------------- | --------------------------------------------------------------------------------------------------------- |
+| **@ton/ton**           | Example of usage in [message lookup](/ecosystem/ton-connect/message-lookup).                              |
+| **TonCenter**          | API methods such as `/api/v2/sendBocReturnHash` or `/api/v3/traces` natively use the normalized hash.     |
+| **TonAPI**             | API lookups like `getBlockchainTransactionByMessageHashGet` natively use the normalized hash.             |
+| **ton-blockchain/ton** | Supported in the [tonlib](https://github.com/ton-blockchain/ton/pull/1557) to enable `sendBocReturnHash`. |
+
+<Aside type="tip">
+  A normalized hash can be resolved only by [full blockchain indexers](/ecosystem/api/overview). Lite servers and archive nodes do not understand it.
+</Aside>
+
+## Uniqueness constraints
+
+The normalized message hash is **not** a globally unique identifier across the entire blockchain. It is possible for custom smart contracts to process identical external messages that produce the same normalized hash, resulting in multiple distinct transaction chains.
+
+However, the normalized message hash serves as a unique identifier for a specific transaction trace when the following conditions are met:
+
+- The message is sent to a [wallet contract](/standard/wallets/comparison).
+- The message includes an instruction to send an internal message with the `IGNORE_ERRORS=+2` flag (this is standard behavior for [TON Connect](/ecosystem/ton-connect/overview) and for wallets starting from v5).
+- The wallet contract is never deleted.
+
+### What to use for global uniqueness
+
+Use normalized hash as a lookup correlation key before confirmation. After a transaction is found, use the transaction identifier for global uniqueness, such as account address + transaction LT (or transaction hash, when available in your integration).
+
+<Aside type="tip">
+  Read more about external message tracking from the TonAPI side in [TonAPI docs](https://docs.tonconsole.com/academy/transaction-tracking).
+</Aside>
