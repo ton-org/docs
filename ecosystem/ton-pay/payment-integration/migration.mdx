@@ -1,0 +1,122 @@
+---
+title: "How to migrate from version 0.3.2 and lower"
+sidebarTitle: "Migrate from version 0.3.2"
+---
+
+import { Aside } from "/snippets/aside.jsx";
+
+This guide covers migration from `@ton-pay/ui-react` `v0.3.2` and lower, which use `TonPayButton` and `useTonPay`, to the `v0.4` hosted widget integration using `TonPayWidget`.
+
+<Aside type="note">
+  This migration primarily affects the client UI flow. Backend flows, including transfer creation and lookups through `@ton-pay/api`, are still supported.
+</Aside>
+
+## Server-side unchanged
+
+These server-side components remain unchanged despite the update to the React UI package:
+
+- `createTonPayTransfer()`;
+- `getTonPayTransferByReference()`;
+- `getTonPayTransferByBodyHash()`;
+- merchant-side order storage for `reference`, `bodyBase64Hash`, and `txHash`.
+
+## Migration mapping
+
+| Legacy React flow                         | Hosted widget flow                       | Notes                                                                                         |
+| ----------------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `TonConnectUIProvider`                    | Not required for the default widget flow | `TonPayWidget` owns wallet interaction inside the hosted UI.                                  |
+| `TonPayButton`                            | `TonPayWidget`                           | The visible button and checkout launcher are the same component.                              |
+| `useTonPay().pay(getMessage)`             | `TonPayWidget` props + callbacks         | Pass checkout parameters directly as props and handle outcomes with `onSuccess` or `onError`. |
+| Manual TON Connect transaction submission | Built into the hosted widget             | No direct TON Connect send step is needed for the default hosted checkout.                    |
+| Manual session or intent handling         | Internal to `TonPayWidget`               | The widget resolves the base URL, creates sessions, and routes the checkout flow.             |
+| `@ton-pay/api` for backend tracking       | Unchanged                                | Keep using it for backend or custom non-widget flows.                                         |
+
+## Migration checklist
+
+1. Update the frontend package `@ton-pay/ui-react` to version `0.4`.
+1. Remove `TonConnectUIProvider` from the TON Pay entry path if it was used only for the legacy checkout.
+1. Replace `TonPayButton` and `useTonPay` with `TonPayWidget`.
+1. Pass checkout parameters through widget props: `amount`, `recipientWalletAddress`, `asset`, `comment`, and `itemTitle`.
+1. Replace legacy client-side success or error handling with `onSuccess`, `onError`, and `onClose` callbacks.
+1. Keep existing server-side lookups for backend reconciliation or non-widget flows.
+1. Validate the hosted flow on testnet before switching to mainnet.
+
+## Compare legacy and hosted widget flows
+
+### Before: legacy React flow
+
+```tsx
+import { TonConnectUIProvider } from "@tonconnect/ui-react";
+import { TonPayButton, useTonPay } from "@ton-pay/ui-react";
+
+function CheckoutButton() {
+  const { pay } = useTonPay();
+
+  async function handlePay() {
+    await pay(async (senderAddr: string) => {
+      const response = await fetch("/api/create-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ senderAddr }),
+      });
+
+      return response.json();
+    });
+  }
+
+  return <TonPayButton handlePay={handlePay} />;
+}
+
+export default function App() {
+  return (
+    <TonConnectUIProvider manifestUrl="https://myapp.com/tonconnect-manifest.json">
+      <CheckoutButton />
+    </TonConnectUIProvider>
+  );
+}
+```
+
+### After: hosted widget flow
+
+```tsx
+import { TonPayWidget } from "@ton-pay/ui-react";
+
+export default function Checkout() {
+  return (
+    <TonPayWidget
+      amount={12.34}
+      chain="testnet"
+      asset="TON"
+      comment="Order #123"
+      itemTitle="Premium plan"
+      recipientWalletAddress="<RECIPIENT_ADDRESS>"
+      onError={(payload) => {
+        console.error(payload.code, payload.message);
+      }}
+      onSuccess={(payload) => {
+        console.log("Payment completed", payload);
+      }}
+    />
+  );
+}
+```
+
+## Migration notes
+
+- Backend endpoints that existed only to build TON Connect messages for `useTonPay` are no longer required for the default hosted widget checkout.
+- Keep endpoints that support custom flows, reconciliation jobs, or audit trails, continuing to use `@ton-pay/api`.
+- In the widget flow, `comment` maps to `commentToRecipient`.
+- `itemTitle` is UI-only metadata displayed inside the hosted checkout.
+
+## Rollout validation
+
+- Verify the hosted widget opens and closes correctly on testnet.
+- Verify `onSuccess` and `onError` handlers receive the expected payloads.
+- Verify no payment screen depends on `TonConnectUIProvider`, `useTonPay`, or direct TON Connect send logic.
+- Verify transfer lookups still function for any remaining backend or custom flows.
+- Verify the final production configuration uses the intended chain, asset, recipient address, and callback logging.
+
+## See also
+
+- [How to add a TON Pay widget using React](/ecosystem/ton-pay/ui-integration/button-react)
+- [How to send payments using TON Pay React widget](/ecosystem/ton-pay/payment-integration/payments-react)
