@@ -7,9 +7,9 @@ import { Aside } from '/snippets/aside.jsx';
 The address of a contract is determined by its [initial code and state](/foundations/status).
 However, with upgrades it is possible to change the code of a contract while keeping its initial address. This allows developers to fix bugs, add features, and adapt to protocol changes without migrating to a new address, which is required for contracts that are already referenced by other contracts or have users interacting with them.
 
-For example, [NFT item contracts](/standard/tokens/nft/how-it-works) reference their collection contract. If the address of a collection contract changes, all of its item contracts would need to be updated to point to the new address. This is not possible, as the item contracts cannot be modified by a collection admin. With upgrades the collection contract address stays the same, so all item contracts continue to reference it without any changes. A collection admin can then upgrade the collection contract code to fix bugs or add features without affecting the item contracts.
+For example, [NFT item contracts](/standard/tokens/nft/how-it-works) reference their collection contract. If the collection contract address changes, all item contracts would need to point to the new address, but the collection admin cannot modify existing item contracts. With upgrades the collection contract address stays the same, so all item contracts continue to reference it without any changes. A collection admin can then upgrade the collection contract code to fix bugs or add features without affecting the item contracts.
 
-The upgrade pattern is also required for [vanity](/contract-dev/vanity) contracts and protocols such as distributed exchanges (DEX) that are referenced by many other contracts.
+The upgrade pattern is also required for [vanity](/contract-dev/vanity) contracts and protocols such as distributed exchanges (DEXs) that are referenced by many other contracts.
 
 ## How upgrades work
 
@@ -31,10 +31,10 @@ Tolk provides two functions for upgrades, one for code and one for data:
 >
   Use delayed upgrades to allow users to react to compromised admin keys or unwanted updates.
 
-  You can find more information on these topics [in the Trail of Bits blog](https://blog.trailofbits.com/2025/06/25/maturing-your-smart-contracts-beyond-private-key-risk/) and on [Wikipedia](https://en.wikipedia.org/wiki/Exit_scam).
+  [The Trail of Bits blog](https://blog.trailofbits.com/2025/06/25/maturing-your-smart-contracts-beyond-private-key-risk/) and [Wikipedia](https://en.wikipedia.org/wiki/Exit_scam) provide additional information on this topic.
 </Aside>
 
-## The basic upgrade pattern
+## Basic upgrade pattern
 
 Upgradable contracts accept upgrade messages containing new code and data. Only an admin can trigger upgrades.
 
@@ -44,14 +44,14 @@ Upgradable contracts accept upgrade messages containing new code and data. Only 
 1. Verify that the message comes from an admin address.
 1. If the message contains code, schedule the code replacement with `setCodePostponed()`.
 1. If the message contains data, replace the existing data with `setData()`.
-1. When the transaction completes, apply the new code during the action phase.
+1. After the transaction completes, apply the new code during the action phase.
 1. Process subsequent messages with the new code.
 
-The upgrade happens immediately in a single transaction. However, new code becomes active after the transaction completes and new data is immediately available when the transaction ends. If the message does not contain enough Toncoin to execute the action phase with the code update, but enough to execute the compute phase with the data update, the contract state changes are reverted. Test the upgrade script to estimate gas requirements, and provide enough Toncoin for complete execution of the upgrade transaction.
+The upgrade runs in a single transaction. New code becomes active after the transaction completes, and new data is available when the transaction ends. If the message contains enough Toncoin to execute only the compute phase but not the action phase, the contract reverts all state changes from the upgrade. Test the upgrade script to estimate gas requirements, and send enough Toncoin to execute the full upgrade transaction.
 
 ### Example contract
 
-The following code illustrates the upgrade pattern. The contract accepts `UpgradeContract` messages that contain new code or data. Only admins can trigger upgrades.
+The following contract accepts `UpgradeContract` messages that contain new code or data. Only admins can trigger upgrades.
 
 ```tolk title="Tolk" expandable
 struct (0x1111) UpgradeContract {
@@ -97,7 +97,7 @@ fun Storage.save(self) {
 }
 ```
 
-## The delayed upgrade pattern for increased security
+## Delayed upgrade pattern for increased security
 
 Consider using the delayed upgrade pattern for production contracts with active users. This pattern adds a time delay between requesting and approving an upgrade, providing an additional security layer. The delay allows users to withdraw funds or exit positions if they don't trust the upgrade or if an admin account is compromised. It also gives users time to review the proposed changes before they take effect.
 
@@ -216,7 +216,7 @@ fun Storage.save(self) {
 }
 ```
 
-## The hot upgrade pattern for high update frequencies
+## Hot upgrade pattern for high update frequencies
 
 The standard upgrade methods fail when contracts receive frequent updates. For example, DEX pools that update prices every second or lending protocols that continuously adjust interest rates. The problem: it is not possible to predict what data will be in storage when the upgrade transaction executes.
 
@@ -230,9 +230,9 @@ Hot upgrades solve this by scheduling a code change and immediately calling a mi
 1. Verify the message comes from an admin address.
 1. Call `setCodePostponed()` to schedule the code replacement.
 1. Call `setTvmRegisterC3()` to activate the new code in register [C3](/tvm/registers#c3-—-function-selector) immediately.
-1. Call `hotUpgradeData()` which now runs with the new code, reads old storage, transforms it, and writes new storage
+1. Call `hotUpgradeData()` to run the migration with the new code.
 
-The `setTvmRegisterC3()` is the key to hot upgrades. It replaces the current code immediately so the following command (e.g., `hotUpgradeData()`) executes the new code, which reads the current storage state (preserving all updates), transforms it to the new schema, and saves it. When the transaction completes, the new code becomes permanent through `setCodePostponed()`.
+The `setTvmRegisterC3()` is the key to hot upgrades. It replaces the current code immediately so the following command (e.g., `hotUpgradeData()`) executes the new code, which reads the current storage state (preserving all updates), transforms it to the new schema, and saves it. After the transaction completes, the new code becomes permanent through `setCodePostponed()`.
 
 <Aside
   type="caution"
