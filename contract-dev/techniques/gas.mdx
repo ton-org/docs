@@ -1,10 +1,23 @@
 ---
-title: "Estimate gas usage in TON contracts"
+title: "How to estimate gas usage in TON contracts"
+sidebarTitle: "Gas usage"
 ---
 
 import { Aside } from "/snippets/aside.jsx";
 
-Contracts which receive a user's message are referred to as **receiver** contracts. Other contracts in the same system are called **internal** contracts. This terminology is local to the current article. Consider a contract system with three contracts: receiver, and internal contracts **A** and **B**. In that system the typical trace looks like this (transactions move from left to right):
+Contracts which receive a user's message are referred to as **receiver** contracts. Other contracts in the same system are called **internal** contracts. This terminology is local to this article.
+
+## Contract system
+
+Consider a contract system with three contracts:
+
+1. receiver;
+1. internal contract A;
+1. internal contract B.
+
+### Transaction trace
+
+In that system, the typical trace looks like this, with transactions moving from left to right.
 
 ```mermaid
 flowchart LR
@@ -17,11 +30,13 @@ flowchart LR
     style User2 r:50
 ```
 
+### Value flow
+
 <Aside type="tip">
-  This article covers abstract contracts system, not connected to any existing project. However, it's primarily applicable to contract systems that use a carry-value pattern.
+  The following explanation uses an abstract contract system and is not connected to any existing project. It is primarily applicable to systems that follow a carry-value pattern, where value is passed between contracts as part of message processing.
 </Aside>
 
-It is important to understand that there is _no separate_ message balance and contract balance. After the message is received, coins from the message are stored to the contract balance, and then the contract is executed. [Sending message modes](/foundations/messages/modes) and [reserve actions](/foundations/actions/reserve) help to properly divide contract balance in the action phase. This diagram of a possible value flow illustrates this.
+There is _no separate_ message balance and contract balance. After the message is received, coins from the message are stored to the contract balance, and then the contract is executed. [Sending message modes](/foundations/messages/modes) and [reserve actions](/foundations/actions/reserve) help to properly divide contract balance in the action phase. This diagram of a possible value flow illustrates this.
 
 ```mermaid
 flowchart LR
@@ -54,15 +69,18 @@ B,Forward fee (B->C),15
 B,Remaining value on B,70
 ```
 
+### Receiver requirements
+
 Receiver contracts must verify that the attached Toncoin is sufficient to cover fees for all contracts in the subsequent trace. If an entry contract accepts a user message it must guarantee that the message will not later fail due to insufficient attached TON. "Accept" doesn't mean the call to `accept_message()`, but semantic acceptance, i.e., no throw and no asset returns.
 
 The reason for this requirement is that reverting the contract system state is usually not possible, because the Toncoin is already spent.
 
 When a contract system's correctness depends on successful execution of the remaining transaction trace, it must guarantee that an incoming message carries enough attached Toncoin to cover all fees. This article describes how to compute those fees.
 
-Define variables for limits and initialize them with zero. We will set them to actual values afterwards.
+## Define fee limits
 
-Use descriptive names for the operation and the contract. It's best to store them in a dedicated file with constants.
+- Define variables for limits and initialize them to zero. Set them to actual values afterwards.
+- Use descriptive names for the operation and the contract. Store them in a dedicated file with constants.
 
 ```tolk
 const GasSwapRequest = 0;
@@ -98,11 +116,11 @@ Received:    11578n
 const GasSwapRequest = 12000;
 ```
 
-### Compute fees
+## Compute fees
 
-There are two kinds of values: gas units and Toncoin. The price of contract execution is fixed in gas units. However, the price of the gas itself is determined by the blockchain configuration.
+There are two kinds of values: gas units and Toncoin. The price of contract execution is fixed in gas units. However, the price of the gas itself is determined by the [blockchain configuration](/foundations/config).
 
-Conversion of gas to Toncoin on-chain using currently set blockchain config parameters can be performed with
+Convert gas to Toncoin on-chain using blockchain configuration:
 
 ```tolk
 import "@stdlib/gas-payments";
@@ -113,7 +131,7 @@ val fee = calculateGasFee(workchain, hardcodedGasValue);
 
 This function uses the [`GETGASFEE`](/tvm/instructions#f836-getgasfee) TVM opcode.
 
-### Forward fees
+## Forward fees
 
 Forward fee is calculated with this formula:
 
@@ -155,11 +173,11 @@ val fwdFee = calculateForwardFee(
   The `maxCells` argument limits the number of cells to visit. Usually it is set to 8192 since it is the [limit for message size](/foundations/limits#message-and-transaction-limits). It can be used to cap the amount of gas spent on size calculation.
 </Aside>
 
-If you do not need the intermediate `(cells, bits)` values directly, you can also use `msg.send()` with mode 1024 and let TVM perform the same calculations used by `calculateForwardFee()`. In TVM, this is implemented as [`SENDRAWMSG`](/tvm/instructions#fb00-sendrawmsg) and consumes approximately the same amount of gas.
+If intermediate `(cells, bits)` values are not required, `msg.send()` with mode 1024 can be used instead, allowing TVM to perform the same calculations as `calculateForwardFee()`. In TVM, this is implemented as [`SENDRAWMSG`](/tvm/instructions#fb00-sendrawmsg) and consumes approximately the same amount of gas.
 
 ### Optimized forward fee calculation
 
-If the size of the outgoing message is bounded by the size of the incoming message, we can estimate the forward fee of an outgoing message to be no larger than the forward fee of the incoming message, that was already computed by TVM. Thus, we don't have to calculate it again. Note that this estimation is correct only for a contract system in the same workchain, because gas prices depend on the workchain.
+If the size of the incoming message bounds the size of the outgoing message, the forward fee of the outgoing message can be estimated as no larger than the forward fee of the incoming message, which TVM already computes. In this case, the forward fee does not need to be calculated again. This estimation is valid only for contract systems within the same workchain, because gas prices depend on the workchain.
 
 ```tolk title="Tolk"
 fun onInternalMessage(in: InMessage) {
@@ -197,17 +215,17 @@ fun onInternalMessage(in: InMessage) {
 }
 ```
 
-### Storage fees
+## Storage fees
 
 <Aside>
-  For calculating storage fees, maximum possible size of the contract in `cells` and `bits` should be known. Calculating it manually might be hard, if the contract stores a hashmap or some other complex data structure in its state.
+  For calculating storage fees, the maximum possible contract size in `cells` and `bits` should be known. Calculating it manually might be hard if the contract stores a hashmap or another complex data structure in its state.
 
-  It might be easier to compute it by writing a test that will occupy maximum possible size, and use the measured value. There are [helper functions](#helper-functions) for doing these measurements.
+  It might be easier to compute it by writing a test that occupies the maximum possible size, and use the measured value. There are [helper functions](#helper-functions) for doing these measurements.
 </Aside>
 
-We cannot predict storage fees that we have to pay for sending messages because it depends on how long the target contract didn't pay storage fee. Storage fees differ in this way from forward and compute fees, as they should be handled both in receiver and internal contracts.
+Storage fees for sending messages cannot be predicted in advance, because they depend on how long the target contract has not paid storage fees. In this respect, storage fees differ from forward and compute fees, as they must be handled in both receiver and internal contracts.
 
-#### Maintain a positive reserve
+### Maintain a positive reserve
 
 Always keep a minimum balance on all contracts in the system. Storage fees get deducted from this reserve. The reserve get replenished with each user interaction. Do not hardcode Toncoin values for fees. Instead, hardcode the maximum possible contract size in cells and bits.
 
@@ -277,7 +295,7 @@ fun onInternalMessage(in: InMessage) {
   Verify the hardcoded contract size in tests.
 </Aside>
 
-#### Cover storage on demand
+### Cover storage on demand
 
 The order of phases [depends](/foundations/phases) on the `bounce` flag of an incoming message. If all messages in the protocol are unbounceable, then the storage phase comes after the credit phase. So, the contract's storage fees are deducted from the joint balance of the contract and incoming message. In this case the pattern where the contract's balance is zero and incoming messages cover storage fees can be applied.
 
@@ -308,7 +326,7 @@ fun onInternalMessage(in: InMessage) {
 }
 ```
 
-If we expect that the rest of trace uses `n` unique contracts, then it won't take more than `n` freeze limits to pay their storage fees. So, in the receiver contract, the check should be:
+If the remaining trace involves `n` unique contracts, no more than `n` freeze limits are required to cover their storage fees. Therefore, the receiver contract should perform the following check:
 
 ```tolk
 const FreezeDueLimit = ton("0.1");  // Current mainnet freeze_due_limit; adjust for other networks if needed.
@@ -382,7 +400,7 @@ fun onInternalMessage(in: InMessage) {
 
 ## Helper functions
 
-Getting gas for transaction in sandbox is quite easy:
+Getting gas for the transaction in sandbox is:
 
 ```ts
 function getComputeGasForTx(tx: Transaction): bigint {
