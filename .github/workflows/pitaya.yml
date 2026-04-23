@@ -45,7 +45,9 @@ jobs:
       cancel-in-progress: true
     # Run on:
     # - PR events when ready_for_review or opened as non‑draft
-    # - Issue comments only when it's a PR thread, command is /review, and commenter is trusted
+    # - Issue comments only when it's a PR thread and command is /review
+    #   Trust is determined inside the job via the repo permission API so
+    #   team-derived write access is recognized as well.
     if: |
       (
         github.event_name == 'pull_request' &&
@@ -55,30 +57,60 @@ jobs:
       (
         github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
-        (github.event.comment.body == '/review' || startsWith(github.event.comment.body, '/review ')) &&
-        (
-          github.event.comment.author_association == 'OWNER' ||
-          github.event.comment.author_association == 'MEMBER' ||
-          github.event.comment.author_association == 'COLLABORATOR'
-        )
+        (github.event.comment.body == '/review' || startsWith(github.event.comment.body, '/review '))
       ) ||
       (
         github.event_name == 'pull_request_review_comment' &&
-        (github.event.comment.body == '/review' || startsWith(github.event.comment.body, '/review ')) &&
-        (
-          github.event.comment.author_association == 'OWNER' ||
-          github.event.comment.author_association == 'MEMBER' ||
-          github.event.comment.author_association == 'COLLABORATOR'
-        )
+        (github.event.comment.body == '/review' || startsWith(github.event.comment.body, '/review '))
       )
     runs-on: ubuntu-latest
     steps:
+      - name: Check commenter permission
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "TRUSTED_COMMENTER=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          if [ -z "${COMMENTER:-}" ] || [ "$COMMENTER" = "null" ]; then
+            echo "TRUSTED_COMMENTER=false" >> "$GITHUB_ENV"
+            echo "::warning::Commenter login is missing; skipping AI review."
+            exit 0
+          fi
+
+          PERMISSION=""
+          if ! PERMISSION=$(gh api \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${REPO}/collaborators/${COMMENTER}/permission" \
+            --jq '.permission // empty' 2>/dev/null); then
+            PERMISSION=""
+          fi
+
+          case "$PERMISSION" in
+            admin|maintain|write)
+              echo "TRUSTED_COMMENTER=true" >> "$GITHUB_ENV"
+              echo "Commenter ${COMMENTER} has effective '${PERMISSION}' permission."
+              ;;
+            *)
+              echo "TRUSTED_COMMENTER=false" >> "$GITHUB_ENV"
+              echo "::notice::Commenter ${COMMENTER} does not have write-or-higher access (effective permission: ${PERMISSION:-none}); skipping AI review."
+              ;;
+          esac
+
       - name: Checkout
+        if: env.TRUSTED_COMMENTER == 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: PR context
+        if: env.TRUSTED_COMMENTER == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_FROM_PR: ${{ github.event.pull_request.number }}
@@ -106,6 +138,7 @@ jobs:
           fi
 
       - name: React 👀 on PR
+        if: env.TRUSTED_COMMENTER == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -125,7 +158,7 @@ jobs:
           fi
 
       - name: React 👀 on comment
-        if: github.event_name == 'issue_comment'
+        if: env.TRUSTED_COMMENTER == 'true' && github.event_name == 'issue_comment'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -146,7 +179,7 @@ jobs:
           fi
 
       - name: React 👀 on inline comment
-        if: github.event_name == 'pull_request_review_comment'
+        if: env.TRUSTED_COMMENTER == 'true' && github.event_name == 'pull_request_review_comment'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -167,15 +200,18 @@ jobs:
           fi
 
       - name: Checkout PR head
+        if: env.TRUSTED_COMMENTER == 'true'
         run: |
           set -euo pipefail
           git fetch origin "pull/${PR_NUMBER}/head:pr_head"
           git checkout -B pr_head pr_head
 
       - name: Fetch branches
+        if: env.TRUSTED_COMMENTER == 'true'
         run: git fetch origin "+refs/heads/*:refs/remotes/origin/*"
 
       - name: Ensure base branch
+        if: env.TRUSTED_COMMENTER == 'true'
         run: |
           BASE_REF="${BASE_REF:-main}"
           if ! git show-ref --verify --quiet "refs/heads/${BASE_REF}"; then
@@ -183,13 +219,13 @@ jobs:
           fi
 
       - name: Use repo scripts
-        if: env.IS_FORK != 'true'
+        if: env.TRUSTED_COMMENTER == 'true' && env.IS_FORK != 'true'
         run: |
           set -euo pipefail
           echo "USING_TRUSTED_CI_SCRIPTS=$GITHUB_WORKSPACE/.github/scripts" >> $GITHUB_ENV
 
       - name: Use base scripts for forks
-        if: env.IS_FORK == 'true'
+        if: env.TRUSTED_COMMENTER == 'true' && env.IS_FORK == 'true'
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/ai-ci"
@@ -198,6 +234,7 @@ jobs:
           echo "USING_TRUSTED_CI_SCRIPTS=$RUNNER_TEMP/ai-ci" >> $GITHUB_ENV
 
       - name: Detect docs changes
+        if: env.TRUSTED_COMMENTER == 'true'
         run: |
           set -euo pipefail
           # Compare PR head against BASE_REF and look for docs changes
@@ -211,7 +248,7 @@ jobs:
           fi
 
       - name: Comment no docs changes
-        if: env.DOCS_CHANGED != 'true'
+        if: env.TRUSTED_COMMENTER == 'true' && env.DOCS_CHANGED != 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -230,7 +267,7 @@ jobs:
             -d @payload.json >/dev/null
 
       - name: Check secrets
-        if: env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
+        if: env.TRUSTED_COMMENTER == 'true' && env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
@@ -240,33 +277,33 @@ jobs:
           fi
 
       - name: Setup Python
-        if: env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
+        if: env.TRUSTED_COMMENTER == 'true' && env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.13"
 
       - name: Setup uv
-        if: env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
+        if: env.TRUSTED_COMMENTER == 'true' && env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
         uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
 
       - name: Checkout Pitaya
-        if: env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
+        if: env.TRUSTED_COMMENTER == 'true' && env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: tact-lang/pitaya
           path: pitaya-src
 
       - name: Install Pitaya deps
-        if: env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
+        if: env.TRUSTED_COMMENTER == 'true' && env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
         working-directory: pitaya-src
         run: uv sync
 
       - name: Build agent image
-        if: env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
+        if: env.TRUSTED_COMMENTER == 'true' && env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
         run: docker build -t pitaya-agents:latest pitaya-src
 
       - name: Run Pitaya review
-        if: env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
+        if: env.TRUSTED_COMMENTER == 'true' && env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
         working-directory: pitaya-src
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -289,7 +326,7 @@ jobs:
             --verbose
 
       - name: Post review
-        if: env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
+        if: env.TRUSTED_COMMENTER == 'true' && env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
         working-directory: pitaya-src
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -420,7 +457,7 @@ jobs:
           fi
 
       - name: Summary
-        if: env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
+        if: env.TRUSTED_COMMENTER == 'true' && env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
         working-directory: pitaya-src
         run: |
           set -euo pipefail
@@ -458,7 +495,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Archive logs
-        if: env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
+        if: env.TRUSTED_COMMENTER == 'true' && env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request')
         id: pitaya_artifacts
         working-directory: pitaya-src
         run: |
@@ -472,7 +509,7 @@ jobs:
           fi
 
       - name: Upload artifacts
-        if: env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request') && steps.pitaya_artifacts.outputs.has_artifacts == 'true'
+        if: env.TRUSTED_COMMENTER == 'true' && env.DOCS_CHANGED == 'true' && (env.IS_FORK != 'true' || github.event_name != 'pull_request') && steps.pitaya_artifacts.outputs.has_artifacts == 'true'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: pitaya-logs-${{ github.run_id }}
