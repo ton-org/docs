@@ -105,6 +105,9 @@ There are two kinds of values: gas units and Toncoin. The price of contract exec
 Conversion of gas to Toncoin on-chain using currently set blockchain config parameters can be performed with
 
 ```tolk
+import "@stdlib/gas-payments";
+
+val workchain = contract.getAddress().getWorkchain();
 val fee = calculateGasFee(workchain, hardcodedGasValue);
 ```
 
@@ -131,6 +134,9 @@ In Tolk, `cell.calculateSizeStrict()` can be used to compute `msgSizeInCells` an
 In Tolk, the formula above is implemented in `calculateForwardFee()`. In TVM, it's implemented as [`GETFORWARDFEE`](/tvm/instructions#f838-getforwardfee) instruction.
 
 ```tolk
+import "@stdlib/gas-payments";
+
+val workchain = contract.getAddress().getWorkchain();
 val msgCell = msg.toCell();
 val (cells, bits, _) = msgCell.calculateSizeStrict(8192);
 
@@ -144,12 +150,12 @@ val fwdFee = calculateForwardFee(
 <Aside
   type="caution"
 >
-  The `computeDataSize()` function consumes large, unpredictable amount of gas. If at all it is possible to precompute the size, it is recommended to do so.
+  The `calculateSizeStrict(maxCells)` call consumes a large, potentially unpredictable amount of gas. If it is possible to precompute the message size, it is recommended to do so.
 
-  If required, the function has the second argument: maximum number of cells to visit. Usually it is set to 8192 since it is the [limit for message size](/foundations/limits#message-and-transaction-limits). It might be used to limit amount of spent gas.
+  The `maxCells` argument limits the number of cells to visit. Usually it is set to 8192 since it is the [limit for message size](/foundations/limits#message-and-transaction-limits). It can be used to cap the amount of gas spent on size calculation.
 </Aside>
 
-In Tolk, both computations can be performed with a call to `msg.send()` with mode 1024. In TVM, it's implemented as [`SENDRAWMSG`](/tvm/instructions#fb00-sendrawmsg). It will consume approximately the same amount of gas.
+If you do not need the intermediate `(cells, bits)` values directly, you can also use `msg.send()` with mode 1024 and let TVM perform the same calculations used by `calculateForwardFee()`. In TVM, this is implemented as [`SENDRAWMSG`](/tvm/instructions#fb00-sendrawmsg) and consumes approximately the same amount of gas.
 
 ### Optimized forward fee calculation
 
@@ -169,17 +175,20 @@ Assume the contract receives a message with an unknown size and forwards it furt
 For this case, in Tolk, there is a function `calculateForwardFeeWithoutLumpPrice()`. In TVM, it's implemented as [`GETFORWARDFEESIMPLE`](/tvm/instructions#f83c-getforwardfeesimple). This function does not take `lumpPrice` into account.
 
 ```tolk title="Tolk"
+import "@stdlib/gas-payments";
+
 fun onInternalMessage(in: InMessage) {
+    val workchain = contract.getAddress().getWorkchain();
     val origFwdFee = in.originalForwardFee;
 
     // "Out" message will consist of fields from
     // "in" message, and some extra fields.
     // Forward fee for "out" message is estimated
     // from a forward fee for "in" message
-    val additionalFwdFee = getSimpleForwardFee(
-        additionalFieldsSize.cells,
+    val additionalFwdFee = calculateForwardFeeWithoutLumpPrice(
+        workchain,
         additionalFieldsSize.bits,
-        isAccountInMasterchain
+        additionalFieldsSize.cells,
     );
     val totalFwdFee = origFwdFee + additionalFwdFee;
 
@@ -209,10 +218,12 @@ This approach affects code of internal contracts.
 </Aside>
 
 ```tolk
+import "@stdlib/gas-payments";
+
 const secondsInFiveYears = 5 * 365 * 24 * 60 * 60;
 
 fun onInternalMessage(in: InMessage) {
-    val msg = Transfer.fromSlice(in.body);
+    val workchain = contract.getAddress().getWorkchain();
     val minTonsForStorage = calculateStorageFee(
         workchain,
         secondsInFiveYears,
@@ -232,10 +243,12 @@ fun onInternalMessage(in: InMessage) {
 In this approach, a receiver contract should calculate maximum possible storage fees for all contracts in trace.
 
 ```tolk
+import "@stdlib/gas-payments";
+
 const secondsInFiveYears = 5 * 365 * 24 * 60 * 60;
 
 fun onInternalMessage(in: InMessage) {
-    val msg = UserIn.fromSlice(in.body);
+    val workchain = contract.getAddress().getWorkchain();
     // Suppose the trace is:
     // receiver -> A -> B
     val storageForA = calculateStorageFee(
@@ -251,7 +264,7 @@ fun onInternalMessage(in: InMessage) {
         maxCellsInB,
     );
     val totalStorageFees = storageForA + storageForB;
-    // compute compute + forward fees here
+    // Compute + forward fees go here.
     val otherFees = 0;
     assert (in.valueCoins >= totalStorageFees + otherFees)
         throw ERR_NOT_ENOUGH_TONS;
@@ -270,13 +283,14 @@ The order of phases [depends](/foundations/phases) on the `bounce` flag of an in
 
 It is impossible to know in advance what the storage fee due will be on the contract, so a threshold must be selected depending on the network configuration. It is a good practice to use [`freeze_due_limit`](/foundations/config#param-20-and-21%3A-gas-prices) as the threshold. Otherwise, the contract likely is already frozen and a transaction chain is likely to fail anyway.
 
-This pattern can be generalized to both bounceable and unbounceable messages with `myStorageDue()` function that returns [`storage_fees_due`](/foundations/phases#storage-phase)
+This pattern can be generalized to both bounceable and unbounceable messages with `contract.getStorageDuePayment()`, which returns [`storage_fees_due`](/foundations/phases#storage-phase).
 
 This approach affects code of internal contracts.
 
 ```tolk
+import "@stdlib/gas-payments";
+
 fun onInternalMessage(in: InMessage) {
-    val msg = Operation.fromSlice(in.body);
     // Reserve the original balance plus any storage debt
     reserveToncoinsOnBalance(
         contract.getStorageDuePayment(),
@@ -284,23 +298,25 @@ fun onInternalMessage(in: InMessage) {
     );
 
     // Send remaining value onward
-    createMessage({
-        bounce: false,
+    val forwardMsg = createMessage({
+        bounce: BounceMode.NoBounce,
         dest: nextHop,
         value: 0,
         // ...
-    }).send(SEND_MODE_CARRY_ALL_BALANCE);
+    });
+    forwardMsg.send(SEND_MODE_CARRY_ALL_BALANCE);
 }
 ```
 
 If we expect that the rest of trace uses `n` unique contracts, then it won't take more than `n` freeze limits to pay their storage fees. So, in the receiver contract, the check should be:
 
 ```tolk
+const FreezeDueLimit = ton("0.1");  // Current mainnet freeze_due_limit; adjust for other networks if needed.
+
 fun onInternalMessage(in: InMessage) {
-    val msg = Operation.fromSlice(in.body);
     // The trace is still receiver -> A -> B
-    val freezeLimit = getFreezeLimit(workchain);
-    val otherFees = ...;
+    val freezeLimit = FreezeDueLimit;
+    val otherFees = 0;  // Compute + forward fees go here.
     // n equals 3 because receiver -> A -> B
     assert (in.valueCoins >= freezeLimit * 3 + otherFees)
         throw ERR_NOT_ENOUGH_TONS;
@@ -327,8 +343,13 @@ This confirms that all incoming value was consumed or forwarded, with none left 
 The final code in the receiver contract could look like this:
 
 ```tolk
+import "@stdlib/gas-payments";
+
+const FreezeDueLimit = ton("0.1");  // Current mainnet freeze_due_limit; adjust for other networks if needed.
+
 fun onInternalMessage(in: InMessage) {
-    val msg = SwapRequest.fromSlice(in.body);
+    val workchain = contract.getAddress().getWorkchain();
+    val msg = lazy SwapRequest.fromSlice(in.body);
     val fwdFee = in.originalForwardFee;
 
     // Count all messages in the operation chain.
@@ -345,7 +366,7 @@ fun onInternalMessage(in: InMessage) {
         calculateGasFee(workchain, GasPoolSwap) +
         // Operation in the second vault
         calculateGasFee(workchain, GasVaultPayout) +
-        3 * getFreezeLimit(workchain);
+        3 * FreezeDueLimit;
 
     assert (in.valueCoins >= msg.amount + minFees)
         throw ERR_INSUFFICIENT_TON_ATTACHED;
