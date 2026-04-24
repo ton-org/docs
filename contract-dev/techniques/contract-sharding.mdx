@@ -5,17 +5,27 @@ title: "Contract sharding"
 import { Aside } from '/snippets/aside.jsx';
 import { Image } from '/snippets/image.jsx';
 
-Some protocols need to store a lot of information in contracts, for example, tokens that have many users. In TON, there is a limit on how much can be stored in a single contract. The solution in TON is to split the data across many different contracts, where you can quickly find the right contract by a key and retrieve the required information from it.
+Some protocols need to store a lot of information in contracts, for example, token contracts with many users. In TON, there is a limit on how much can be stored in a single contract. The solution is to split the data across multiple contracts.
 
-In such protocols, there is a child contract that initially contains the information identified by a key. In some protocols, it is important to know the Parent contract, which acts as the information manager.
+Each such contract, referred to as a child contract, is associated with a key that allows direct access to the required contract and its data. Some protocols also introduce a _parent_ contract that coordinates child contracts.
 
-To avoid having to know the key upfront, we do not populate that field in `StateInit`; we only populate the key field. This makes it easy to locate the required contract later.
+## Child contract address by key
+
+The contract address depends on the initial data provided in [`StateInit`](/foundations/messages/deploy). To ensure that a child contract can be accessed using only the key, the initial data includes the key but does not include the associated value. As a result, the address of the child contract can be determined from the key alone.
 
 <Aside
   type="caution"
 >
-  Child contracts should store information about the Parent so that only it can authorize important state changes.
+  Child contracts should store the parent contract address and verify that incoming messages originate from it. This ensures that only the parent contract can perform authorized state changes.
 </Aside>
+
+## NFT and jetton examples
+
+Consider NFTs: the collection acts as the parent contract, and each NFT item is a child contract. The key in this case is the item index, and only the collection can set the initial owner.
+
+For jettons, the parent contract is the minter, and the child contracts are user wallets. The key is the user's smart contract address, and the value is the user's token balance.
+
+Both patterns follow the same principle: each key maps to a separate contract. In jetton protocols, there is a unique contract per user, while in NFT collections, there is one contract per item (by index) that is shared across all users.
 
 <Image
   src="/resources/images/child_light.png"
@@ -23,62 +33,125 @@ To avoid having to know the key upfront, we do not populate that field in `State
   alt="Shard pattern"
 />
 
-Consider NFTs: the collection serves as the Parent contract, and the NFT items are the child contracts. The key in this case is the index, and only a message from the collection can set the initial owner.
-
-For Jettons, the Parent is the minter and the Children are user wallets. The key is the user's smart contract address, and the value is the user's token balance.
-
-In general, jettons and NFTs share this principle, but broadly speaking, jetton protocols have a unique contract per user, while NFTs have a single contract per item (by index) that is shared across all users.
-
 ## Unbounded data structures
 
-An interesting property of this pattern is that the number of potential children is unbounded! We can have an infinite number of children.
+Contract sharding supports an unbounded number of potential child contracts.
 
-In general, infinite data structures that can actually scale to billions are very difficult to implement on blockchain efficiently. This pattern showcases the power of TON.
+In general, data structures that can scale to very large sizes are difficult to implement efficiently on blockchains. This pattern allows such scaling by distributing data across multiple contracts.
 
-```tact Tact
-import "@stdlib/deploy";
 
-// we have multiple instances of the children
-contract TodoChild {
+```tolk title="storage.tolk"
+// Shared storage layouts and helper used by both contracts.
 
-    seqno: Int as uint64;
+struct TodoChildStorage {
+    seqno: uint64
+}
 
-    // when deploying an instance, we must specify its index (sequence number)
-    init(seqno: Int) {
-        self.seqno = seqno;
+fun TodoChildStorage.load() {
+    return TodoChildStorage.fromCell(contract.getData())
+}
+
+fun TodoChildStorage.save(self) {
+    contract.setData(self.toCell())
+}
+
+struct TodoParentStorage {
+    numChildren: uint64 = 0
+    // Parent must know the child contract code to deploy new instances.
+    todoChildCode: cell
+}
+
+fun TodoParentStorage.load() {
+    return TodoParentStorage.fromCell(contract.getData())
+}
+
+fun TodoParentStorage.save(self) {
+    contract.setData(self.toCell())
+}
+
+// Child prints its sequence number when it receives this message.
+struct (0x49f29a21) Identify {}
+
+// Parent deploys another child when it receives this message.
+struct (0x5b6f1392) DeployAnother {}
+
+// Build StateInit for a TodoChild instance with the given seqno.
+fun calcDeployedTodoChild(
+    seqno: uint64,
+    todoChildCode: cell,
+): AutoDeployAddress {
+    val childStorage: TodoChildStorage = {
+        seqno,
+    };
+
+    return {
+        stateInit: {
+            code: todoChildCode,
+            data: childStorage.toCell(),
+        }
     }
+}
+```
 
-    // this message handler will just debug print the seqno so we can see when it's called
-    receive("identify") {
-        dump(self.seqno);
+```tolk title="child.tolk"
+import "storage"
+
+type TodoChildMessage = Identify
+
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy TodoChildMessage.fromSlice(in.body);
+
+    match (msg) {
+        Identify => {
+            val storage = lazy TodoChildStorage.load();
+            debug.print(storage.seqno);
+        }
+        else => {
+            // Ignore empty top-up messages, reject everything else.
+            assert (in.body.isEmpty()) throw 0xFFFF;
+        }
     }
 }
 
-// we have one instance of the parent
-contract TodoParent with Deployable {
+get fun seqno(): uint64 {
+    val storage = lazy TodoChildStorage.load();
+    return storage.seqno;
+}
+```
 
-    numChildren: Int as uint64;
 
-    init() {
-        self.numChildren = 0;
+```tolk title="parent.tolk"
+import "storage"
+
+type TodoParentMessage = DeployAnother
+
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy TodoParentMessage.fromSlice(in.body);
+
+    match (msg) {
+        DeployAnother => {
+            var storage = lazy TodoParentStorage.load();
+            storage.numChildren += 1;
+
+            // Send a message to the auto-calculated address and attach
+            // the child code and initial data so the child is deployed.
+            val deployMsg = createMessage({
+                dest: calcDeployedTodoChild(
+                    storage.numChildren,
+                    storage.todoChildCode,
+                ),
+                value: ton("0.1"),
+                body: Identify {},
+            });
+
+            storage.save();
+            deployMsg.send(SEND_MODE_IGNORE_ERRORS);
+        }
     }
+}
 
-    // this message handler will cause the contract to deploy another child
-    receive("deploy another") {
-        self.numChildren = self.numChildren + 1;
-        let init: StateInit = initOf TodoChild(self.numChildren);
-        send(SendParameters{
-            to: contractAddress(init),
-            value: ton("0.1"),              // pay for message, the deployment, and give some TON for storage
-            mode: SendIgnoreErrors,
-            code: init.code,                // attaching the `StateInit` will cause the message to deploy
-            data: init.data,
-            body: "identify".asComment()    // we must piggyback the deployment on another message
-        });
-    }
-
-    get fun numChildren(): Int {
-        return self.numChildren;
-    }
+get fun numChildren(): uint64 {
+    val storage = lazy TodoParentStorage.load();
+    return storage.numChildren;
 }
 ```
