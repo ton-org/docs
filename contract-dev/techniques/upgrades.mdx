@@ -44,8 +44,8 @@ Upgradable contracts accept upgrade messages containing new code and data. Only 
 1. Verify that the message comes from an admin address.
 1. If the message contains code, schedule the code replacement with `setCodePostponed()`.
 1. If the message contains data, replace the existing data with `setData()`.
-1. After the transaction completes, apply the new code during the action phase.
-1. Process subsequent messages with the new code.
+1. During the action phase, apply the scheduled code replacement.
+1. Process subsequent messages with the new code after the transaction completes.
 
 The upgrade runs in a single transaction. New code becomes active after the transaction completes, and new data is available when the transaction ends. If the message does not provide enough Toncoin to run both the compute phase and the action phase, the entire transaction is aborted and no state changes from the upgrade are applied. Test the upgrade script to estimate gas requirements, and send enough Toncoin to execute the full upgrade transaction.
 
@@ -97,7 +97,7 @@ fun Storage.save(self) {
 }
 ```
 
-## Delayed upgrade pattern for increased security
+## Delayed upgrade pattern
 
 Consider using the delayed upgrade pattern for production contracts with active users. This pattern adds a time delay between requesting and approving an upgrade, providing an additional security layer. The delay allows users to withdraw funds or exit positions if they don't trust the upgrade or if an admin account is compromised. It also gives users time to review the proposed changes before they take effect.
 
@@ -216,7 +216,7 @@ fun Storage.save(self) {
 }
 ```
 
-## Hot upgrade pattern for high update frequencies
+## Hot upgrade pattern
 
 The standard upgrade methods fail when contracts receive frequent updates. For example, DEX pools that update prices every second or lending protocols that continuously adjust interest rates. The problem: it is not possible to predict what data will be in storage when the upgrade transaction executes.
 
@@ -232,13 +232,13 @@ Hot upgrades solve this by scheduling a code change and immediately calling a mi
 1. Call `setTvmRegisterC3()` to activate the new code in register [C3](/tvm/registers#c3-—-function-selector) immediately.
 1. Call `hotUpgradeData()` to run the migration with the new code.
 
-The `setTvmRegisterC3()` is the key to hot upgrades. It replaces the current code immediately so the following command (e.g., `hotUpgradeData()`) executes the new code, which reads the current storage state (preserving all updates), transforms it to the new schema, and saves it. After the transaction completes, the new code becomes permanent through `setCodePostponed()`.
+The `setTvmRegisterC3()` is the key to hot upgrades. It replaces the current code immediately so the following command (e.g., `hotUpgradeData()`) runs the new code. The migration function reads the current storage, transforms it to the new schema, and saves it. After the transaction completes, the new code becomes permanent through `setCodePostponed()`.
 
 <Aside
   type="caution"
   title="Migration risks"
 >
-  Hot upgrades require careful migration logic. Test migrations thoroughly on testnet. If the migration function fails, the contract becomes unusable. The `hotUpgradeData()` function runs only during upgrade messages, not on regular messages, preventing accidental repeated migrations.
+  Hot upgrades require careful migration logic. Test migrations thoroughly on testnet. If the migration function throws, the upgrade transaction aborts and no state changes are applied. If the migration succeeds but writes invalid storage, the contract can become unusable. The `hotUpgradeData()` function runs only during upgrade messages, not on regular messages, preventing accidental repeated migrations.
 </Aside>
 
 ### Example code
@@ -333,7 +333,7 @@ type AllowedMessages =
 // migration function must have method_id
 @method_id(2121)
 fun hotUpgradeData(additionalData: cell?) {
-    var oldStorage = lazy oldStorage.load();
+    var oldStorage = lazy OldStorage.load();
 
     assert (additionalData != null) throw 1112;
 
@@ -346,13 +346,13 @@ fun hotUpgradeData(additionalData: cell?) {
     contract.setData(storage.toCell());
 }
 
-struct oldStorage {
+struct OldStorage {
     adminAddress: address
     counter: uint32
 }
 
-fun oldStorage.load() {
-    return oldStorage.fromCell(contract.getData());
+fun OldStorage.load() {
+    return OldStorage.fromCell(contract.getData());
 }
 
 
@@ -412,7 +412,7 @@ The new version of `hotUpgradeData()` function is what is called after the code 
 
 The migration logic follows these steps:
 
-1. Load the storage using the old structure (e.g., `oldStorage` with `adminAddress` and `counter`).
+1. Load the storage using the old structure (e.g., `OldStorage` with `adminAddress` and `counter`).
 1. Create new storage with the additional `metadata` field from `additionalData`.
 1. Reorder fields, to move `counter` before `adminAddress`.
 1. Write the migrated storage immediately with `contract.setData()`.
