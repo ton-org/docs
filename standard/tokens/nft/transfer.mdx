@@ -268,7 +268,77 @@ async function main() {
 
 ### Buy an NFT (GetGems)
 
-To buy from a [`nft-fixprice-sale-v3r3`](https://github.com/getgems-io/nft-contracts/blob/main/packages/contracts/sources/nft-fixprice-sale-v3r3.fc) sale contract, send a regular transfer **without** payload. Amount = NFT price + 1 TON for fees:
+To buy from a [`nft-fixprice-sale-v3r3`](https://github.com/getgems-io/nft-contracts/blob/main/packages/contracts/sources/nft-fixprice-sale-v3r3.fc) sale contract, send a regular transfer **without** payload. Amount = NFT price + 1 TON for fees.
+
+<Aside
+  type="danger"
+  title="Verify the sale contract before sending TON"
+>
+  A lookalike sale contract can return a believable `get_sale_data` tuple but route incoming TON elsewhere. Match the deployed code hash against the canonical v3r3 hash before sending TON.
+</Aside>
+
+#### Verify the sale contract
+
+Confirm three things before sending TON: the deployed code matches `nft-fixprice-sale-v3r3`, `get_sale_data` describes an active sale for the expected NFT and price, and the NFT is held by the sale contract.
+
+```ts expandable
+import { Cell, TonClient, Address } from '@ton/ton';
+
+// Hash of NftFixPriceSaleV3R3CodeBoc from the GetGems nft-contracts repo
+const NFT_FIXPRICE_SALE_V3R3_HASH = Buffer.from(
+  '24221fa571e542e055c77bedfdbf527c7af460cfdc7f344c450787b4cfa1eb4d',
+  'hex',
+);
+
+async function verifySaleContract(
+  client: TonClient,
+  saleAddress: Address,
+  expectedNftAddress: Address,
+  expectedPrice: bigint,
+): Promise<void> {
+  // 1. Deployed code must match the canonical v3r3 contract
+  const state = await client.getContractState(saleAddress);
+  if (!state.code) throw new Error('Sale contract is not deployed');
+  const codeHash = Cell.fromBoc(state.code)[0].hash();
+  if (!codeHash.equals(NFT_FIXPRICE_SALE_V3R3_HASH)) {
+    throw new Error('Code hash does not match v3r3 — possible lookalike contract');
+  }
+
+  // 2. get_sale_data must describe an active sale for the expected NFT and price.
+  // Stack order: magic, is_complete, created_at, marketplace_address, nft_address,
+  // nft_owner_address, full_price, marketplace_fee_address, marketplace_fee,
+  // royalty_address, royalty_amount.
+  const sale = await client.runMethod(saleAddress, 'get_sale_data');
+  if (sale.stack.readNumber() !== 0x46495850) throw new Error('Not a FIXP sale');
+  if (sale.stack.readNumber() !== 0) throw new Error('Sale already complete');
+  // Skip created_at and marketplace_address.
+  sale.stack.readNumber();
+  sale.stack.readAddress();
+  const nftAddress = sale.stack.readAddress();
+  if (!nftAddress.equals(expectedNftAddress)) throw new Error('Sale points to a different NFT');
+  // Skip nft_owner_address; full_price comes next.
+  sale.stack.readAddress();
+  if (sale.stack.readBigNumber() !== expectedPrice) throw new Error('Price does not match');
+
+  // 3. The NFT must be held by the sale contract.
+  // get_nft_data stack order: init?, index, collection_address, owner_address, individual_content.
+  const nftData = await client.runMethod(nftAddress, 'get_nft_data');
+  // Skip init?, index, and collection_address.
+  nftData.stack.readBigNumber();
+  nftData.stack.readBigNumber();
+  nftData.stack.readAddress();
+  const owner = nftData.stack.readAddress();
+  if (!owner.equals(saleAddress)) {
+    throw new Error('NFT is not held by the sale contract');
+  }
+}
+```
+
+The canonical BOC and reference verifier ([`isNftFixPriceSaleV3Contract`](https://github.com/getgems-io/nft-contracts/blob/main/packages/contracts/nft-fixprice-sale-v3/isNftFixPriceSaleV3Contract.ts)) live in the GetGems nft-contracts repo. For v4 sale contracts, use the v4r1 hash from [`NftFixPriceSaleV4.source.ts`](https://github.com/getgems-io/nft-contracts/blob/main/packages/contracts/nft-fixprice-sale-v4/NftFixPriceSaleV4.source.ts).
+
+#### Send the buy transaction
+
+Once verification passes, send a payload-free transfer:
 
 <CodeGroup>
   ```tsx title="React" icon="react"
@@ -322,7 +392,7 @@ To buy from a [`nft-fixprice-sale-v3r3`](https://github.com/getgems-io/nft-contr
   ```
 </CodeGroup>
 
-Where `<NFT_SALE_CONTRACT>` is the address of the GetGems sale contract for the desired NFT item.
+Where `<NFT_SALE_CONTRACT>` is the address of the verified GetGems sale contract.
 
 ## See also
 
