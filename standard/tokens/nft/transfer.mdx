@@ -158,135 +158,129 @@ Where:
 
 ### List an NFT for sale (GetGems)
 
-To place an NFT on the [GetGems](https://getgems.io) marketplace, transfer it to a sale contract using [`nft-fixprice-sale-v3r3`](https://github.com/getgems-io/nft-contracts/blob/main/packages/contracts/sources/nft-fixprice-sale-v3r3.fc). The transfer body wraps a `do_sale` opcode with the sale contract's state init and body. This snippet shows only the transfer body — the full expandable example below includes `stateInitCell` and `saleBody` construction:
-
-```ts
-import { beginCell, toNano, Address } from '@ton/ton';
-
-const transferNftBody = beginCell()
-  .storeUint(0x5fcc3d14, 32)                               // NFT transfer op code
-  .storeUint(0, 64)                                        // query_id
-  .storeAddress(Address.parse('<DEPLOYER_ADDRESS>'))        // new_owner — GetGems sale deployer
-  .storeAddress(Address.parse('<WALLET_ADDRESS>'))          // response_destination
-  .storeBit(0)                                             // no custom_payload
-  .storeCoins(toNano('0.2'))                               // forward_amount
-  .storeBit(0)                                             // forward_payload in this cell
-  .storeUint(0x0fe0ede, 31)                                // do_sale opcode (31 bits — prior 0 bit is consumed)
-  .storeRef(stateInitCell)
-  .storeRef(saleBody)
-  .endCell();
-```
-
-<Aside
-  type="caution"
->
-  Send this body to the NFT item contract with at least `1.08` TON to cover processing fees. Excess is returned to the sender.
-</Aside>
-
-The full algorithm constructs the sale contract state init (with price, fees, royalties) and the sale body:
+Listing on [GetGems](https://getgems.io) goes through the GetGems deployer: the seller transfers the NFT to the deployer with a `do_sale` forward payload, and the deployer atomically deploys a per-listing sale contract (`nft-fixprice-sale-v4r1`) and moves the NFT into it.
 
 ```ts expandable
 import {
   Address,
   beginCell,
-  StateInit,
+  Cell,
+  contractAddress,
+  internal,
+  SendMode,
   storeStateInit,
   toNano,
-  Cell,
 } from '@ton/ton';
 
-async function main() {
-  // If GetGems updates its sale contract, obtain the new code from:
-  // https://github.com/getgems-io/nft-contracts/blob/main/packages/contracts/nft-fixprice-sale-v3/NftFixpriceSaleV3.source.ts
-  const NftFixPriceSaleV3R3CodeBoc =
-    'te6ccgECDwEAA5MAART/APSkE/S88sgLAQIBYgIDAgLNBAUCASANDgL30A6GmBgLjYSS+CcH0gGHaiaGmAaY/9IH0gfSB9AGppj+mfmBg4KYVjgGAASpiFaY+F7xDhgEoYBWmfxwjFsxsLcxsrZBZjgsk5mW8oBfEV4ADJL4dwEuuk4QEWQIEV3RXgAJFZ2Ngp5OOC2HGBFWAA+WjKFkEINjYQQF1AYHAdFmCEAX14QBSYKBSML7y4cIk0PpA+gD6QPoAMFOSoSGhUIehFqBSkCH6RFtwgBDIywVQA88WAfoCy2rJcfsAJcIAJddJwgKwjhtQRSH6RFtwgBDIywVQA88WAfoCy2rJcfsAECOSNDTiWoMAGQwMWyy1DDQ0wchgCCw8tGVIsMAjhSBAlj4I1NBobwE+CMCoLkTsPLRlpEy4gHUMAH7AATwU8fHBbCOXRNfAzI3Nzc3BPoA+gD6ADBTIaEhocEB8tGYBdD6QPoA+kD6ADAwyDICzxZY+gIBzxZQBPoCyXAgEEgQNxBFEDQIyMsAF8sfUAXPFlADzxYBzxYB+gLMyx/LP8ntVOCz4wIwMTcowAPjAijAAOMCCMACCAkKCwCGNTs7U3THBZJfC+BRc8cF8uH0ghAFE42RGLry4fX6QDAQSBA3VTIIyMsAF8sfUAXPFlADzxYBzxYB+gLMyx/LP8ntVADiODmCEAX14QAYvvLhyVNGxwVRUscFFbHy4cpwIIIQX8w9FCGAEMjLBSjPFiH6Astqyx8Vyz8nzxYnzxYUygAj+gITygDJgwb7AHFwVBcAXjMQNBAjCMjLABfLH1AFzxZQA88WAc8WAfoCzMsfyz/J7VQAGDY3EDhHZRRDMHDwBQAgmFVEECQQI/AF4F8KhA/y8ADsIfpEW3CAEMjLBVADzxYB+gLLaslx+wBwIIIQX8w9FMjLH1Iwyz8kzxZQBM8WE8oAggnJw4D6AhLKAMlxgBjIywUnzxZw+gLLaswl+kRbyYMG+wBxVWD4IwEIyMsAF8sfUAXPFlADzxYBzxYB+gLMyx/LP8ntVACHvOFnaiaGmAaY/9IH0gfSB9AGppj+mfmC3ofSB9AH0gfQAYKaFQkNDggPlozJP9Ii2TfSItkf0iLcEIIySsKAVgAKrAQAgb7l72omhpgGmP/SB9IH0gfQBqaY/pn5gBaH0gfQB9IH0AGCmxUJDQ4ID5aM0U/SItlH0iLZH9Ii2F4ACFiBqqiU';
-  const NftFixPriceSaleV3R3CodeCell = Cell.fromBoc(
-    Buffer.from(NftFixPriceSaleV3R3CodeBoc, 'base64'),
-  )[0];
+const GETGEMS_DEPLOYER = Address.parse('EQA51jCD5I9GRS_4oEzQ03M6kMi-KZqllRtidBdZssF-DjDh');
+const GETGEMS_MARKETPLACE = Address.parse('EQBYTuYbLf8INxFtD8tQeNk5ZLy-nAX9ahQbG_yl1qQ-GEMS');
+const GETGEMS_FEE_ADDRESS = Address.parse('UQC-56PXuMBvlVIDLDiApWp0twKtiyJPQr-xrBwzvXGQgKvJ');
 
-  const marketplaceAddress = Address.parse(
-    'EQBYTuYbLf8INxFtD8tQeNk5ZLy-nAX9ahQbG_yl1qQ-GEMS',
-  ); // GetGems marketplace
-  const marketplaceFeeAddress = Address.parse(
-    'EQCjk1hh952vWaE9bRguFkAhDAL5jj3xj9p0uPWrFBq_GEMS',
-  ); // GetGems fee address
-  const destinationAddress = Address.parse(
-    'EQAIFunALREOeQ99syMbO6sSzM_Fa1RsPD5TBoS0qVeKQ-AR',
-  ); // GetGems sale deployer
+// nft-fixprice-sale-v4r1 code BOC;
+const SALE_V4R1_CODE_BOC =
+  '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';
+const SALE_V4R1_CODE = Cell.fromBoc(Buffer.from(SALE_V4R1_CODE_BOC, 'base64'))[0];
 
-  const walletAddress = Address.parse('<WALLET_ADDRESS>');
-  const royaltyAddress = Address.parse('<ROYALTY_ADDRESS>');
-  const nftAddress = Address.parse('<NFT_ITEM_ADDRESS>');
-  const price = toNano('5'); // 5 TON
+interface ListingParams {
+  seller: Address;
+  nftAddress: Address;
+  royaltyAddress: Address;
+  royaltyPercent: number;
+  // Sale price in nanoTON
+  fullPrice: bigint;
+}
 
-  const feesData = beginCell()
-    .storeAddress(marketplaceFeeAddress)
-    .storeCoins((price / BigInt(100)) * BigInt(5))       // 5% GetGems fee
-    .storeAddress(royaltyAddress)
-    .storeCoins((price / BigInt(100)) * BigInt(5))       // 5% royalty
+const GETGEMS_FEE_PERCENT = 5000;
+
+function buildListingMessage(p: ListingParams) {
+  const staticData = beginCell()
+    .storeAddress(GETGEMS_FEE_ADDRESS)               // fee_address
+    .storeAddress(p.royaltyAddress)                  // royalty_address
+    .storeUint(GETGEMS_FEE_PERCENT, 17)              // fee_percent
+    .storeUint(p.royaltyPercent, 17)                 // royalty_percent
+    .storeAddress(p.nftAddress)                      // nft_address
+    .storeUint(Math.floor(Date.now() / 1000), 32)    // created_at
     .endCell();
 
   const saleData = beginCell()
-    .storeBit(0)                                         // is_complete
-    .storeUint(Math.round(Date.now() / 1000), 32)       // created_at
-    .storeAddress(marketplaceAddress)
-    .storeAddress(nftAddress)
-    .storeAddress(walletAddress)                         // previous_owner
-    .storeCoins(price)
-    .storeRef(feesData)
-    .storeUint(0, 32)                                    // sold_at
-    .storeUint(0, 64)                                    // query_id
+    .storeUint(0, 1)                                 // is_complete
+    .storeAddress(GETGEMS_MARKETPLACE)               // marketplace_address
+    .storeAddress(p.seller)                          // nft_owner_address (receives sale proceeds)
+    .storeCoins(p.fullPrice)                         // full_price
+    .storeUint(0, 32)                                // sold_at
+    .storeUint(0, 64)                                // sold_query_id
+    .storeRef(staticData)
+    .storeBit(0)                                     // jetton_price_dict (Maybe = empty)
     .endCell();
 
-  const stateInit: StateInit = {
-    code: NftFixPriceSaleV3R3CodeCell,
-    data: saleData,
-  };
+  const stateInit = { code: SALE_V4R1_CODE, data: saleData };
+  const saleAddress = contractAddress(0, stateInit);
   const stateInitCell = beginCell().store(storeStateInit(stateInit)).endCell();
 
+  // deploy_blank — accepts coins on deploy without further processing, no signature required
   const saleBody = beginCell()
-    .storeUint(1, 32)                                    // accept coins on deploy
-    .storeUint(0, 64)
+    .storeUint(0x664c0905, 32)                       // op: deploy_blank
+    .storeUint(0, 64)                                // query_id
     .endCell();
 
-  const transferNftBody = beginCell()
-    .storeUint(0x5fcc3d14, 32)
-    .storeUint(0, 64)
-    .storeAddress(destinationAddress)                    // new_owner
-    .storeAddress(walletAddress)                         // response_destination
-    .storeBit(0)
-    .storeCoins(toNano('0.2'))                           // forward_amount
-    .storeBit(0)
-    .storeUint(0x0fe0ede, 31)                            // do_sale opcode
+  const forwardPayload = beginCell()
+    .storeUint(0x0fe0ede, 32)                        // op: do_sale
     .storeRef(stateInitCell)
     .storeRef(saleBody)
+    .storeCoins(toNano('0.02'))                      // fwd_amount
     .endCell();
 
-  // Send transferNftBody to the NFT item contract with at least 1.08 TON
+  const transferBody = beginCell()
+    .storeUint(0x5fcc3d14, 32)                       // op: transfer
+    .storeUint(0, 64)                                // query_id
+    .storeAddress(GETGEMS_DEPLOYER)                  // new_owner
+    .storeAddress(p.seller)                          // response_destination (excess TON)
+    .storeBit(0)                                     // no custom_payload
+    .storeCoins(toNano('0.2'))                       // forward_amount to deployer
+    .storeBit(1)                                     // forward_payload is a ref
+    .storeRef(forwardPayload)                        // ref(forward_payload)
+    .endCell();
+
+  // value covers deployer gas, sale-contract deploy, and excess return to seller
+  return {
+    saleAddress,
+    message: internal({
+      to: p.nftAddress,
+      value: toNano('0.5'),
+      bounce: true,
+      body: transferBody,
+    }),
+  };
 }
 ```
 
+When the deployer receives the NFT, it validates the sale contract code hash against its allowlist, deploys the contract from the supplied `stateInit`, and forwards the NFT to the new sale address. Confirm the listing went through by checking that the NFT's `owner_address` equals the computed `saleAddress`.
+
 ### Buy an NFT (GetGems)
 
-To buy from a [`nft-fixprice-sale-v3r3`](https://github.com/getgems-io/nft-contracts/blob/main/packages/contracts/sources/nft-fixprice-sale-v3r3.fc) sale contract, send a regular transfer **without** payload. Amount = NFT price + 1 TON for fees.
+GetGems sale contracts come in two active versions: [`nft-fixprice-sale-v3r3`](https://github.com/getgems-io/nft-contracts/blob/main/packages/contracts/sources/nft-fixprice-sale-v3r3.fc) and [`nft-fixprice-sale-v4r1`](https://github.com/getgems-io/nft-contracts/blob/main/packages/contracts/sources/nft-fixprice-sale-v4r1.fc). Both are bought the same way — send a regular transfer **without** payload, with `amount = full_price + 0.1 TON`. The marketplace fee and royalty are taken out of `full_price` itself; the extra `0.1 TON` matches the v4r1 contract's `min_gas_amount` (see [`nft-fixprice-sale-v4r1.fc` line 9](https://github.com/getgems-io/nft-contracts/blob/main/packages/contracts/sources/nft-fixprice-sale-v4r1.fc#L9)), and any unspent gas is returned to the buyer with the NFT.
 
 <Aside
   type="danger"
   title="Verify the sale contract before sending TON"
 >
-  A lookalike sale contract can return a believable `get_sale_data` tuple but route incoming TON elsewhere. Match the deployed code hash against the canonical v3r3 hash before sending TON.
+  A lookalike sale contract can return a believable getter tuple but route incoming TON elsewhere. Match the deployed code hash against the canonical v3r3 or v4r1 hash before sending TON.
 </Aside>
 
 #### Verify the sale contract
 
-Confirm three things before sending TON: the deployed code matches `nft-fixprice-sale-v3r3`, `get_sale_data` describes an active sale for the expected NFT and price, and the NFT is held by the sale contract.
+Confirm three things before sending TON: the deployed code matches one of the canonical hashes, the sale getter describes an active sale for the expected NFT and price, and the NFT is held by the sale contract. v3r3 exposes `get_sale_data` (stack starts with the `0x46495850` "FIXP" magic); v4r1 exposes `get_fix_price_data_v4` (no magic, jetton-pricing slot is rejected by this TON-only verifier).
 
 ```ts expandable
 import { Cell, TonClient, Address } from '@ton/ton';
 
-// Hash of NftFixPriceSaleV3R3CodeBoc from the GetGems nft-contracts repo
+// Code hashes from the GetGems nft-contracts repo
 const NFT_FIXPRICE_SALE_V3R3_HASH = Buffer.from(
   '24221fa571e542e055c77bedfdbf527c7af460cfdc7f344c450787b4cfa1eb4d',
+  'hex',
+);
+const NFT_FIXPRICE_SALE_V4R1_HASH = Buffer.from(
+  '6b95a6418b9c9d2359045d1e7559b8d549ae0e506f24caab58fa30c8fb1feb86',
   'hex',
 );
 
@@ -296,34 +290,64 @@ async function verifySaleContract(
   expectedNftAddress: Address,
   expectedPrice: bigint,
 ): Promise<void> {
-  // 1. Deployed code must match the canonical v3r3 contract
+  // 1. Deployed code must match a canonical GetGems sale contract
   const state = await client.getContractState(saleAddress);
   if (!state.code) throw new Error('Sale contract is not deployed');
   const codeHash = Cell.fromBoc(state.code)[0].hash();
-  if (!codeHash.equals(NFT_FIXPRICE_SALE_V3R3_HASH)) {
-    throw new Error('Code hash does not match v3r3 — possible lookalike contract');
+  const isV3 = codeHash.equals(NFT_FIXPRICE_SALE_V3R3_HASH);
+  const isV4 = codeHash.equals(NFT_FIXPRICE_SALE_V4R1_HASH);
+  if (!isV3 && !isV4) {
+    throw new Error('Code hash matches neither v3r3 nor v4r1 — possible lookalike contract');
   }
 
-  // 2. get_sale_data must describe an active sale for the expected NFT and price.
-  // Stack order: magic, is_complete, created_at, marketplace_address, nft_address,
-  // nft_owner_address, full_price, marketplace_fee_address, marketplace_fee,
-  // royalty_address, royalty_amount.
-  const sale = await client.runMethod(saleAddress, 'get_sale_data');
-  if (sale.stack.readNumber() !== 0x46495850) throw new Error('Not a FIXP sale');
-  if (sale.stack.readNumber() !== 0) throw new Error('Sale already complete');
-  // Skip created_at and marketplace_address.
-  sale.stack.readNumber();
-  sale.stack.readAddress();
-  const nftAddress = sale.stack.readAddress();
+  // 2. The sale getter must describe an active sale for the expected NFT and price.
+  let nftAddress: Address;
+  let fullPrice: bigint;
+  if (isV3) {
+    // v3r3 get_sale_data: magic, is_complete, created_at, marketplace_address,
+    // nft_address, nft_owner_address, full_price, ...
+    const sale = await client.runMethod(saleAddress, 'get_sale_data');
+    if (sale.stack.readNumber() !== 0x46495850) throw new Error('Not a FIXP sale');
+    if (sale.stack.readNumber() !== 0) throw new Error('Sale already complete');
+    // Skip created_at and marketplace_address
+    sale.stack.readNumber();
+    sale.stack.readAddress();
+    nftAddress = sale.stack.readAddress();
+    // Skip nft_owner_address
+    sale.stack.readAddress();
+    fullPrice = sale.stack.readBigNumber();
+  } else {
+    // v4r1 get_fix_price_data_v4 stack: is_complete, created_at, marketplace_address,
+    // nft_address, nft_owner_address, full_price, fee_address, fee_percent,
+    // royalty_address, royalty_percent, sold_at, sold_query_id, jetton_price_dict.
+    const sale = await client.runMethod(saleAddress, 'get_fix_price_data_v4');
+    if (sale.stack.readBoolean()) throw new Error('Sale already complete');
+    // Skip created_at and marketplace_address
+    sale.stack.readBigNumber();
+    sale.stack.readAddress();
+    nftAddress = sale.stack.readAddress();
+    // Skip nft_owner_address
+    sale.stack.readAddress();
+    fullPrice = sale.stack.readBigNumber();
+    // Skip fee_address, fee_percent, royalty_address, royalty_percent, sold_at, sold_query_id
+    sale.stack.readAddress();
+    sale.stack.readBigNumber();
+    sale.stack.readAddress();
+    sale.stack.readBigNumber();
+    sale.stack.readBigNumber();
+    sale.stack.readBigNumber();
+    // Reject mixed TON/jetton sales — this verifier handles TON-only
+    if (sale.stack.readCellOpt() !== null) {
+      throw new Error('Sale also accepts jettons; this verifier handles TON-only');
+    }
+  }
   if (!nftAddress.equals(expectedNftAddress)) throw new Error('Sale points to a different NFT');
-  // Skip nft_owner_address; full_price comes next.
-  sale.stack.readAddress();
-  if (sale.stack.readBigNumber() !== expectedPrice) throw new Error('Price does not match');
+  if (fullPrice !== expectedPrice) throw new Error('Price does not match');
 
   // 3. The NFT must be held by the sale contract.
-  // get_nft_data stack order: init?, index, collection_address, owner_address, individual_content.
+  // get_nft_data stack order: init?, index, collection_address, owner_address, individual_content
   const nftData = await client.runMethod(nftAddress, 'get_nft_data');
-  // Skip init?, index, and collection_address.
+  // Skip init?, index, collection_address
   nftData.stack.readBigNumber();
   nftData.stack.readBigNumber();
   nftData.stack.readAddress();
@@ -334,7 +358,7 @@ async function verifySaleContract(
 }
 ```
 
-The canonical BOC and reference verifier ([`isNftFixPriceSaleV3Contract`](https://github.com/getgems-io/nft-contracts/blob/main/packages/contracts/nft-fixprice-sale-v3/isNftFixPriceSaleV3Contract.ts)) live in the GetGems nft-contracts repo. For v4 sale contracts, use the v4r1 hash from [`NftFixPriceSaleV4.source.ts`](https://github.com/getgems-io/nft-contracts/blob/main/packages/contracts/nft-fixprice-sale-v4/NftFixPriceSaleV4.source.ts).
+The canonical BOCs and reference verifier ([`isNftFixPriceSaleV3Contract`](https://github.com/getgems-io/nft-contracts/blob/main/packages/contracts/nft-fixprice-sale-v3/isNftFixPriceSaleV3Contract.ts)) live in the GetGems nft-contracts repo, alongside the v4 source ([`NftFixPriceSaleV4.source.ts`](https://github.com/getgems-io/nft-contracts/blob/main/packages/contracts/nft-fixprice-sale-v4/NftFixPriceSaleV4.source.ts)).
 
 #### Send the buy transaction
 
@@ -345,15 +369,16 @@ Once verification passes, send a payload-free transfer:
   import { useTonConnectUI } from '@tonconnect/ui-react';
   import { toNano } from '@ton/ton';
 
-  const nftPrice = 5.0; // TON
-  const buyAmount = nftPrice + 1.0;
+  // NFT price in TON; total value is price + 0.1 TON for network gas, with excess returned
+  const nftPrice = 5.0;
+  const buyAmount = nftPrice + 0.1;
 
   const transaction = {
     validUntil: Math.floor(Date.now() / 1000) + 360,
     messages: [
       {
-        address: '<NFT_SALE_CONTRACT>',                  // sale contract address
-        amount: toNano(buyAmount).toString(),            // price + 1 TON, excess returned
+        address: '<NFT_SALE_CONTRACT>',
+        amount: toNano(buyAmount).toString(),
       },
     ],
   };
@@ -376,7 +401,7 @@ Once verification passes, send a payload-free transfer:
   const tonConnectUI = new TonConnectUI({ manifestUrl: '<MANIFEST_URL>' });
 
   const nftPrice = 5.0;
-  const buyAmount = nftPrice + 1.0;
+  const buyAmount = nftPrice + 0.1;
 
   const transaction = {
     validUntil: Math.floor(Date.now() / 1000) + 360,
