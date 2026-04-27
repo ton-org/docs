@@ -1,5 +1,6 @@
 ---
-title: "Signing messages"
+title: "How to sign messages"
+sidebarTitle: "Signing messages"
 ---
 
 import { Aside } from '/snippets/aside.jsx';
@@ -26,12 +27,12 @@ Specification:
 
 TVM exposes additional cryptographic primitives beyond Ed25519. These are useful for cross-chain compatibility and advanced protocols:
 
-| Primitive                                                                                     | Purpose                                                                      |
-| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| [secp256k1](https://en.wikipedia.org/wiki/Secp256k1)                                          | Ethereum-style ECDSA via `ECRECOVER`; x-only pubkey operations (TVM v9+)     |
-| [secp256r1 (P-256)](https://en.wikipedia.org/wiki/Elliptic_Curve_Digital_Signature_Algorithm) | ECDSA verification via `P256_CHKSIGNS` and `P256_CHKSIGNU`                   |
-| [BLS12-381](https://en.wikipedia.org/wiki/BLS_digital_signature)                              | Pairing-based operations for signature aggregation and zero-knowledge proofs |
-| [Ristretto255](https://en.wikipedia.org/wiki/Curve25519#Ristretto)                            | Prime-order group over Curve25519 for advanced cryptographic constructions   |
+| Primitive                                                                                     | Purpose                                                                       |
+| --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [secp256k1](https://en.wikipedia.org/wiki/Secp256k1)                                          | Ethereum-style ECDSA via `ECRECOVER`; x-only pubkey operations (TVM v9+).     |
+| [secp256r1 (P-256)](https://en.wikipedia.org/wiki/Elliptic_Curve_Digital_Signature_Algorithm) | ECDSA verification via `P256_CHKSIGNS` and `P256_CHKSIGNU`.                   |
+| [BLS12-381](https://en.wikipedia.org/wiki/BLS_digital_signature)                              | Pairing-based operations for signature aggregation and zero-knowledge proofs. |
+| [Ristretto255](https://en.wikipedia.org/wiki/Curve25519#Ristretto)                            | Prime-order group over Curve25519 for advanced cryptographic constructions.   |
 
 For details, see crypto instructions in [TVM instructions](/tvm/instructions).
 
@@ -39,24 +40,25 @@ This guide focuses on Ed25519, usually used for TON.
 
 ## Signing pipeline
 
-Ed25519 signatures in TON typically work with hashes rather than raw data, because signing the hash takes a smaller and constant amount of time.
+Ed25519 signatures in TON typically operate on hashes rather than raw data. This ensures a fixed-size input regardless of message length.
 
 - Off-chain (TypeScript)
-  - Serialize message data into a cell
-  - Compute its hash (256 bits)
-  - Sign the hash with private key
-  - Signature (512 bits)
+  1. Serialize message data into a cell
+  1. Compute its hash (256 bits)
+  1. Sign the hash with private key
+  1. Signature (512 bits)
+
 - On-chain (Tolk)
-  - Contract receives signature and data
-  - Recomputes the hash
-  - Verifies signature matches the hash and public key
+  1. Contract receives signature and data
+  1. Recomputes the hash
+  1. Verifies signature matches the hash and public key
 
 TVM provides two signature verification methods:
 
-- [`CHKSIGNS`](/tvm/instructions#f911-chksigns) checks signature of data;
-- [`CHKSIGNU`](/tvm/instructions#f910-chksignu) checks signature of hash.
+1. [`CHKSIGNU`](/tvm/instructions#f910-chksignu) checks signature of hash;
+1. [`CHKSIGNS`](/tvm/instructions#f911-chksigns) checks signature of data.
 
-Hash-based verification (`CHKSIGNU`) is preferred because `CHKSIGNS` only processes data from a single cell (up to $127 * 8 = 1016$ bits) and ignores cell references. For messages containing multiple cells or references, hashing the entire structure first is required.
+Hash-based verification (`CHKSIGNU`) is preferred because `CHKSIGNS` only processes data from a single cell with a maximum size of 127 × 8 = 1016 bits and ignores [cell references](/foundations/serialization/library). For messages containing multiple cells or references, hashing the entire structure first is required.
 
 ## Signature interaction patterns
 
@@ -68,77 +70,77 @@ Standard wallet contracts are [described in more detail](/standard/wallets/histo
 
 How it works:
 
-1. User signs a message off-chain (includes replay protection data and transfer details)
-1. User sends external message to blockchain
-1. Wallet contract verifies the signature
-1. Wallet contract checks seqno for replay protection
-1. Wallet contract accepts message (pays gas from wallet balance)
-1. Wallet contract increments seqno
-1. Wallet contract executes the transfer
+1. User signs a message off-chain that includes replay protection data and transfer details.
+1. User sends external message to blockchain.
+1. Wallet contract verifies the signature.
+1. Wallet contract checks seqno for replay protection.
+1. Wallet contract accepts the message and pays gas from the wallet balance.
+1. Wallet contract increments seqno.
+1. Wallet contract executes the transfer.
 
 Key characteristics:
 
-- Who signs: User
-- Who sends: User (external message)
-- Who pays gas: Wallet contract
+- Who signs: user
+- Who sends: user (external message)
+- Who pays gas: wallet contract
 
 This is the most common pattern.
 
-### Example 2: Gasless transactions (Wallet v5)
+### Example 2: Gasless transactions (wallet v5)
 
 How it works:
 
-1. User signs a message off-chain that includes two transfers: one to recipient, one to service as payment
-1. User sends signed message to service via API
-1. Service verifies the signature
-1. Service wraps signed message in internal message
-1. Service sends internal message to user's wallet (pays gas in TON)
-1. Wallet contract verifies user's signature
-1. Wallet contract checks seqno for replay protection
-1. Wallet contract increments seqno
-1. Wallet contract executes both transfers (to recipient and to service)
+1. User signs a message off-chain that includes two transfers: one to recipient, one to service as payment.
+1. User sends signed message to service using API.
+1. Service verifies the signature.
+1. Service wraps signed message in internal message.
+1. Service sends internal message to user's wallet and pays gas in TON.
+1. Wallet contract verifies user's signature.
+1. Wallet contract checks seqno for replay protection.
+1. Wallet contract increments seqno.
+1. Wallet contract executes both transfers to the recipient and to the service.
 
 Key characteristics:
 
-- Who signs: User
-- Who sends: Service (internal message)
-- Who pays gas: Service (in TON), gets compensated in Jettons
+- Who signs: user
+- Who sends: service (internal message)
+- Who pays gas: service (in TON), gets compensated in jettons
 
-This pattern enables users to pay gas in Jettons instead of TON.
+This pattern enables users to pay gas in jettons instead of TON.
 
 ### Example 3: Server-controlled operations
 
 How it works:
 
-1. User requests authorization from server
-1. Server validates request and signs authorization message (includes validity period and operation parameters)
-1. User sends server-signed message to contract (with payment)
-1. Contract verifies server's signature
-1. Contract checks validity period
-1. Contract performs authorized action (deploy, mint, claim)
-1. If user tries to send same message again, contract ignores it (state already changed)
+1. User requests authorization from server.
+1. Server validates request and signs authorization message that includes validity period and operation parameters.
+1. User sends server-signed message to contract with payment.
+1. Contract verifies server's signature.
+1. Contract checks validity period.
+1. Contract performs authorized action, including deploy, mint, and claim.
+1. If the user tries to send the same message again, the contract ignores it because the state has already changed.
 
 Key characteristics:
 
-- Who signs: Server
-- Who sends: User (internal message with payment)
-- Who pays gas: User
+- Who signs: server
+- Who sends: user (internal message with payment)
+- Who pays gas: user
 
-This pattern is useful when backend needs to authorize specific operations (auctions, mints, claims) without managing private keys for each user.
+This pattern is useful when the backend needs to authorize specific operations, such as auctions, mints, and claims, without managing private keys for each user.
 
-Real-world example: [telemint contract](https://github.com/TelegramMessenger/telemint) uses server-signed messages to authorize NFT deployments.
+Real-world example: the [telemint contract](https://github.com/TelegramMessenger/telemint) uses server-signed messages to authorize NFT deployments.
 
 ## Message structure for signing
 
-When designing a signed message, the choice is how to organize the signed data — the message fields that will be hashed and verified. The key question: is the signed data a **slice** (part of a cell) or a **cell** (separate cell)? This affects gas consumption during signature verification.
+When designing a signed message, decide how to organize the data to be signed — the message fields that are hashed and verified. The data can be represented as a **slice** or as a **cell**. This choice affects gas consumption during signature verification.
 
 ### Approach 1: Signed data as slice
 
-After loading the signature from the message body, the signed data remains as a **slice** — a part of the cell that may contain additional data and references.
+After loading the signature from the message body, the signed data remains as a slice — part of the cell that may contain additional data and references.
 
-Used in: Wallet v1-v5
+This approach is used in wallets v1–v5.
 
-Schema — Wallet v3r2:
+Schema for wallet v3r2:
 
 ```tlb
 msg_body$_ signature:bits512 subwallet_id:uint32
@@ -170,37 +172,36 @@ graph
 
 ```
 
-Verification in FunC:
+Verification:
 
-```func
-slice signature = in_msg_body~load_bits(512);
-slice signed_data = in_msg_body;  // Remaining data
+```tolk
+val signature = inMsgBody.loadBits(512);
+val signedData = inMsgBody;   // remaining data
 
-int hash = slice_hash(signed_data);  // 526 gas
-throw_unless(35, check_signature(hash, signature, public_key));
+val hash = signedData.hash();
+assert (isSignatureValid(hash, signature, publicKey)) throw 35;
 ```
 
 Gas analysis:
 
-After loading the signature, the remaining data is a **slice**. To verify the signature, the contract needs to hash this slice. In TVM, the method for hashing a slice is `slice_hash()`, which costs `526` gas.
+After loading the signature, the remaining data is a **slice**. To verify the signature, the contract needs to hash this slice. In TVM, the method for hashing a slice is `slice.hash()`, which costs 526 gas.
 
-Why expensive?\
-`slice_hash()` internally rebuilds a cell from the slice, copying all data and references.
+This cost is high because `slice.hash()` internally rebuilds a cell from the slice, copying all data and references.
 
 <Aside
   type="tip"
   title="Optimization available"
 >
-  Recent TVM versions support `builder_hash()` for efficient hashing. Convert the slice to a builder and hash it — this costs less than 100 gas total. See [Optimization: Builder hashing](#optimization-builder-hashing) below for details.
+  Recent TVM versions support `builder.hash()` for efficient hashing. [Convert the slice to a builder and hash it](#optimization-builder-hashing) — this costs less than 100 gas total.
 </Aside>
 
 ### Approach 2: Signed data as cell
 
 The signed data is stored in a **separate cell**, placed as a reference in the message body.
 
-Used in: Preprocessed Wallet v2, Highload Wallet v3
+This approach is used in preprocessed wallet v2 and highload wallet v3.
 
-Schema — Preprocessed Wallet v2:
+Schema for preprocessed wallet v2:
 
 ```tlb
 _ valid_until:uint64 seqno:uint16 actions:^Cell = MsgInner;
@@ -230,51 +231,48 @@ graph LR
 
 ```
 
-Verification in FunC:
+Verification:
 
-```func
-slice signature = in_msg_body~load_bits(512);
-cell signed_data = in_msg_body~load_ref();  // Signed data as cell
+```tolk
+val signature = inMsgBody.loadBits(512);
+val signedData = inMsgBody.loadRef(); // Signed data as cell
 
-int hash = cell_hash(signed_data);  // 26 gas
-throw_unless(35, check_signature(hash, signature, public_key));
+val hash = signedData.hash();
+assert (isSignatureValid(hash, signature, publicKey)) throw 35;
 ```
 
 Gas analysis:
 
-The signed data is loaded as a **cell** from the reference. To get its hash, the contract uses `cell_hash()`, which costs only 26 gas.
+The signed data is loaded as a **cell** from the reference. To get its hash, the contract uses `cell.hash()`, which costs 26 gas.
 
-Why efficient?\
-Every cell in TON stores its hash as metadata. `cell_hash()` reads this precomputed value directly — no rebuilding, no copying.
+This is efficient because every cell in TON stores its hash as metadata. `cell.hash()` reads this precomputed value directly without rebuilding or copying the data.
 
-Trade-off:\
-This approach adds one extra cell to the message, slightly increasing the forward fee. However, the gas savings (\~500 gas) outweigh the forward fee increase.
+This approach adds one extra cell to the message, increasing the forward fee. However, the gas savings of \~500 gas outweigh the increase in forward fees.
 
 ### Optimization: Builder hashing
 
-Recent TVM versions introduced efficient builder hashing (`HASHBU` instruction), which makes **signed data as slice** approach much more gas-efficient.
+TVM versions introduce builder hashing through the `HASHBU` instruction. This optimization reduces the gas cost of the signed data as a slice approach.
 
-Verification in FunC (optimized):
+Verification (optimized):
 
-```func
-slice signature = in_msg_body~load_bits(512);
-slice signed_data = in_msg_body;
+```tolk
+val signature = inMsgBody.loadBits(512);
+val signedData = inMsgBody;
 
-builder b = begin_cell().store_slice(signed_data);
-int hash = b.builder_hash();
-throw_unless(35, check_signature(hash, signature, public_key));
+val b = beginCell().storeSlice(signedData);
+val hash = b.hash();
+assert (isSignatureValid(hash, signature, publicKey)) throw 35;
 ```
 
 Gas comparison:
 
-| Method                  | Gas cost  | Notes                              |
-| ----------------------- | --------- | ---------------------------------- |
-| `slice_hash()`          | 526 gas   | Rebuilds cell from slice           |
-| Builder hashing (slice) | \<100 gas | With HASHBU: cheap builder hashing |
-| `cell_hash()` (cell)    | 26 gas    | Uses precomputed cell hash         |
+| Method                  | Gas cost  | Notes                                |
+| ----------------------- | --------- | ------------------------------------ |
+| `slice.hash()`          | 526 gas   | Rebuilds cell from slice             |
+| Builder hashing (slice) | \<100 gas | With `HASHBU`: cheap builder hashing |
+| `cell.hash()` (cell)    | 26 gas    | Uses precomputed cell hash           |
 
-Conclusion:\
-With builder hashing optimization, both approaches are gas-efficient. New contracts can choose based on code simplicity and forward fee considerations.
+With builder hashing, both approaches are gas-efficient. Choose based on code simplicity and forward fee considerations.
 
 Reference: [`GlobalVersions.md` — TVM improvements](https://github.com/ton-blockchain/ton/blob/5c0349110bb03dd3a241689f2ab334ae1a554ffb/doc/GlobalVersions.md#new-tvm-instructions-4)
 
@@ -282,10 +280,9 @@ Reference: [`GlobalVersions.md` — TVM improvements](https://github.com/ton-blo
 
 ### Prerequisites
 
-- Node.js 18+ or TypeScript environment
-- `@ton/core`, `@ton/crypto` packages installed
+- [Node.js](https://nodejs.org/en/download/) 18 or later LTS
 
-Install required packages:
+### Step 0: Install dependencies
 
 ```bash
 npm install @ton/core @ton/crypto
@@ -314,7 +311,7 @@ const mnemonic = (process.env.MNEMONIC ?? 'MNEMONIC_WORDS').split(' ');
   type="danger"
   title="Protect the mnemonic"
 >
-  Anyone with access to the mnemonic can control the wallet and all funds. Store it securely (password manager, hardware wallet, encrypted storage). Never commit it to version control.
+  Anyone with access to the mnemonic can control the wallet and all funds. Store it securely using a password manager, a hardware wallet, or encrypted storage. Never commit it to version control.
 </Aside>
 
 ### Step 2: Derive the keypair
@@ -360,7 +357,7 @@ const signature = sign(signedData.hash(), keyPair.secretKey);
 
 ### Step 5: Build the message body
 
-Choose the structure based on the contract design (see [Message structure for signing](#message-structure-for-signing) above):
+Choose the structure based on the contract design:
 
 ```typescript
 // Approach 1: Signed data as slice
