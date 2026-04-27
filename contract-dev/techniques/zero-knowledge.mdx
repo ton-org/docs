@@ -32,18 +32,10 @@ Create, compile, and test a simple [Circom](https://docs.circom.io/) scheme and 
   </Step>
 
   <Step
-    title="Install libraries"
+    title="Install dependencies"
   >
     ```bash
-    npm install snarkjs @types/snarkjs
-    ```
-  </Step>
-
-  <Step
-    title="Install the verifier"
-  >
-    ```bash
-    npm install export-ton-verifier@latest
+    npm install snarkjs @types/snarkjs export-ton-verifier@latest
     ```
   </Step>
 </Steps>
@@ -57,6 +49,8 @@ Create, compile, and test a simple [Circom](https://docs.circom.io/) scheme and 
     ```bash
     mkdir -p circuits/Multiplier && cd circuits/Multiplier
     ```
+
+    Run the commands from the following steps in the `circuits/Multiplier` directory, or adjust the paths accordingly if running from the project root.
   </Step>
 
   <Step
@@ -91,7 +85,7 @@ Create, compile, and test a simple [Circom](https://docs.circom.io/) scheme and 
 
     - `Multiplier.r1cs` — circuit constraints (R1CS)
     - `Multiplier.sym` — symbolic signal map
-    - `Multiplier.wasm` — artifact for generating proof
+    - `Multiplier_js/Multiplier.wasm` — artifact for generating proof
   </Step>
 
   <Step
@@ -107,6 +101,7 @@ Create, compile, and test a simple [Circom](https://docs.circom.io/) scheme and 
     [INFO]  snarkJS: # of Constraints: 1
     [INFO]  snarkJS: # of Private Inputs: 2
     [INFO]  snarkJS: # of Public Inputs: 0
+    [INFO]  snarkJS: # of Labels: 4
     [INFO]  snarkJS: # of Outputs: 1
     ```
 
@@ -161,6 +156,8 @@ Choose the "power of tau" parameter (`10`) as low as possible, because it affect
     ```bash
     rm pot10_0000.ptau pot10_0001.ptau pot10_final.ptau Multiplier_0000.zkey
     ```
+
+    Run the commands from the following steps in the project root.
   </Step>
 </Steps>
 
@@ -207,30 +204,50 @@ Choose the "power of tau" parameter (`10`) as low as possible, because it affect
   <Step
     title="Implement local verification"
   >
-    ```ts
-    const wasmPath = path.join(__dirname, '../circuits/Multiplier', 'Multiplier.wasm');
-    const zkeyPath = path.join(__dirname, '../circuits/Multiplier', 'Multiplier_final.zkey');
-    const verificationKey = require('../circuits/Multiplier/verification_key.json');
+    ```ts title="./tests/ZkSimple.spec.ts"
+    it("should verify the proof locally", async () => {
+      const wasmPath = path.join(
+        __dirname,
+        '../circuits/Multiplier/Multiplier_js',
+        'Multiplier.wasm'
+      );
+      const zkeyPath = path.join(
+        __dirname,
+        '../circuits/Multiplier',
+        'Multiplier_final.zkey'
+      );
+      const verificationKey = require('../circuits/Multiplier/verification_key.json');
 
-    const input = { a: '342', b: '1245' };
+      const input = { a: '342', b: '1245' };
 
-    const { proof, publicSignals } = await snarkjs.groth16.fullProve(input, wasmPath, zkeyPath);
-    const okLocal = await snarkjs.groth16.verify(verificationKey, publicSignals, proof);
+      const {
+        proof,
+        publicSignals
+      } = await snarkjs.groth16.fullProve(input, wasmPath, zkeyPath);
+
+      const okLocal = await snarkjs.groth16.verify(verificationKey, publicSignals, proof);
+      expect(okLocal).toBe(true);
+    });
     ```
   </Step>
 
   <Step
     title="Implement on-chain verification"
   >
-    ```ts
-    const { pi_a, pi_b, pi_c, pubInputs } = await groth16CompressProof(proof, publicSignals);
+    ```ts title="./tests/ZkSimple.spec.ts"
+    it("should verify the proof on-chain", async () => {
+      const { pi_a, pi_b, pi_c, pubInputs } = await groth16CompressProof(proof, publicSignals);
 
-    // Quick check via get-method: verifies the proof locally without changing blockchain state.
-    expect(await verifier.getVerify({ pi_a, pi_b, pi_c, pubInputs })).toBe(true);
+      // Quick check via get-method: verifies the proof locally without changing blockchain state.
+      expect(await verifier.getVerify({ pi_a, pi_b, pi_c, pubInputs })).toBe(true);
 
-    // Send the proof to the contract in a message.
-    // The contract will run verification; subsequent handling of the result depends on the integration.
-    await verifier.sendVerify(deployer.getSender(), { pi_a, pi_b, pi_c, pubInputs, value: toNano('0.15') });
+      // Send the proof to the contract in a message.
+      // The contract will run verification; subsequent handling of the result depends on the integration.
+      await verifier.sendVerify
+        deployer.getSender(),
+        { pi_a, pi_b, pi_c, pubInputs, value: toNano('0.15') }
+      );
+    });
     ```
   </Step>
 </Steps>
