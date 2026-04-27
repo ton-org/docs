@@ -1,0 +1,254 @@
+---
+
+title: "Init data"
+
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+Init data is a signed payload that the Telegram client generates when launching a Mini App. It is transmitted in the [`tgWebAppData`](/ecosystem/tma/launch-parameters) launch parameter and contains information about the current user, chat context, and a cryptographic signature.
+
+Telegram signs the payload with the bot token, so a server can verify the signature and trust the content without additional authentication.
+
+## Retrieving init data
+
+Extract init data from launch parameters using the [@tma.js/sdk](https://www.npmjs.com/package/@tma.js/sdk):
+
+```typescript
+import { retrieveLaunchParams } from '@tma.js/sdk';
+
+const { tgWebAppData: initData } = retrieveLaunchParams();
+```
+
+## Sending init data to the server
+
+Pass raw init data in the `Authorization` header with every request:
+
+```typescript
+import { retrieveRawInitData } from '@tma.js/sdk';
+
+const initDataRaw = retrieveRawInitData();
+
+fetch('https://example.com/api', {
+  method: 'POST',
+  headers: {
+    Authorization: `tma ${initDataRaw}`,
+  },
+});
+```
+
+The header format is `tma <INIT_DATA_RAW>`, where `<INIT_DATA_RAW>` is the raw query string from the `tgWebAppData` launch parameter.
+
+## Validating init data
+
+Validation confirms that Telegram issued the payload and that no one tampered with it. Two methods are available.
+
+### Using the bot token
+
+This method requires the bot token that is bound to the Mini App.
+
+1. Parse the init data as query parameters. Separate the `hash` value and remove it from the set.
+1. Sort the remaining key-value pairs alphabetically and join them as `key=value` strings separated by `\n`.
+1. Create an HMAC-SHA256 of the bot token using the string `WebAppData` as the key.
+1. Create an HMAC-SHA256 of the sorted pairs string (from step 2) using the result of step 3 as the key. Convert the output to a hex string.
+1. Compare the result with the `hash` value from step 1. If they match, the init data is valid.
+
+<Aside
+  type="caution"
+>
+  The HMAC-SHA256 result from step 3 is a raw byte array. Do not convert it to a hex string before using it as the key in step 4.
+</Aside>
+
+### Using the Telegram public key
+
+This method validates init data without the bot token — only the bot identifier is needed. It uses Ed25519 signature verification.
+
+Telegram provides two public keys:
+
+| Environment | Ed25519 public key (hex)                                           |
+| ----------- | ------------------------------------------------------------------ |
+| Production  | `e7bf03a2fa4602af4580703d88dda5bb59f32ed8b02a56c187fe7d34caed242d` |
+| Test        | `40055058a4ee38156a06562e52eece92a771bcd8346a8c4615cb7376eddf72ec` |
+
+1. Parse the init data as query parameters. Separate the `signature` value (base64-encoded) and remove both `hash` and `signature` from the set.
+1. Sort the remaining key-value pairs alphabetically and join them as `key=value` strings separated by `\n`.
+1. Prepend the string `<BOT_ID>:WebAppData\n` to the result from step 2.
+1. Verify the Ed25519 signature against the data-check string from step 3 using the appropriate public key.
+
+<Aside
+  type="caution"
+>
+  Some Telegram clients send the `signature` value without base64 padding. If the signature length is not a multiple of 4, append `=` characters before decoding.
+</Aside>
+
+### Expiration check
+
+In addition to signature verification, check the `auth_date` field against the current time. Reject init data older than a chosen threshold (for example, 1 hour) to limit the window for replay attacks.
+
+## Server-side examples
+
+### Node.js
+
+This example uses [express](https://www.npmjs.com/package/express) and [@tma.js/init-data-node](https://www.npmjs.com/package/@tma.js/init-data-node).
+
+```typescript
+import { validate, parse, type InitData } from '@tma.js/init-data-node';
+import express, {
+  type ErrorRequestHandler,
+  type RequestHandler,
+  type Response,
+} from 'express';
+
+const BOT_TOKEN = '<BOT_TOKEN>';
+
+const authMiddleware: RequestHandler = (req, res, next) => {
+  const [authType, authData = ''] = (
+    req.header('authorization') || ''
+  ).split(' ');
+
+  if (authType !== 'tma') {
+    return next(new Error('Unauthorized'));
+  }
+
+  try {
+    validate(authData, BOT_TOKEN, { expiresIn: 3600 });
+    res.locals.initData = parse(authData);
+    return next();
+  } catch (e) {
+    return next(e);
+  }
+};
+
+const app = express();
+app.use(authMiddleware);
+
+app.get('/', (_req, res) => {
+  res.json(res.locals.initData);
+});
+
+app.use(((err, _req, res) => {
+  res.status(500).json({ error: err.message });
+}) as ErrorRequestHandler);
+
+app.listen(3000);
+```
+
+Replace `<BOT_TOKEN>` with the bot token bound to the Mini App. The `expiresIn: 3600` option rejects init data older than 1 hour.
+
+### Go
+
+This example uses [gin](https://gin-gonic.com/) and [init-data-golang](https://github.com/telegram-mini-apps/init-data-golang).
+
+```go
+package main
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	initdata "github.com/telegram-mini-apps/init-data-golang"
+)
+
+type contextKey string
+
+const initDataKey contextKey = "init-data"
+
+func authMiddleware(token string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authParts := strings.Split(c.GetHeader("authorization"), " ")
+		if len(authParts) != 2 || authParts[0] != "tma" {
+			c.AbortWithStatusJSON(401, gin.H{"message": "Unauthorized"})
+			return
+		}
+
+		if err := initdata.Validate(authParts[1], token, time.Hour); err != nil {
+			c.AbortWithStatusJSON(401, gin.H{"message": err.Error()})
+			return
+		}
+
+		parsed, err := initdata.Parse(authParts[1])
+		if err != nil {
+			c.AbortWithStatusJSON(500, gin.H{"message": err.Error()})
+			return
+		}
+
+		ctx := context.WithValue(c.Request.Context(), initDataKey, parsed)
+		c.Request = c.Request.WithContext(ctx)
+	}
+}
+
+func main() {
+	token := "<BOT_TOKEN>"
+
+	r := gin.New()
+	r.Use(authMiddleware(token))
+
+	r.GET("/", func(c *gin.Context) {
+		data, _ := c.Request.Context().Value(initDataKey).(initdata.InitData)
+		c.JSON(200, data)
+	})
+
+	if err := r.Run(":3000"); err != nil {
+		panic(err)
+	}
+}
+```
+
+Replace `<BOT_TOKEN>` with the bot token bound to the Mini App. The `time.Hour` argument rejects init data older than 1 hour.
+
+### Verify
+
+After starting the server, send a test request:
+
+```bash
+curl -H "Authorization: tma <INIT_DATA_RAW>" http://localhost:3000/
+```
+
+Expected output: a JSON object containing the parsed init data fields (`user`, `auth_date`, `query_id`, and others).
+
+## Init data parameters
+
+| Parameter        | Type            | Description                                                                                                                                          |
+| ---------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth_date`      | `number`        | Unix timestamp when the init data was created.                                                                                                       |
+| `can_send_after` | `number`        | Optional. Seconds after which a message can be sent via [`answerWebAppQuery`](https://core.telegram.org/bots/api#answerwebappquery).                 |
+| `chat`           | [`Chat`](#chat) | Optional. Chat where the bot was launched via the attachment menu. Returned for supergroups, channels, and group chats.                              |
+| `chat_type`      | `string`        | Optional. Chat type: `sender`, `private`, `group`, `supergroup`, or `channel`. Returned only for apps opened by direct link.                         |
+| `chat_instance`  | `string`        | Optional. Global identifier of the chat from which the Mini App was opened. Returned only for apps opened by direct link.                            |
+| `hash`           | `string`        | Init data signature (HMAC-SHA256).                                                                                                                   |
+| `query_id`       | `string`        | Optional. Unique session ID. Used with [`answerWebAppQuery`](https://core.telegram.org/bots/api#answerwebappquery).                                  |
+| `receiver`       | [`User`](#user) | Optional. Chat partner in a private chat where the bot was launched via the attachment menu.                                                         |
+| `signature`      | `string`        | Optional. Ed25519 signature (base64-encoded). Used for [public key validation](#using-the-telegram-public-key).                                      |
+| `start_param`    | `string`        | Optional. Value of the `startattach` or `startapp` query parameter from the launch link. Returned only for Mini Apps opened via the attachment menu. |
+| `user`           | [`User`](#user) | Optional. Information about the current user.                                                                                                        |
+
+### `Chat`
+
+| Property    | Type     | Description                                                                                               |
+| ----------- | -------- | --------------------------------------------------------------------------------------------------------- |
+| `id`        | `number` | Unique chat ID.                                                                                           |
+| `type`      | `string` | Chat type: `group`, `supergroup`, or `channel`.                                                           |
+| `title`     | `string` | Chat title.                                                                                               |
+| `photo_url` | `string` | Optional. Chat photo URL (`.jpeg` or `.svg`). Returned only for Mini Apps opened via the attachment menu. |
+| `username`  | `string` | Optional. Chat username.                                                                                  |
+
+### `User`
+
+| Property                   | Type      | Description                                                                                                      |
+| -------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------- |
+| `id`                       | `number`  | User or bot ID.                                                                                                  |
+| `first_name`               | `string`  | User or bot first name.                                                                                          |
+| `last_name`                | `string`  | Optional. User last name.                                                                                        |
+| `username`                 | `string`  | Optional. User or bot username.                                                                                  |
+| `language_code`            | `string`  | Optional. [IETF language tag](https://en.wikipedia.org/wiki/IETF_language_tag) of the user.                      |
+| `is_bot`                   | `boolean` | Optional. `true` if the user is a bot.                                                                           |
+| `is_premium`               | `boolean` | Optional. `true` if the user has Telegram Premium.                                                               |
+| `added_to_attachment_menu` | `boolean` | Optional. `true` if the user added the bot to the attachment menu.                                               |
+| `allows_write_to_pm`       | `boolean` | Optional. `true` if the user allowed the bot to message them.                                                    |
+| `photo_url`                | `string`  | Optional. User or bot photo URL (`.jpeg` or `.svg`). Returned only for Mini Apps opened via the attachment menu. |
+
+## See also
+
+- [Launch parameters](/ecosystem/tma/launch-parameters) — all parameters passed to a Mini App at startup
