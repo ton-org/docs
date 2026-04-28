@@ -214,48 +214,72 @@ In TON blockchain, all pending messages are publicly visible in the mempool. Fro
 
 Include critical parameters like the recipient address (`to`) within the data that is signed. This ensures that the signature is valid only for the intended operation and recipient, preventing attackers from reusing the signature for their benefit. Also, implement replay protection to prevent the same signed message from being used multiple times.
 
-```tact
+```tolk
+import "@stdlib/gas-payments"
+
 struct RequestBody {
-    to: Address;
-    seqno: Int as uint64;
+    to: address
+    seqno: uint64
 }
 
-message(0x988d4037) Request {
-    signature: Slice as bytes64;
-    requestBody: RequestBody;
+struct (0x988d4037) Request {
+    signature: bytes64
+    requestBody: RequestBody
 }
 
-contract SecureChecker(
-    publicKey: Int as uint256,
-    seqno: Int as uint64, // Add seqno for replay protection
-) {
-    receive(request: Request) {
-        // Verify the signature against the reconstructed data hash
-        require(checkSignature(request.requestBody.toCell().hash(), request.signature, self.publicKey), "Invalid signature!");
-
-        // Check replay protection
-        require(request.requestBody.seqno == self.seqno, "Invalid seqno"); // Assuming external message with seqno
-        self.seqno += 1; // Increment seqno after successful processing
-
-        // Ensure the message is sent to the address specified in the signed data
-        message(MessageParameters {
-            to: request.requestBody.to, // Use the 'to' from the signed request
-            value: 0,
-            mode: SendRemainingBalance, // Caution: sending the whole balance!
-            bounce: false,
-            body: "Your action payload here".asComment(), // Example body
-        });
-    }
-
-    // Empty receiver for the deployment,
-    // which forwards the remaining value back to the sender
-    receive() { cashback(sender()) }
-
-    get fun seqno(): Int {
-        return self.seqno;
-    }
+enum ErrCode {
+    InvalidSignature = 1000,
+    InvalidSeqno = 1001,
 }
 
+struct Storage {
+    publicKey: uint256
+    seqno: uint64
+}
+
+fun Storage.load() {
+    return Storage.fromCell(contract.getData())
+}
+
+fun Storage.save(self) {
+    contract.setData(self.toCell())
+}
+
+fun onInternalMessage(in: InMessage) {
+    // ignore internal messages
+}
+
+fun onExternalMessage(inMsg: slice) {
+    val request = Request.fromSlice(inMsg);
+    var storage = lazy Storage.load();
+
+    assert (
+        isSignatureValid(
+            request.requestBody.toCell().hash(),
+            request.signature as slice,
+            storage.publicKey
+        )
+    ) throw ErrCode.InvalidSignature;
+
+    assert (request.requestBody.seqno == storage.seqno) throw ErrCode.InvalidSeqno;
+    storage.seqno += 1;
+
+    acceptExternalMessage();
+    storage.save();
+
+    val msg = createMessage({
+        bounce: BounceMode.NoBounce,
+        dest: request.requestBody.to,
+        value: 0,
+        body: "Your action payload here"
+    });
+    msg.send(128);
+}
+
+get fun seqno(): uint64 {
+    val storage = lazy Storage.load();
+    return storage.seqno;
+}
 ```
 
 Remember to also implement replay protection to prevent reusing the same signature even if it's correctly targeted.
@@ -264,34 +288,41 @@ Remember to also implement replay protection to prevent reusing the same signatu
 
 Do not sign data without including essential context like the recipient address. An attacker could intercept the message, copy the signature, and replace the recipient address in their own transaction, effectively redirecting the intended action or funds.
 
-```tact
-message(0x988d4037) Request {
-    signature: Slice as bytes64;
-    data: Slice as remaining; // 'to' address is not part of the signed data
+```tolk
+struct (0x988d4037) Request {
+    signature: bytes64
+    data: RemainingBitsAndRefs  // `to` address is not part of the signed data
 }
 
-contract InsecureChecker(
-    publicKey: Int as uint256,
-) {
-    receive(request: Request) {
-        // The signature only verifies 'request.data', not the intended recipient.
-        if (checkDataSignature(request.data.hash(), request.signature, self.publicKey)) {
-            // Attacker can see this message, copy the signature, and send their own
-            // message to a different 'to' address before this one confirms.
-            // The 'sender()' here is the original sender, but the attacker can initiate
-            // a similar transaction targeting themselves or another address.
-            message(MessageParameters {
-                to: sender(), // Vulnerable: recipient isn't verified by the signature
-                value: 0,
-                mode: SendRemainingBalance, // Caution: sending the whole balance!
-                bounce: false,
-            });
-        }
-    }
+struct Storage {
+    publicKey: uint256
+}
 
-    // Empty receiver for the deployment,
-    // which forwards the remaining value back to the sender
-    receive() { cashback(sender()) }
+fun Storage.load() {
+    return Storage.fromCell(contract.getData())
+}
+
+fun onInternalMessage(in: InMessage) {
+    val request = Request.fromSlice(in.body);
+    val storage = lazy Storage.load();
+
+    // The signature only verifies `request.data`, not the intended recipient.
+    if (isSignatureValid(
+        request.data.hash(),
+        request.signature as slice,
+        storage.publicKey
+    )) {
+        // Attacker can see this message, copy the signature, and send their own
+        // message to a different `to` address before this one confirms.
+        // The `in.senderAddress` here is the original sender, but the attacker can initiate
+        // a similar transaction targeting themselves or another address.
+        val msg = createMessage({
+            bounce: BounceMode.NoBounce,
+            dest: in.senderAddress,  // Vulnerable: recipient isn't verified by the signature
+            value: 0,
+        });
+        msg.send(128);  // Caution: sending the whole balance!
+    }
 }
 ```
 
@@ -303,27 +334,42 @@ If excess gas is not returned to the sender, funds accumulate in contracts over 
 
 ### Secure gas handling
 
-```func
-message(0xd53276db) Excesses {}
-message Vote { votes: Int as int32 }
+```tolk
+struct (0xd53276db) Excesses {}
 
-contract Sample(
-    votes: Int as uint32,
-) {
-    receive(msg: Vote) {
-        self.votes += msg.votes;
+struct Vote {
+    votes: int32
+}
 
-        message(MessageParameters {
-            to: sender(),
-            value: 0,
-            mode: SendRemainingValue | SendIgnoreErrors,
-            body: Excesses {}.toCell(),
-        });
-    }
+struct Storage {
+    votes: uint32
+}
 
-    // Empty receiver for the deployment,
-    // which forwards the remaining value back to the sender
-    receive() { cashback(sender()) }
+fun Storage.load() {
+    return Storage.fromCell(contract.getData())
+}
+
+fun Storage.save(self) {
+    contract.setData(self.toCell())
+}
+
+fun onInternalMessage(in: InMessage) {
+    val msg = Vote.fromSlice(in.body);
+
+    var storage = lazy Storage.load();
+    storage.votes += msg.votes;
+    storage.save();
+
+    val excessesMsg = createMessage({
+        bounce: BounceMode.NoBounce,
+        dest: in.senderAddress,
+        value: 0,
+        body: Excesses {}
+    });
+    excessesMsg.send(
+        SEND_MODE_IGNORE_ERRORS +
+        SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
+    );
 }
 ```
 
@@ -337,49 +383,102 @@ Thus, any on-chain communication is asynchronous and done by sending and receivi
 
 Exchange messages to pull data from another contract.
 
-```tact
-message GetMoney {}
-message ProvideMoney {}
-message TakeMoney { money: Int as coins }
+Shared messages:
 
-contract OneContract(
-    money: Int as coins,
-) {
-    receive(msg: ProvideMoney) {
-        message(MessageParameters {
-            to: sender(),
-            value: 0,
-            mode: SendRemainingValue | SendIgnoreErrors,
-            body: TakeMoney { money: self.money }.toCell(),
-        });
-    }
+```tolk title="message.tolk"
+struct (0x100001) GetMoney {}
 
-    // Empty receiver for the deployment,
-    // which forwards the remaining value back to the sender
-    receive() { cashback(sender()) }
+struct (0x100002) ProvideMoney {}
+
+struct (0x100003) TakeMoney {
+    money: coins
+}
+```
+
+```tolk title="OneContract.tolk"
+import "message"
+
+struct OneContractStorage {
+    money: coins
 }
 
-contract AnotherContract(
-    oneContractAddress: Address,
-) {
-    receive(_: GetMoney) {
-        message(MessageParameters {
-            to: self.oneContractAddress,
-            value: 0,
-            mode: SendRemainingValue | SendIgnoreErrors,
-            bounce: false,
-            body: ProvideMoney {}.toCell(),
-        });
-    }
+fun OneContractStorage.load() {
+    return OneContractStorage.fromCell(contract.getData())
+}
 
-    receive(msg: TakeMoney) {
-        require(sender() == self.oneContractAddress, "Invalid money provider!");
-        // ...further processing...
-    }
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy ProvideMoney.fromSlice(in.body);
 
-    // Empty receiver for the deployment,
-    // which forwards the remaining value back to the sender
-    receive() { cashback(sender()) }
+    match (msg) {
+        ProvideMoney => {
+            val storage = lazy OneContractStorage.load();
+
+            val reply = createMessage({
+                bounce: BounceMode.NoBounce,
+                dest: in.senderAddress,
+                value: 0,
+                body: TakeMoney {
+                    money: storage.money
+                }
+            });
+            reply.send(
+                SEND_MODE_IGNORE_ERRORS +
+                SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
+            );
+        }
+
+        else => {
+            assert (in.body.isEmpty()) throw 0xFFFF;
+        }
+    }
+}
+```
+
+```tolk title="AnotherContract.tolk"
+import "message"
+
+enum ErrCode {
+    InvalidMoneyProvider = 100,
+}
+
+type AnotherContractMessage = GetMoney | TakeMoney
+
+struct AnotherContractStorage {
+    oneContractAddress: address
+}
+
+fun AnotherContractStorage.load() {
+    return AnotherContractStorage.fromCell(contract.getData())
+}
+
+fun onInternalMessage(in: InMessage) {
+    val msg = lazy AnotherContractMessage.fromSlice(in.body);
+    val storage = lazy AnotherContractStorage.load();
+
+    match (msg) {
+        GetMoney => {
+            val request = createMessage({
+                bounce: BounceMode.NoBounce,
+                dest: storage.oneContractAddress,
+                value: 0,
+                body: ProvideMoney {}
+            });
+            request.send(
+                SEND_MODE_IGNORE_ERRORS +
+                SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
+            );
+        }
+
+        TakeMoney => {
+            assert (in.senderAddress == storage.oneContractAddress)
+                throw ErrCode.InvalidMoneyProvider;
+            // ...further processing...
+        }
+
+        else => {
+            assert (in.body.isEmpty()) throw 0xFFFF;
+        }
+    }
 }
 ```
 
@@ -442,13 +541,13 @@ val readValue = storage.loadUint(32);
 
 Ignoring function return values can lead to logic errors and unexpected behavior.
 
-### Vulnerable code:
+### Vulnerable code
 
 ```func
 infoDict.delete(index);  // Ignoring success flag
 ```
 
-### Secure implementation:
+### Secure implementation
 
 ```tolk
 val success = infoDict.delete(index);
