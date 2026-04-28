@@ -61,8 +61,8 @@ Destroying accounts using [send mode](/foundations/messages/modes) `128 + 32` wi
 ### Vulnerable code
 
 ```tolk
-fun onInternalMessage(msgValue: int, inMsgFull: cell, inMsgBody: slice) {
-    if (inMsgBody.isEmpty()) {
+fun onInternalMessage(in: InMessage) {
+    if (in.body.isEmpty()) {
         return;  // Dangerous: empty message handling
     }
 
@@ -74,9 +74,9 @@ fun onInternalMessage(msgValue: int, inMsgFull: cell, inMsgBody: slice) {
 ### Secure approach
 
 ```tolk
-fun onInternalMessage(msgValue: int, inMsgFull: cell, inMsgBody: slice) {
+fun onInternalMessage(in: InMessage) {
     // Proper validation before any destruction
-    assert (authorizedSender(sender)) throw ErrCode.Unauthorized;
+    assert (authorizedSender(in.senderAddress)) throw ErrCode.Unauthorized;
 
     // Ensure no pending operations
     assert (safeToDestroy()) throw ErrCode.PendingOperations;
@@ -99,7 +99,7 @@ fun onExternalMessage(mutate inMsg: slice) {
 
     assert (msgSeqno == storedSeqno) throw 33;  // Prevent replay
 
-    acceptMessage();
+    acceptExternalMessage();
 
     // Update sequence number
     contract.setData(
@@ -268,12 +268,12 @@ fun onExternalMessage(inMsg: slice) {
     storage.save();
 
     val msg = createMessage({
-        bounce: BounceMode.NoBounce,
-        dest: request.requestBody.to,
-        value: 0,
-        body: "Your action payload here"
+      bounce: BounceMode.NoBounce,
+      dest: request.requestBody.to,
+      value: 0,
+      body: "Your action payload here"
     });
-    msg.send(128);
+    msg.send(SEND_MODE_REGULAR);
 }
 
 get fun seqno(): uint64 {
@@ -338,7 +338,7 @@ If excess gas is not returned to the sender, funds accumulate in contracts over 
 struct (0xd53276db) Excesses {}
 
 struct Vote {
-    votes: int32
+    votes: uint32
 }
 
 struct Storage {
