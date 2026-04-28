@@ -295,7 +295,109 @@ Retrieve every jetton held by the connected TON wallet or an arbitrary address:
 
 ### Continuous balance monitoring
 
-Poll the balance at regular intervals to keep the displayed value up to date. Use an appropriate interval based on UX requirements — shorter intervals provide fresher data but increase API usage.
+Obtain real-time jetton balance updates with a [streaming API provider](/ecosystem/appkit/init#providers) and fallback to polling at regular intervals to keep the displayed value up to date. For polling, use an appropriate interval based on UX requirements — shorter intervals provide fresher data but increase API usage.
+
+#### With streaming
+
+Modify the following example according to the application logic:
+
+<CodeGroup>
+  ```tsx title="React" icon="react"
+  import {
+    useJettonBalanceByAddress,
+    useAddress,
+    useWatchJettonsByAddress,
+  } from '@ton/appkit-react';
+
+  export const JettonBalanceCard = ({ jettonAddress }) => {
+    const ownerAddress = useAddress();
+
+    useWatchJettonsByAddress({
+      address: ownerAddress ?? '<TON_WALLET_ADDRESS>',
+    });
+
+    const {
+      data: balance,
+      isLoading,
+      error,
+      refetch,
+    } = useJettonBalanceByAddress({
+      ownerAddress: ownerAddress ?? '<TON_WALLET_ADDRESS>',
+      jettonAddress,
+      jettonDecimals: 6,
+    });
+
+    if (isLoading) {
+      return <div>Loading...</div>;
+    }
+
+    if (error) {
+      return (
+        <div>
+          <p>Error: {error.message}</p>
+          <button onClick={() => refetch()}>Try again</button>
+        </div>
+      );
+    }
+
+    return <div>Jetton balance: {balance ?? '0'}</div>;
+  };
+  ```
+
+  ```ts title="TypeScript" icon="globe" expandable
+  // Not runnable: implement the updateUI()
+  import {
+    type AppKit,
+    Network,
+    getSelectedWallet,
+    hasStreamingProvider,
+    watchJettons,
+  } from '@ton/appkit';
+
+  export function startJettonBalanceMonitoring(
+    kit: AppKit,
+    jettonAddress: string,
+    onBalanceUpdate: (balance: string) => void,
+    network: Network = Network.mainnet(),
+  ): () => void {
+    if (!hasStreamingProvider(kit, network)) {
+      throw new Error([
+        `No streaming provider registered for network ${network.chainId}. `,
+        'Register one via kit.streamingManager.registerProvider(...) first.',
+      ].join());
+    }
+
+    return watchJettons(kit, {
+      network,
+      onChange: (update) => {
+        const selectedWallet = getSelectedWallet(kit);
+        if (!selectedWallet) return;
+        if (update.status !== 'finalized') return;
+        if (update.masterAddress !== jettonAddress) return;
+
+        onBalanceUpdate(update.balance);
+      },
+    });
+  }
+
+  // Usage
+  const stopMonitoring = startJettonBalanceMonitoring(
+    kit,
+    // Jetton master (minter) contract address
+    // E.g., USDT on TON mainnet:
+    'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs',
+    // The updateUI() function is exemplary and should be replaced by
+    // an app function that refreshes the state of the balance displayed
+    // in the interface
+    (balance) => updateUI(balance),
+  );
+
+  // Stop monitoring once it is no longer needed
+  stopMonitoring();
+  ```
+</CodeGroup>
+
+#### Only polling
 
 Modify the following example according to the application logic:
 
