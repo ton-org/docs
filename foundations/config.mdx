@@ -432,9 +432,13 @@ This parameter provides the configuration for the `Catchain` protocol in the TON
 
 This parameter provides the configuration for the consensus protocol above `Catchain` ([Param 28](#param-28)) in the TON Blockchain. The consensus protocol is a crucial component of a blockchain network, and it ensures that all nodes agree on the state of the distributed ledger.
 
+`ConfigParam 29` has evolved through several constructors. The most recent one, `consensus_config_v4#d9`, is documented in [`block.tlb`](https://github.com/ton-blockchain/ton/blob/af252bcdaea357fee21739e984654c2c84e7d61d/crypto/block/block.tlb#L782) and is identical to the previous `consensus_config_v3#d8`, except that one bit is reallocated from `flags` to a new `use_quic:Bool` field that selects the network transport used by the legacy Catchain consensus path.
+
 ### Configuration parameters
 
 - `flags`: A general field that can be used to set various binary parameters.
+
+- `use_quic`: A Boolean value indicating whether the legacy Catchain consensus path uses QUIC transport instead of RLDP2. Introduced in `consensus_config_v4#d9`; has the same meaning as the `use_quic` field in [Param 30](#param-30).
 
 - `new_catchain_ids`: A Boolean value indicating whether to generate new `Catchain` identifiers.
 
@@ -459,6 +463,55 @@ This parameter provides the configuration for the consensus protocol above `Catc
 - `catchain_max_blocks_coeff`: The coefficient limiting the rate of block generation in `Catchain`, [description](https://github.com/ton-blockchain/ton/blob/master/doc/catchain-dos.md).
 
 For up-to-date values, see [https://tonviewer.com/config](https://tonviewer.com/config).
+
+#### On-chain schema
+
+`ConfigParam 29` is a tagged union: validators must accept any of the legacy constructors so old serialized configs keep parsing, but new on-chain values are written using the latest tag. The current set defined in [`block.tlb`](https://github.com/ton-blockchain/ton/blob/af252bcdaea357fee21739e984654c2c84e7d61d/crypto/block/block.tlb#L782) is:
+
+```tlb
+consensus_config#d6 round_candidates:# { round_candidates >= 1 }
+  next_candidate_delay_ms:uint32 consensus_timeout_ms:uint32
+  fast_attempts:uint32 attempt_duration:uint32 catchain_max_deps:uint32
+  max_block_bytes:uint32 max_collated_bytes:uint32 = ConsensusConfig;
+
+consensus_config_new#d7 flags:(## 7) { flags = 0 } new_catchain_ids:Bool
+  round_candidates:(## 8) { round_candidates >= 1 }
+  next_candidate_delay_ms:uint32 consensus_timeout_ms:uint32
+  fast_attempts:uint32 attempt_duration:uint32 catchain_max_deps:uint32
+  max_block_bytes:uint32 max_collated_bytes:uint32 = ConsensusConfig;
+
+consensus_config_v3#d8 flags:(## 7) { flags = 0 } new_catchain_ids:Bool
+  round_candidates:(## 8) { round_candidates >= 1 }
+  next_candidate_delay_ms:uint32 consensus_timeout_ms:uint32
+  fast_attempts:uint32 attempt_duration:uint32 catchain_max_deps:uint32
+  max_block_bytes:uint32 max_collated_bytes:uint32
+  proto_version:uint16 = ConsensusConfig;
+
+consensus_config_v4#d9 flags:(## 6) { flags = 0 } use_quic:Bool new_catchain_ids:Bool
+  round_candidates:(## 8) { round_candidates >= 1 }
+  next_candidate_delay_ms:uint32 consensus_timeout_ms:uint32
+  fast_attempts:uint32 attempt_duration:uint32 catchain_max_deps:uint32
+  max_block_bytes:uint32 max_collated_bytes:uint32
+  proto_version:uint16 catchain_max_blocks_coeff:uint32 = ConsensusConfig;
+
+_ ConsensusConfig = ConfigParam 29;
+```
+
+#### `consensus_config_v4#d9` (current format)
+
+`consensus_config_v4#d9` is the current canonical layout for `ConfigParam 29`. Compared to `consensus_config_v3#d8`:
+
+| Aspect | `consensus_config_v3#d8` | `consensus_config_v4#d9` |
+| --- | --- | --- |
+| `flags` width | `## 7` | `## 6` (one bit reallocated) |
+| New field | — | `use_quic:Bool` placed right after `flags` |
+| Other fields | unchanged | unchanged |
+
+The reallocation is wire-compatible in the sense that no existing flag bit is repurposed — the previous `flags` value of `0` is still expressible — but the new constructor has its own tag (`#d9`) so parsers must recognize it explicitly.
+
+<Aside>
+  `consensus_config_v4#d9` was introduced together with the [Catchain 2.0 / Simplex](https://github.com/ton-blockchain/simplex-docs/blob/main/Simplex.md) migration tracked by [Param 30](#param-30). The `use_quic` toggle in Param 29 controls the transport for the legacy Catchain path; the `use_quic` toggle in Param 30 controls the transport for the new Simplex path. They are configured independently.
+</Aside>
 
 [Parameter #29 on mainnet](https://tonviewer.com/config#29)
 
