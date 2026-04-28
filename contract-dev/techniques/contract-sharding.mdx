@@ -7,11 +7,11 @@ import { Image } from '/snippets/image.jsx';
 
 Some protocols need to store a lot of information in contracts, for example, token contracts with many users. In TON, there is a limit on how much can be stored in a single contract. The solution is to split the data across multiple contracts.
 
-Each such contract, referred to as a child contract, is associated with a key that allows direct access to the required contract and its data. Some protocols also introduce a _parent_ contract that coordinates child contracts.
+Each such contract, referred to as a _child_ contract, is associated with a key that determines its address within a parent contract. Some protocols also introduce a _parent_ contract that coordinates child contracts.
 
 ## Child contract address by key
 
-The contract address depends on the initial data provided in [`StateInit`](/foundations/messages/deploy). To ensure that a child contract can be accessed using only the key, the initial data includes the key but does not include the associated value. As a result, the address of the child contract can be determined from the key alone.
+The contract address depends on the initial data provided in [`StateInit`](/foundations/messages/deploy). To ensure that a child contract can be accessed using only the key within a specific parent, the initial data includes the key and the parent address, but does not include the associated value. As a result, the address of the child contract can be determined from the parent address and key alone.
 
 <Aside
   type="caution"
@@ -39,7 +39,6 @@ Contract sharding supports an unbounded number of potential child contracts.
 
 In general, data structures that can scale to very large sizes are difficult to implement efficiently on blockchains. This pattern allows such scaling by distributing data across multiple contracts.
 
-
 ```tolk title="storage.tolk"
 // Shared storage layouts and helper used by both contracts.
 
@@ -56,6 +55,8 @@ fun TodoChildStorage.save(self) {
 }
 
 struct TodoParentStorage {
+    // Initialize this field in the parent's StateInit during deployment.
+    adminAddress: address
     numChildren: uint64 = 0
     // Parent must know the child contract code to deploy new instances.
     todoChildCode: cell
@@ -119,7 +120,6 @@ get fun seqno(): uint64 {
 }
 ```
 
-
 ```tolk title="parent.tolk"
 import "storage"
 
@@ -131,11 +131,15 @@ fun onInternalMessage(in: InMessage) {
     match (msg) {
         DeployAnother => {
             var storage = lazy TodoParentStorage.load();
+            assert (in.senderAddress == storage.adminAddress) throw 0xFFFF;
+            // `numChildren` is used as the next child id. Because deployment
+            // is sent with SEND_MODE_IGNORE_ERRORS, failed sends can leave gaps.
             storage.numChildren += 1;
 
             // Send a message to the auto-calculated address and attach
             // the child code and initial data so the child is deployed.
             val deployMsg = createMessage({
+                bounce: BounceMode.Only256BitsOfBody,
                 dest: calcDeployedTodoChild(
                     storage.numChildren,
                     storage.todoChildCode,
