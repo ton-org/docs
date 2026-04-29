@@ -1,5 +1,6 @@
 ---
-title: "Mintless Jetton"
+title: "Mintless jetton"
+sidebarTitle: "Mintless jetton"
 ---
 
 import { Aside } from "/snippets/aside.jsx"
@@ -36,7 +37,7 @@ Because mintless jettons extend the standard jettons, you can interact with them
 
 Mintless jettons leverage [Merkle trees](/foundations/proofs/overview) and cryptographic proofs to enable efficient, decentralized airdrops without traditional minting. Here's a detailed breakdown of the technical implementation:
 
-### Merkle Tree Foundation
+### Merkle Tree foundation
 
 The core innovation lies in representing all airdrop data as a single Merkle tree, where:
 
@@ -46,7 +47,7 @@ The core innovation lies in representing all airdrop data as a single Merkle tre
 
 This approach reduces storage from O(n) per recipient to O(1) for the entire airdrop.
 
-### Data Structures
+### Data structures
 
 Airdrop HashMap represents how we store individual users' airdrop information.
 
@@ -71,7 +72,7 @@ The standard wallet storage is extended with:
 - `merkle_hash`: Copy of the master's Merkle hash for validation
 - `already_claimed`: Boolean flag indicating whether the airdrop has been claimed
 
-### Claiming Mechanism
+### Claiming mechanism
 
 ```tlb
 merkle_airdrop_claim#0df602d6 proof:^Cell = CustomPayload;
@@ -91,33 +92,26 @@ transfer#0f8a7ea5 query_id:uint64 amount:(VarUInteger 16) destination:MsgAddress
 
 The standard transfer message is enhanced by including the claim proof in `custom_payload`.
 
-### Cryptographic Proof Validation
+### Cryptographic proof validation
 
 When a jetton wallet receives a transfer with a claim payload, it performs these validation steps:
 
-1. Merkle Proof Verification
+1. Merkle proof verification
+   - Extracts the MerkleProof exotic cell from `custom_payload`
+   - Verifies the proof's cryptographic integrity against the stored `merkle_hash`
+   - Ensures the proof path leads to a valid `AirdropItem` for the sender's address
+1. Timestamp validation
+   - Checks that `now() >= start_from` (claiming period has begun)
+   - Verifies that `now() <= expired_at` (claiming period hasn't expired)
+1. Claim status check
+   - Ensures `already_claimed == false` (prevents double-claiming)
+1. Amount Validation
+   - Extracts the airdrop amount from the validated AirdropItem
+   - Credits this amount to the wallet's balance
 
-- Extracts the MerkleProof exotic cell from `custom_payload`
-- Verifies the proof's cryptographic integrity against the stored `merkle_hash`
-- Ensures the proof path leads to a valid `AirdropItem` for the sender's address
+### State transitions
 
-2. Timestamp Validation
-
-- Checks that `now() >= start_from` (claiming period has begun)
-- Verifies that `now() <= expired_at` (claiming period hasn't expired)
-
-3. Claim Status Check
-
-- Ensures `already_claimed == false` (prevents double-claiming)
-
-4. Amount Validation
-
-- Extracts the airdrop amount from the validated AirdropItem
-- Credits this amount to the wallet's balance
-
-### State Transitions
-
-Before Claim:
+Before claim:
 
 ```
 JettonWallet {
@@ -127,7 +121,7 @@ JettonWallet {
 }
 ```
 
-After Successful Claim:
+After successful claim:
 
 ```
 JettonWallet {
@@ -137,18 +131,18 @@ JettonWallet {
 }
 ```
 
-### Off-chain Infrastructure
+### Off-chain infrastructure
 
-#### Merkle Tree Generation
+#### Merkle Tree generation
 
-1. **Data Collection**: Gather all recipient addresses and their allocated amounts
-1. **Tree Construction**: Build a binary Merkle tree with AirdropItem structures as leaves
-1. **Hash Computation**: Calculate SHA-256 hashes recursively up to the root
-1. **Proof Generation**: Create individual Merkle proofs for each recipient
+1. **Data collection**: Gather all recipient addresses and their allocated amounts
+1. **Tree construction**: Build a binary Merkle tree with AirdropItem structures as leaves
+1. **Hash computation**: Calculate SHA-256 hashes recursively up to the root
+1. **Proof generation**: Create individual Merkle proofs for each recipient
 
-#### Proof Serving
+#### Proof serving
 
-- **Static Storage**: Host the complete Merkle tree data at `mintless_merkle_dump_uri`
+- **Static storage**: Host the complete Merkle tree data at `mintless_merkle_dump_uri`
 - **Dynamic API**: Implement `custom_payload_api_uri` to serve individual proofs on demand
 - **Caching**: Optimize proof retrieval with appropriate caching strategies
 
@@ -178,9 +172,9 @@ Using a custom API:
   Wallets are not required to support mintless claims, including indexing airdrop trees. Wallet applications may charge the jetton issuer for this service.
 </Aside>
 
-## Supporting mintless jettons in DApps (DEX/Lending platforms)
+## Supporting mintless jettons in dApps
 
-Because wallet applications handle claims automatically, DApps don’t need special logic for mintless jettons. DApps can use APIs (such as TonAPI or Ton Center API) to display unclaimed balances.
+Because wallet applications handle claims automatically, dApps like DEXes or lending platforms don’t need special logic for mintless jettons. DApps can use APIs, such as TonAPI or [TON Center](/ecosystem/api/toncenter/introduction), to display unclaimed balances.
 
 To improve the user experience, DApps can check if the user's wallet application supports a specific mintless jetton. If unsupported, retrieve the airdrop proof and initialization data from the Jetton API and include it in the transfer message.
 
