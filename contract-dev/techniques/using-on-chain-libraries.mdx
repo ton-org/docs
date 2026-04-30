@@ -74,22 +74,21 @@ The following Tolk example is based on the librarian contract from the [multisig
 ```tolk
 import "@stdlib/gas-payments"
 
-const DEFAULT_DURATION = 3600 * 24 * 365 * 10   // 10 years, can top-up in any time
+const DEFAULT_DURATION = 3600 * 24 * 365 * 10  // 10 years, can top-up any time
+const MAX_LIBRARY_CELLS = 1000 // Network config limit for library cells
 const ONE_TON = ton("1")
+const PUBLIC_LIBRARY_MODE = 2 // Public library mode for masterchain contracts
 
 // https://docs.ton.org/tvm/instructions#fb06-setlibcode
 fun setLibCode(code: cell, mode: int): void
     asm "SETLIBCODE"
-
-fun emptyCell(): cell
-    asm "<b b> PUSHREF"
 
 fun onInternalMessage(in: InMessage) {
     val senderAddress = in.senderAddress;
     val libToPublish = contract.getData();
 
     val initialGas = getGasConsumedAtTheMoment();
-    val (orderCells, orderBits, _) = libToPublish.calculateSizeStrict(1000);
+    val (orderCells, orderBits, _) = libToPublish.calculateSizeStrict(MAX_LIBRARY_CELLS);
     val sizeCountingGas = getGasConsumedAtTheMoment() - initialGas;
 
     val toReserve =
@@ -105,16 +104,16 @@ fun onInternalMessage(in: InMessage) {
     });
     reply.send(SEND_MODE_CARRY_ALL_BALANCE);
 
-    setLibCode(libToPublish, 2);
+    setLibCode(libToPublish, PUBLIC_LIBRARY_MODE);
 
-    contract.setCodePostponed(emptyCell());
-    contract.setData(emptyCell());
+    contract.setCodePostponed(createEmptyCell());
+    contract.setData(createEmptyCell());
 }
 ```
 
 This contract requires enough TON for at least 10 years of storage. That prevents the library from freezing shortly after publication and becoming inaccessible.
 
-The key line is `setLibCode(libToPublish, 2);`. This call publishes an ordinary cell with the flag set to `2`, which makes the library public.
+The key line is `setLibCode(libToPublish, PUBLIC_LIBRARY_MODE);`. This call publishes an ordinary cell with the flag set to `2`, which makes the library public.
 
 <Aside type="note">
   After publication, the contract becomes bricked, so no further operations are possible.
