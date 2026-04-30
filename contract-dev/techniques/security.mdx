@@ -56,7 +56,7 @@ val privateData = beginCell()
 
 ## Account destruction race conditions
 
-Destroying accounts using [send mode](/foundations/messages/modes) `128 + 32` without proper checks can lead to fund loss in race conditions.
+Destroying accounts using [send mode](/foundations/messages/modes) `SEND_MODE_CARRY_ALL_BALANCE + SEND_MODE_DESTROY` (`128 + 32`) without proper checks can lead to fund loss in race conditions.
 
 ### Vulnerable code
 
@@ -67,7 +67,7 @@ fun onInternalMessage(in: InMessage) {
     }
 
     // Process and destroy account
-    sendRawMessage(msg, 128 + 32);  // Destroys account
+    sendRawMessage(msg, SEND_MODE_CARRY_ALL_BALANCE + SEND_MODE_DESTROY);  // Destroys account
 }
 ```
 
@@ -138,7 +138,7 @@ fun onExternalMessage(inMsg: slice) {
     // parse message and contract storage (omitted)
     assert (msgSeqno == storedSeqno) throw 33;
     assert (subwalletId == storedSubwallet) throw 34;
-    assert (checkSignature(inMsg.hash(), signature, publicKey)) throw 35;
+    assert (isSignatureValid(inMsg.hash(), signature, publicKey)) throw 35;
     acceptMessage();
     // handle the message (omitted)
 }
@@ -215,8 +215,6 @@ In TON blockchain, all pending messages are publicly visible in the mempool. Fro
 Include critical parameters like the recipient address (`to`) within the data that is signed. This ensures that the signature is valid only for the intended operation and recipient, preventing attackers from reusing the signature for their benefit. Also, implement replay protection to prevent the same signed message from being used multiple times.
 
 ```tolk
-import "@stdlib/gas-payments"
-
 struct RequestBody {
     to: address
     seqno: uint64
@@ -543,7 +541,7 @@ Ignoring function return values can lead to logic errors and unexpected behavior
 
 ### Vulnerable code
 
-```func
+```tolk
 infoDict.delete(index);  // Ignoring success flag
 ```
 
@@ -561,10 +559,10 @@ Contracts can be updated if not properly protected, changing their behavior unex
 ### Secure implementation
 
 ```tolk
-fun updateCode(newCode: cell) {
-    assert (authorizedAdmin(sender())) throw ErrCode.Unauthorized;
+fun updateCode(sender: address, newCode: cell) {
+    assert (authorizedAdmin(sender)) throw ErrCode.Unauthorized;
     assert (validateCode(newCode)) throw ErrCode.InvalidCode;
 
-    setCode(newCode);
+    contract.setCode(newCode);
 }
 ```
