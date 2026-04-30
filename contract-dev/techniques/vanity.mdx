@@ -19,39 +19,40 @@ The contract code and data are included in the vanity deploy message. The vanity
 The vanity contract code:
 
 ```tolk expandable
+struct VanityStorage {
+    padding: uint5
+    owner: address
+    salt: uint256
+}
+
+struct DeployPayload {
+    code: cell
+    data: cell
+}
+
 fun onInternalMessage(in: InMessage) {
+    val storage = lazy VanityStorage.fromCell(contract.getData());
 
-    // Parse data
-    var ds = contract.getData().beginParse();
-    ds.skipBits(5); // Padding
-    val owner = ds.loadAddress();
-    ds.skipBits(256);
-    ds.assertEnd();
-
-    // Parse message
-    // int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool
+    // Read sender address
     val sender = in.senderAddress;
 
     // Allow deployment only to the owner
-    assert (sender == owner) throw 8;
+    assert (sender == storage.owner) throw 8;
 
     // Set code and data
-    var body = in.body;
-    val code = body.loadRef();
-    val data = body.loadRef();
-    body.assertEnd();
-    contract.setCodePostponed(code);
-    contract.setData(data);
+    val payload = lazy DeployPayload.fromSlice(in.body);
+    contract.setCodePostponed(payload.code);
+    contract.setData(payload.data);
 }
 ```
 
-It checks whether the message comes from the owner specified in the data, then replaces the contract's code and data with those provided in the incoming message.
+It loads the owner from the typed `VanityStorage`, checks whether the message comes from this owner, then loads `DeployPayload` and replaces the contract's code and data with the cells from the incoming message.
 
-In a vanity contract, a `salt` is a 256-bit value stored in `StateInit` along with five padding bits and the owner address. The contract skips this value during execution using `ds.skipBits(256);`, so it does not affect runtime behavior and only influences the resulting address via the `StateInit` hash.
+In a vanity contract, a `salt` is a 256-bit value stored in `StateInit` along with five padding bits and the owner address. The contract declares this layout in `VanityStorage`, but only the `owner` field is needed at runtime. The `salt` does not affect runtime behavior and only influences the resulting address via the `StateInit` hash.
 
 The `owner` field is required because someone could intercept an external message, extract the `salt`, and deploy their own contract with the same `salt` concurrently. Since the `owner` value also unpredictably affects the address, the intercepted `salt` is useless unless the attacker can send the message from the same `owner` address.
 
-Because a contract address is derived from the `StateInit` hash, changing the `salt` changes the address deterministically. The search for a suitable `salt` happens entirely off-chain: a Python script with an OpenCL kernel for speed generates many random `salt` values, computes the resulting address, and reports matches. The on-chain vanity contract does not brute-force salts; it only verifies the owner and then sets the provided code and data when deployed.
+Because a contract address is derived from the `StateInit` hash, changing the `salt` changes the address deterministically. The search for a suitable `salt` happens entirely off-chain: a Python script with an OpenCL kernel for speed generates many random `salt` values, computes the resulting address, and reports matches. The on-chain vanity contract does not brute-force salts; it only verifies the owner and then applies the provided code and data when deployed.
 
 ## Generate salt
 
