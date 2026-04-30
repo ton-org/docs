@@ -9,7 +9,9 @@ import { Aside } from '/snippets/aside.jsx';
   Understand [the jetton architecture](/standard/tokens/jettons/overview) before reading this article.
 </Aside>
 
-Jetton contracts use the `JettonNotify` message to notify receiving contracts of incoming jetton transfers, allowing them to react by crediting user accounts or triggering other actions. However, since anyone can send a `JettonNotify` message, receiving contracts must verify that it comes from the correct jetton wallet address.
+Contracts routinely process jettons for DEX, escrow, and lending protocols by handling `JettonNotify` messages from jetton wallets. However, since anyone can send these messages, receiving contracts must verify the message sender has the correct jetton wallet address.
+
+The problem is, that the jetton minter deploys the jetton wallet on the first jetton transfer to the contract, so the wallet address is unknown at the moment of contract deployment. This means, the contract needs logic to learn about the wallet address after deployment to be able to verify `JettonNotify` messages.
 
 ```mermaid
 graph LR
@@ -24,13 +26,13 @@ There are three approaches to verify `JettonNotify` messages, depending on the l
 | Requirement                 | [Manual management](#manual-wallet-management) | [Automatic discovery](#automatic-wallet-discovery) | [Get-method emulation](#on-chain-get-method-emulation) |
 | --------------------------- | ---------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------ |
 | Jetton type known           | Yes                                            | No                                                 | No                                                     |
-| Trust in deployer           | High                                           | Medium                                             | Low                                                    |
+| Trust in deployer           | Yes                                            | No                                                 | No                                                     |
 | Jetton is TEP-89 compatible | No                                             | Yes                                                | No                                                     |
 | Implementation complexity   | Low                                            | Medium                                             | High                                                   |
 
 ## Manual wallet management
 
-If the receiving contract knows the jetton type in advance, it must only check that the message comes from the correct jetton wallet address. This is the most efficient approach, because it only requires one address comparison.
+If the jetton type is known in advance, [calculate the corresponding jetton wallet address off-chain](https://docs.ton.org/standard/tokens/jettons/find) and set it via a message after deployment. It is impossible to hardcode the jetton wallet address in the contract’s [`StateInit`](/foundations/messages/deploy) because the wallet address depends on the contract address and creates a circular dependency. This is the most efficient approach, because it only requires one address comparison.
 
 The following example of a receiving contract handles `JettonNotify` messages for a trusted jetton wallet address that can be set by the owner of the contract.
 
@@ -40,8 +42,11 @@ sequenceDiagram
     participant Contract
     participant JettonWallet
 
-    Owner-->>Contract: Deploy with minter address
+    Owner-)Contract: Deploy with minter address
+    Contract-->Owner: Read contract address
     JettonWallet-xContract: JettonNotify
+    Note over JettonWallet, Contract: Message is ignored because<br/> trusted wallet is not set.
+    Owner-->Owner: Derive jetton wallet address from<br/>contract address and minter address
     Owner-)Contract: SetTrustedJettonWallet
     JettonWallet-)Contract: JettonNotify
 ```
@@ -100,9 +105,7 @@ fun onInternalMessage(in: InMessage) {
 
 This contract uses `SetTrustedJettonWallet` messages to set the trusted jetton wallet address whose owner is the receiving contract address.
 
-When deploying with this pattern, [calculate the jetton wallet address](/standard/tokens/jettons/find) that must receive top-ups. It is impossible to hardcode the jetton wallet address in the contract's [`StateInit`](/foundations/messages/deploy), because the wallet address depends on the contract address and creates a circular dependency.
-
-Including `jettonMinter` in the contract's `Storage` ensures that each instance of the contract is unique to a specific jetton, and thus has a unique address. This allows deploying multiple instances of the contract for different jettons, even if they share the same owner. Each instance can then set its own `trustedJettonWallet` address corresponding to its `jettonMinter`.
+Include the jetton minter address in the contract `Storage` to ensure each instance of the contract is unique to a specific jetton, and thus has a unique address. This allows deploying multiple instances of the contract for different jettons, even if they share the same owner. Each instance can then set its own `trustedJettonWallet` address corresponding to its `jettonMinter`.
 
 Modify `trustedJettonWallet` to store several addresses, to handle several jetton types with a single contract.
 
@@ -129,6 +132,7 @@ sequenceDiagram
 
     Owner-->>Contract: Deploy with minter address
     JettonWallet-xContract: JettonNotify
+    Note over JettonWallet, Contract: Message is ignored because<br/> trusted wallet is not set.
     Owner-)Contract: InitContract
     Contract-)JettonMinter: ProvideWalletAddress
     JettonMinter-)Contract: TakeWalletAddress
@@ -237,6 +241,7 @@ sequenceDiagram
 
     Owner-->>Contract: deploy with minter address
     JettonWallet-xContract: JettonNotify
+    Note over JettonWallet, Contract: Message is ignored because<br/> trusted wallet is not set.
     Contract<<-->>JettonMinter: get_wallet_address(owner)
     JettonWallet-)Contract: JettonNotify
 ```
