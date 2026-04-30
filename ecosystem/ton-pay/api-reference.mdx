@@ -5,32 +5,150 @@ sidebarTitle: "API reference"
 
 import { Aside } from "/snippets/aside.jsx";
 
-TypeScript exports for the TON Pay SDK packages `@ton-pay/api` and `@ton-pay/ui-react`. To install the packages, use:
+TypeScript exports for the TON Pay [`v0.4`](https://www.npmjs.com/package/@ton-pay/api?activeTab=versions) packages.
+
+## Install
 
 ```bash
-npm install @ton-pay/api @ton-pay/ui-react
+npm install @ton-pay/ui-react
 ```
 
-## Imports
+Install `@ton-pay/api` separately only when server-side helpers are required.
+
+## `@ton-pay/ui-react`
 
 ```ts
-// API helpers
+import { TonPayWidget } from "@ton-pay/ui-react";
+import type {
+  TonPayWidgetProps,
+  WidgetErrorPayload,
+  WidgetRouteChangedPayload,
+  WidgetSuccessPayload,
+} from "@ton-pay/ui-react";
+```
+
+### `TonPayWidget`
+
+Self-contained React component that:
+
+- resolves the TON Pay base URL from `chain`;
+- creates and caches widget sessions;
+- preloads the hosted iframe;
+- maps merchant checkout props to widget intent;
+- opens the checkout UI;
+- forwards widget lifecycle callbacks.
+
+### `TonPayWidgetProps`
+
+```ts
+type TonPayWidgetProps = {
+  amount: number | string;
+  recipientWalletAddress: string;
+  asset?: string;
+  bgColor?: string;
+  borderRadius?: number | string;
+  chain?: "mainnet" | "testnet";
+  className?: string;
+  comment?: string;
+  currency?: string;
+  disabled?: boolean;
+  fontFamily?: string;
+  height?: number | string;
+  isLoading?: boolean;
+  itemTitle?: string;
+  onClose?: () => void;
+  onError?: (payload: WidgetErrorPayload) => void;
+  onReady?: () => void;
+  onRouteChange?: (payload: WidgetRouteChangedPayload) => void;
+  onSuccess?: (payload: WidgetSuccessPayload) => void;
+  referenceId?: string;
+  style?: React.CSSProperties;
+  text?: string;
+  textColor?: string;
+  variant?: "long" | "short";
+  width?: number | string;
+};
+```
+
+<Aside type="note">
+  `chain` defaults to `mainnet`. `TonPayWidget` selects the TON Pay base URL internally, so the host app does not need to pass it as a prop.
+</Aside>
+
+### `WidgetErrorPayload`
+
+```ts
+type WidgetErrorPayload = {
+  code:
+    | "unknown"
+    | "invalid_intent"
+    | "route_blocked"
+    | "wallet_disconnected"
+    | "storage_access_denied"
+    | "network_error"
+    | "setup_required"
+    | "setup_failed"
+    | "unlock_failed"
+    | "payment_failed"
+    | "insufficient_balance"
+    | "signless_stopped";
+  message: string;
+  recoverable: boolean;
+  route?: string;
+};
+```
+
+### `WidgetRouteChangedPayload`
+
+```ts
+type WidgetRouteChangedPayload = {
+  pathname: string;
+  search: string;
+};
+```
+
+### `WidgetSuccessPayload`
+
+```ts
+type WidgetSuccessPayload = {
+  action: "setup" | "payment" | "topup" | "withdraw" | "reset";
+  reference?: string;
+  referenceId?: string;
+  sessionId?: string;
+  txHash?: string;
+  walletAddress?: string;
+};
+```
+
+### Checkout prop notes
+
+- `comment` –  payment comment added to the blockchain transaction. It maps to `commentToRecipient`.
+- `itemTitle` – UI-only text displayed in the widget.
+
+## `@ton-pay/api`
+
+```ts
 import {
+  TON,
+  USDT,
   createTonPayTransfer,
   getTonPayTransferByBodyHash,
   getTonPayTransferByReference,
-  type CompletedTonPayTransferInfo,
-  type CreateTonPayTransferParams,
-  type CreateTonPayTransferResponse,
+  verifySignature,
+  type TransferCompletedWebhookPayload,
+  type TransferRefundedWebhookPayload,
+  type WebhookPayload,
 } from "@ton-pay/api";
-
-// React UI
-import { TonPayButton, useTonPay } from "@ton-pay/ui-react";
 ```
 
-## Functions
+Use `@ton-pay/api` for backend and non-widget flows such as:
 
-### `createTonPayTransfer(params, options?)`
+- transfer creation for TON Connect or custom payment flows;
+- transfer status lookup by `reference` or `bodyBase64Hash`;
+- MoonPay helper calls outside the hosted widget flow.
+
+### Functions
+
+#### `createTonPayTransfer(params, options?)`
 
 Build a canonical message and return tracking identifiers.
 
@@ -38,7 +156,7 @@ Build a canonical message and return tracking identifiers.
 - `options`: `APIOptions`.
 - `options.chain`: `mainnet | testnet`.
 
-### `getTonPayTransferByBodyHash(bodyHash, options?)`
+#### `getTonPayTransferByBodyHash(bodyHash, options?)`
 
 Fetch a transfer by Base64 hash of the signed message body content (payload).
 
@@ -46,25 +164,13 @@ Fetch a transfer by Base64 hash of the signed message body content (payload).
 - `options`: `APIOptions`.
 - Return `CompletedTonPayTransferInfo`.
 
-### `getTonPayTransferByReference(reference, options?)`
+#### `getTonPayTransferByReference(reference, options?)`
 
 Fetch a transfer by reference.
 
 - `reference`: use the `reference` returned by `createTonPayTransfer`.
 - `options`: `APIOptions`.
 - Return `CompletedTonPayTransferInfo`.
-
-### `useTonPay(options?)`
-
-A React hook. Connect a wallet through [TON Connect](/ecosystem/ton-connect/overview) and send a transaction.
-
-- `pay(getMessage)`: Receive `senderAddr`, request `{ message }` from the factory, and send through TON Connect. Resolve `{ txResult, ...factoryReturn }`.
-
-### `TonPayButton`
-
-Prebuilt button. Handle wallet connect or disconnect flow and call `handlePay`.
-
-## Types: `@ton-pay/api`
 
 ### `CreateTonPayTransferParams`
 
@@ -118,13 +224,13 @@ type CompletedTonPayTransferInfo = {
 ```
 
 - `status`: `pending`, `success`, or `error`;
-- `errorCode`: TON Pay error codes in [Check status and retrieve info](/ecosystem/ton-pay/payment-integration/status-info).
+- `errorCode`: TON Pay error code returned for failed transfers, when available.
 
 ### `APIOptions`
 
 ```ts
 type APIOptions = {
-  chain: "mainnet" | "testnet";
+  chain?: "mainnet" | "testnet";
 };
 ```
 
@@ -151,9 +257,22 @@ import { TON, USDT } from "@ton-pay/api";
 
 ## Errors
 
-All API helpers throw `Error` with an HTTP `cause` if the network call fails. For example, `createTonPayTransfer` may throw "Failed to create TON Pay transfer".
+All API helpers throw `Error` when a network call fails. Inspect two fields to branch in a `try`/`catch`:
 
-## Peer dependencies
+- `error.message` — human-readable reason from the helper. For example, `createTonPayTransfer` throws `"Failed to create TON Pay transfer"`.
+- `error.cause` — the underlying HTTP response. Check `cause.status` to distinguish `4xx` (validation or not-found) from `5xx` (server or upstream) failures.
 
-- [`@tonconnect/ui-react`](https://www.npmjs.com/package/@tonconnect/ui-react) – React UI kit for TON Connect SDK.
-- [React 18](https://react.dev/) or later and `react-dom` 18 or later.
+```ts
+try {
+  const transfer = await createTonPayTransfer(params);
+} catch (err) {
+  if (err instanceof Error && err.cause) {
+    const status = (err.cause as Response).status;
+    console.error(status, err.message);
+  }
+}
+```
+
+## See also
+
+- End-to-end [server-side integration](/ecosystem/ton-pay/payment-integration/payments-server-side) examples
