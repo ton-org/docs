@@ -53,7 +53,98 @@ Balances are returned as strings representing fractional Toncoin units. For exam
 
 ### Continuous balance monitoring
 
-Poll the balance at regular intervals to keep the displayed value up to date. Use an appropriate interval based on UX requirements — shorter intervals provide fresher data but increase API usage.
+Obtain real-time balance updates with a [streaming API provider](/ecosystem/appkit/init#providers) and fallback to polling at regular intervals to keep the displayed value up to date. For polling, use an appropriate interval based on UX requirements — shorter intervals provide fresher data but increase API usage.
+
+#### With streaming
+
+Modify the following examples according to the application logic:
+
+<CodeGroup>
+  ```tsx title="React" icon="react" expandable
+  import {
+    useBalance,
+    useWatchBalance,
+  } from '@ton/appkit-react';
+
+  export const BalanceCard = () => {
+    // Polling
+    const {
+      data: balance,
+      isLoading,
+      error,
+      refetch,
+    } = useBalance();
+
+    // Hook enabling real-time balance updates for the currently selected wallet.
+    useWatchBalance();
+
+    if (error) {
+      return (
+        <div>
+          <p>Error retrieving balance</p>
+          <button onClick={() => refetch()}>Try again</button>
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        {isLoading ? (
+          <p>Loading the balance...</p>
+        ) : (
+          <p>TON wallet balance in fractional Toncoin: {balance ?? '0'}</p>
+        )}
+      </div>
+    );
+  };
+  ```
+
+  ```ts title="TypeScript" icon="globe" expandable
+  // Not runnable: implement the updateUI()
+  import {
+    type AppKit,
+    Network,
+    hasStreamingProvider,
+    watchBalance,
+  } from '@ton/appkit';
+
+  export function startBalanceMonitoring(
+    kit: AppKit,
+    onBalanceUpdate: (balance: string) => void,
+    network: Network = Network.mainnet(),
+  ): () => void {
+    if (!hasStreamingProvider(kit, network)) {
+      throw new Error([
+        `No streaming provider registered for network ${network.chainId}. `,
+        'Register one via kit.streamingManager.registerProvider(...) first.',
+      ].join());
+    }
+
+    return watchBalance(kit, {
+      network,
+      onChange: (update) => {
+        if (update.status === 'finalized') {
+          onBalanceUpdate(update.balance);
+        }
+      },
+    });
+  }
+
+  // Usage
+  const stopMonitoring = startBalanceMonitoring(
+    kit,
+    // The updateUI() function is exemplary and should be replaced by
+    // an app function that refreshes the state of the balance displayed
+    // in the interface
+    (balance) => updateUI(balance),
+  );
+
+  // Stop monitoring once it is no longer needed
+  stopMonitoring();
+  ```
+</CodeGroup>
+
+#### Only polling
 
 Modify the following examples according to the application logic:
 
@@ -279,9 +370,9 @@ Modify the following examples according to the application logic:
 
 ## Confirm transaction delivery
 
-TON achieves transaction [finality](https://en.wikipedia.org/wiki/Blockchain#Finality) after a single masterchain block confirmation, where new blocks are produced approximately every 3 seconds. Once a transaction appears in a masterchain block, it becomes irreversible.
+TON achieves transaction [finality](https://en.wikipedia.org/wiki/Blockchain#Finality) after a single masterchain block confirmation. Once a transaction appears in a masterchain block, it becomes irreversible.
 
-Therefore, to reliably confirm the transaction delivery and status, one needs to check whether a transaction has achieved masterchain finality using the selected API client. Applications should not block the UI while waiting for such confirmation. With [continuous balance monitoring](#continuous-balance-monitoring) and subsequent transaction requests, users will receive the latest information either way.
+Therefore, to reliably confirm the transaction delivery and status, one needs to check whether a transaction has achieved masterchain finality using the selected API client. Applications should not block the UI while waiting for such confirmation. With [continuous balance monitoring](#continuous-balance-monitoring), `watchTransactions()` streaming, and subsequent transaction requests, users will receive the latest information either way.
 
 Confirmations are only needed to reliably display a list of past transactions, including the most recent ones. For detailed transaction tracking and message lookups, the [message lookup guide](/ecosystem/ton-connect/message-lookup) covers finding transactions by external message hash, waiting for confirmations, and applying message normalization.
 
