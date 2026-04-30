@@ -23,9 +23,9 @@ The contract address depends on the initial data provided in [`StateInit`](/foun
 
 Consider NFTs: the collection acts as the parent contract, and each NFT item is a child contract. The key in this case is the item index, and only the collection can set the initial owner.
 
-For jettons, the parent contract is the minter, and the child contracts are user wallets. The key is the user's smart contract address, and the value is the user's token balance.
+For jettons, the parent contract is the minter, and the child contracts are user wallets. The key is the user's smart contract address.
 
-Both patterns follow the same principle: each key maps to a separate contract. In jetton protocols, there is a unique contract per user, while in NFT collections, there is one contract per item (by index) that is shared across all users.
+Both patterns follow the same principle: each key maps to a separate contract. In jetton protocols, there is a unique wallet contract per user, while in NFT collections, there is a unique item contract per NFT index, regardless of who owns the item.
 
 <Image
   src="/resources/images/child_light.png"
@@ -39,10 +39,13 @@ Contract sharding supports an unbounded number of potential child contracts.
 
 In general, data structures that can scale to very large sizes are difficult to implement efficiently on blockchains. This pattern allows such scaling by distributing data across multiple contracts.
 
+The following example shows a parent contract that deploys child contracts and assigns each child a sequence number. The shared storage file defines the data layouts and message types used by both contracts.
+
 ```tolk title="storage.tolk"
-// Shared storage layouts and helper used by both contracts.
+// Shared storage layouts and messages used by both contracts.
 
 struct TodoChildStorage {
+    parentAddress: address
     seqno: uint64
 }
 
@@ -75,24 +78,9 @@ struct (0x49f29a21) Identify {}
 
 // Parent deploys another child when it receives this message.
 struct (0x5b6f1392) DeployAnother {}
-
-// Build StateInit for a TodoChild instance with the given seqno.
-fun calcDeployedTodoChild(
-    seqno: uint64,
-    todoChildCode: cell,
-): AutoDeployAddress {
-    val childStorage: TodoChildStorage = {
-        seqno,
-    };
-
-    return {
-        stateInit: {
-            code: todoChildCode,
-            data: childStorage.toCell(),
-        }
-    }
-}
 ```
+
+The child contract stores the parent address in its initial data and accepts the `Identify` message only from that parent.
 
 ```tolk title="child.tolk"
 import "storage"
@@ -105,6 +93,7 @@ fun onInternalMessage(in: InMessage) {
     match (msg) {
         Identify => {
             val storage = lazy TodoChildStorage.load();
+            assert (in.senderAddress == storage.parentAddress) throw 0xFFFF;
             debug.print(storage.seqno);
         }
         else => {
@@ -120,10 +109,31 @@ get fun seqno(): uint64 {
 }
 ```
 
+The parent contract owns the deployment logic. It derives each child address from the parent address, the child sequence number, and the child code.
+
 ```tolk title="parent.tolk"
 import "storage"
 
 type TodoParentMessage = DeployAnother
+
+// Build StateInit for a TodoChild instance owned by the given parent.
+fun calcDeployedTodoChild(
+    parentAddress: address,
+    seqno: uint64,
+    todoChildCode: cell,
+): AutoDeployAddress {
+    val childStorage: TodoChildStorage = {
+        parentAddress,
+        seqno,
+    };
+
+    return {
+        stateInit: {
+            code: todoChildCode,
+            data: childStorage.toCell(),
+        }
+    }
+}
 
 fun onInternalMessage(in: InMessage) {
     val msg = lazy TodoParentMessage.fromSlice(in.body);
@@ -141,6 +151,7 @@ fun onInternalMessage(in: InMessage) {
             val deployMsg = createMessage({
                 bounce: BounceMode.Only256BitsOfBody,
                 dest: calcDeployedTodoChild(
+                    contract.getAddress(),
                     storage.numChildren,
                     storage.todoChildCode,
                 ),
