@@ -202,32 +202,39 @@ const patchedShardState = rebuild(newShardState, path, accountState) // And repl
 
 Another interesting point is how we access the hash of the last known `ShardBlock`.
 
-```tact title="Tact"
-inline fun findShardInBinTree(root: Cell, address: Address, shardBitLen: Int): ShardDescr {
-    let curCs = root.beginParse();
-    // It's std address, but we parse it as VarAddress to get hash part as Slice, not as Int
-    let accountId = myParseVarAddress(address.asSlice()).address;
+```tolk title="Tolk"
+@pure
+fun slice.preloadIthRef(self, idx: int): cell
+    asm "PLDREFVAR"
+
+@inline
+fun findShardInBinTree(root: cell, addr: address, shardBitLen: int): ShardDescr {
+    var curCs = root.beginParse();
+    val (_, accountId) = addr.getWorkchainAndHash();
+    var bitMask = 1 << 255;
     repeat (shardBitLen) {
-        if (accountId.loadBool()) {
-            // If the bit is 1, we go to the right child
+        if ((accountId & bitMask) != 0) {
+            // If the bit is 1, go to the right child.
             curCs = curCs.preloadIthRef(1).beginParse();
         } else {
-            // If the bit is 0, we go to the left child
+            // If the bit is 0, go to the left child.
             curCs = curCs.preloadIthRef(0).beginParse();
         }
+        bitMask = bitMask >> 1;
     }
-    curCs.skipBits(1); // We need to skip 1 bit - leaf tag of the tree node
+    curCs.skipBits(1); // Skip the leaf tag of the tree node.
     return ShardDescr.fromSlice(curCs);
 }
 
 // ...
 
-let mcBlockExtra = McBlockExtra.fromCell(blockHeader.extra.loadRef().beginParse().preloadIthRef(3));
-// shardHashes is a hashmap (workchain -> ShardDescr)
-// Therefore, we only need to retrieve the ShardDescr for workchain 0, as we are working in basechain.
-// We can use a non-null assertion, as we already proved that it is a valid block, and a valid masterchain block must have a ShardDescr for workchain 0.
-let binTreeWithShardDescr: Cell = mcBlockExtra.shardHashes.get(0)!!;
-let shardDescr = findShardInBinTree(binTreeWithShardDescr, jettonMaster, shardBitLen);
+var blockExtra = blockHeader.extra;
+val mcBlockExtra = McBlockExtra.fromCell(blockExtra.loadRef().beginParse().preloadIthRef(3));
+// shardHashes is a hashmap (workchain -> ShardDescr).
+// Only the ShardDescr for workchain 0 is needed, since the target account is in basechain.
+// `mustGet` is safe here because the block is already validated, and every valid masterchain block has a ShardDescr for workchain 0.
+val binTreeWithShardDescr: cell = mcBlockExtra.shardHashes.mustGet(0);
+val shardDescr = findShardInBinTree(binTreeWithShardDescr, jettonMaster, shardBitLen);
 ```
 
 ```tlb
