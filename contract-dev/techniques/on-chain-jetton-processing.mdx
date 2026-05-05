@@ -1,38 +1,57 @@
 ---
-title: "On-chain Jetton processing"
+title: "On-chain jetton processing"
 sidebarTitle: "Jetton processing"
 ---
 
 import { Aside } from '/snippets/aside.jsx';
 
-<Aside>
-  Read this article after understanding the [Jetton](/standard/tokens/jettons/overview) architecture.
+<Aside type="note">
+  Understand [the jetton architecture](/standard/tokens/jettons/overview) before reading this article.
 </Aside>
 
-Contracts routinely process jettons for DEX, escrow, and lending protocols. Each contract must determine which jetton type arrived when a `JettonNotify` message shows up.
+Contracts routinely process jettons for DEX, escrow, and lending protocols by handling `JettonNotify` messages from jetton wallets. However, since anyone can send these messages, receiving contracts must verify the message sender has the correct jetton wallet address.
+
+The problem is, that the jetton minter deploys the jetton wallet on the first jetton transfer to the contract, so the wallet address is unknown at the moment of contract deployment. This means, the contract needs logic to learn about the wallet address after deployment to be able to verify `JettonNotify` messages.
 
 ```mermaid
 graph LR
 A((Jetton Wallet)) -->|JettonNotify 0x7362d09c| B((Contract))
+C((Attacker)) -->|JettonNotify 0x7362d09c| B((Contract))
 ```
 
-## Known Jetton or trusted deployer
+## Comparison of approaches
 
-When someone does a Jetton transfer, they deploy a new `JettonWallet`, that has an address depending on the address of `JettonMinter` and the address of the receiver, and then send a message with a type `JettonNotify` to the regular wallet (or other kind of contract) that tells the transfer succeeded. The attacker might send a `JettonNotify` message from a contract that is not a valid `JettonWallet`, so handling it requires care.
+There are three approaches to verify `JettonNotify` messages, depending on the level of trust in the contract deployer and whether the approach requires TEP-89.
 
-To handle the `JettonNotify` message, it's preferable to precompute the address of the `JettonWallet` for a specific minter (i.e. Jetton type) in advance, so that the validation only consists of checking two addresses for equality.
+| Requirement                 | [Manual management](#manual-wallet-management) | [Automatic discovery](#automatic-wallet-discovery) | [Get-method emulation](#on-chain-get-method-emulation) |
+| --------------------------- | ---------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------ |
+| Jetton type known           | Yes                                            | No                                                 | No                                                     |
+| Trust in deployer           | Yes                                            | No                                                 | No                                                     |
+| Jetton is TEP-89 compatible | No                                             | Yes                                                | No                                                     |
+| Implementation complexity   | Low                                            | Medium                                             | High                                                   |
 
-Here is an example of a contract that handles `JettonNotify` messages. It's deployed along with a `SetTrustedJettonWallet` message with an address of `JettonWallet` that is owned by this same contract.
+## Manual wallet management
 
-When deploying with this pattern, [calculate](/standard/tokens/jettons/find) the Jetton wallet address that must receive top-ups. It is impossible to hardcode the jetton wallet address in the contract's [`StateInit`](/foundations/messages/deploy), because the wallet address depends on the contract address and creates a circular dependency.
+If the jetton type is known in advance, [calculate the corresponding jetton wallet address off-chain](https://docs.ton.org/standard/tokens/jettons/find) and set it via a message after deployment. It is impossible to hardcode the jetton wallet address in the contract’s [`StateInit`](/foundations/messages/deploy) because the wallet address depends on the contract address and creates a circular dependency. This is the most efficient approach, because it only requires one address comparison.
 
-To handle several Jetton types with a single contract, `trustedJettonWallet` should be modified to store several addresses.
+The following example of a receiving contract handles `JettonNotify` messages for a trusted jetton wallet address that can be set by the owner of the contract.
 
-The `jettonMinter` address is included in `Storage`, because otherwise every instance of this contract owned by the same owner will deploy to the same address, even if there was an intent to have them with different `trustedJettonWallet`s.
+```mermaid
+sequenceDiagram
+    participant Owner
+    participant Contract
+    participant JettonWallet
 
-This approach is used by [Bidask](https://bidask.finance/en/).
+    Owner-)Contract: Deploy with minter address
+    Contract-->Owner: Read contract address
+    JettonWallet-xContract: JettonNotify
+    Note over JettonWallet, Contract: Message is ignored because<br/> trusted wallet is not set.
+    Owner-->Owner: Derive jetton wallet address from<br/>contract address and minter address
+    Owner-)Contract: SetTrustedJettonWallet
+    JettonWallet-)Contract: JettonNotify
+```
 
-```tolk expandable
+```tolk title="Tolk" expandable
 tolk 1.2;
 
 struct Storage {
@@ -84,31 +103,43 @@ fun onInternalMessage(in: InMessage) {
 }
 ```
 
-## Unknown TEP-89 Jetton or untrusted deployer
+This contract uses `SetTrustedJettonWallet` messages to set the trusted jetton wallet address whose owner is the receiving contract address.
 
-In the previous example, addresses of `jettonMinter` and `trustedJettonWallet` are chosen off-chain by a deploying party. Someone who depends on this contract has to trust that the wallet belongs to this minter, which is not a problem, for example, for an exchange. If deployer might be monetarily interested to break this invariant, the previous approach is not suitable, and the address of the `trustedJettonWallet` address must be computed on-chain.
+Include the jetton minter address in the contract `Storage` to ensure each instance of the contract is unique to a specific jetton, and thus has a unique address. This allows deploying multiple instances of the contract for different jettons, even if they share the same owner. Each instance can then set its own `trustedJettonWallet` address corresponding to its `jettonMinter`.
 
-Most modern Jettons implement [TEP-89](https://github.com/ton-blockchain/TEPs/blob/66675fc7ecda1e3dc1524159d6bfcaa2ed2372fe/text/0089-jetton-wallet-discovery.md), that defines a message `provide_wallet_address` that requests a Jetton wallet address for an arbitrary owner, and `take_wallet_address` message with a response.
+Modify `trustedJettonWallet` to store several addresses, to handle several jetton types with a single contract.
 
-The contract works similarly to the example above, except it's deployed along with a `InitContract` message, that asks a `JettonMinter` what `jettonWalletAddress` should be.
+<Aside type="tip">
+  [The Bidask Finance DEX](https://bidask.finance/en/) uses manual wallet management.
+</Aside>
 
-This approach is used by [DeDust](https://dedust.io/).
+## Automatic wallet discovery
+
+In the first approach, the deploying party chooses addresses of the jetton minter and wallet contracts off-chain. The contract's dependents have to trust that the wallet belongs to the corresponding minter, which is not a problem for an exchange. However, if the deployer is not trustworthy, the first approach is not suitable, and the contract must compute the `trustedJettonWallet` address on-chain.
+
+Most modern jetton contracts implement [TEP-89](https://github.com/ton-blockchain/TEPs/blob/66675fc7ecda1e3dc1524159d6bfcaa2ed2372fe/text/0089-jetton-wallet-discovery.md), which defines a `provide_wallet_address` message that requests a jetton wallet address for an arbitrary owner, and a `take_wallet_address` message with a response.
+
+The receiving contract works similarly to the first approach, except it is initialized with an `InitContract` message that asks the jetton minter which jetton wallet address it should use.
+
+The following example of a receiving contract handles `JettonNotify` messages for a jetton wallet address that is unknown at the moment of deployment, and is set by the `JettonMinter` in response to the `ProvideWalletAddress` message sent during initialization.
 
 ```mermaid
-graph LR
-A((Deployer))
-B((Contract))
-C((Jetton minter))
-D((Contract))
+sequenceDiagram
+    participant Owner
+    participant Contract
+    participant JettonWallet
+    participant JettonMinter
 
-    A -->|InitContract| B
-    B -->|ProvideWalletAddress| C
-    C -->|TakeWalletAddress| D
+    Owner-->>Contract: Deploy with minter address
+    JettonWallet-xContract: JettonNotify
+    Note over JettonWallet, Contract: Message is ignored because<br/> trusted wallet is not set.
+    Owner-)Contract: InitContract
+    Contract-)JettonMinter: ProvideWalletAddress
+    JettonMinter-)Contract: TakeWalletAddress
+    JettonWallet-)Contract: JettonNotify
 ```
 
-The contract that initializes the jetton wallet with this pattern can look like this:
-
-```tolk expandable
+```tolk title="Tolk" expandable
 tolk 1.2
 
 struct Storage {
@@ -185,17 +216,37 @@ fun onInternalMessage(in: InMessage) {
 }
 ```
 
-## Unknown TEP-74 Jetton and untrusted deployer
+<Aside type="tip">
+  [The DeDust DEX](https://dedust.io/) uses automatic wallet discovery.
+</Aside>
 
-Jettons that do not have TEP-89 methods for computing a wallet address on-chain are rare. [TONCO DEX](https://tonco.io/) rejects them, while platforms such as [DeDust](https://dedust.io/) allow them after a manual approval flow. There are two approaches, both using get-method emulation.
+## On-chain get-method emulation
 
-### Running get-method on-chain
+If a jetton contract doesn't implement TEP-89, it is possible to compute the jetton wallet address on-chain by executing the `get_wallet_address` method of the jetton minter. This approach doesn't require any trust in the jetton deployer and works for jettons that don't implement TEP-89.
 
-Given a Jetton minter state, we can emulate execution of the minter on-chain via [RUNVM](/tvm/instructions#db4-runvm) instruction. During the emulation, it calls the `get_wallet_address` [get-method](/tvm/get-method) to derive the wallet address for any owner.
+<Aside type="note">
+  Jettons that do not implement the TEP-89 messages for computing a wallet address on-chain are rare. [TONCO DEX](https://tonco.io/) rejects them, while platforms such as [DeDust](https://dedust.io/) only allow them after a manual approval.
+</Aside>
 
-This helper uses [Fift](/languages/fift/overview), because it's impossible to assign a type to `c7`.
+With the state of a jetton minter, the [RUNVM](/tvm/instructions#db4-runvm) instruction can emulate the execution of the `get_wallet_address` [get-method](/tvm/get-method) to derive the wallet address for any owner.
 
-```tolk expandable
+Use the following helper function. It relies on [Fift](/languages/fift/overview) because it's impossible to assign a type to `c7`. It executes the `get_wallet_address` method of a jetton minter on-chain, and calculates the corresponding wallet address for a given owner.
+
+```mermaid
+sequenceDiagram
+    participant Owner
+    participant Contract
+    participant JettonWallet
+    participant JettonMinter
+
+    Owner-->>Contract: deploy with minter address
+    JettonWallet-xContract: JettonNotify
+    Note over JettonWallet, Contract: Message is ignored because<br/> trusted wallet is not set.
+    Contract<<-->>JettonMinter: get_wallet_address(owner)
+    JettonWallet-)Contract: JettonNotify
+```
+
+```tolk title="Tolk/Fift" expandable
 fun calculateJettonWallet(owner: address, jettonData: cell, jettonCode: cell, jettonMinter: address): address asm """
     c7 PUSHCTR
     // Unpack environment information from c7
@@ -222,27 +273,27 @@ fun calculateJettonWallet(owner: address, jettonData: cell, jettonCode: cell, je
     // +4 = load c4 (persistent data) from stack and return its final value
     // +16 = load c7 (smart-contract context)
     // +256 = pop number N, return exactly N values from stack (only if res=0 or 1; if not enough then res=stk_und)
-    // Mode 256 is crucial, because it ignores all stack values except the first one, and protects us from stack poisoning
+    // Mode 256 is crucial, because it ignores all stack values except the first one, and protects from stack poisoning
     277 RUNVM        // address exit_code c4'"
     2 BLKDROP       // address";
 """
 ```
 
-### Approach 1: non-vanity addresses
+### Minters without vanity addresses
 
-If the `JettonMinter` was not deployed with a [vanity](/contract-dev/vanity) contract, address and `StateInit` match. The logic for the contract that handles `JettonNotify` messages is thus
+Minter address and `StateInit` will match if the jetton minter was not deployed with [a vanity contract](/contract-dev/vanity). The logic for the contract that handles `JettonNotify` messages is thus:
 
-1. get the `StateInit` of `JettonMinter` off-chain;
-1. deploy the contract with the address of `JettonMinter` in its data;
-1. send a message to the contract with the `StateInit` of `JettonMinter`;
-1. contract validates that this `StateInit` matches the address of the `JettonMinter`;
-1. contract runs `calculateJettonWallet`
-   - `owner` - address of the contract (`contract.getAddress()`);
-   - `jettonData`, `jettonCode` - `StateInit` of `JettonMinter`;
-   - `jettonMinter` - address of `JettonMinter`.
+1. Get the `StateInit` of the jetton minter off-chain.
+1. Deploy the receiver contract with the address of the jetton minter in its data.
+1. Send a message to the contract with the `StateInit` of the jetton minter.
+1. Validate that `StateInit` matches the address of the jetton minter.
+1. Run `calculateJettonWallet` with the following arguments:
+   - `owner`: address of the contract (e.g., `contract.getAddress()`).
+   - `jettonData` and `jettonCode`: `StateInit` of the jetton minter.
+   - `jettonMinter`: address of the jetton minter.
 
-### Approach 2: where the previous method fails
+### Minters with vanity addresses or invalid get-methods
 
-If the `JettonMinter` was deployed with a vanity contract, or otherwise lacks `get_wallet_address` method, or `get_wallet_address` returns incorrect addresses, we have to use the current state of the contract instead.
+If the jetton minter was deployed with a vanity contract, or otherwise lacks `get_wallet_address` method, or `get_wallet_address` returns incorrect addresses, use the current state of the contract instead.
 
-To prove that the state is currently at the Jetton minter address, a full [state proof](/foundations/proofs/overview) is required.
+A full [state proof](/foundations/proofs/overview) is required to prove that the state is currently at the jetton minter address.
