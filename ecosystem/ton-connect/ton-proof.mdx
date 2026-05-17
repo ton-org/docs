@@ -1,0 +1,431 @@
+---
+title: "Signed-in user verification"
+sidebarTitle: "Verify users (ton_proof)"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+import { Image } from '/snippets/image.jsx';
+
+`ton_proof` lets a backend verify that a user actually owns the wallet they connected. The client signs a payload with the wallet's private key; the server checks the signature.
+
+## Verification flow
+
+<Image
+  src="/resources/images/ton-connect/ton_proof_scheme.svg"
+  darkSrc="/resources/images/ton-connect/ton_proof_scheme-dark.svg"
+  alt="TON Proof verification flow: client requests payload, signs with wallet, and sends proof to backend"
+/>
+
+After wallet connection, the client receives a `TonProofItemReplySuccess` object and sends it to the backend:
+
+```typescript
+type TonProofItemReplySuccess = {
+  name: 'ton_proof';
+  proof: {
+    timestamp: number;     // 64-bit Unix epoch time of the signing operation (seconds)
+    domain: {
+      lengthBytes: number; // AppDomain length
+      value: string;       // App domain name (URL part, without encoding)
+    };
+    signature: string;     // base64-encoded signature
+    payload: string;       // payload from the request
+  };
+};
+```
+
+## Verify the signature
+
+To verify, reconstruct the same message the wallet signed and check the signature against it.
+
+### Message assembly
+
+Assemble the message exactly as the wallet did:
+
+```text
+message = utf8_encode("ton-proof-item-v2/") ++
+          Address ++
+          AppDomain ++
+          Timestamp ++
+          Payload
+```
+
+- **Address** — the user's wallet address: `workchain` (32-bit big-endian) + `hash` (256-bit big-endian).
+- **AppDomain** — the app domain prefixed with its length. `lengthBytes` is a 32-bit little-endian integer.
+- **Timestamp** — 64-bit little-endian Unix epoch time in seconds.
+- **Payload** — a unique string, often a nonce, to prevent replay attacks.
+
+### Signature verification
+
+The signature is an Ed25519 signature over `sha256(0xffff ++ utf8_encode("ton-connect") ++ sha256(message))`:
+
+```text
+signature = Ed25519Sign(
+  privkey,
+  sha256(0xffff ++ utf8_encode("ton-connect") ++ sha256(message))
+)
+```
+
+The backend hashes the message, prepends `0xffff ++ "ton-connect"`, hashes again, and verifies with the user's public key.
+
+## Obtain the public key
+
+### From walletStateInit (preferred)
+
+Extract the public key from the `walletStateInit` in `TonAddressItemReply` — no network call needed.
+
+1. Parse `walletStateInit` — decode the `walletStateInit` cell.
+1. Identify the wallet version — compare the `code` hash of the `walletStateInit` with known standard wallet contract codes.
+1. Extract the public key — parse the `data` section according to the identified wallet version.
+
+### From on-chain get\_public\_key (fallback)
+
+For non-standard wallets where `walletStateInit` parsing fails, query the blockchain:
+
+1. Invoke the `get_public_key` get method on the smart contract at the user's address.
+1. Extract the public key from the result.
+
+### Final checks
+
+After extracting the public key, verify:
+
+1. It matches the `publicKey` field in `TonAddressItemReply`.
+1. `contractAddress(workchain, walletStateInit)` equals the user's address.
+
+<Aside>
+  The helper used to extract a public key from `stateInit` in the examples below is simplified. Replace it with version-aware parsing after determining the wallet type via code hash.
+</Aside>
+
+## React example
+
+From the [`demo-dapp-with-wallet`](https://github.com/ton-connect/demo-dapp-with-wallet) `TonProofDemo` component:
+
+```tsx expandable
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import ReactJson from 'react-json-view';
+import { TonProofDemoApi } from '../../TonProofDemoApi';
+import { useTonConnectUI, useTonWallet, CHAIN } from '@tonconnect/ui-react';
+import useInterval from '../../hooks/useInterval';
+
+export const TonProofDemo = () => {
+  const firstProofLoading = useRef<boolean>(true);
+
+  const [data, setData] = useState({});
+  const wallet = useTonWallet();
+  const [authorized, setAuthorized] = useState(false);
+  const [tonConnectUI] = useTonConnectUI();
+
+  const recreateProofPayload = useCallback(async () => {
+    if (firstProofLoading.current) {
+      tonConnectUI.setConnectRequestParameters({ state: 'loading' });
+      firstProofLoading.current = false;
+    }
+
+    const payload = await TonProofDemoApi.generatePayload();
+
+    if (payload) {
+      tonConnectUI.setConnectRequestParameters({ state: 'ready', value: payload });
+    } else {
+      tonConnectUI.setConnectRequestParameters(null);
+    }
+  }, [tonConnectUI, firstProofLoading]);
+
+  if (firstProofLoading.current) {
+    recreateProofPayload();
+  }
+
+  useInterval(recreateProofPayload, TonProofDemoApi.refreshIntervalMs);
+
+  useEffect(
+    () =>
+      tonConnectUI.onStatusChange(async (w) => {
+        if (!w || w.account.chain === CHAIN.TESTNET) {
+          TonProofDemoApi.reset();
+          setAuthorized(false);
+          return;
+        }
+
+        if (w.connectItems?.tonProof && 'proof' in w.connectItems.tonProof) {
+          await TonProofDemoApi.checkProof(w.connectItems.tonProof.proof, w.account);
+        }
+
+        if (!TonProofDemoApi.accessToken) {
+          tonConnectUI.disconnect();
+          setAuthorized(false);
+          return;
+        }
+
+        setAuthorized(true);
+      }),
+    [tonConnectUI],
+  );
+
+  const handleClick = useCallback(async () => {
+    if (!wallet) {
+      return;
+    }
+    const response = await TonProofDemoApi.getAccountInfo(wallet.account);
+    setData(response);
+  }, [wallet]);
+
+  if (!authorized) {
+    return null;
+  }
+
+  return (
+    <div className="ton-proof-demo">
+      <h3>Demo backend API with ton_proof verification</h3>
+      {authorized ? (
+        <button onClick={handleClick}>Call backend getAccountInfo()</button>
+      ) : (
+        <div className="ton-proof-demo__error">Connect wallet to call API</div>
+      )}
+      <ReactJson src={data} name="response" theme="ocean" />
+    </div>
+  );
+};
+```
+
+## Backend example
+
+From [`demo-dapp-with-react-ui`](https://github.com/ton-connect/demo-dapp-with-react-ui/tree/master/src/server):
+
+### Proof request schema
+
+```ts
+import { CHAIN } from '@tonconnect/ui-react';
+import zod from 'zod';
+
+export const CheckProofRequest = zod.object({
+  address: zod.string(),
+  network: zod.enum([CHAIN.MAINNET, CHAIN.TESTNET]),
+  public_key: zod.string(),
+  proof: zod.object({
+    timestamp: zod.number(),
+    domain: zod.object({
+      lengthBytes: zod.number(),
+      value: zod.string(),
+    }),
+    payload: zod.string(),
+    signature: zod.string(),
+    state_init: zod.string(),
+  }),
+  payloadToken: zod.string(),
+});
+
+export type CheckProofRequestDto = zod.infer<typeof CheckProofRequest>;
+```
+
+### Proof verification service
+
+```ts expandable
+import { getSecureRandomBytes, sha256 } from '@ton/crypto';
+import { Address, Cell, contractAddress, loadStateInit } from '@ton/ton';
+import { Buffer } from 'buffer';
+import { sign } from 'tweetnacl';
+import { CheckProofRequestDto } from '../dto/check-proof-request-dto';
+import { tryParsePublicKey } from '../wrappers/wallets-data';
+
+const tonProofPrefix = 'ton-proof-item-v2/';
+const tonConnectPrefix = 'ton-connect';
+const allowedDomains = [
+  'tonconnect-demo-dapp-with-react-ui.vercel.app',
+  'ton-connect.github.io',
+  'localhost:5173',
+];
+const validAuthTime = 15 * 60; // 15 minutes
+
+export class TonProofService {
+  /** Generate random bytes for the payload. */
+  public async generateRandomBytes(): Promise<Buffer> {
+    return await getSecureRandomBytes(32);
+  }
+
+  /**
+   * Verify the ton_proof payload.
+   * Reference: https://github.com/ton-blockchain/ton-connect/blob/main/requests-responses.md#address-proof-signature-ton_proof
+   */
+  public async checkProof(
+    payload: CheckProofRequestDto,
+    getWalletPublicKey: (address: string) => Promise<Buffer | null>,
+  ): Promise<boolean> {
+    try {
+      const stateInit = loadStateInit(
+        Cell.fromBase64(payload.proof.state_init).beginParse(),
+      );
+
+      // 1. Try to obtain public key from stateInit.
+      // 2. Fall back to get_public_key get method on-chain.
+      let publicKey =
+        tryParsePublicKey(stateInit) ??
+        (await getWalletPublicKey(payload.address));
+      if (!publicKey) {
+        return false;
+      }
+
+      // Verify public key matches the one provided by TonAddressItemReply
+      const wantedPublicKey = Buffer.from(payload.public_key, 'hex');
+      if (!publicKey.equals(wantedPublicKey)) {
+        return false;
+      }
+
+      // Verify address matches the stateInit hash
+      const wantedAddress = Address.parse(payload.address);
+      const address = contractAddress(wantedAddress.workChain, stateInit);
+      if (!address.equals(wantedAddress)) {
+        return false;
+      }
+
+      if (!allowedDomains.includes(payload.proof.domain.value)) {
+        return false;
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      if (now - validAuthTime > payload.proof.timestamp) {
+        return false;
+      }
+
+      const message = {
+        workchain: address.workChain,
+        address: address.hash,
+        domain: {
+          lengthBytes: payload.proof.domain.lengthBytes,
+          value: payload.proof.domain.value,
+        },
+        signature: Buffer.from(payload.proof.signature, 'base64'),
+        payload: payload.proof.payload,
+        stateInit: payload.proof.state_init,
+        timestamp: payload.proof.timestamp,
+      };
+
+      const wc = Buffer.alloc(4);
+      wc.writeInt32BE(message.workchain, 0);
+
+      const ts = Buffer.alloc(8);
+      ts.writeBigUInt64LE(BigInt(message.timestamp), 0);
+
+      const dl = Buffer.alloc(4);
+      dl.writeUInt32LE(message.domain.lengthBytes, 0);
+
+      // message = utf8_encode("ton-proof-item-v2/") ++ Address ++ AppDomain ++ Timestamp ++ Payload
+      const msg = Buffer.concat([
+        Buffer.from(tonProofPrefix),
+        wc,
+        message.address,
+        dl,
+        Buffer.from(message.domain.value),
+        ts,
+        Buffer.from(message.payload),
+      ]);
+
+      const msgHash = Buffer.from(await sha256(msg));
+
+      // signature = Ed25519Sign(privkey, sha256(0xffff ++ utf8_encode("ton-connect") ++ sha256(message)))
+      const fullMsg = Buffer.concat([
+        Buffer.from([0xff, 0xff]),
+        Buffer.from(tonConnectPrefix),
+        msgHash,
+      ]);
+
+      const result = Buffer.from(await sha256(fullMsg));
+
+      return sign.detached.verify(result, message.signature, publicKey);
+    } catch (e) {
+      return false;
+    }
+  }
+}
+```
+
+### API endpoints
+
+<CodeGroup>
+  ```ts title="Check proof" icon="globe"
+  import { sha256 } from '@ton/crypto';
+  import { HttpResponseResolver } from 'msw';
+  import { CheckProofRequest } from '../dto/check-proof-request-dto';
+  import { TonApiService } from '../services/ton-api-service';
+  import { TonProofService } from '../services/ton-proof-service';
+  import { badRequest, ok } from '../utils/http-utils';
+  import { createAuthToken, verifyToken } from '../utils/jwt';
+
+  // POST /api/check_proof
+  export const checkProof: HttpResponseResolver = async ({ request }) => {
+    try {
+      const body = CheckProofRequest.parse(await request.json());
+
+      const client = TonApiService.create(body.network);
+      const service = new TonProofService();
+
+      const isValid = await service.checkProof(body, (address) =>
+        client.getWalletPublicKey(address),
+      );
+      if (!isValid) {
+        return badRequest({ error: 'Invalid proof' });
+      }
+
+      const payloadTokenHash = body.proof.payload;
+      const payloadToken = body.payloadToken;
+      if (!(await verifyToken(payloadToken))) {
+        return badRequest({ error: 'Invalid token' });
+      }
+      if ((await sha256(payloadToken)).toString('hex') !== payloadTokenHash) {
+        return badRequest({ error: 'Invalid payload token hash' });
+      }
+
+      const token = await createAuthToken({
+        address: body.address,
+        network: body.network,
+      });
+
+      return ok({ token: token });
+    } catch (e) {
+      console.error(e);
+      return badRequest({ error: 'Invalid request' });
+    }
+  };
+  ```
+
+  ```ts title="Generate payload" icon="globe"
+  import { sha256 } from '@ton/crypto';
+  import { HttpResponseResolver } from 'msw';
+  import { TonProofService } from '../services/ton-proof-service';
+  import { badRequest, ok } from '../utils/http-utils';
+  import { createPayloadToken } from '../utils/jwt';
+
+  // POST /api/generate_payload
+  export const generatePayload: HttpResponseResolver = async () => {
+    try {
+      const service = new TonProofService();
+
+      const randomBytes = await service.generateRandomBytes();
+      const payloadToken = await createPayloadToken({
+        randomBytes: randomBytes.toString('hex'),
+      });
+      const payloadTokenHash = (await sha256(payloadToken)).toString('hex');
+
+      return ok({
+        payloadToken: payloadToken,
+        payloadTokenHash: payloadTokenHash,
+      });
+    } catch (e) {
+      console.error(e);
+      return badRequest({ error: 'Invalid request' });
+    }
+  };
+  ```
+</CodeGroup>
+
+## Verification examples in other languages
+
+- [Go demo app](https://github.com/ton-connect/demo-dapp-backend)
+- [Rust demo app](https://github.com/liketurbo/demo-dapp-backend-rs)
+- [JS demo app](https://github.com/liketurbo/demo-dapp-backend-js)
+- [Python example](https://github.com/XaBbl4/pytonconnect/blob/main/examples/check_proof.py)
+- [PHP example](https://github.com/vladimirfokingithub/Ton-Connect-Proof-Php-Check)
+- [C# demo app](https://github.com/WinoGarcia/TonProof.NET)
+
+## See also
+
+- [TON Connect overview](/ecosystem/ton-connect/overview)
+- [dApp integration](/ecosystem/ton-connect/dapp)
+- [Backend example repository](https://github.com/ton-connect/demo-dapp-with-react-ui/tree/master/src/server)
