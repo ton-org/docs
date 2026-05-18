@@ -1,0 +1,220 @@
+---
+title: "Block proof validation in Tact"
+---
+
+import {Aside} from "/snippets/aside.jsx";
+
+The decentralized exchange (DEX) [`block-proof.tact`](https://github.com/tact-lang/dex/blob/main/sources/contracts/vaults/proofs/block-proof.tact) contract reconstructs a trusted [`StateInit`](/foundations/messages/deploy) by chaining masterchain, shard-block, and shard-state proofs. This verification path lets the vault validate a Jetton master's state against a recent masterchain block without trusting raw account data from the message body.
+
+<Aside
+  type="note"
+  title="Prerequisites"
+>
+  Assumes familiarity with [Understanding pruned branch cells](/foundations/proofs/overview#understanding-pruned-branch-cells), [Composing proofs](/foundations/proofs/overview#composing-proofs), [Merkle proof cells](/foundations/serialization/merkle), [Shard block](/foundations/proofs/verifying-liteserver-proofs#shard-block), and [TL-B (Type Language - Binary)](/languages/tl-b/overview) schemas.
+</Aside>
+
+## What this contract proves
+
+The DEX vault uses this logic when a Jetton wallet cannot be validated with a simple `StateInit` proof. Given a `StateProof`, the contract proves that:
+
+- `mcBlockSeqno` still belongs to the last 16 masterchain blocks available through [`PREVMCBLOCKS`](/tvm/instructions#f83400-prevmcblocks).
+- `mcBlockHeaderProof` matches the trusted masterchain block hash.
+- The validated masterchain block contains the shard descriptor for the Jetton master's address.
+- `shardBlockHeaderProof` matches that shard block hash, and its `state_update` exposes the trusted new shard-state hash.
+- `shardChainStateProof` matches that shard-state hash and contains the target account in [`ShardAccounts`](/foundations/whitepapers/tblkch#4-1-9-the-combined-state-of-all-accounts-in-a-shard), the shard-state dictionary keyed by account ID.
+
+If all checks pass, the contract returns the Jetton master's `StateInit` and uses it to derive the expected wallet address.
+
+```tact title="StateProof"
+struct StateProof {
+    mcBlockSeqno: Int as uint32;
+    shardBitLen: Int as uint8;
+    mcBlockHeaderProof: Cell;
+    shardBlockHeaderProof: Cell;
+    shardChainStateProof: Cell;
+}
+```
+
+## Cryptographic trust chain
+
+```mermaid
+graph LR
+    A[PREVMCBLOCKS] --> B[Trusted masterchain block hash]
+    B --> C[mcBlockHeaderProof]
+    C --> D[Masterchain block header]
+    D --> E[McBlockExtra.shardHashes]
+    E --> F[BinTree lookup by Jetton master address]
+    F --> G[Trusted shard block root hash]
+    G --> H[shardBlockHeaderProof]
+    H --> I[state_update]
+    I --> J[MerkleUpdate.newHash]
+    J --> K[shardChainStateProof]
+    K --> L[ShardState]
+    L --> M[ShardAccounts]
+    M --> N[Jetton master ShardAccount]
+    N --> O[StateInit]
+```
+
+Each step depends on the hash extracted by the previous one. The contract never trusts an account state directly from the message body.
+
+## How the validation logic works
+
+The flow has two parts. An off-chain service assembles `StateProof`, then the contract revalidates each hash on-chain.
+
+### Masterchain anchor
+
+`getJettonMasterState` starts from [`PREVMCBLOCKS`](/tvm/instructions#f83400-prevmcblocks), which exposes the last 16 masterchain blocks to the TON Virtual Machine (TVM). The contract loads the newest block with `getLastMcBlock()`, checks that `last.seqno - proof.mcBlockSeqno <= 16`, and then retrieves the requested block with `getMcBlockBySeqno(proof.mcBlockSeqno)`.
+
+This step establishes the first trusted value: the masterchain block `rootHash`. Everything else in the message must match data reachable from that hash.
+
+### Masterchain proof validation
+
+The helper `validateMerkleProof` performs the low-level proof check:
+
+```tact
+inline fun validateMerkleProof(proofCell: Cell, expectedHash: Int): Cell {
+    let parsedExotic = proofCell.beginParseExotic();
+    require(parsedExotic.isExotic, "Block Proof: Merkle proof is not exotic");
+    let merkleProof = MerkleProof.fromSlice(parsedExotic.data);
+    require(merkleProof.tag == MerkleProofTag, "Block Proof: Invalid Merkle proof tag");
+    require(merkleProof.hash == expectedHash, "Block Proof: Invalid Merkle proof hash");
+    return merkleProof.content;
+}
+```
+
+[`XCTOS`](/tvm/instructions#d739-xctos) unwraps the cell into a slice and reports whether it is exotic. The contract then parses the exotic payload as `MerkleProof`, checks the tag, compares the embedded `hash` field with the trusted hash, and returns the referenced content cell.
+
+That returned cell is parsed as `BlockHeader`. The contract intentionally reads only the fields needed for the next checks:
+
+- `stateUpdate` for shard-state validation later.
+- `extra` to reach `McBlockExtra` and the shard hashes.
+
+### Shard resolution
+
+For masterchain blocks, the relevant shard metadata lives in `McBlockExtra`, the masterchain-specific extension inside `BlockExtra`:
+
+```tlb
+masterchain_block_extra#cca5
+  key_block:(## 1)
+  shard_hashes:ShardHashes
+  shard_fees:ShardFees
+  ^[ prev_blk_signatures:(HashmapE 16 CryptoSignaturePair)
+     recover_create_msg:(Maybe ^InMsg)
+     mint_msg:(Maybe ^InMsg) ]
+  config:key_block?ConfigParams
+= McBlockExtra;
+```
+
+The contract reads `shardHashes.get(0)!!`, so this path only works for the basechain. The resulting value is a `BinTree ShardDescr`, a binary tree whose leaves store shard descriptors. `findShardInBinTree` walks that tree with the Jetton master's address bits:
+
+- Parse the address as `VarAddress`, the variable-length internal-address form, to get the hash part as a `Slice`.
+- For each of the first `shardBitLen` bits, move left on `0` and right on `1`.
+- Skip the leaf tag bit.
+- Parse the remaining slice as `ShardDescr`.
+
+The returned `ShardDescr.rootHash` becomes the trusted shard block hash.
+
+### Shard-block proof validation
+
+`getShardAccounts` repeats the same proof pattern for the shard block:
+
+1. Validate `shardBlockHeaderProof` against the trusted shard block hash.
+1. Parse the returned content as `BlockHeader`.
+1. Read `stateUpdate` and unwrap it as an exotic [`MerkleUpdate`](/foundations/serialization/merkle-update).
+1. Check that the tag is `4`.
+
+At this point, the contract trusts `shardUpdate.newHash`, which is the hash of the shard state after that block.
+
+```tact
+let shardStateUpdate = shardHeader.stateUpdate.beginParseExotic();
+require(shardStateUpdate.isExotic, "Block Proof: Shard state update is not exotic");
+
+let shardUpdate = MerkleUpdate.fromSlice(shardStateUpdate.data);
+require(shardUpdate.tag == MerkleUpdateTag, "Block Proof: Invalid Merkle update tag");
+```
+
+### Off-chain proof preparation
+
+The contract does not assemble `StateProof` itself. The off-chain service prepares the proof bundle before the vault call:
+
+- Select a target masterchain block that is still available through `PREVMCBLOCKS`.
+- Fetch the account state and proof cells with `getRawAccountState`.
+- Patch the returned `AccountState` into the pruned shard-state path.
+- Compute `shardBitLen`, which `findShardInBinTree` later uses as the shard-prefix length.
+
+In the test harness, `shardBitLen` is derived from the masterchain proof depth:
+
+```ts
+const shardBitLen = Cell.fromHex(shardBlockProof.links[0].proof).depth() - 6
+```
+
+This subtraction is specific to the proof shape used in the test harness. The code comment only states that the goal is to recover the `BinTree ShardDescr` depth from a masterchain-block Merkle proof. It does not derive a general rule for other proof layouts.
+
+### Shard-state proof composition
+
+This contract uses a composed proof instead of proving `ShardState` and `AccountState` separately.
+
+The off-chain service first calls `getRawAccountState`, which returns:
+
+- the serialized `AccountState`;
+- a shard block proof;
+- a shard-state proof where most branches are pruned.
+
+The test harness then patches the real account state back into the deepest pruned branch and wraps the result as a Merkle proof:
+
+```ts
+const proofs = Cell.fromBoc(Buffer.from(accountStateAndProof.proof, "hex"))
+
+const scBlockProof = proofs[0]
+const newShardStateProof = proofs[1]
+const newShardState = newShardStateProof.refs[0]
+const accountState = Cell.fromHex(accountStateAndProof.state)
+
+const { path } = walk(newShardState, 0, [], null)
+const patchedShardState = rebuild(newShardState, path, accountState)
+
+const shardChainStateProof = convertToMerkleProof(patchedShardState)
+```
+
+On-chain, `validateMerkleProof(shardChainStateProof, shardUpdate.newHash)` returns the patched `ShardState`. The contract then loads the second reference from `ShardStateUnsplit`, the unsplit shard-state layout used by this proof flow, which contains the `ShardAccounts` dictionary. The contract does not rebuild that branch itself. It expects `shardChainStateProof` to already contain the restored account-state path.
+
+### Account lookup and state reconstruction
+
+The final lookup happens inside `ShardAccounts`:
+
+1. Parse the Jetton master address into its 256-bit account ID.
+1. Load the augmented hashmap from `ShardAccounts`.
+1. Run `augHashmapLookup(..., 256)` with that account ID.
+1. Fail if the account is not present.
+
+The matched `ShardAccount` is then converted into `StateInit` by `parseStateFromShardAccount`. The function assumes the account is active, takes the last two references from `Account`, and interprets them as `code` and `data`.
+
+```tact
+inline fun parseStateFromShardAccount(c: Slice): StateInit {
+    let account = c.loadRef();
+    let lastTwoRefs = getTwoLastRefs(account.beginParse());
+    return StateInit {
+        code: lastTwoRefs.first,
+        data: lastTwoRefs.second,
+    };
+}
+```
+
+The calling contract later uses that `StateInit` to derive the expected Jetton wallet address and compare it with `sender()`.
+
+## Trade-offs and assumptions
+
+- Basechain only. `getShardRootHash` always reads `shardHashes.get(0)`.
+- Recent masterchain blocks only. `PREVMCBLOCKS` exposes only the last 16 masterchain blocks.
+- `ShardStateUnsplit` only. The code does not handle split shard states.
+- Active accounts only. `parseStateFromShardAccount` assumes `AccountActive`.
+- No `StateInit` library support. The parser reads only `code` and `data`.
+- Block-boundary state only. The proof reconstructs the shard state after a specific block, not an intermediate execution state.
+
+These constraints come from this contract's parser design. They are not general limits of TON proof verification.
+
+## Related topics
+
+- [Merkle proofs overview](/foundations/proofs/overview)
+- [Liteserver proof verification](/foundations/proofs/verifying-liteserver-proofs)
+- [Merkle proof cells](/foundations/serialization/merkle)
