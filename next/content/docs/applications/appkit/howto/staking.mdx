@@ -1,0 +1,151 @@
+---
+id: ecosystem/appkit/howto/staking
+title: "Staking"
+sidebarTitle: "Staking"
+description: ""
+---
+
+Quote a stake or unstake, build the transaction, and send it through the connected wallet.
+
+## How it works
+
+The `StakingManager` routes each quote and build call to a single registered staking provider — by default the first one you registered, or the one you pass as `providerId`. `setDefaultProvider` on the manager overrides the default; an unknown `providerId` throws. A quote describes the intent (`direction: 'stake' | 'unstake'`, `amount`, optional `unstakeMode`), and `useBuildStakeTransaction` turns an accepted quote into a `TransactionRequest`.
+
+The protocol shape — derivative jetton, unstake modes, settlement timing, pool model — is provider-specific. Tonstakers, the bundled provider, issues `tsTON` and supports `INSTANT`, `WHEN_AVAILABLE`, and `ROUND_END` unstake modes. Read the user's staked-token balance with `useStakedBalance`, or query the jetton balance directly. `apy` and `instantUnstakeAvailable` from `useStakingProviderInfo` are provider-supplied display data, not guarantees of future yield or withdrawal timing.
+
+## Before you begin
+
+You need a connected wallet and a staking provider registered on the AppKit instance. Tonstakers ships bundled — see [Providers → How they are registered](/applications/appkit/howto/providers#how-they-are-registered).
+
+## Hooks
+
+| Hook                       | Purpose                                                              |
+| -------------------------- | -------------------------------------------------------------------- |
+| `useStakingProviders`      | List registered staking provider IDs.                                |
+| `useStakingProviderInfo`   | Read APY and instant-unstake liquidity for a provider.               |
+| `useStakedBalance`         | Read the user's staked-token balance (e.g. `tsTON`).                 |
+| `useStakingQuote`          | Quote a stake or unstake intent.                                     |
+| `useBuildStakeTransaction` | Build a `TransactionRequest` from a quote.                           |
+
+The first three are query hooks (`{ data, isLoading, isError, refetch }`); the last two are mutation/query pair used together. The built `TransactionRequest` is handed to `<Send />` from `@ton/appkit-react`, which exposes loading/error state.
+
+## Read the user's staking balance
+
+`useStakedBalance` returns `StakingBalance` for the given user address. The shape is `{ stakedBalance, rawStakedBalance, instantUnstakeAvailable, rawInstantUnstakeAvailable, providerId }`. Render `stakedBalance` as the user's tsTON amount and `instantUnstakeAvailable` as the pool's liquid TON.
+
+```tsx
+import { useAddress, useStakedBalance } from '@ton/appkit-react';
+
+export function StakedBalance() {
+  const address = useAddress();
+  const { data, isLoading, isError } = useStakedBalance({
+    userAddress: address ?? '',
+    query: { refetchInterval: 10000, enabled: Boolean(address) },
+  });
+
+  if (isLoading) return <span>…</span>;
+  if (isError) return <span>—</span>;
+
+  return (
+    <div>
+      <p>Staked: {data?.stakedBalance ?? '0'} tsTON</p>
+      <p>
+        Instant unstake liquidity:{' '}
+        {data?.instantUnstakeAvailable ?? '0'} TON
+      </p>
+    </div>
+  );
+}
+```
+
+## Quote a stake or unstake
+
+`useStakingQuote` takes the intent and returns settlement amounts. For an unstake, pass `unstakeMode` (`UnstakeMode.INSTANT`, `UnstakeMode.WHEN_AVAILABLE`, or `UnstakeMode.ROUND_END`) when the provider supports more than one.
+
+```tsx
+import { UnstakeMode, useNetwork, useStakingQuote } from '@ton/appkit-react';
+
+export function StakePreview({ amount }: { amount: string }) {
+  const network = useNetwork();
+  const { data: quote, isLoading, isError } = useStakingQuote({
+    amount,
+    direction: 'stake',
+    network,
+  });
+
+  if (isLoading) return <span>Fetching quote…</span>;
+  if (isError || !quote) return <span>Staking unavailable</span>;
+
+  const rate = Number(quote.amountOut) / Number(quote.amountIn);
+
+  return (
+    <div>
+      <p>
+        Stake {quote.amountIn} TON → receive {quote.amountOut} tsTON
+      </p>
+      <p>Rate: 1 TON ≈ {rate.toFixed(4)} tsTON</p>
+    </div>
+  );
+}
+```
+
+For an unstake, swap `direction` and add `unstakeMode`:
+
+```tsx
+const { data: quote } = useStakingQuote({
+  amount,
+  direction: 'unstake',
+  unstakeMode: UnstakeMode.INSTANT,
+  network,
+});
+```
+
+## Build and send the transaction
+
+`useBuildStakeTransaction` is the mutation that turns an accepted quote into a `TransactionRequest`. Hand it to `<Send />` through a `request` callback.
+
+```tsx
+import { Send, useAddress, useBuildStakeTransaction } from '@ton/appkit-react';
+import type { StakingQuote } from '@ton/appkit';
+
+export function StakeSendButton({
+  quote,
+}: {
+  quote: StakingQuote | undefined;
+}) {
+  const address = useAddress();
+  const { mutateAsync: buildStakeTransaction } = useBuildStakeTransaction();
+
+  const request = async () => {
+    if (!quote || !address) {
+      throw new Error('Missing quote or address');
+    }
+    return buildStakeTransaction({ quote, userAddress: address });
+  };
+
+  return (
+    <Send
+      request={request}
+      disabled={!quote || !address}
+      text="Stake"
+      onSuccess={({ boc }) => console.log('sent', boc)}
+    />
+  );
+}
+```
+
+## After the send
+
+After the send completes, pass the response to `getTransactionStatus` to confirm settlement, then refetch `useStakedBalance` to see the new staked-token balance. The response carries either a `boc` or a `normalizedHash`; pass whichever is set.
+
+## Tips
+
+- The user's stake is a derivative jetton (e.g. `tsTON`), not an opaque AppKit object. Refresh with `useStakedBalance` (or a jetton balance read) after sends.
+- APY and instant-unstake liquidity from `useStakingProviderInfo` are provider-supplied display data, not guarantees of future yield or withdrawal timing.
+- Unstake mechanics (instant, delayed, round-end) are provider-specific. Pass `unstakeMode` on the quote when the provider supports more than one.
+
+## Related pages
+
+- [Providers](/applications/appkit/howto/providers#staking)
+- [Read balances](/applications/appkit/howto/read-balances)
+- [How to](/applications/appkit/howto/howto)

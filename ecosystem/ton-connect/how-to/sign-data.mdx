@@ -1,0 +1,322 @@
+---
+title: "Sign data"
+sidebarTitle: "Sign data"
+---
+
+{/* TODO(spec-merge): spec links point to `the-ton-tech/ton-connect` (`feature/refine-protocol`); switch to `ton-blockchain/ton-connect` once merged. */}
+
+`signData` asks the wallet to sign opaque data the user reviews on the wallet's screen. The signature is bound to the user's wallet address, the dApp's domain, a timestamp, and the payload — so the same bytes signed by a different wallet, or for a different dApp, do not verify.
+
+Three payload variants cover three use cases:
+
+| Variant  | Use it when                                                                                                |
+| -------- | ---------------------------------------------------------------------------------------------------------- |
+| `text`   | The data is human-readable text. The wallet shows it verbatim, monospace.                                  |
+| `binary` | The data is opaque bytes. The wallet warns the user the content is unknown.                                |
+| `cell`   | The signature will be verified on-chain. The wallet may parse a TL-B schema and show a structured preview. |
+
+## Calling `signData`
+
+`tonConnectUi.signData(payload)` is the entry point. The wallet must be connected when you call it, or pass `options.enableEmbeddedRequest: true` to defer the request until a wallet is picked from the modal — a compliant wallet then handles connect and sign in one tap. See [Connect-and-act in one tap](/ecosystem/ton-connect/how-to/embedded-request). Without either, the SDK throws.
+
+### Text
+
+Use `text` for anything a person should read and approve — confirmation prompts, off-chain auth challenges, login messages.
+
+```ts
+const result = await tonConnectUi.signData({
+    type: 'text',
+    text: 'Confirm new 2fa number:\n+1 234 567 8901',
+    network: '-239',
+    from: tonConnectUi.wallet?.account.address,
+});
+```
+
+### Binary
+
+Use `binary` for opaque bytes — encrypted blobs, hashes, anything the user cannot read. Pass the bytes as base64 (not URL-safe).
+
+```ts
+const result = await tonConnectUi.signData({
+    type: 'binary',
+    bytes: 'KGVsZWN0cmljIGJvb2dhbG9vKQ==',
+    network: '-239',
+    from: tonConnectUi.wallet?.account.address,
+});
+```
+
+### Cell
+
+Use `cell` when a smart contract will verify the signature. The wallet hashes a TON cell, not a flat byte string; you also send the [TL-B](https://docs.ton.org/v3/documentation/data-formats/tlb/tl-b-language) schema so the wallet can decode the cell on-screen.
+
+```ts
+const result = await tonConnectUi.signData({
+    type: 'cell',
+    schema: 'transfer#0f8a7ea5 query_id:uint64 amount:(VarUInteger 16) destination:MsgAddress response_destination:MsgAddress custom_payload:(Maybe ^Cell) forward_ton_amount:(VarUInteger 16) forward_payload:(Either Cell ^Cell) = InternalMsgBody;',
+    cell: 'te6ccgEBAQEAVwAAqg+KfqVUbeTvKqB4h0AcnDgIAZucsOi6TLrfP6FcuPKEeTI6oB3fF/NBjyqtdov/KtutACCLqvfmyV9kH+Pyo5lcsrJzJDzjBJK6fd+ZnbFQe4+XggI=',
+    network: '-239',
+    from: tonConnectUi.wallet?.account.address,
+});
+```
+
+If the schema declares several types, the **last** declared type is the root.
+
+### Response
+
+All three variants return the same shape:
+
+```ts
+interface SignDataResult {
+    signature: string;  // base64 Ed25519 signature
+    address: string;    // raw wallet address ("0:<hex>")
+    timestamp: number;  // unix seconds (UTC) at signing time
+    domain: string;     // app domain (URL part, not encoded)
+    payload: object;    // the payload from the request
+    traceId?: string;   // UUID for end-to-end analytics correlation
+}
+```
+
+`payload` is the original request payload, echoed back verbatim. Reuse it when reconstructing the signed bytes for verification — never re-serialise.
+
+```ts
+const result = await tonConnectUi.signData(payload, {
+    traceId: '019a2a92-a884-7cfc-b1bc-caab18644b6f', // optional; SDK generates a UUIDv7 if omitted
+});
+
+console.log(result.signature);
+```
+
+See [Bridge specification § `trace_id`](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/bridge.md#trace_id--analytics-correlation) for the protocol-level details.
+
+## Detecting wallet support
+
+The SDK rejects requests whose `type` is not supported by the connected wallet before they reach the bridge — calling `signData({ type: 'cell', ... })` against a wallet that lists only `['text']` throws. To restrict the wallet picker to wallets that support a given type, see [Filter wallets by required features](/ecosystem/ton-connect/how-to/filter-wallets).
+
+## Verifying `text` and `binary` signatures
+
+The signing scheme for `text` and `binary` payloads is described in the [`signData` RPC specification](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/rpc.md#signdata).
+
+To verify on the backend:
+
+1. Reconstruct `message` from the response fields.
+2. Compute `sha256(message)`.
+3. Look up the user's Ed25519 `publicKey` — extract it from `walletStateInit` (see below), then fall back to calling `get_public_key` on-chain. Never trust `publicKey` from the wallet response directly. See [Connect a wallet § backend verification](/ecosystem/ton-connect/how-to/connect#backend-verification).
+4. Verify the Ed25519 signature against the digest.
+5. Reject if `Timestamp` is older than your tolerance window — 15 minutes is a common bound.
+6. Reject if `domain` is not your domain.
+
+### Extracting the public key
+
+The wallet response carries the address and the signature; the public key needed for verification has to be resolved from the wallet's `stateInit` (received during connect and stored in the dApp's session) or from the on-chain `get_public_key` getter when the contract is deployed.
+
+`tryExtractPublicKey` walks the standard `v1R1`–`v5R1` contract codes and parses the public key out of the data cell when it finds a match. The data layout differs per wallet version, so each version has its own parser:
+
+```ts
+import {
+    Slice, StateInit,
+    WalletContractV1R1, WalletContractV1R2, WalletContractV1R3,
+    WalletContractV2R1, WalletContractV2R2,
+    WalletContractV3R1, WalletContractV3R2,
+    WalletContractV4 as WalletContractV4R2,
+    WalletContractV5R1,
+} from '@ton/ton';
+import { Buffer } from 'buffer';
+
+function loadV1(cs: Slice) { cs.loadUint(32); return cs.loadBuffer(32); }
+function loadV2(cs: Slice) { cs.loadUint(32); return cs.loadBuffer(32); }
+function loadV3(cs: Slice) { cs.loadUint(32); cs.loadUint(32); return cs.loadBuffer(32); }
+function loadV4(cs: Slice) { cs.loadUint(32); cs.loadUint(32); const k = cs.loadBuffer(32); return k; }
+function loadV5(cs: Slice) { cs.loadBoolean(); cs.loadUint(32); cs.loadUint(32); return cs.loadBuffer(32); }
+
+const knownWallets = [
+    { contract: WalletContractV1R1, load: loadV1 },
+    { contract: WalletContractV1R2, load: loadV1 },
+    { contract: WalletContractV1R3, load: loadV1 },
+    { contract: WalletContractV2R1, load: loadV2 },
+    { contract: WalletContractV2R2, load: loadV2 },
+    { contract: WalletContractV3R1, load: loadV3 },
+    { contract: WalletContractV3R2, load: loadV3 },
+    { contract: WalletContractV4R2, load: loadV4 },
+    { contract: WalletContractV5R1, load: loadV5 },
+].map(({ contract, load }) => ({
+    code: contract.create({ workchain: 0, publicKey: Buffer.alloc(32) }).init.code,
+    load,
+}));
+
+export function tryExtractPublicKey(stateInit: StateInit): Buffer | null {
+    if (!stateInit.code || !stateInit.data) return null;
+    for (const { code, load } of knownWallets) {
+        try {
+            if (code.equals(stateInit.code)) {
+                return load(stateInit.data.beginParse());
+            }
+        } catch { /* unknown layout — try next */ }
+    }
+    return null;
+}
+```
+
+### Node.js verifier
+
+```ts
+import { Address, Cell, loadStateInit } from '@ton/ton';
+import { sha256 } from '@ton/crypto';
+import { Buffer } from 'node:buffer';
+import nacl from 'tweetnacl';
+
+interface SignDataResult {
+    signature: string;
+    address: string;
+    timestamp: number;
+    domain: string;
+    payload: { type: 'text'; text: string } | { type: 'binary'; bytes: string };
+}
+
+export async function verifyTextOrBinary(
+    res: SignDataResult,
+    walletStateInit: string,    // base64 BoC from the connect event
+    expected: { domain: string; maxAgeSeconds: number },
+    getWalletPublicKey: (address: string) => Promise<Buffer | null>,
+): Promise<boolean> {
+    if (res.domain !== expected.domain) return false;
+    const now = Math.floor(Date.now() / 1000);
+    if (now - res.timestamp > expected.maxAgeSeconds) return false;
+
+    const addr = Address.parse(res.address);
+    const stateInit = loadStateInit(Cell.fromBase64(walletStateInit).beginParse());
+    const publicKey = tryExtractPublicKey(stateInit) ?? (await getWalletPublicKey(res.address));
+    if (!publicKey) return false;
+
+    const wc = Buffer.alloc(4);
+    wc.writeInt32BE(addr.workChain);
+
+    const dom = Buffer.from(res.domain, 'utf8');
+    const domLen = Buffer.alloc(4);
+    domLen.writeUInt32BE(dom.length);
+
+    const ts = Buffer.alloc(8);
+    ts.writeBigUInt64BE(BigInt(res.timestamp));
+
+    const data = res.payload.type === 'text'
+        ? Buffer.from(res.payload.text, 'utf8')
+        : Buffer.from(res.payload.bytes, 'base64');
+
+    const dataLen = Buffer.alloc(4);
+    dataLen.writeUInt32BE(data.length);
+
+    const prefix = Buffer.from(res.payload.type === 'text' ? 'txt' : 'bin');
+
+    const message = Buffer.concat([
+        Buffer.from([0xff, 0xff]),
+        Buffer.from('ton-connect/sign-data/'),
+        wc, addr.hash, domLen, dom, ts, prefix, dataLen, data,
+    ]);
+    const digest = await sha256(message);
+
+    return nacl.sign.detached.verify(
+        new Uint8Array(digest),
+        new Uint8Array(Buffer.from(res.signature, 'base64')),
+        new Uint8Array(publicKey),
+    );
+}
+```
+
+## Verifying `cell` signatures
+
+For the `cell` variant the wallet hashes a TON cell, not a flat byte string. The cell carries the same five fields as the off-chain construction, plus a magic prefix and a CRC-32 of the schema:
+
+```ts
+import { beginCell } from '@ton/core';
+import crc32 from 'crc-32';
+
+const message = beginCell()
+    .storeUint(0x75569022, 32)              // magic prefix
+    .storeUint(crc32.buf(Buffer.from(schema, 'utf8')) >>> 0, 32) // schema hash
+    .storeUint(timestamp, 64)               // unix seconds
+    .storeAddress(userWalletAddress)        // MsgAddressInt
+    .storeStringRefTail(encodedDomain)      // DNS wire format per TEP-81
+    .storeRef(payloadCell);                 // the cell the dApp sent
+
+const signature = Ed25519Sign(message.hash(), privkey);
+```
+
+`encodedDomain` is the app domain in [TEP-81](https://github.com/ton-blockchain/TEPs/blob/master/text/0081-dns-standard.md) DNS wire format — labels reversed, each terminated by `\0`. For example, `ton-connect.github.io` becomes `io\0github\0ton-connect\0`.
+
+### TL-B schema
+
+The TL-B schema for the signed message is:
+
+```tlb
+message#75569022
+    schema_hash:uint32
+    timestamp:uint64
+    user_address:MsgAddress
+    {n:#} app_domain:^(SnakeData ~n)
+    payload:^Cell
+    = SignedMessage;
+```
+
+### FunC verifier
+
+A receiver smart contract that accepts a signed cell stores the expected `user_address`, `user_pubkey`, `app_domain`, and the schema hash at compile time, then runs six checks:
+
+```func
+#include "imports/stdlib.fc";
+
+const int SCHEMA_HASH = 0x047cf718;       ;; crc32 of your TL-B schema string
+const int SIGNATURE_TTL = 360;            ;; 6 minutes
+
+global slice state::owner_address;
+global int   state::user_pubkey;
+global slice state::domain;
+
+() load_data() impure {
+    slice cs = get_data().begin_parse();
+    state::owner_address = cs~load_msg_addr();
+    state::user_pubkey   = cs~load_uint(256);
+    state::domain        = cs~load_ref().begin_parse();
+}
+
+int verify_signature(cell signed, slice signature) method_id {
+    load_data();
+    var cs = signed.begin_parse();
+
+    throw_unless(460, check_signature(cs.slice_hash(), signature, state::user_pubkey));
+
+    int   prefix      = cs~load_uint(32);
+    int   schema_hash = cs~load_uint(32);
+    int   timestamp   = cs~load_uint(64);
+    slice addr        = cs~load_msg_addr();
+    slice domain      = cs~load_ref().begin_parse();
+
+    throw_unless(461, prefix == 0x75569022);
+    throw_unless(462, schema_hash == SCHEMA_HASH);
+    throw_unless(463, now() < timestamp + SIGNATURE_TTL);
+    throw_unless(464, equal_slices_bits(addr, state::owner_address));
+    throw_unless(465, equal_slices_bits(domain, state::domain));
+
+    cell payload = cs~load_ref();
+    return 1;
+}
+```
+
+The contract must run all six checks: signature, magic prefix, schema hash, freshness, sender, domain. Skipping any one of them lets a different signature pass — the magic prefix alone does not bind the signature to a specific schema, sender, or dApp.
+
+The `SCHEMA_HASH` constant is the CRC-32 of the exact UTF-8 schema string the dApp passes in `signData`. Compute it once at deploy time and hard-code it; recomputing it on-chain would burn gas.
+
+## Errors
+
+| Code | Name                   | Description                |
+| ---- | ---------------------- | -------------------------- |
+| 0    | `UNKNOWN_ERROR`        | Unknown error.             |
+| 1    | `BAD_REQUEST_ERROR`    | Bad request.               |
+| 100  | `UNKNOWN_APP_ERROR`    | Unknown app.               |
+| 300  | `USER_REJECTS_ERROR`   | User declined the request. |
+| 400  | `METHOD_NOT_SUPPORTED` | Method not supported.      |
+
+## See also
+
+- [`signData` RPC specification](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/rpc.md#signdata)
+- [`signData` wallet guide](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/guides/sign-data.md)
+- [Filter wallets by required features](/ecosystem/ton-connect/how-to/filter-wallets)
+- [Connect a wallet § backend verification](/ecosystem/ton-connect/how-to/connect#backend-verification) — for looking up the user's public key

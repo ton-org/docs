@@ -1,0 +1,552 @@
+---
+title: "Get started with TON Connect"
+sidebarTitle: "Get started"
+---
+
+This page walks through every supported integration path. Start with [What you need](#what-you-need); then jump to the section for your stack.
+
+- [What you need](#what-you-need)
+- [Build a dApp with React](#build-a-dapp-with-react)
+- [Build a dApp with Next.js](#build-a-dapp-with-nextjs)
+- [Build a dApp with vanilla JS](#build-a-dapp-with-vanilla-js)
+- [Build without a UI (`@tonconnect/sdk`)](#build-without-a-ui-tonconnectsdk)
+
+---
+
+## What you need
+
+Before you start integrating, two things need to be in place: a hosted app manifest and a chosen SDK.
+
+### 1. The manifest
+
+`tonconnect-manifest.json` is the JSON file the wallet fetches to learn your app's name, icon, and policy URLs. The wallet shows this metadata to the user before approving the connection.
+
+The minimum:
+
+```json
+{
+  "url": "https://yourapp.com",
+  "name": "Your App",
+  "iconUrl": "https://yourapp.com/icon-180.png"
+}
+```
+
+Optional:
+
+```json
+{
+  "termsOfUseUrl": "https://yourapp.com/terms",
+  "privacyPolicyUrl": "https://yourapp.com/privacy"
+}
+```
+
+#### Hosting requirements
+
+- The file must be reachable with a `GET` from any origin, without CORS restrictions, without auth and without a Cloudflare-style proxy challenge.
+- The icon at the URL listed in `iconUrl` must be PNG or ICO. SVG is not supported. Use a 180×180 px PNG.
+- The manifest must be served over HTTPS. Wallets do not guarantee they will fetch a manifest served over plain HTTP.
+- Any reachable HTTPS URL is valid. Hosting the manifest at the root of your domain (e.g. `https://yourapp.com/tonconnect-manifest.json`) keeps access simple.
+
+If the wallet cannot fetch the manifest, the connect flow returns `MANIFEST_NOT_FOUND_ERROR` (code 2) or `MANIFEST_CONTENT_ERROR` (code 3). See [Manifest 404 and CORS](/ecosystem/ton-connect/troubleshooting#manifest-404-and-cors).
+
+For the full field reference, see [Manifest](/ecosystem/ton-connect/core-concepts#manifest).
+
+### 2. Pick an SDK
+
+Three dApp-facing packages, all published from [`ton-connect/sdk`](https://github.com/ton-connect/sdk):
+
+| Package                | When to use                                                                |
+| ---------------------- | -------------------------------------------------------------------------- |
+| `@tonconnect/ui-react` | React or Next.js dApps. **Recommended.** Hooks, prebuilt button, modal.    |
+| `@tonconnect/ui`       | Vanilla JS or non-React frameworks. Same UI components, no React bindings. |
+| `@tonconnect/sdk`      | Headless integrations — server-side flows, custom UI from scratch.         |
+
+Pick `ui-react` if your app is React. Pick `ui` if it is not. Reach for `sdk` only when you need low-level control.
+
+---
+
+## Build a dApp with React
+
+Install the UI kit, host the manifest, mount the provider, add a connect button, and send a test transaction.
+
+For Next.js-specific notes (App Router, `'use client'`, SSR), see [Build a dApp with Next.js](#build-a-dapp-with-nextjs).
+
+### 1. Install
+
+```bash
+npm i @tonconnect/ui-react
+```
+
+### 2. Host the manifest
+
+Place `tonconnect-manifest.json` at the root of your app's domain. See [What you need](#what-you-need) for the full requirements.
+
+### 3. Wrap the app in `TonConnectUIProvider`
+
+```tsx
+import { TonConnectUIProvider } from '@tonconnect/ui-react';
+
+export function App() {
+    return (
+        <TonConnectUIProvider manifestUrl="https://yourapp.com/tonconnect-manifest.json">
+            <YourApp />
+        </TonConnectUIProvider>
+    );
+}
+```
+
+### 4. Add the connect button
+
+```tsx
+import { TonConnectButton } from '@tonconnect/ui-react';
+
+export function Header() {
+    return (
+        <header>
+            <TonConnectButton />
+        </header>
+    );
+}
+```
+
+The button toggles between "Connect Wallet" and the connected account state automatically.
+
+You can pass a `className` or `style` prop:
+
+```tsx
+<TonConnectButton className="my-class" style={{ float: 'right' }} />
+```
+
+### 5. Read connection state
+
+```tsx
+import { useTonAddress, useTonWallet } from '@tonconnect/ui-react';
+
+function Status() {
+    const address = useTonAddress();
+    const wallet = useTonWallet();
+
+    if (!wallet) return <span>Not connected</span>;
+    return <span>Connected as {address}</span>;
+}
+```
+
+### 6. Send a transaction
+
+The destination here is the connected wallet's own address, returned by `useTonAddress()` in user-friendly form. Replace it with your recipient.
+
+```tsx
+import { useTonAddress, useTonConnectUI, useTonWallet } from '@tonconnect/ui-react';
+
+function PayButton() {
+    const [tonConnectUi] = useTonConnectUI();
+    const wallet = useTonWallet();
+    const address = useTonAddress();
+
+    const handlePay = async () => {
+        if (!address) return;
+        try {
+            await tonConnectUi.sendTransaction({
+                validUntil: Math.floor(Date.now() / 1000) + 300,
+                network: '-239', // mainnet
+                messages: [
+                    { address, amount: '100000000' }, // 0.1 TON
+                ],
+            });
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    return (
+        <button onClick={handlePay} disabled={!wallet}>
+            Send 0.1 TON
+        </button>
+    );
+}
+```
+
+`address` must be in user-friendly format (base64url with the bounce flag — `EQ…` for bounceable, `UQ…` for non-bounceable). Wallets reject raw `0:<hex>` addresses. To convert one, use `toUserFriendlyAddress` from `@tonconnect/ui-react`. Each `message` also accepts optional `payload`, `stateInit`, and `extraCurrency` fields. Amounts use **nanoTON**: `1 TON = 10⁹ nanoTON`. Send `100000000` for 0.1 TON.
+
+### Open the modal manually
+
+```tsx
+const [tonConnectUi] = useTonConnectUI();
+
+<button onClick={() => tonConnectUi.openModal()}>
+    Connect Wallet
+</button>
+```
+
+### Customise the UI
+
+```tsx
+import { useTonConnectUI, THEME } from '@tonconnect/ui-react';
+
+const [tonConnectUi] = useTonConnectUI();
+
+tonConnectUi.uiOptions = {
+    language: 'ru',
+    uiPreferences: { theme: THEME.DARK },
+};
+```
+
+`uiOptions` is a setter, not a plain object. Assigning to it runs the merge, theme switch, and re-render logic; mutating a nested property (e.g. `tonConnectUi.uiOptions.uiPreferences.theme = ...`) bypasses the setter and has no effect. Always reassign the whole object.
+
+---
+
+## Build a dApp with Next.js
+
+Next.js needs two adjustments on top of the [React tutorial](#build-a-dapp-with-react): `TonConnectUIProvider` must run on the client, and the manifest is served from `public/`. The hooks behave the same as in plain React.
+
+### 1. Install
+
+```bash
+npm i @tonconnect/ui-react
+```
+
+### 2. Host the manifest in `public/`
+
+Drop `tonconnect-manifest.json` into your project's `public/` directory:
+
+```text
+public/tonconnect-manifest.json
+```
+
+Next.js serves the file at `https://yourapp.com/tonconnect-manifest.json`. Make sure your hosting layer does not add CORS or auth gates — see [Manifest 404 and CORS](/ecosystem/ton-connect/troubleshooting#manifest-404-and-cors).
+
+### 3. App Router
+
+`TonConnectUIProvider` reads from local storage and opens modals — both browser-only. Mount it in a client component:
+
+```tsx
+// app/providers.tsx
+'use client';
+
+import { TonConnectUIProvider } from '@tonconnect/ui-react';
+
+export function Providers({ children }: { children: React.ReactNode }) {
+    return (
+        <TonConnectUIProvider manifestUrl="https://yourapp.com/tonconnect-manifest.json">
+            {children}
+        </TonConnectUIProvider>
+    );
+}
+```
+
+Then wrap the root layout:
+
+```tsx
+// app/layout.tsx
+import { Providers } from './providers';
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+    return (
+        <html>
+            <body>
+                <Providers>{children}</Providers>
+            </body>
+        </html>
+    );
+}
+```
+
+Components that use `useTonWallet`, `useTonConnectUI`, etc. must also start with `'use client'`.
+
+### 4. Pages Router
+
+Dynamic-import the provider with SSR off so it does not run on the server:
+
+```tsx
+import dynamic from 'next/dynamic';
+import type { AppProps } from 'next/app';
+
+const TonConnectUIProvider = dynamic(
+    () => import('@tonconnect/ui-react').then(m => m.TonConnectUIProvider),
+    { ssr: false }
+);
+
+function MyApp({ Component, pageProps }: AppProps) {
+    return (
+        <TonConnectUIProvider manifestUrl="https://yourapp.com/tonconnect-manifest.json">
+            <Component {...pageProps} />
+        </TonConnectUIProvider>
+    );
+}
+
+export default MyApp;
+```
+
+### SSR pitfalls
+
+- **Local storage.** TON Connect persists the session in `localStorage`. Code that reads the wallet state during SSR will see "not connected" until hydration. Render the wallet-dependent UI inside a client component so the hooks run after hydration, or return a skeleton while `useTonWallet()` is still `null`.
+- **Browser-only APIs.** Anything from `@tonconnect/ui-react` that touches `window`, modals, or storage must run in a client component or be lazy-loaded with `ssr: false`.
+
+The hooks, button, and transaction-sending API are identical to plain React — see [Build a dApp with React](#build-a-dapp-with-react) for the rest.
+
+---
+
+## Build a dApp with vanilla JS
+
+Same flow as the [React tutorial](#build-a-dapp-with-react) — connect button, status subscription, transaction — built with `@tonconnect/ui` for plain HTML / JavaScript.
+
+### 1. Install
+
+Via npm:
+
+```bash
+npm i @tonconnect/ui
+```
+
+Or via CDN:
+
+```html
+<script src="https://unpkg.com/@tonconnect/ui@latest/dist/tonconnect-ui.min.js"></script>
+```
+
+The CDN bundle exposes the API on `window.TON_CONNECT_UI`.
+
+### 2. Host the manifest
+
+Place `tonconnect-manifest.json` at the root of your domain. Hosting rules in [What you need](#what-you-need).
+
+### 3. Mark up a connect-button container
+
+```html
+<div id="ton-connect"></div>
+<button id="send" disabled>Send 0.1 TON</button>
+```
+
+### 4. Initialise the UI
+
+```javascript
+const ui = new TON_CONNECT_UI.TonConnectUI({
+    manifestUrl: 'https://yourapp.com/tonconnect-manifest.json',
+    buttonRootId: 'ton-connect',
+});
+```
+
+The library renders the connect button into `#ton-connect`. Tapping it opens the wallet picker.
+
+If you imported via npm:
+
+```javascript
+import { TonConnectUI } from '@tonconnect/ui';
+const ui = new TonConnectUI({ /* same options */ });
+```
+
+### 5. Subscribe to connection status
+
+```javascript
+ui.onStatusChange(wallet => {
+    document.getElementById('send').disabled = !wallet;
+});
+```
+
+`wallet` is `null` when disconnected, or a connected `Wallet` (with `device`, `account`, and optional `connectItems`) otherwise.
+
+### 6. Send a transaction
+
+```javascript
+import { toUserFriendlyAddress } from '@tonconnect/ui';
+
+document.getElementById('send').onclick = async () => {
+    const wallet = ui.wallet;
+    if (!wallet) return;
+    const address = toUserFriendlyAddress(wallet.account.address);  // or window.TON_CONNECT_UI.toUserFriendlyAddress
+    try {
+        await ui.sendTransaction({
+            validUntil: Math.floor(Date.now() / 1000) + 300,
+            network: '-239',
+            messages: [
+                { address, amount: '100000000' }, // 0.1 TON
+            ],
+        });
+    } catch (error) {
+        console.error('Transaction failed:', error);
+    }
+};
+```
+
+The destination `address` must be in user-friendly format; see the note in the [React example](#6-send-a-transaction). Amounts are in **nanoTON**: `1 TON = 10⁹ nanoTON`.
+
+### Restore on reload
+
+`onStatusChange` fires whenever the wallet state changes — connect, disconnect, and a successful session restore.
+
+---
+
+## Build without a UI (`@tonconnect/sdk`)
+
+`@tonconnect/sdk` is the headless TON Connect implementation — the same protocol layer that ships inside `@tonconnect/ui-react` and `@tonconnect/ui`, with no wallet picker, no modal, and no DOM dependencies. Use it on a server, in a custom UI you render yourself, or as a reference when porting TON Connect to another language.
+
+For a regular browser dApp, prefer [`@tonconnect/ui-react`](#build-a-dapp-with-react) (React, Next.js) or [`@tonconnect/ui`](#build-a-dapp-with-vanilla-js) (vanilla JS). They wrap this SDK and add the wallet picker, connect button, and notifications.
+
+This section covers the headless API end-to-end: install, connector setup, custom storage, wallet discovery, the connect handshake, status events, and `sendTransaction`. The same shape applies whether you call it from a server or a custom in-browser UI.
+
+### 1. Install
+
+```bash
+npm i @tonconnect/sdk
+```
+
+### 2. Create a connector
+
+```ts
+import TonConnect from '@tonconnect/sdk';
+
+const connector = new TonConnect({
+    manifestUrl: 'https://yourapp.com/tonconnect-manifest.json',
+    storage: myStorage,
+});
+
+await connector.restoreConnection();
+```
+
+`manifestUrl` is the public URL of your `tonconnect-manifest.json`. The wallet fetches it during connect and shows the metadata to the user. See [What you need](#what-you-need) for hosting rules.
+
+`storage` is an `IStorage` implementation. In a browser, the SDK falls back to `window.localStorage` if you omit it. Anywhere else — Node.js, a worker — supply your own. `restoreConnection()` reads from storage and wires the connector back to the bridge if a session is already there. Call it once per instance, not on every request.
+
+### 3. Custom storage
+
+```ts
+interface IStorage {
+    setItem(key: string, value: string): Promise<void>;
+    getItem(key: string): Promise<string | null>;
+    removeItem(key: string): Promise<void>;
+}
+```
+
+A trivial in-memory implementation suits one-shot flows:
+
+```ts
+class MemoryStorage implements IStorage {
+    private data = new Map<string, string>();
+    async setItem(key: string, value: string) { this.data.set(key, value); }
+    async getItem(key: string) { return this.data.get(key) ?? null; }
+    async removeItem(key: string) { this.data.delete(key); }
+}
+```
+
+For long-running servers, back `IStorage` with a per-user record in your database (Postgres, Redis, etc.) keyed by your user ID. See [Long-lived servers](#long-lived-servers).
+
+### 4. Discover wallets
+
+```ts
+const wallets = await connector.getWallets();
+```
+
+Each entry is a `WalletInfo` with the fields a custom UI needs to render a picker and start a connect:
+
+```ts
+interface WalletInfoBase {
+    name: string;        // human-readable display name
+    appName: string;     // stable identifier, e.g. "tonkeeper"
+    imageUrl: string;
+    aboutUrl: string;
+    tondns?: string;
+    platforms: ('ios' | 'android' | 'macos' | 'windows'
+              | 'linux' | 'chrome' | 'firefox' | 'safari')[];
+    features?: Feature[];
+}
+
+interface WalletInfoRemote extends WalletInfoBase {
+    universalLink: string;
+    bridgeUrl: string;
+    deepLink?: string;
+}
+
+interface WalletInfoInjectable extends WalletInfoBase {
+    jsBridgeKey: string;
+    injected: boolean;
+    embedded: boolean;
+}
+
+type WalletInfo =
+    | WalletInfoRemote
+    | WalletInfoInjectable
+    | (WalletInfoRemote & WalletInfoInjectable);
+```
+
+A wallet that supports both transports satisfies the intersection. Narrow with `'universalLink' in wallet` for HTTP wallets and `'jsBridgeKey' in wallet` for injected ones.
+
+### 5. Connect
+
+For an HTTP wallet, `connect()` returns a universal link. Show it to the user as a clickable URL, a deep link, or a QR code:
+
+```ts
+const link = connector.connect({
+    universalLink: 'https://app.tonkeeper.com/ton-connect',
+    bridgeUrl: 'https://bridge.tonapi.io/bridge',
+});
+```
+
+For a JS-injected wallet (browser extension or in-wallet browser), pass the bridge key. The wallet handles the handoff in-page, so `connect()` returns `void`:
+
+```ts
+connector.connect({ jsBridgeKey: 'tonkeeper' });
+```
+
+To request `ton_proof` alongside the address, pass it under `request`:
+
+```ts
+connector.connect(
+    { universalLink, bridgeUrl },
+    { request: { tonProof: nonce } },
+);
+```
+
+See [Connect a wallet](/ecosystem/ton-connect/how-to/connect) for the proof-verification flow.
+
+### 6. Listen for status changes
+
+```ts
+const unsubscribe = connector.onStatusChange(wallet => {
+    if (wallet) {
+        // wallet.account.address — raw 0:<hex> (convert to user-friendly before passing to sendTransaction)
+        // wallet.account.publicKey — hex string without 0x, optional (some wallets omit it)
+        // wallet.connectItems?.tonProof — TonProofItemReply, may carry proof or error
+    } else {
+        // disconnected — by the user or by the wallet
+    }
+});
+```
+
+The same callback fires for connects, restores, and wallet-initiated disconnects. Call `unsubscribe()` when you no longer need it.
+
+### 7. Send a transaction
+
+```ts
+const result = await connector.sendTransaction({
+    validUntil: Math.floor(Date.now() / 1000) + 300,
+    network: '-239', // mainnet (use '-3' for testnet)
+    messages: [
+        { address: 'UQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJKZ', // burn address
+          amount: '20000000' },
+    ],
+});
+
+console.log(result.boc); // base64 BoC of the signed external message
+```
+
+Each wallet advertises its own per-call limit on the `SendTransaction` feature entry: `wallet.device.features.find(f => typeof f === 'object' && f.name === 'SendTransaction')?.maxMessages`.
+
+### Long-lived servers
+
+- One `TonConnect` instance per signed-in user, with an `IStorage` keyed by user ID, and an in-process cache so the same instance is reused across requests.
+- The HTTP bridge stays open over SSE for as long as the connector is live. Call `pauseConnection()` when a user goes idle and `unPauseConnection()` when they return.
+- React to wallet-initiated disconnects through `onStatusChange`. When the callback fires with `null`, evict the cached connector and clear any session token you issued.
+- Persist the session per user, not globally. Two users sharing one `TonConnect` will leak addresses and overwrite each other's session keypairs.
+
+---
+
+## What's next
+
+- Authenticate the user with `ton_proof` → [Connect a wallet](/ecosystem/ton-connect/how-to/connect)
+- Send a structured transaction → [Send a transaction](/ecosystem/ton-connect/how-to/send-transaction)
+- Sign data on the wallet → [Sign data](/ecosystem/ton-connect/how-to/sign-data)
+- Gasless transactions → [Sign and relay a message (gasless)](/ecosystem/ton-connect/how-to/sign-message-gasless)
+- One-tap connect-and-pay → [Connect-and-act in one tap](/ecosystem/ton-connect/how-to/embedded-request)
+- Handle wallet-initiated disconnects → [Disconnect a session](/ecosystem/ton-connect/how-to/disconnect)
+- Filter wallets by feature → [Filter wallets by required features](/ecosystem/ton-connect/how-to/filter-wallets)
+- WalletConnect support → [Add WalletConnect support](/ecosystem/ton-connect/how-to/walletconnect-support)

@@ -1,0 +1,74 @@
+---
+title: "AppKit"
+sidebarTitle: "AppKit"
+---
+
+TON Connect's **AppKit** is an open-source SDK that integrates web2 and web3 applications with TON. It enables wallet connection, authorization, balance tracking, asset transfers, and data signing.
+
+The framework-independent core lives in `@ton/appkit`. React bindings live in `@ton/appkit-react` and wrap the same actions with hooks.
+
+AppKit prepares requests, tracks application state, and connects your interface to wallets and providers. Wallets still sign transactions and data. Your backend still verifies orders, signatures, and business rules.
+
+## Features
+
+- **TON Connect**: integrates with the standard wallet infrastructure for TON.
+- **Wallet management**: access connected wallets from registered connectors.
+- **Asset support**: work with Toncoin, jettons (USDT and others), and NFTs.
+- **React**: hooks and ready-made UI components for common flows.
+- **DeFi**: swaps, staking, on-ramp, and gasless transfers through registered providers.
+
+## What it owns
+
+A single `AppKit` instance holds configured **networks** (mainnet, testnet, and the API client used to read each), registered **connectors** that route signing requests to wallets, **connected wallets** with one wallet marked as selected, and **managers** for swap, staking, and streaming flows. Anything that reads or changes wallet state should go through this instance.
+
+## Configuration notes
+
+Create the `AppKit` instance once with an `AppKitConfig`. All fields are optional; pass only the configuration your app needs. See [Get started → Add wallet connectors](/ecosystem/appkit/get-started/connectors) for the constructor walkthrough.
+
+<Note>
+  If `networks` is omitted entirely, AppKit constructs a **mainnet-only** `ApiClientToncenter` with no API key. Fine for quick prototyping; expect rate limits on real workloads. Testnet apps must declare `networks` explicitly.
+</Note>
+
+## Lifecycle
+
+```text
+new AppKit(config) → connect → connector:connected → wallets:updated → (auto-select) wallets:selection-changed
+```
+
+## Action shapes
+
+AppKit exposes its capabilities as standalone functions instead of instance methods. Every action takes the `AppKit` instance as its first argument, which keeps the API easy to test and tree-shake.
+
+```ts
+import { getSelectedWallet, transferTon } from '@ton/appkit';
+
+const wallet = getSelectedWallet(appKit);
+if (wallet) {
+  await transferTon(appKit, { recipientAddress: 'EQ...', amount: '1.25' });
+}
+```
+
+Actions use three patterns. **Queries** read state synchronously or with a one-shot async call (`getSelectedWallet`, `getBalance`). **Watchers** subscribe to changes and return an unsubscribe function (`watchSelectedWallet`, `watchBalance`). **Mutations** trigger side effects and return a promise (`connect`, `transferTon`, `sendTransaction`).
+
+Read actions that target the selected wallet (`getBalance`, `getJettons`, `getNfts`, …) return **`null`** when no wallet is selected. Mutation and signing actions (`transferTon`, `sendTransaction`, `signText`, …) **throw** `Error('Wallet not connected')` in the same case. Check for a selected wallet — or be ready for the throw — before calling a mutation.
+
+## React integration
+
+`@ton/appkit-react` provides hooks for the main AppKit actions and watchers. Mount `AppKitProvider` once at the root inside a TanStack `QueryClientProvider`, then call hooks anywhere below it. See [Installation → Wrap the application](/ecosystem/appkit/get-started/installation/react-app#wrap-the-application) for the full mount.
+
+Most async data hooks return TanStack Query results such as `{ data, isLoading, error, refetch }`, and mutation hooks return `{ mutate, mutateAsync, isPending, error }`. Watch hooks such as `useWatchBalance` return `void` and keep the related query cache fresh while mounted. Wallet state hooks read AppKit's local store directly: `useSelectedWallet()` returns `[wallet, setWalletId]`, while `useConnectedWallets()` and `useConnectors()` return arrays.
+
+## Tips
+
+- Create one AppKit instance for one app runtime. Do not share an instance across windows or processes.
+- Pass the instance to actions directly, or provide it to React with `AppKitProvider`. Do not call actions before the instance is constructed.
+- Connector `id`s are singletons. Registering a second connector with the same `id` calls `destroy()` on the old one before installing the new.
+- Swap and staking provider `providerId`s are singletons too, but only the registry entry is replaced — the previous provider is not torn down. Hold the reference if you need to dispose of it yourself.
+- Do not call signing or transfer mutations without first checking that a wallet is selected.
+
+## Related pages
+
+- [Connect to a wallet](/ecosystem/appkit/howto/connect-to-a-wallet)
+- [Providers](/ecosystem/appkit/howto/providers)
+- [Send Toncoin](/ecosystem/appkit/howto/send-toncoin)
+- [Sign data](/ecosystem/appkit/howto/sign-data)

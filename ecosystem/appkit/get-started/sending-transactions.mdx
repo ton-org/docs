@@ -1,0 +1,57 @@
+---
+title: "Send transactions"
+sidebarTitle: "Send transactions"
+---
+
+Assemble a `TransactionRequest`, ask the connected wallet to sign and broadcast it, and wait for the chain to settle the result. AppKit ships three layers over this flow: UI components that wrap the full mutation lifecycle, mutation hooks that expose the same lifecycle without UI, and core actions that just make the wallet call.
+
+Reaching this page means you have a working app: install, connect, read, send. The pages after this one — streaming, DeFi providers, and UI widgets — layer on improvements rather than baseline functionality.
+
+The lifecycle has clear ownership boundaries. _Your code_ assembles the request — recipient, amount, payload, validity window. _The wallet_ reviews the request, presents it to the user, and signs it. _The chain_ receives the signed message, orders it, and either includes or rejects it. _The streaming provider_ observes the result and reports back. `onSuccess` firing on a component or hook means the wallet accepted the request, not that the chain accepted the transaction; settlement is observed separately on [Streaming](/ecosystem/appkit/get-started/streaming).
+
+## Send Toncoin in one component
+
+`<SendTonButton />` owns the whole lifecycle for a Toncoin transfer. It builds the request from `recipientAddress`, `amount` (decimal TON), and an optional `comment`; calls the wallet; and surfaces pending, error, and success state through a render-prop child. When you need to send something other than a plain Toncoin transfer — an NFT, a multi-message bundle, a swap-built transaction — use `<Send />` with a `request` callback that returns a `TransactionRequest` you assembled yourself.
+
+```tsx
+import { SendTonButton } from '@ton/appkit-react';
+
+<SendTonButton recipientAddress="EQ..." amount="0.05" comment="Test">
+  {({ isLoading, onSubmit, disabled, text }) => (
+    <button onClick={onSubmit} disabled={disabled}>
+      {isLoading ? 'Sending…' : text}
+    </button>
+  )}
+</SendTonButton>
+```
+
+The component exposes `{ isLoading, onSubmit, disabled, text }` to the render-prop child.
+
+## Pick the right call
+
+The three layers trade off control against work done for you. Components own the full lifecycle and ship a default render-prop UI hook, so you write the least code; mutation hooks give you the lifecycle without UI, so you build the button yourself; core actions give you neither — just a function that drives the wallet — and are the right pick from vanilla code or when you need to compose multiple transactions in one user action. Pick by how much of the lifecycle you want AppKit to own.
+
+| Goal                                | Component              | Hook                 | Core action       |
+| ----------------------------------- | ---------------------- | -------------------- | ----------------- |
+| Send Toncoin                        | `<SendTonButton />`    | `useTransferTon`     | `transferTon`     |
+| Send a jetton                       | `<SendJettonButton />` | `useTransferJetton`  | `transferJetton`  |
+| Send an NFT                         | `<Send />` + builder   | `useTransferNft`     | `transferNft`     |
+| Send a prepared transaction request | `<Send />`             | `useSendTransaction` | `sendTransaction` |
+
+## Tips
+
+Wallet acceptance is not settlement. Always pair a send with [Stream live updates](/ecosystem/appkit/get-started/streaming) or `getTransactionStatus`, and verify the final outcome on a backend before delivering paid goods.
+
+## Code example
+
+See a [working example](https://github.com/ton-connect/kit/tree/main/apps/appkit-minter) of TON, jetton, and NFT transfers built with these mutations — [try it live](https://appkit-minter.vercel.app/).
+
+## What to do next
+
+You now have the baseline working app. From here, layer on improvements:
+
+- [Stream live updates](/ecosystem/appkit/get-started/streaming) to react to chain changes without polling.
+- [Add DeFi providers](/ecosystem/appkit/get-started/providers) when the app needs swaps or staking.
+- [Use UI widgets](/ecosystem/appkit/get-started/using-ui-widgets) to drop in ready-made flows.
+
+For task-level walkthroughs, see [Send Toncoin](/ecosystem/appkit/howto/send-toncoin), [Send jettons](/ecosystem/appkit/howto/send-jettons), and [NFTs](/ecosystem/appkit/howto/nfts).

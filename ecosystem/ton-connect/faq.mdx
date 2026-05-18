@@ -1,0 +1,58 @@
+---
+title: "TON Connect FAQ"
+sidebarTitle: "FAQ"
+---
+
+{/* TODO(spec-merge): spec links point to `the-ton-tech/ton-connect` (`feature/refine-protocol`); switch to `ton-blockchain/ton-connect` once merged. */}
+
+## How do I tell if the user is on mainnet or testnet?
+
+Read `wallet.account.chain` after connect. Values: `'-239'` (mainnet) or `'-3'` (testnet).
+
+The protocol does not emit a `NetworkChanged` event. If your dApp targets mainnet, set `network: '-239'` on every `sendTransaction` and `signMessage` request — the wallet refuses mismatched networks and shows an alert.
+
+If you need separate testnet and mainnet experiences, run two instances of the dApp on different domains (`app.com` and `testnet.app.com`) rather than switching networks at runtime.
+
+## How do I make my own bridge?
+
+Most dApp developers should not need to. The wallet provider operates the bridge; you connect to whichever bridge the user's wallet lists in [`wallets-list`](https://github.com/ton-connect/wallets-list).
+
+If you are building a wallet, you do need a bridge. Options:
+
+- Use the common bridge at `https://connect.ton.org/bridge` for a quick start.
+- Run the Go reference implementation: [`ton-connect/bridge`](https://github.com/ton-connect/bridge).
+- Implement the `/events` and `/message` endpoints from the [Bridge specification](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/bridge.md) yourself.
+
+The wallet side of the bridge API is not mandated — you can add wallet-specific routes (admin, monitoring) freely.
+
+## How do I add my wallet to the list?
+
+Submit a pull request to [`ton-connect/wallets-list`](https://github.com/ton-connect/wallets-list) that adds your entry to `wallets-v2.json`. The PR runs schema validation against `wallets-v2.schema.json` — make your entry match.
+
+Apps may also add wallets directly through the SDK without the registry — useful for staging or partner integrations.
+
+For the full implementer guide, see the [Wallet Guidelines](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/guides/wallet-guidelines.md).
+
+## How do I implement backend authentication with TON Connect?
+
+Use the `ton_proof` connect item. The wallet returns a signature that binds the user's address, your domain, a timestamp, and a server-issued nonce. The backend verifies the signature against the user's public key (extracted from `walletStateInit` or fetched via the on-chain `get_public_key` method) and issues a session token.
+
+Walkthrough: [Connect a wallet → Authenticate with `ton_proof`](/ecosystem/ton-connect/how-to/connect#authenticate-with-ton_proof). Reference example: [`ton-connect/demo-dapp-backend`](https://github.com/ton-connect/demo-dapp-backend).
+
+## Why is there no `accountChanged` event?
+
+By design. TON Connect treats the wallet like a physical wallet that holds many "bank cards" (accounts). The user picks one account at connect time, and the dApp continues working with that account regardless of which account the user later browses in the wallet.
+
+To switch accounts the user disconnects (logs out) and reconnects (logs in) inside the dApp UI. See the [wallet developer guide](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/guides/wallet-guidelines.md).
+
+## Why is there no `networkChanged` event?
+
+Same philosophy. Mainnet and testnet are distinct deployments — dApps target one or the other and refuse cross-network requests. There is no expected runtime network switch. Hosting separate instances on separate domains is the recommended pattern.
+
+## How big can a transaction batch be?
+
+Bounded by the wallet's `maxMessages` field in its `SendTransaction` feature. Common values are 4 (older wallets) to 255 (newer wallets). Read it from `wallet.device.features` and split larger batches.
+
+## See also
+
+- [Troubleshooting](/ecosystem/ton-connect/troubleshooting) — error codes and manifest fetch failures.

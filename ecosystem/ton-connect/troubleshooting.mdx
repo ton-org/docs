@@ -1,0 +1,194 @@
+---
+title: "TON Connect troubleshooting"
+sidebarTitle: "Troubleshooting"
+---
+
+{/* TODO(spec-merge): spec links point to `the-ton-tech/ton-connect` (`feature/refine-protocol`); switch to `ton-blockchain/ton-connect` once merged. */}
+
+When TON Connect breaks, the failure surfaces in one of two places — an explicit error code from the wallet, or a manifest fetch problem before the wallet even sees the request. This page collects each.
+
+For frequently asked questions about expected behaviour rather than failures, see the [FAQ](/ecosystem/ton-connect/faq).
+
+## Common errors
+
+### `MANIFEST_NOT_FOUND_ERROR` — code 2
+
+The wallet could not fetch `tonconnect-manifest.json` at the URL the dApp passed in `ConnectRequest.manifestUrl`. Surfaces only as a `connect_error` event ([connect event codes](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/connect.md#connect-event-error-codes)).
+
+Causes:
+
+- The manifest URL returns a non-2xx status — wrong path, wrong host, or behind authentication.
+- The dApp is hosted on `localhost` or a private network the wallet cannot reach.
+- A WAF or CORS rule blocks unauthenticated `GET` requests from the wallet.
+
+**Action.** See [Manifest 404 and CORS](#manifest-404-and-cors). Confirm the manifest is reachable from the public internet with `curl -i https://yourapp.com/tonconnect-manifest.json`.
+
+### `MANIFEST_CONTENT_ERROR` — code 3
+
+The wallet fetched the manifest but rejected the body — JSON parse failure or a missing required field (`url`, `name`, `iconUrl`). An unreachable icon alone should not trigger this code — the spec lets wallets substitute a placeholder rather than blocking connect on icon failure. Surfaces only as a `connect_error` event ([connect event codes](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/connect.md#connect-event-error-codes)).
+
+**Action.** See [Manifest 404 and CORS](#manifest-404-and-cors). Validate the JSON against the [Manifest JSON schema](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/schemas/manifest.schema.json) and drop any trailing slash from `url`.
+
+### Bridge unreachable or timeout
+
+Not a protocol error code — surfaces as a network failure, a closed `EventSource`, or a hung promise on the dApp side.
+
+Causes:
+
+- The wallet's HTTP bridge is down or rate-limiting the dApp's `client_id`.
+- The user's network blocks the bridge domain.
+- The wallet never reconnected its SSE channel after backgrounding.
+
+**Action.** The SDK already retries: it reconnects the SSE channel with a fixed 2-second delay and resends every `POST /message` every 5 seconds. The resend loop runs indefinitely unless the dApp passes an explicit `attempts` count or an `AbortSignal` to the request — set one if you need a give-up policy. Surface a _Connection problem_ state in the UI and offer to reconnect. Each wallet entry in [`wallets-v2.json`](https://github.com/ton-connect/wallets-list) lists at most one SSE bridge URL — there is no fallback inside the entry, so a permanently broken bridge has to be fixed by the wallet provider.
+
+### `USER_REJECTS_ERROR` — code 300
+
+The user tapped Cancel in the wallet, or closed the wallet before signing. Surfaces on `sendTransaction`, `signMessage`, `signData`, and as a `connect_error` event. It does not surface on `disconnect` — that method has no user-cancel path ([`disconnect` RPC specification](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/rpc.md#disconnect)).
+
+**Action.** Treat this as the _user changed their mind_ path. Show a soft message ("Transaction cancelled") and let them retry. Do not log it as a system error.
+
+### `BAD_REQUEST_ERROR` — code 1
+
+The wallet rejected the payload as malformed. Surfaces on every RPC method and in `connect_error` events. Common triggers:
+
+- An address in raw format (`0:abc…`) where the wallet expects [TEP-2 friendly](https://github.com/ton-blockchain/TEPs/blob/master/text/0002-address.md) (base64url with the bounceable flag).
+- Both `messages` and `items` present in `sendTransaction` or `signMessage` — the payload must contain one or the other, never both ([RPC specification](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/rpc.md)).
+- An entry in `items` whose `type` is not in the wallet's advertised `Feature.itemTypes` (`'ton'`, `'jetton'`, `'nft'`).
+- `valid_until` already in the past at the moment the wallet receives the request.
+- `network` does not match the network currently selected in the wallet.
+
+**Action.** Inspect the request. Validate address formats and the `messages` XOR `items` rule. If the request was assembled from user input, validate before sending.
+
+### `METHOD_NOT_SUPPORTED` — code 400
+
+The wallet does not implement the requested method, or it does not advertise the feature the request relies on. The same code is reused per-item by [connect item codes](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/connect.md#connect-item-error-codes) when the wallet cannot honour an individual `ConnectItem` such as `ton_proof`.
+
+| Method or item                       | Required feature                                                       |
+| ------------------------------------ | ---------------------------------------------------------------------- |
+| `sendTransaction`                    | `SendTransaction`                                                      |
+| `signMessage`                        | `SignMessage`                                                          |
+| `signData` (text)                    | `SignData` with `'text'` in `types`                                    |
+| `signData` (binary)                  | `SignData` with `'binary'` in `types`                                  |
+| `signData` (cell)                    | `SignData` with `'cell'` in `types`                                    |
+| Embedded request (`e` URL parameter) | `EmbeddedRequest`                                                      |
+| Structured `items`                   | `SendTransaction` or `SignMessage` with `itemTypes` covering each item |
+| `ton_proof` connect item             | per-item code 400 in the `ConnectItemReply`                            |
+
+**Action.** Either fall back to a supported method, or use [`walletsRequiredFeatures`](/ecosystem/ton-connect/how-to/filter-wallets) to hide wallets that lack the feature before the user reaches the connect modal.
+
+### `UNKNOWN_APP_ERROR` — code 100
+
+The wallet does not recognise the app's session. Surfaces on every RPC method, on `connect_error`, and on `restoreConnection()` when the wallet has cleared the session.
+
+Causes:
+
+- The session was previously revoked from the wallet.
+- The app's `client_id` does not match what the wallet has stored for that session.
+
+**Action.** Clear the dApp's local session entry and prompt the user to reconnect.
+
+### `UNKNOWN_ERROR` — code 0
+
+A wallet-side fallback when no other code applies — internal exception, account locked, contract resolution failure, or a feature the SDK does not recognise.
+
+**Action.** Inspect the `message` field on the bridge response first; the SDK surfaces it through the rejected promise and into your browser console. If `message` is empty or generic, check the wallet's own logs — the bridge response will not have more detail than `{ code: 0, message }`. Repeated code 0 from a single wallet is worth reporting upstream as a wallet-side bug.
+
+### Correlating logs with `traceId`
+
+Every `sendTransaction`, `signMessage`, `signData`, and `disconnect` call attaches a `traceId` (UUID, UUIDv7 by default) to the bridge request, the connect URL, and the wallet's reply. The same value comes back on `result.traceId`. Log it alongside your analytics and include it when reporting issues — the wallet, bridge, and dApp share one ID per user-visible operation, which is what makes a server-side log search tractable.
+
+## Manifest 404 and CORS
+
+A manifest fetch error means the wallet could not load or validate your `tonconnect-manifest.json`. Before showing the connect prompt, the wallet fetches this file over HTTPS from any origin without authentication. Common causes are an unreachable host, blocked CORS, an HTML gateway challenge, and an `iconUrl` that does not load. In these cases the wallet returns `MANIFEST_NOT_FOUND_ERROR` (code `2`) or `MANIFEST_CONTENT_ERROR` (code `3`).
+
+Use `curl` to identify the failing layer. For the manifest schema and fields, see [Manifest](/ecosystem/ton-connect/core-concepts#manifest) and the [App manifest specification](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/manifest.md).
+
+### Self-diagnosis with `curl`
+
+Run this request from a phone hotspot, VPS, or another context where your dApp cookies do not apply:
+
+```bash
+curl -i https://example.com/tonconnect-manifest.json
+```
+
+Expect:
+
+- HTTP `200` status. The HTTP version on the status line is not relevant.
+- `Content-Type: application/json`.
+- `Access-Control-Allow-Origin` set to `*` or to the request `Origin`.
+- A JSON body with `url`, `name`, and `iconUrl`.
+
+If you see HTML, a redirect chain, `403`, or no `Access-Control-Allow-Origin`, go to the matching section.
+
+To exercise the cross-origin path explicitly, repeat the request with an arbitrary `Origin` header:
+
+```bash
+curl -i -H 'Origin: https://wallet.example.com' https://example.com/tonconnect-manifest.json
+```
+
+Confirm that the response returns the same `Access-Control-Allow-Origin` value.
+
+### Manifest URL is unreachable
+
+**Symptom.** The connect modal shows, but after the user taps a wallet, the wallet reports an error or does not open.
+
+**Check.** Open the manifest URL in an incognito browser tab. You should see raw JSON.
+
+**Common causes.**
+
+- The file is outside `public/` (Next.js, Vite) or missing from the build output.
+- A CDN in front of your domain still serves an old build.
+- The manifest lives on a subdomain (`api.example.com/...`) while `manifestUrl` points to the apex domain.
+
+**Fix.** Host the manifest at the root of the same domain that runs your dApp. Verify it with `curl -i https://example.com/tonconnect-manifest.json`. Expect HTTP `200` status and a JSON content type. Avoid `curl -I` (`HEAD`). Some hosts emit different headers for `HEAD` than for the `GET` request wallets use.
+
+### CORS blocks the wallet
+
+**Symptom.** The manifest URL is reachable from your dApp origin, but the wallet still reports a manifest error.
+
+**Why.** The wallet requests the manifest from another origin: a wallet web app, a native app, or an in-app webview. The [App manifest specification](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/manifest.md#hosting) requires the file to be reachable from any origin without CORS restrictions.
+
+**Fix.** Serve the manifest with permissive CORS:
+
+```http
+Access-Control-Allow-Origin: *
+```
+
+Static hosts such as Vercel, Netlify, GitHub Pages, and S3 usually emit this header by default. If you have custom CORS middleware, check that it does not restrict allowed origins to your own dApp.
+
+### Cloudflare or WAF challenge
+
+**Symptom.** The manifest loads in a browser, but the wallet sometimes fails to fetch it.
+
+**Why.** Cloudflare's Bot Fight Mode, JavaScript challenge, or "Under Attack" mode can return an HTML challenge page instead of JSON. The wallet receives HTML, fails to parse it as JSON, and reports `MANIFEST_CONTENT_ERROR` (code `3`).
+
+**Fix.** Bypass the challenge for the manifest path:
+
+- In Cloudflare, add a Configuration Rule or legacy Page Rule that disables Bot Fight Mode for `/tonconnect-manifest.json`.
+- In other gateways, add an equivalent allow rule for the same path. This includes Vercel Firewall, Akamai Bot Manager, and AWS WAF.
+
+The same logic applies to any gateway that may return HTML for a path the wallet expects to be JSON.
+
+### Auth proxy or `iconUrl` 404
+
+**Symptom.** The manifest itself loads, but the wallet still reports a content error.
+
+**Why.** The `iconUrl` in the manifest is unreachable, sits behind authentication, or returns `404`. Some wallets refuse to display a manifest when its icon does not load and report `MANIFEST_CONTENT_ERROR` (code `3`).
+
+**Fix.** Test the icon URL directly with `curl -i`. The icon must be PNG or ICO. SVG is not supported. Use a 180×180 px PNG and host it on the same public path without authentication.
+
+### Caching pitfalls
+
+The TON Connect protocol does not define manifest caching. Wallets cache at their own discretion, so behaviour is implementation-specific.
+
+After publishing a fix:
+
+- A wallet may keep using the previously cached broken manifest until its own TTL expires.
+- Changing the manifest path to `tonconnect-manifest-v2.json` and updating `manifestUrl` in the SDK constructor forces a fresh fetch.
+
+## See also
+
+- [FAQ](/ecosystem/ton-connect/faq) — frequently asked questions about behaviour and design choices.
+- [Universal links](/ecosystem/ton-connect/core-concepts#universal-links) — `ret` parameter reference.
+- [Connect-and-act in one tap](/ecosystem/ton-connect/how-to/embedded-request) — reduces round-trips on mobile.
+- [RPC specification](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/rpc.md) (`sendTransaction`, `signMessage`, `signData`, `disconnect`) and [Connect specification](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/connect.md) (connect event, connect item) — full normative error tables.

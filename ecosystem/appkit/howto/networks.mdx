@@ -1,0 +1,92 @@
+---
+title: "Networks"
+sidebarTitle: "Networks"
+---
+
+A network in AppKit is the chain context AppKit uses to read data, submit requests, and compare wallet state against the app's expected chain.
+
+## Configured networks
+
+AppKit can be configured with more than one network at the same time. Each network is identified by a `Network` value with a `chainId`, and each configured chain has an API client behind it.
+
+The API client is the app's source for chain reads: balances, transactions, block height, asset metadata, and request submission. AppKit includes Toncenter and TonAPI clients, and a pre-built client can be supplied when an app needs its own transport or authentication policy.
+
+At least one network must be configured. If a flow tries to read from a chain that the AppKit instance does not know about, the app has no reliable source of truth for that chain.
+
+## Default network
+
+Some flows are explicitly scoped to a network. Others need a fallback when the caller does not pass one. The default network is that fallback.
+
+Changing the default network changes the chain AppKit uses for reads and actions that do not specify a network. Connectors observe this change so wallet-facing flows can compare the selected wallet's network with the app's current expectation.
+
+## Configure networks
+
+Each network entry takes an `apiClient` — either the inline `{ url, key }` shape that targets TON Center, or a constructed `ApiClient` instance (such as `ApiClientTonApi`) for any other backend. The inline shape has preset URLs for mainnet and testnet, so `url` can be omitted for those.
+
+### Configure multiple networks
+
+Add more entries to `networks` to declare additional chains, including custom networks beyond mainnet and testnet. The example below configures mainnet and testnet through TON Center, plus a custom chain through a TonAPI client instance with its own endpoint URL.
+
+```ts
+const customNetwork = Network.custom('custom_chain_id');
+
+const appKit = new AppKit({
+  networks: {
+    [Network.mainnet().chainId]: {
+      apiClient: {
+        key: 'your-mainnet-key',
+      },
+    },
+    [Network.testnet().chainId]: {
+      apiClient: {
+        url: 'https://testnet.toncenter.com',
+        key: 'your-testnet-key',
+      },
+    },
+    [customNetwork.chainId]: {
+      apiClient: new ApiClientTonApi({
+        network: customNetwork,
+        endpoint: 'https://your-custom-endpoint.example',
+        apiKey: 'your-custom-key',
+      }),
+    },
+  },
+});
+```
+
+### Set and read the default network
+
+Set the default network with `setDefaultNetwork`:
+
+```ts
+import { setDefaultNetwork } from '@ton/appkit';
+
+setDefaultNetwork(appKit, { network: Network.testnet() });
+```
+
+Use `getDefaultNetwork` or the React `useDefaultNetwork` hook when UI needs to show the active chain. `useDefaultNetwork` returns a `[network, setNetwork]` tuple — the value is `Network | undefined`, and the setter updates the default network reactively.
+
+```tsx
+import { useDefaultNetwork } from '@ton/appkit-react';
+
+const [network] = useDefaultNetwork();
+return <span>{network?.chainId}</span>;
+```
+
+## Network mismatch
+
+A network mismatch happens when the app expects one chain and the selected wallet or provider reports another. This is not a display issue — it changes where a transaction request would be signed and where a result would settle.
+
+Block unsafe actions when the expected network and the reported network do not match. Surface the expected network and let the wallet or app flow resolve the mismatch before sending a transaction request.
+
+## Tips
+
+- Develop on testnet first.
+- Never derive product state from a network the AppKit instance is not configured to read.
+- Block unsafe actions when the selected wallet network does not match the expected network.
+
+## Related pages
+
+- [Providers](/ecosystem/appkit/howto/providers)
+- [Connect to a wallet](/ecosystem/appkit/howto/connect-to-a-wallet)
+- [How to](/ecosystem/appkit/howto)

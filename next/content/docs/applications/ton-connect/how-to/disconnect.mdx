@@ -1,0 +1,61 @@
+---
+id: ecosystem/ton-connect/how-to/disconnect
+title: "Disconnect a session"
+sidebarTitle: "Disconnect a session"
+description: ""
+---
+
+{/* TODO(spec-merge): spec links point to `the-ton-tech/ton-connect` (`feature/refine-protocol`); switch to `ton-blockchain/ton-connect` once merged. */}
+
+A TON Connect session ends from either side — the dApp calls `disconnect()`, or the user revokes the session from inside the wallet.
+
+## dApp-initiated disconnect
+
+```ts
+await tonConnectUi.disconnect();
+```
+
+`disconnect()` returns a `Promise<void>`. It first clears the wallet info from local storage and sets the connector's `wallet` to `null` (firing every `onStatusChange` subscriber), so the dApp sees the disconnected state immediately. The SDK then sends a `disconnect` RPC request over the bridge so the wallet can clean up its own state. The wallet does not emit a `disconnect` event in response to a dApp-initiated call.
+
+If no wallet is connected, `disconnect()` throws `WalletNotConnectedError`. Guard the call with `tonConnectUi.connected`.
+
+The call accepts an optional `traceId` (UUIDv7 by default) that the SDK attaches to the bridge request for analytics correlation, mirroring the option on `sendTransaction`, `signData`, and `signMessage`:
+
+```ts
+await tonConnectUi.disconnect({ traceId: '019a2a92-a884-7cfc-b1bc-caab18644b6f' });
+```
+
+## Wallet-initiated disconnect
+
+The user can revoke the session from inside the wallet — for example, from a "Connected dApps" list. The wallet sends a `disconnect` event over the bridge:
+
+```ts
+interface DisconnectEvent {
+    event: 'disconnect';
+    id: number;
+    payload: {};
+}
+```
+
+The SDK consumes the event in the bridge provider: it closes the gateway, removes the connection from storage, and triggers a status change with `wallet === null`.
+
+## Reacting to disconnects
+
+Both disconnect paths funnel into the same status change. Subscribe to the connector to handle either case:
+
+```ts
+const unsubscribe = tonConnectUi.onStatusChange(wallet => {
+    if (wallet === null) {
+        // The wallet revoked the session, or the dApp called disconnect().
+        // Clear UI state, redirect to login, etc.
+    }
+});
+```
+
+The callback cannot tell which side initiated the disconnect — the SDK does not surface a separate "revoked" signal. If the dApp needs to distinguish them, track whether the dApp itself called `disconnect()` earlier.
+
+## See also
+
+- [`disconnect` RPC specification](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/rpc.md#disconnect) and the [Bridge specification](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/bridge.md)
+- [Connect a wallet](/applications/ton-connect/how-to/connect)
+- [Sessions and keypairs](/applications/ton-connect/core-concepts#sessions-and-keypairs)

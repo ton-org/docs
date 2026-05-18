@@ -1,0 +1,100 @@
+---
+title: "Read balances"
+sidebarTitle: "Read balances"
+---
+
+Read Toncoin and jetton balances for the connected wallet or any address.
+
+## How it works
+
+Balance reads come from the configured API client for the active network. Selected-wallet hooks are convenient for wallet UI, while address-explicit hooks are better for receipts, profiles, admin views, and backend-confirmed destinations.
+
+Live balance changes are streaming signals. They are useful for refreshing UI, but product decisions should still rely on a point-in-time read from the network the app is configured to trust.
+
+## Before you begin
+
+A connected wallet (or a known address) and the React provider mounted. See [Connect to a wallet](/ecosystem/appkit/howto/connect-to-a-wallet).
+
+## Pick the right hook
+
+| Goal                                    | Hook                  |
+| --------------------------------------- | --------------------- |
+| Toncoin balance for the selected wallet | `useBalance`          |
+| Toncoin balance for an explicit address | `useBalanceByAddress` |
+| Jetton balances for the selected wallet | `useJettons`          |
+| Jetton balances for an explicit address | `useJettonsByAddress` |
+
+All four are query hooks. They return `{ data, isLoading, error, refetch }` and accept a `query` field to forward TanStack Query options such as `refetchInterval`.
+
+## Read the connected wallet
+
+```tsx
+import { useBalance, useJettons } from '@ton/appkit-react';
+
+export function Balances() {
+  const ton = useBalance({ query: { refetchInterval: 20000 } });
+  const jettons = useJettons({ query: { refetchInterval: 20000 } });
+
+  if (ton.isLoading || jettons.isLoading) return <span>Loading…</span>;
+  if (ton.isError) return <span>Failed to load TON</span>;
+
+  return (
+    <section>
+      <p>TON: {ton.data ?? '0'}</p>
+      <p>Jettons: {jettons.data?.jettons.length ?? 0}</p>
+    </section>
+  );
+}
+```
+
+`ton.data` is a string in TON units. Render it directly, or use `toNano` only when another API expects raw nanotons.
+
+Jetton reads return formatted balances in the token's own units. Use the token metadata for symbols and decimals when rendering a list.
+
+## Read by address
+
+Use the `*ByAddress` hooks to read any address — useful for receipt screens or admin tooling.
+
+```tsx
+import { useBalanceByAddress, useJettonsByAddress } from '@ton/appkit-react';
+
+export function ProfileBalances({ address }: { address: string }) {
+  const ton = useBalanceByAddress({ address });
+  const jettons = useJettonsByAddress({ address });
+  return <p>TON: {ton.data ?? '0'}</p>;
+}
+```
+
+## Render a jetton row
+
+The SDK ships `getFormattedJettonInfo` to normalize jetton metadata for display.
+
+```tsx
+import { getFormattedJettonInfo } from '@ton/appkit';
+
+const formatted = getFormattedJettonInfo(jetton);
+// formatted: { name, symbol, decimals, balance, image, address }
+```
+
+## Read from vanilla JS
+
+```ts
+import { getBalanceByAddress, getJettonsByAddress } from '@ton/appkit';
+
+const ton = await getBalanceByAddress(appKit, { address: 'EQ...' });
+const jettons = await getJettonsByAddress(appKit, { address: 'EQ...' });
+```
+
+## Live updates
+
+Mount `useWatchBalance()` and `useWatchJettons()` once high in the tree to keep the cache pushed live. See [Stream live updates](/ecosystem/appkit/get-started/streaming).
+
+## Code example
+
+See a [working example](https://github.com/ton-connect/kit/tree/main/apps/appkit-minter) of TON and jetton balances rendered together with the same hooks documented above — [try it live](https://appkit-minter.vercel.app/).
+
+## Related pages
+
+- [Streaming](/ecosystem/appkit/howto/streaming)
+- [AppKit reference](/ecosystem/appkit/reference)
+- [Send Toncoin](/ecosystem/appkit/howto/send-toncoin)

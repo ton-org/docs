@@ -1,0 +1,80 @@
+name: Next.js build & lint
+
+on:
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "next/**"
+      - ".github/workflows/next-build.yml"
+  push:
+    branches: ["main", "master"]
+    paths:
+      - "next/**"
+      - ".github/workflows/next-build.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Next.js docs
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      HUSKY: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: next/package-lock.json
+
+      - name: Install dependencies
+        working-directory: next
+        run: npm ci
+
+      - name: Generate Fumadocs source
+        working-directory: next
+        run: npm run generated-source
+
+      - name: Prettier check
+        working-directory: next
+        run: npm run fmt:check
+        continue-on-error: true
+
+      - name: ESLint
+        working-directory: next
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Validate navigation
+        working-directory: next
+        run: npm run lint:navigation
+
+      - name: Validate internal links
+        working-directory: next
+        run: npm run lint:links:internal
+
+      - name: Validate links
+        working-directory: next
+        run: npm run lint:links:validate
+
+      - name: Validate SEO continuity (redirects, chains, sitemap, canonical)
+        working-directory: next
+        run: npm run lint:seo
+
+      - name: Next build
+        working-directory: next
+        run: npm run build

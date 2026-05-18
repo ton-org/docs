@@ -1,0 +1,125 @@
+---
+title: "Send Toncoin"
+sidebarTitle: "Send Toncoin"
+---
+
+Transfer Toncoin from the connected wallet. Pick the call style that fits your UI.
+
+## How it works
+
+Toncoin is the native asset on TON. AppKit keeps Toncoin amounts as decimal strings in human-readable TON units and converts them when it builds the wallet request. Precision is 9 digits — `'0.1'` is 100,000,000 nanoToncoin; the smallest representable amount is `'0.000000001'` (1 nanoToncoin).
+
+The flow has three steps: AppKit assembles the request, the wallet signs and broadcasts, and the chain settles. A wallet response means the selected wallet accepted and submitted the request — it does not prove that the transaction settled on chain, so product state should wait for status tracking or a backend verification read.
+
+## Before you begin
+
+A connected wallet and the React provider mounted. See [Connect to a wallet](/ecosystem/appkit/howto/connect-to-a-wallet). Use testnet during development.
+
+## Component (recommended)
+
+`<SendTonButton />` builds the request, calls the wallet, and exposes the mutation state to a render-prop child.
+
+```tsx
+import { SendTonButton } from '@ton/appkit-react';
+import { getErrorMessage } from '@ton/appkit';
+import { useState } from 'react';
+
+export function SendTon() {
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <SendTonButton
+      recipientAddress="EQ..."
+      amount="0.05"
+      comment="Test payment"
+      onError={(e) => setError(getErrorMessage(e))}
+      onSuccess={({ boc }) => console.log('sent', boc)}
+    >
+      {({ isLoading, onSubmit, disabled, text }) => (
+        <button onClick={onSubmit} disabled={disabled}>
+          {isLoading ? 'Sending…' : text}
+        </button>
+      )}
+    </SendTonButton>
+  );
+}
+```
+
+`amount` is a decimal string in TON. The component accepts an optional `comment` for a memo on chain.
+
+## Hook
+
+`useTransferTon` is the mutation hook behind the component.
+
+```tsx
+import { useTransferTon } from '@ton/appkit-react';
+
+const transferTon = useTransferTon();
+
+transferTon.mutate({
+  recipientAddress: 'EQ...',
+  amount: '0.05',
+  comment: 'Test payment',
+});
+```
+
+Read `transferTon.isPending`, `transferTon.error`, and use `mutation.onSuccess` / `mutation.onError` if you initialize the hook with options.
+
+## Core action
+
+```ts
+import { transferTon } from '@ton/appkit';
+import { appKit } from './appkit';
+
+await transferTon(appKit, {
+  recipientAddress: 'EQ...',
+  amount: '0.05',
+  comment: 'Test payment',
+});
+```
+
+## Parameters
+
+| Field              | Type     | Required | Notes                                               |
+| ------------------ | -------- | -------- | --------------------------------------------------- |
+| `recipientAddress` | `string` | Yes      | TON address.                                        |
+| `amount`           | `string` | Yes      | Decimal TON, e.g. `'0.05'`.                         |
+| `comment`          | `string` | No       | Plain text memo. Mutually exclusive with `payload`. |
+| `payload`          | `string` | No       | Base64 cell. Overrides `comment` when set.          |
+| `stateInit`        | `string` | No       | Base64 cell, used to deploy.                        |
+
+## Confirm settlement
+
+TON achieves transaction [finality](https://docs.ton.org/payments/overview#transaction-finality) after a single masterchain block confirmation, with new blocks produced roughly every 400 ms. Once a transaction appears in a masterchain block, it becomes irreversible.
+
+`sendTransaction` returning a `boc` means **the user signed**. Settlement is a separate state — verify with `getTransactionStatus(appKit, { boc })`, which returns `'unknown' | 'pending' | 'completed' | 'failed'` along with `totalMessages`, `pendingMessages`, and `onchainMessages` for trace progress. Treat only `status === 'completed'` as final.
+
+Applications should not block the UI while waiting for confirmation. Show a "signed / confirming" state, let [Streaming](/ecosystem/appkit/howto/streaming) push live updates, and act on `completed` when it arrives. For finding a transaction by external message hash and applying normalization, see the [message lookup guide](/ecosystem/ton-connect/message-lookup).
+
+## Common failures
+
+| Failure              | Meaning                                                      |
+| -------------------- | ------------------------------------------------------------ |
+| User rejected        | The user closed or rejected the wallet request.              |
+| Insufficient balance | The wallet cannot pay amount and fees.                       |
+| Expired request      | The transaction deadline passed before approval.             |
+| Invalid address      | The recipient address is malformed or for the wrong network. |
+
+## Tips
+
+- Validate the recipient address, amount, and expected network before calling any mutation. Do not rely on the wallet as the final input validator.
+- Treat `sendTransaction` returning a `boc` as "user signed", not "settled". Wait for `getTransactionStatus` to return `completed` before delivering value.
+- Do not block UI while waiting for settlement. Show a "signed / confirming" state, let `watchBalance` / `watchTransactions` update the view, and act on `completed` when it arrives.
+- Refetch wallet balances and cached lists after settlement. Use trace status, not the immediate wallet response, as the trigger for product state changes.
+- Do not derive product success from the wallet response shape. Verify on the chain.
+- Keep amounts as strings or bigints until you display them. Floating-point math loses precision at TON's nine decimal places.
+
+## Code example
+
+See a [working example](https://github.com/ton-connect/kit/tree/main/apps/appkit-minter) of TON transfers built with these mutations — [try it live](https://appkit-minter.vercel.app/).
+
+## Related pages
+
+- [Send jettons](/ecosystem/appkit/howto/send-jettons)
+- [NFTs](/ecosystem/appkit/howto/nfts)
+- [Use UI widgets](/ecosystem/appkit/howto/use-ui-widgets)

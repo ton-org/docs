@@ -1,0 +1,107 @@
+---
+title: "Swaps"
+sidebarTitle: "Swaps"
+---
+
+Quote a swap, build the transaction, and send it through the connected wallet.
+
+## How it works
+
+The `SwapManager` routes each quote and build call to a single registered swap provider — by default the first one you registered, or the one you pass as `providerId`. `setDefaultProvider` on the manager overrides the default; an unknown `providerId` throws. A quote is the chosen provider's current offer for a route — input asset, output asset, amount, fees, and execution assumptions — and `useBuildSwapTransaction` turns an accepted quote into a `TransactionRequest`. AppKit does not price markets itself; the provider does.
+
+The quote is provider-supplied data and can expire. Refresh it close to the moment the user confirms, and treat the displayed `toAmount` as an estimate, not a guarantee. The wallet still owns approval, signing, and rejection on the final send.
+
+## Before you begin
+
+You need a connected wallet and at least one swap provider registered on the AppKit instance. Omniston and DeDust ship bundled — see [Providers → How they are registered](/ecosystem/appkit/howto/providers#how-they-are-registered).
+
+## Hooks
+
+| Hook                      | Purpose                                                          |
+| ------------------------- | ---------------------------------------------------------------- |
+| `useSwapQuote`            | Fetch a swap quote.                                              |
+| `useBuildSwapTransaction` | Build a `TransactionRequest` from a quote.                       |
+
+`useSwapQuote` is a query hook (`{ data, isLoading, isError, refetch }`); `useBuildSwapTransaction` is a mutation hook (`{ mutate, mutateAsync, isPending, error }`). Pass the built `TransactionRequest` to `<Send />` from `@ton/appkit-react`, which exposes loading/error state.
+
+## Quote a swap
+
+`useSwapQuote` takes the asset pair and amount and returns the provider's current offer. Pass `network`, `slippageBps`, and an optional `providerId` to pin a specific provider.
+
+```tsx
+import { useNetwork, useSwapQuote } from '@ton/appkit-react';
+
+const TON = { address: 'ton', decimals: 9, symbol: 'TON' };
+const USDT = {
+  address: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs',
+  decimals: 6,
+  symbol: 'USDT',
+};
+
+export function SwapPreview({ amount }: { amount: string }) {
+  const network = useNetwork();
+  const { data: quote, isLoading, isError } = useSwapQuote({
+    amount,
+    from: USDT,
+    to: TON,
+    network,
+    slippageBps: 100,
+  });
+
+  if (isLoading) return <span>Fetching quote…</span>;
+  if (isError || !quote) return <span>Swap unavailable</span>;
+
+  return (
+    <span>
+      {quote.fromAmount} {USDT.symbol} → {quote.toAmount} {TON.symbol}
+    </span>
+  );
+}
+```
+
+## Build and send the transaction
+
+`useBuildSwapTransaction` is the mutation that turns an accepted quote into a `TransactionRequest`. Wrap it in a `request` callback and hand it to `<Send />`; the component exposes loading/error state.
+
+```tsx
+import { Send, useAddress, useBuildSwapTransaction } from '@ton/appkit-react';
+import type { SwapQuote } from '@ton/appkit';
+
+export function SwapSendButton({ quote }: { quote: SwapQuote | undefined }) {
+  const address = useAddress();
+  const { mutateAsync: buildSwapTransaction } = useBuildSwapTransaction();
+
+  const request = async () => {
+    if (!quote || !address) {
+      throw new Error('Missing quote or address');
+    }
+    return buildSwapTransaction({ quote, userAddress: address });
+  };
+
+  return (
+    <Send
+      request={request}
+      disabled={!quote || !address}
+      text="Swap"
+      onSuccess={({ boc }) => console.log('sent', boc)}
+    />
+  );
+}
+```
+
+## After the send
+
+After the send completes, pass the response to `getTransactionStatus` to confirm settlement before updating balances, orders, or inventory. The response carries either a `boc` or a `normalizedHash`; pass whichever is set.
+
+## Tips
+
+- Refresh a quote before building if the user paused on the confirmation screen — the route can move while the modal is open.
+- Provider responses are external data; treat `toAmount` as an estimate, not a guarantee.
+- `minReceived` is the slippage-protected lower bound on the output after `slippageBps` is applied. Compare against your product floor before letting the user sign.
+- Slippage protection is provider-specific. `slippageBps` caps price drift; pass provider-specific fields through `providerOptions` when a provider needs more.
+
+## Related pages
+
+- [Providers](/ecosystem/appkit/howto/providers#swaps)
+- [Send Toncoin](/ecosystem/appkit/howto/send-toncoin)
+- [How to](/ecosystem/appkit/howto)

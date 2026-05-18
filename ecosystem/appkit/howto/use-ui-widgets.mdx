@@ -1,0 +1,304 @@
+---
+title: "Use UI widgets"
+sidebarTitle: "Use UI widgets"
+---
+
+`@ton/appkit-react` exports ready-to-use components for the most common AppKit flows. Drop them into your tree and connect callbacks. The default styles ship in `@ton/appkit-react/styles.css`.
+
+## How it works
+
+Widgets are React vertical flows over the same AppKit instance, selected wallet, network, and providers used by hooks and core actions. They are not a separate design system.
+
+Use the default UI when the built-in flow fits. Use render props when the widget should keep AppKit state and behavior but the app owns layout. Use hooks directly when the product flow no longer matches one component.
+
+## Before you begin
+
+You need the React providers mounted and the styles imported once at the entry file. See [Installation → Wrap the application](/ecosystem/appkit/get-started/installation/react-app#wrap-the-application).
+
+```tsx
+import '@ton/appkit-react/styles.css';
+```
+
+## Component catalog
+
+| Component                 | What it does                                                                |
+| ------------------------- | --------------------------------------------------------------------------- |
+| `<TonConnectButton />`    | Drop-in connect button. Opens the TON Connect modal and shows the address.  |
+| `<Send />`                | Generic transaction submitter. Accepts a `request` factory.                 |
+| `<SendTonButton />`       | Toncoin transfer with `recipientAddress`, `amount`, `comment`.              |
+| `<SendJettonButton />`    | Jetton transfer. Takes a `jetton` descriptor plus the same transfer fields. |
+| `<TransactionProgress />` | Renders the lifecycle of a sent transaction.                                |
+| `<NftItem />`             | NFT card with image and metadata.                                           |
+| `<SwapWidget />`          | Full swap UI: token select, amount, slippage, settings, submit.             |
+| `<StakingWidget />`       | Full staking UI: stake/unstake tabs, amount, APY and exchange-rate readout. |
+| `<TonIcon />`             | TON logo glyph as an inline SVG.                                            |
+| `<TonIconCircle />`       | Same glyph framed in a circle background.                                   |
+
+## Connect button
+
+```tsx
+import { TonConnectButton } from '@ton/appkit-react';
+
+<TonConnectButton />;
+```
+
+See [Connect to a wallet](/ecosystem/appkit/howto/connect-to-a-wallet) for the custom-selector alternative.
+
+## Send Toncoin
+
+```tsx
+import { SendTonButton } from '@ton/appkit-react';
+
+<SendTonButton recipientAddress="EQ..." amount="1.5" />;
+```
+
+The default rendering shows `Send {amount} TON`. Pass a `children` render-prop with `{ isLoading, onSubmit, disabled, text }` if you want to drive a custom button — the component still owns the request, the call to the wallet, and the loading/error state.
+
+<div
+  className="flex justify-center my-4"
+>
+  <img
+    className="block dark:hidden"
+    width="96"
+    src="/resources/images/appkit/send-ton-button-light.png"
+    alt="SendTonButton in Storybook"
+  />
+
+  <img
+    className="hidden dark:block"
+    width="96"
+    src="/resources/images/appkit/send-ton-button-dark.png"
+    alt="SendTonButton in Storybook"
+  />
+</div>
+
+## Send a jetton
+
+`<SendJettonButton />` mirrors `<SendTonButton />` but takes a `jetton` descriptor with the master address, ticker, and decimals so it knows which jetton wallet to call.
+
+```tsx
+import { SendJettonButton } from '@ton/appkit-react';
+
+<SendJettonButton
+  jetton={{
+    address: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs',
+    symbol: 'USDT',
+    decimals: 6,
+  }}
+  recipientAddress="EQ..."
+  amount="100"
+/>;
+```
+
+`jetton.address`, `jetton.symbol`, and `jetton.decimals` are all required. The default rendering shows `Send {amount} {jetton.symbol}`; pass a `children` render-prop if you want to drive a custom button.
+
+<div
+  className="flex justify-center my-4"
+>
+  <img
+    className="block dark:hidden"
+    width="108"
+    src="/resources/images/appkit/send-jetton-button-light.png"
+    alt="SendJettonButton in Storybook"
+  />
+
+  <img
+    className="hidden dark:block"
+    width="108"
+    src="/resources/images/appkit/send-jetton-button-dark.png"
+    alt="SendJettonButton in Storybook"
+  />
+</div>
+
+## Send a prepared transaction
+
+`<Send />` accepts a `request` function that returns a `TransactionRequest`. Use it for transactions you build yourself (offline builders, swap quotes, NFT transfers). Set `text` to label the default button.
+
+```tsx
+import { Send, useAppKit } from '@ton/appkit-react';
+import { createTransferNftTransaction } from '@ton/appkit';
+
+const appKit = useAppKit();
+
+const request = async () =>
+  createTransferNftTransaction(appKit, {
+    nftAddress: 'EQ...',
+    recipientAddress: 'EQ...',
+  });
+
+<Send
+  request={request}
+  text="Send Transaction"
+  onSuccess={({ boc }) => console.log('sent', boc)}
+/>;
+```
+
+Pass a `children` render-prop with `{ isLoading, onSubmit, disabled, text }` instead of (or alongside) `text` if you want full control over the button markup.
+
+<div
+  className="flex justify-center my-4"
+>
+  <img
+    className="block dark:hidden"
+    width="117"
+    src="/resources/images/appkit/send-light.png"
+    alt="Send in Storybook"
+  />
+
+  <img
+    className="hidden dark:block"
+    width="117"
+    src="/resources/images/appkit/send-dark.png"
+    alt="Send in Storybook"
+  />
+</div>
+
+## Render an NFT
+
+```tsx
+import { NftItem, useNfts } from '@ton/appkit-react';
+
+const { data } = useNfts();
+const nfts = data?.nfts ?? [];
+
+<div className="grid grid-cols-2 gap-2">
+  {nfts.map((nft) => (
+    <NftItem
+      key={nft.address}
+      nft={nft}
+      onClick={() => /* open detail */ undefined}
+    />
+  ))}
+</div>;
+```
+
+## Swap widget
+
+`<SwapWidget />` is the complete swap UI: pay/receive fields, token selector, flip button, slippage settings, and the submit button. Pass the list of tokens the user can pick between, optionally seed the default pair, and the widget handles quote fetching, building, and the wallet call internally.
+
+```tsx
+import { SwapWidget } from '@ton/appkit-react';
+import { Network } from '@ton/appkit';
+import type { AppkitUIToken } from '@ton/appkit-react';
+
+const TOKENS: AppkitUIToken[] = [
+  {
+    symbol: 'TON',
+    name: 'Toncoin',
+    decimals: 9,
+    address: 'ton',
+    network: Network.mainnet(),
+  },
+  {
+    symbol: 'USDT',
+    name: 'Tether USD',
+    decimals: 6,
+    address: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs',
+    network: Network.mainnet(),
+  },
+];
+
+<SwapWidget
+  tokens={TOKENS}
+  defaultFromSymbol="TON"
+  defaultToSymbol="USDT"
+  defaultSlippage={100}
+/>;
+```
+
+The required prop is `tokens`. `defaultFromSymbol`, `defaultToSymbol`, `defaultSlippage` (basis points, default `100` = 1%), `fiatSymbol` (default `'$'`), and `network` (defaults to the connected wallet's network) are all optional. Pass a `children` render-prop to replace the default UI while keeping the widget's internal state — the function receives `{ fromToken, toToken, fromAmount, toAmount, isQuoteLoading, canSubmit, setFromAmount, onFlip, ... }`.
+
+<div
+  className="flex justify-center my-4"
+>
+  <img
+    className="block dark:hidden"
+    width="343"
+    src="/resources/images/appkit/swap-widget-light.png"
+    alt="SwapWidget in Storybook"
+  />
+
+  <img
+    className="hidden dark:block"
+    width="343"
+    src="/resources/images/appkit/swap-widget-dark.png"
+    alt="SwapWidget in Storybook"
+  />
+</div>
+
+## Staking widget
+
+`<StakingWidget />` is the complete staking UI: stake/unstake tabs, amount input, balance readout, current APY, exchange rate, and provider. The widget reads the registered staking provider (Tonstakers ships bundled — see [Providers → How they are registered](/ecosystem/appkit/howto/providers#how-they-are-registered)) and handles quote, build, and the wallet call internally.
+
+```tsx
+import { StakingWidget } from '@ton/appkit-react';
+import { Network } from '@ton/appkit';
+
+<StakingWidget />;
+
+// Or pin a specific network:
+<StakingWidget network={Network.mainnet()} />;
+```
+
+`network` is the only prop; pass it to override the connected wallet's network. Pass a `children` render-prop for a custom UI; the function receives `{ amount, quote, isQuoteLoading, canSubmit, setAmount, direction, setDirection, unstakeMode, setUnstakeMode, ... }` to drive your own controls against the widget's internal state.
+
+<div className="flex justify-center my-4">
+<img
+  className="block dark:hidden"
+  width="301"
+  src="/resources/images/appkit/staking-widget-light.png"
+  alt="StakingWidget in Storybook"
+/>
+<img
+  className="hidden dark:block"
+  width="301"
+  src="/resources/images/appkit/staking-widget-dark.png"
+  alt="StakingWidget in Storybook"
+/>
+</div>
+
+## Show transaction progress
+
+After a send call resolves with a `boc`, hand it to `<TransactionProgress />` to render the wallet → chain lifecycle UI.
+
+```tsx
+import { TransactionProgress } from '@ton/appkit-react';
+
+<TransactionProgress boc={boc} />;
+```
+
+The component renders its own default UI. For full layout control, pass a `children` render prop. The child receives `{ status, totalMessages, pendingMessages, onchainMessages, isFetching, error, boc, texts }`. For lighter customization, pass `classNames={{ container, icon, message }}` to restyle internal parts without owning the markup.
+
+## TON glyphs
+
+`<TonIcon />` is an inline SVG of the TON diamond; it follows the surrounding `color` (so it tints with `currentColor`). `<TonIconCircle />` is the same glyph framed in a circular background. Both accept an optional `size` (defaults to `16`).
+
+```tsx
+import { TonIcon, TonIconCircle } from '@ton/appkit-react';
+
+<TonIcon size={24} />
+<TonIconCircle size={40} />
+```
+
+## Common props
+
+The send components share a callback shape:
+
+| Prop        | Type                                               | Notes                                                          |
+| ----------- | -------------------------------------------------- | -------------------------------------------------------------- |
+| `onSuccess` | `(response: SendTransactionResponse) => void`      | Response carries `boc`, `normalizedBoc`, and `normalizedHash`. |
+| `onError`   | `(error: Error) => void`                           | Plain `Error`. Pair with `getErrorMessage` for UX-safe text.   |
+| `disabled`  | `boolean`                                          | Disable the underlying button externally.                      |
+| children    | `(state: { isLoading, onSubmit, disabled, text })` | Render-prop API for full styling control.                      |
+| `text`      | `ReactNode`                                        | Label rendered when no children render-prop is provided.       |
+
+## Code example
+
+See a [working example](https://github.com/ton-connect/kit/tree/main/apps/appkit-minter) that integrates `<SwapWidget />` and `<StakingWidget />` — [try it live](https://appkit-minter.vercel.app/).
+
+## Related pages
+
+- [AppKit reference](/ecosystem/appkit/reference)
+- [Connect to a wallet](/ecosystem/appkit/howto/connect-to-a-wallet)
+- [Send Toncoin](/ecosystem/appkit/howto/send-toncoin)
+- [NFTs](/ecosystem/appkit/howto/nfts)

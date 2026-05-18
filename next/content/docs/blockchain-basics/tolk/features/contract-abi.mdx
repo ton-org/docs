@@ -1,0 +1,167 @@
+---
+id: tolk/features/contract-abi
+title: "Contract declaration and ABI"
+sidebarTitle: "Contract and ABI"
+description: ""
+---
+
+A Tolk file that defines a contract may start with a `contract` declaration. This is a directive for tooling: it tells the compiler that the file is a contract and lists the public shapes that describe it.
+
+The compiler uses this information to emit a machine-readable **ABI** — `out.abi.json` next to the produced `out.fif` — and to generate **TypeScript wrappers**, **source maps**, and other artifacts that the Acton toolchain consumes.
+
+```tolk
+contract Counter {
+    author: "My Team"
+    version: "0.1"
+    description: "A small counter contract"
+
+    storage: ContractStorage
+    incomingMessages: Increment | Reset
+}
+
+// the rest of the contract is unchanged:
+// types, onInternalMessage, get methods, etc.
+```
+
+<Aside type="note">
+  The directive does not affect bytecode at all. Contracts work without it just as before; declaring `contract` is what enables ABI export and tooling integration.
+</Aside>
+
+## What the `contract` declaration affects
+
+By convention, the file's name matches the contract's name (preferably PascalCase): `JettonMinter.tolk`, `JettonWallet.tolk`. Adding the declaration:
+
+- lists the contract's public interface in one place;
+- enables ABI export and TypeScript wrappers;
+- changes how [imports](/blockchain-basics/tolk/syntax/imports) propagate entrypoints (see below);
+- requires all `get fun` and message entrypoints to live in the same file.
+
+### Entrypoints must be in the same file
+
+When `contract` is present, all entrypoints (`get fun`, `onInternalMessage`, `onExternalMessage`) declarations must exist in the same file. They cannot be imported from another file — the compiler reports an error if you try.
+
+```tolk
+// file: MyContract.tolk
+import "separate-getter"   // compilation error if it declares `get fun`
+
+contract MyContract { /* ... */ }
+```
+
+### Imports do not pollute entrypoints
+
+When file `Foo.tolk` declares `contract Foo`, then `import "Foo"` exposes its types, functions, and methods, but **not** its `onInternalMessage` and `get fun`. Those belong to `Foo` only.
+
+This enables two patterns:
+
+1. **Tests and scripts as standalone files.** Import a contract and add your own `get fun` for tests — no conflicts.
+1. **Multi-contract projects.** A jetton minter can `import "JettonWallet"` to reuse its types (`WalletStorage`, messages) without colliding on `onInternalMessage` or get methods.
+
+## Properties of `contract`
+
+Most properties either describe the contract for explorers and clients, or expose information the compiler can not infer from imperative code (such as which messages are accepted). All properties are optional except those required for ABI fidelity in your case.
+
+```tolk
+contract SomeName {
+    /// arbitrary metadata strings, exported to ABI as-is
+    author: "Tolk team"
+    version: "1.0"
+    description: "..."
+
+    /// shape of persistent on-chain data
+    storage: MyStorage
+
+    /// shape of storage AT DEPLOYMENT (when calculating
+    /// initial address), if it differs from `storage`;
+    /// for example, NFT items have a smaller pre-init shape
+    storageAtDeployment: PartialStruct
+
+    /// internal messages accepted by this contract;
+    /// typically the same union used in `lazy` match
+    incomingMessages: UnionOfStructs
+
+    /// expected shape for `onExternalMessage`, if present
+    incomingExternal: SomeStructOrUnion
+
+    /// outgoing internal messages and emitted events;
+    /// auto-derived from `createMessage` /
+    /// `createExternalLogMessage` calls — specify only to override
+    outgoingMessages: UnionOfStructs
+    emittedEvents: UnionOfStructs
+
+    /// exception codes the contract may throw (an enum);
+    /// auto-derived from `throw` / `assert` — specify to override
+    thrownErrors: SomeEnum
+
+    /// extra types to include in ABI even if unreachable
+    /// from storage/messages/getters (handy for unit tests)
+    forceAbiExport: (type1, type2, ...)
+}
+```
+
+`incomingMessages` and `storage` cannot be inferred from source — Tolk treats `MyStorage` as a regular struct and `lazy ... fromSlice` as one of many ways to dispatch a body. The compiler asks you to declare them explicitly to make ABI honest and stable.
+
+## Contract ABI export
+
+Invoked from the command line:
+
+```bash
+tolk -o out.fif Counter.tolk
+```
+
+The compiler produces `out.abi.json` next to `out.fif`. The ABI contains:
+
+- contract metadata (name, author, version, description);
+- incoming and outgoing internal messages, external messages, emitted events;
+- storage shape (and storage at deployment, if any);
+- get methods with parameters and return types;
+- exceptions the contract may throw;
+- user-defined declarations (structs, aliases, enums) and the unique types they reference;
+- compiler name and version.
+
+The ABI is targeted at machine consumption: it powers TypeScript wrappers, explorers, UI builders, dynamic serialization, stack-layout introspection, and other client-side tooling. Tolk's ABI is built on the Tolk type system, not TL-B — Tolk types are richer than TL-B (aliases, enums, inline unions with auto-generated prefix trees, custom serializers, and so on).
+
+### Doc comments
+
+Place `///` doc comments above declarations to enrich ABI with descriptions. They are then surfaced as comments in TypeScript wrappers, IDE hover, explorer UIs, and so on.
+
+```tolk
+/// Persistent contract data
+struct (0x12345678) ContractStorage {
+    /// Current counter value
+    counter: int32
+
+    /// Contract owner
+    owner: address
+}
+
+/// Reads current counter.
+/// @param verbose whether to include debug info
+get fun currentCounter(verbose: bool): (int32, cell?) {
+    // ...
+}
+
+enum ErrCode {
+    /// Sender is not allowed to perform this action.
+    NotOwner = 401
+}
+```
+
+Only `///` comments are treated as documentation. Regular `//` comments inside code are ignored.
+
+### Client-side type override
+
+Sometimes the on-chain field is intentionally low-level (to save gas), but client tools should see a richer shape. Use the `@abi.clientType` annotation to expose a different type to ABI:
+
+```tolk
+struct AskToTransfer {
+    // ...
+    @abi.clientType(PayloadInline | PayloadInRef)
+    forwardPayload: RemainingBitsAndRefs
+}
+```
+
+The compiler still serializes the field as `RemainingBitsAndRefs`, but ABI advertises the richer union to clients.
+
+### Describing existing FunC contracts
+
+To generate TypeScript wrappers (or any ABI-driven artifact) for an existing FunC contract, **describe its interface in Tolk** rather than hand-writing JSON. A skeleton with the contract declaration, type stubs, and an empty `onInternalMessage` is enough for the compiler to emit a complete ABI.

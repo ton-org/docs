@@ -1,0 +1,310 @@
+---
+id: ecosystem/ton-connect/how-to/connect
+title: "Connect a wallet"
+sidebarTitle: "Connect a wallet"
+description: ""
+---
+
+{/* TODO(spec-merge): spec links point to `the-ton-tech/ton-connect` (`feature/refine-protocol`); switch to `ton-blockchain/ton-connect` once merged. */}
+
+Connecting a wallet is the first step in any TON Connect flow. The dApp presents a wallet picker, the user picks a wallet, and the wallet returns the user's account information over the bridge. Optionally, the dApp can also request `ton_proof` — a signature proving the user owns the connected address.
+
+## Connect
+
+### Default modal
+
+```tsx
+import { TonConnectButton, TonConnectUIProvider } from '@tonconnect/ui-react';
+
+<TonConnectUIProvider manifestUrl="https://example.com/tonconnect-manifest.json">
+  <TonConnectButton />
+  <App />
+</TonConnectUIProvider>
+```
+
+Render `<TonConnectButton />` inside the provider. The button opens the default modal and toggles between "Connect Wallet" and the connected account state automatically.
+
+Restyle it with `className` or `style`:
+
+```tsx
+<TonConnectButton className="my-class" style={{ float: 'right' }} />
+```
+
+### Open the modal manually
+
+To open the modal from a different control, call `openModal()` on the connector:
+
+```tsx
+import { useTonConnectUI } from '@tonconnect/ui-react';
+
+function ConnectButton() {
+    const [tonConnectUi] = useTonConnectUI();
+    return <button onClick={() => tonConnectUi.openModal()}>Connect Wallet</button>;
+}
+```
+
+The vanilla `TonConnectUI` instance exposes the same method.
+
+### Read connection state
+
+```tsx
+import { useTonAddress, useTonWallet, useIsConnectionRestored } from '@tonconnect/ui-react';
+
+function Status() {
+    const address = useTonAddress();
+    const wallet = useTonWallet();
+    const restored = useIsConnectionRestored();
+
+    if (!restored) return <span>Restoring…</span>;
+    if (!wallet)   return <span>Not connected</span>;
+    return <span>Connected: {address}</span>;
+}
+```
+
+`useIsConnectionRestored` matters: until it returns `true`, `wallet` and `address` are "not yet known", not "not connected". Gate any redirect or auth logic on the restored flag.
+
+The vanilla SDK exposes the same state through `tonConnectUi.wallet`, `tonConnectUi.account`, and the `onStatusChange` subscription.
+
+### Customise the modal
+
+```tsx
+import { useTonConnectUI, THEME } from '@tonconnect/ui-react';
+
+const [tonConnectUi] = useTonConnectUI();
+
+tonConnectUi.uiOptions = {
+    language: 'ru',
+    uiPreferences: { theme: THEME.DARK },
+};
+```
+
+`uiOptions` is a setter, not a plain object. Assigning to it runs the merge, theme switch, and re-render logic. Mutating a nested property (for example `tonConnectUi.uiOptions.uiPreferences.theme = ...`) bypasses the setter and has no effect. Always reassign the whole object.
+
+### Direct universal link (no modal)
+
+For flows where the user has already chosen a wallet:
+
+```ts
+import { TonConnectUI } from '@tonconnect/ui';
+
+const tc = new TonConnectUI({ manifestUrl: '...' });
+
+const universalLink = tc.connector.connect({
+    universalLink: 'https://app.tonkeeper.com/ton-connect',
+    bridgeUrl: 'https://bridge.tonapi.io/bridge'
+});
+window.location.href = universalLink;
+```
+
+### Restoring a previous connection
+
+The SDK calls `restoreConnection()` automatically on mount. Use `useIsConnectionRestored` (or the `connector.onStatusChange` callback for vanilla) to know when the restore attempt has settled — only after that should you decide whether the user is connected.
+
+### Trace ID for analytics
+
+The connect call accepts an optional `traceId` (UUIDv7 by default) that the SDK propagates as the `trace_id` query parameter on the connect URL and on the bridge. Tracing-aware wallets echo the same ID on the connect-event reply, so the dApp, bridge, and wallet share one correlation key for the connect operation. Pass it explicitly to align with an upstream tracing system, or let the SDK auto-generate it:
+
+```ts
+await tonConnectUi.openModal({ traceId: '019a2a92-a884-7cfc-b1bc-caab18644b6f' });
+```
+
+The same option is accepted by `tonConnectUi.disconnect`, `sendTransaction`, `signMessage`, and `signData`. The result of each action exposes `traceId` for logging.
+
+## Authenticate with `ton_proof`
+
+`ton_proof` returns a signature that binds the user's wallet, the dApp's domain, a timestamp, and a server-issued nonce. The dApp's backend verifies the signature against the user's public key and issues a session token (JWT or your own).
+
+### Frontend
+
+Fetch a backend nonce, then set connect request parameters before opening the modal:
+
+```ts
+import { useTonConnectUI } from '@tonconnect/ui-react';
+
+const [tonConnectUi] = useTonConnectUI();
+
+tonConnectUi.setConnectRequestParameters({ state: 'loading' });
+
+const nonce = await fetch('/api/tonconnect/nonce').then(r => r.text());
+
+tonConnectUi.setConnectRequestParameters({
+    state: 'ready',
+    value: { tonProof: nonce },
+});
+```
+
+Vanilla (`@tonconnect/ui`) uses the same API:
+
+```ts
+import { TonConnectUI } from '@tonconnect/ui';
+
+const tonConnectUi = new TonConnectUI({
+    manifestUrl: 'https://example.com/tonconnect-manifest.json',
+});
+
+tonConnectUi.setConnectRequestParameters({ state: 'loading' });
+
+const nonce = await fetch('/api/tonconnect/nonce').then(r => r.text());
+
+tonConnectUi.setConnectRequestParameters({
+    state: 'ready',
+    value: { tonProof: nonce },
+});
+```
+
+After the wallet responds, read the proof from the connect event:
+
+```ts
+tonConnectUi.onStatusChange(async wallet => {
+    if (!wallet) return;
+    const proof = wallet.connectItems?.tonProof;
+    if (proof && 'proof' in proof) {
+        await fetch('/api/tonconnect/verify', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+                proof: proof.proof,
+                address: wallet.account.address,
+                walletStateInit: wallet.account.walletStateInit,
+                network: wallet.account.chain
+            }),
+        });
+    }
+});
+```
+
+### Backend verification
+
+The backend reconstructs the signed message bytes and checks the Ed25519 signature against the user's public key.
+
+```text
+message = "ton-proof-item-v2/" ++ Address ++ AppDomain ++ Timestamp ++ Payload
+hash    = sha256(0xffff ++ "ton-connect" ++ sha256(message))
+verify  Ed25519(signature, hash, publicKey)
+```
+
+Field encodings are defined in the [`ton_proof` signature specification](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/connect.md#address-proof-signature-ton_proof). The verifier should:
+
+1. Check that the address derived from `walletStateInit` matches the reported account address — this binds the stateInit to the wallet whose proof you are verifying.
+1. Resolve the wallet's public key. First call [`tryExtractPublicKey`](/applications/ton-connect/how-to/sign-data#extracting-the-public-key) from the sign-data guide on the stateInit; if it returns `null` (unknown contract), fall back to the on-chain `get_public_key` getter. The wallet-reported `publicKey` is not trusted — the address-bound stateInit is the authoritative source.
+1. Verify the Ed25519 signature over the reconstructed hash.
+1. Reject proofs outside your time window (15 minutes is a common default).
+1. Reject proofs whose `AppDomain` does not match your dApp domain.
+1. Reject proofs whose `Payload` does not match a nonce your backend issued for that session.
+
+On success, issue a session token. The token's `sub` is the wallet address; the `aud` is your domain.
+
+### Node.js verifier
+
+```ts
+import { createHash } from 'node:crypto';
+import nacl from 'tweetnacl';
+import { Address, Cell, contractAddress, loadStateInit } from '@ton/ton';
+import { tryExtractPublicKey } from './wallet-public-key'; // from sign-data guide
+
+const PROOF_MAX_AGE_SEC = 15 * 60;
+
+interface TonProofPayload {
+    timestamp: number;
+    domain: { lengthBytes: number; value: string };
+    payload: string;       // application-defined; treat as opaque here
+    signature: string;     // base64
+}
+
+interface VerifyTonProofInput {
+    address: string;           // user-friendly wallet address
+    walletStateInit: string;   // base64 BoC from the connect event
+    proof: TonProofPayload;
+    expectedDomain: string;    // your dApp host, e.g. "example.com"
+}
+
+function sha256(buf: Buffer): Buffer {
+    return createHash('sha256').update(buf).digest();
+}
+
+function buildTonProofDigest(address: Address, proof: TonProofPayload): Buffer {
+    const wc = Buffer.alloc(4);
+    wc.writeUInt32BE(address.workChain, 0);
+
+    const domainBytes = Buffer.from(proof.domain.value, 'utf8');
+    if (proof.domain.lengthBytes !== domainBytes.length) {
+        throw new Error('domain lengthBytes mismatch');
+    }
+    const domainLen = Buffer.alloc(4);
+    domainLen.writeUInt32LE(proof.domain.lengthBytes, 0);
+
+    const ts = Buffer.alloc(8);
+    ts.writeBigUInt64LE(BigInt(proof.timestamp), 0);
+
+    const msg = Buffer.concat([
+        Buffer.from('ton-proof-item-v2/', 'utf8'),
+        wc,
+        Buffer.from(address.hash),
+        domainLen,
+        domainBytes,
+        ts,
+        Buffer.from(proof.payload, 'utf8'),
+    ]);
+
+    const inner = sha256(msg);
+    return sha256(Buffer.concat([
+        Buffer.from([0xff, 0xff]),
+        Buffer.from('ton-connect', 'utf8'),
+        inner,
+    ]));
+}
+
+export async function verifyTonProof(
+    input: VerifyTonProofInput,
+    getWalletPublicKey: (address: string) => Promise<Buffer | null>,
+): Promise<boolean> {
+    const { address, walletStateInit, proof, expectedDomain } = input;
+
+    if (proof.domain.value !== expectedDomain) throw new Error('wrong domain');
+
+    const now = Math.floor(Date.now() / 1000);
+    if (Math.abs(now - proof.timestamp) > PROOF_MAX_AGE_SEC) {
+        throw new Error('proof expired');
+    }
+
+    const wantedAddress = Address.parse(address);
+    const stateInit = loadStateInit(Cell.fromBase64(walletStateInit).beginParse());
+    const derivedAddress = contractAddress(wantedAddress.workChain, stateInit);
+    if (!derivedAddress.equals(wantedAddress)) {
+        throw new Error('walletStateInit does not match address');
+    }
+
+    const publicKey = tryExtractPublicKey(stateInit) ?? (await getWalletPublicKey(address));
+    if (!publicKey) throw new Error('could not resolve wallet public key');
+
+    const digest = buildTonProofDigest(wantedAddress, proof);
+    const sig = Buffer.from(proof.signature, 'base64');
+    const ok = nacl.sign.detached.verify(
+        new Uint8Array(digest),
+        new Uint8Array(sig),
+        new Uint8Array(publicKey),
+    );
+    if (!ok) throw new Error('bad signature');
+
+    return true;
+}
+```
+
+### Domain and timestamp checks
+
+Enforce these checks on every proof:
+
+- Compare `proof.domain.value` to your backend's expected host exactly.
+- Reject proofs outside your time window (15 minutes is a common default).
+- Issue each `proof.payload` (nonce) from your backend per session, and delete it on a successful verify so the same value cannot be reused.
+
+For browser calls to a different origin, add a CORS middleware or proxy API routes through the same host as the dApp.
+
+## See also
+
+- [Get started](/applications/ton-connect/get-started) — React, Next.js, vanilla JS, and headless SDK quick-starts.
+- [Sign data § Extracting the public key](/applications/ton-connect/how-to/sign-data#extracting-the-public-key) — the wallet public-key extraction the `ton_proof` verifier depends on.
+- [`ton_proof` signature specification](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/connect.md#address-proof-signature-ton_proof)
+- [Disconnect a session](/applications/ton-connect/how-to/disconnect)
+- [Filter wallets by required features](/applications/ton-connect/how-to/filter-wallets)
+- [TON Connect manifest](/applications/ton-connect/core-concepts#manifest)

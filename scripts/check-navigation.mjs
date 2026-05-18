@@ -104,7 +104,8 @@ const checkCover = async (config) => {
   const allRelevantMdxPages = findUnignoredFiles('mdx');
   const forgottenPages = allRelevantMdxPages.filter((it) => {
     // Present in the navigation
-    if (uniqPages.has(prefixWithSlash(it.replace(/\.mdx$/, '')))) {
+    const normalizedPath = it.replace(/\\/g, '/').replace(/\.mdx$/, '');
+    if (uniqPages.has(prefixWithSlash(normalizedPath))) {
       return false;
     }
     // Lost from the navigation and not a stub

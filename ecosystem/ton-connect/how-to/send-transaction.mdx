@@ -1,0 +1,328 @@
+---
+title: "Send a transaction"
+sidebarTitle: "Send a transaction"
+---
+
+{/* TODO(spec-merge): spec links point to `the-ton-tech/ton-connect` (`feature/refine-protocol`); switch to `ton-blockchain/ton-connect` once merged. */}
+
+`sendTransaction` asks the wallet to sign and broadcast one or more outgoing messages from the connected account. The request supports two payload shapes — raw `messages` for full control, or structured `items` to let the wallet build the BoC.
+
+## Request shape
+
+```ts
+interface SendTransactionRequest {
+    validUntil: number;          // unix seconds; reject if older
+    network?: string;            // NETWORK_ID; '-239' mainnet, '-3' testnet, any other valid TON global_id allowed
+    from?: string;               // optional sender address; restricts which account signs
+    messages?: RawMessage[];     // raw mode (mutually exclusive with `items`)
+    items?: StructuredItem[];    // structured mode (mutually exclusive with `messages`)
+}
+```
+
+`network` should be set explicitly. If the dApp's network and the wallet's network differ, the wallet refuses the request.
+
+## Raw `messages[]`
+
+Use raw messages when you need full control over the cell — custom op codes, contract calls, or backward compatibility with wallets that do not advertise `itemTypes`.
+
+Each message is `{ address, amount, payload?, stateInit?, extraCurrency? }`. `address` must be [TEP-2](https://github.com/ton-blockchain/TEPs/blob/master/text/0002-address.md) user-friendly form (not raw `workchain:hex`).
+
+Plain TON transfers omit `payload` or use an empty body.
+
+### TON transfer (with comment)
+
+Raw `messages` (no payload for a simple transfer):
+
+```ts
+import { comment } from '@ton/ton'
+
+await tonConnectUi.sendTransaction({
+    validUntil: Math.floor(Date.now() / 1000) + 600,
+    network: '-239',
+    messages: [{ address: 'EQD4oN...wz7A', amount: '5000000', payload: comment('Hello, world!') }],
+});
+```
+
+### Jetton transfer
+
+For jettons you send to the **user's jetton wallet** contract with a [TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md) `transfer#0f8a7ea5` body.
+
+```ts
+import { Address, beginCell, toNano } from '@ton/core';
+import { TonClient } from '@ton/ton';
+import { TonConnectUI } from '@tonconnect/ui';
+
+const tonConnectUi = new TonConnectUI({
+    manifestUrl: 'https://your-dapp.example/tonconnect-manifest.json',
+});
+
+const JETTON_MASTER = 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs';
+const RECIPIENT = 'Ef8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAU';
+
+const account = tonConnectUi.account;
+if (!account?.address) {
+    throw new Error('Connect the wallet first');
+}
+const SENDER = account.address;
+
+const client = new TonClient({
+    endpoint: 'https://toncenter.com/api/v2/jsonRPC',
+});
+
+async function resolveJettonWalletAddress(master: string, owner: string): Promise<string> {
+    const result = await client.runMethod(
+        Address.parse(master),
+        'get_wallet_address',
+        [{ type: 'slice', cell: beginCell().storeAddress(Address.parse(owner)).endCell() }]
+    );
+
+    const walletAddress = result.stack.readAddress();
+    return walletAddress.toString({ urlSafe: true, bounceable: true });
+}
+
+const jettonAmount = toNano('1');
+const forwardTonAmount = 1n; // 1 nanoTON
+
+const userJettonWallet = await resolveJettonWalletAddress(JETTON_MASTER, SENDER);
+
+const transferBody = beginCell()
+    .storeUint(0x0f8a7ea5, 32) // transfer op
+    .storeUint(0n, 64) // query_id
+    .storeCoins(jettonAmount)
+    .storeAddress(Address.parse(RECIPIENT))
+    .storeAddress(Address.parse(SENDER)) // response_destination
+    .storeBit(0) // custom_payload: none
+    .storeCoins(forwardTonAmount)
+    .storeBit(0) // forward_payload: inline empty
+    .endCell()
+    .toBoc()
+    .toString('base64');
+
+await tonConnectUi.sendTransaction({
+    validUntil: Math.floor(Date.now() / 1000) + 600,
+    network: '-239',
+    messages: [
+        {
+            address: userJettonWallet, // user-friendly (base64url) format
+            amount: toNano('0.05').toString(), // TON attached for jetton-wallet execution
+            payload: transferBody,
+        },
+    ],
+});
+```
+
+### NFT transfer
+
+For NFTs you send to the **NFT item** contract with [TEP-62](https://github.com/ton-blockchain/TEPs/blob/master/text/0062-nft-standard.md) `transfer#5fcc3d14`. Build the body as a base64 BoC and attach it as `payload`:
+
+```ts
+import { Address, beginCell, toNano } from '@ton/core';
+
+const nftItem = Address.parse('EQAcoW...qD8qM3T'); // NFT item contract, full friendly address
+const newOwner = Address.parse('EQD4oN...wz7A');
+const responseDestination = Address.parse('UQAs9V...g5kX'); // connected wallet, excess return
+
+const nftTransferBody = beginCell()
+    .storeUint(0x5fcc3d14, 32)
+    .storeUint(0n, 64) // query_id
+    .storeAddress(newOwner)
+    .storeAddress(responseDestination)
+    .storeBit(0) // no custom_payload
+    .storeCoins(toNano('0.01')) // forward_amount to new owner
+    .storeBit(0) // forward_payload: empty (Either left)
+    .endCell()
+    .toBoc()
+    .toString('base64');
+
+await tonConnectUi.sendTransaction({
+    validUntil: Math.floor(Date.now() / 1000) + 600,
+    network: '-239',
+    messages: [
+        {
+            address: nftItem.toString({ urlSafe: true, bounceable: true }),
+            amount: toNano('0.05').toString(),
+            payload: nftTransferBody,
+        },
+    ],
+});
+```
+
+## Structured `items[]`
+
+Structured items describe **what** to do — send TON, transfer a jetton, transfer an NFT. The wallet resolves jetton wallet addresses, builds transfer cells, and estimates gas. Use this path only when you know the target wallet advertises support (see [Choosing items vs messages](#choosing-items-vs-messages) and [Filter wallets by required features](/ecosystem/ton-connect/how-to/filter-wallets)).
+
+Three item types: `ton`, `jetton`, `nft`.
+
+### `ton` — transfer TON
+
+```ts
+interface TonItem {
+    type: 'ton';
+    address: string;       // destination, friendly format
+    amount: string;        // nanoTON as decimal string
+    payload?: string;      // optional one-cell BoC, base64
+    stateInit?: string;    // optional one-cell BoC, base64
+    extraCurrency?: { [k: number]: string };
+}
+```
+
+Same TON-with-comment transfer as the raw version above, expressed as a structured item:
+
+```ts
+import { comment } from '@ton/ton';
+
+await tonConnectUi.sendTransaction({
+    validUntil: Math.floor(Date.now() / 1000) + 600,
+    network: '-239',
+    items: [
+        {
+            type: 'ton',
+            address: 'EQD4oN...wz7A', // recipient, full TEP-2 friendly address
+            amount: '5000000',
+            payload: comment('Hello, world!'),
+        },
+    ],
+});
+```
+
+### `jetton` — transfer fungible tokens
+
+```ts
+interface JettonItem {
+    type: 'jetton';
+    master: string;               // jetton master contract address
+    destination: string;          // recipient address
+    amount: string;               // jetton amount in elementary units
+    attachAmount?: string;        // TON to attach for fees; wallet estimates if omitted
+    responseDestination?: string; // where to send excess; defaults to sender
+    customPayload?: string;       // raw one-cell BoC, base64
+    forwardAmount?: string;       // nanoTON to forward to destination
+    forwardPayload?: string;      // raw one-cell BoC, base64
+    queryId?: string;
+}
+```
+
+```ts
+await tonConnectUi.sendTransaction({
+    validUntil: Math.floor(Date.now() / 1000) + 600,
+    network: '-239',
+    items: [
+        {
+            type: 'jetton',
+            master: 'EQCxE6...Id_sDs', // jetton master, full friendly address
+            amount: '1000000',
+            destination: 'EQD4oN...wz7A',
+        },
+    ],
+});
+```
+
+### `nft` — transfer an NFT
+
+```ts
+interface NftItem {
+    type: 'nft';
+    nftAddress: string;
+    newOwner: string;
+    attachAmount?: string;
+    responseDestination?: string;
+    customPayload?: string;
+    forwardAmount?: string;
+    forwardPayload?: string;
+    queryId?: string;
+}
+```
+
+```ts
+await tonConnectUi.sendTransaction({
+    validUntil: Math.floor(Date.now() / 1000) + 600,
+    network: '-239',
+    items: [
+        {
+            type: 'nft',
+            nftAddress: 'EQAcoW...qD8qM3T', // NFT item contract, full friendly address
+            newOwner: 'EQD4oN...wz7A',
+        },
+    ],
+});
+```
+
+### Mixing types in one transaction
+
+```ts
+await tonConnectUi.sendTransaction({
+    validUntil: Math.floor(Date.now() / 1000) + 600,
+    network: '-239',
+    items: [
+        { type: 'ton', address: '...', amount: '5000000' },
+        {
+            type: 'jetton',
+            master: 'EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs',
+            amount: '50000',
+            destination: 'Ef8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAU',
+        }
+    ]
+});
+```
+
+To restrict the picker to wallets that support specific item types, see [Filter wallets by required features](/ecosystem/ton-connect/how-to/filter-wallets).
+
+## Multi-message batches
+
+Wallets accept up to `maxMessages` messages per request (declared in the wallet's [`SendTransaction` feature](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/connect.md)). Exceeding the limit throws before the wallet is opened.
+
+Submission is grouped, execution is not atomic across recipients:
+
+- The wallet signs and broadcasts one external message containing all requested internal messages.
+- Recipient contracts execute independently; one message can fail or bounce while others succeed.
+- Recipient execution order and final outcomes can diverge from the input list.
+
+Treat batch results as partial by default and verify each target account on-chain.
+
+## Choosing items vs messages
+
+Prefer **`messages`** today unless you control the wallet list. Many wallets still do not advertise structured `SendTransaction` capabilities (`itemTypes` for `ton` / `jetton` / `nft`), so `items` flows often fail or fall back unpredictably across the full registry.
+
+If you build on **`items`** (simpler jetton and NFT flows, no jetton-wallet resolution in the dApp), restrict the connect UI to wallets that declare the features you need. See [Filter wallets by required features](/ecosystem/ton-connect/how-to/filter-wallets).
+
+| Prefer `messages` when                      | Prefer `items` when (with wallet filtering)                                                              |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Default path for maximum compatibility      | The wallet advertises the needed `itemTypes`                                                             |
+| Custom op codes or non-standard payloads    | Standard TON / jetton / NFT transfers only                                                               |
+| You already resolve jetton wallet addresses | You want the wallet to build TEP-74 / TEP-62 bodies                                                      |
+| You cannot filter the wallet picker         | You filter wallets — [Filter wallets by required features](/ecosystem/ton-connect/how-to/filter-wallets) |
+
+## Response
+
+```ts
+interface SendTransactionResponse {
+    boc: string;        // base64 BoC of the broadcast external message
+    traceId?: string;   // UUID for end-to-end analytics correlation
+}
+```
+
+```ts
+const result = await tonConnectUi.sendTransaction(request);
+
+console.log(result.boc);     // base64 BoC of the broadcast external message
+```
+
+Use the returned BoC to look up the transaction on-chain.
+
+## Errors
+
+| Code | Name                   | Description                |
+| ---- | ---------------------- | -------------------------- |
+| 0    | `UNKNOWN_ERROR`        | Unknown error.             |
+| 1    | `BAD_REQUEST_ERROR`    | Bad request.               |
+| 100  | `UNKNOWN_APP_ERROR`    | Unknown app.               |
+| 300  | `USER_REJECTS_ERROR`   | User declined the request. |
+| 400  | `METHOD_NOT_SUPPORTED` | Method not supported.      |
+
+## See also
+
+- [Sign and relay a message (gasless)](/ecosystem/ton-connect/how-to/sign-message-gasless) — same payload shape, no broadcast
+- [Connect-and-act in one tap (embedded request)](/ecosystem/ton-connect/how-to/embedded-request)
+- [Filter wallets by required features](/ecosystem/ton-connect/how-to/filter-wallets)
+- [Structured items wallet guide](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/guides/structured-items.md)
+- [RPC specification](https://github.com/the-ton-tech/ton-connect/blob/feature/refine-protocol/spec/rpc.md)

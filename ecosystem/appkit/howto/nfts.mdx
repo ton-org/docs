@@ -1,0 +1,236 @@
+---
+title: "NFTs"
+sidebarTitle: "NFTs"
+---
+
+Read, render, and transfer NFTs owned by the connected wallet.
+
+<Warning>
+  **Verify NFT authenticity.** Scammers create fake NFTs that mimic popular collections. An NFT item contract can claim any collection address, so reading the `collection` field from the item alone is not sufficient. To verify that an NFT item genuinely belongs to a collection, query the collection contract with the item's index and check that the returned address matches the item's address. See [how to verify an NFT item](/standard/tokens/nft/verify) for the full procedure.
+</Warning>
+
+## How it works
+
+NFTs are unique digital assets on TON, similar to ERC-721 tokens on Ethereum. Unlike jettons, which have a balance, a wallet either owns a specific NFT item or it does not. NFTs consist of a collection contract and individual NFT item contracts; each item carries an `ownerAddress` that reflects current ownership.
+
+AppKit reads NFT ownership and metadata through the configured API client. NFT names, images, attributes, and collection fields are display data from contracts and indexers, so render them defensively.
+
+Transfers are wallet-approved transaction requests. The wallet accepting the request starts the chain flow, while ownership verification confirms that the NFT moved.
+
+## Before you begin
+
+A connected wallet and the React provider mounted. See [Connect to a wallet](/ecosystem/appkit/howto/connect-to-a-wallet).
+
+## Read NFTs
+
+```tsx
+import { useNfts } from '@ton/appkit-react';
+
+export function MyNfts() {
+  const { data, isLoading, isError, refetch } = useNfts({
+    query: { refetchInterval: 10000 },
+  });
+
+  if (isError) return <button onClick={() => refetch()}>Retry</button>;
+  if (isLoading) return <span>Loading…</span>;
+
+  const nfts = data?.nfts ?? [];
+  return <p>{nfts.length} NFT(s)</p>;
+}
+```
+
+For a different address, use `useNftsByAddress({ address })`.
+
+## Render with `<NftItem />`
+
+`@ton/appkit-react` ships an `NftItem` component that renders the NFT card with image, name, and collection.
+
+```tsx
+import { NftItem, useNfts } from '@ton/appkit-react';
+
+const { data } = useNfts();
+const nfts = data?.nfts ?? [];
+
+return (
+  <div className="grid grid-cols-2 gap-2">
+    {nfts.map((nft) => (
+      <NftItem key={nft.address} nft={nft} onClick={() => console.log(nft)} />
+    ))}
+  </div>
+);
+```
+
+## Transfer an NFT
+
+<Warning>
+  **Assets at risk.** Transferring an NFT is irreversible — once sent, only the new owner can transfer it back. Verify both the NFT address and the recipient address before initiating a transfer. A common failure mode is **stale ownership**: the NFT changes owners between the read and the transfer attempt. Reread `ownerAddress` before opening the wallet. If `isOnSale` is true, also check `realOwnerAddress`.
+</Warning>
+
+Before opening the wallet, make sure the sender's wallet has enough Toncoin to cover the [fees](/foundations/fees).
+
+An NFT transfer carries the destination owner address, the NFT contract address, and an optional small Toncoin amount that is forwarded to the recipient message. For NFTs the recommended pattern is to build the request offline with `createTransferNftTransaction`, then hand it to `<Send />`. This keeps the transaction shape testable.
+
+```tsx
+import { Send, useAppKit } from '@ton/appkit-react';
+import { createTransferNftTransaction, getErrorMessage } from '@ton/appkit';
+import { useCallback } from 'react';
+
+export function TransferNft({ nftAddress, recipientAddress }: { nftAddress: string; recipientAddress: string }) {
+  const appKit = useAppKit();
+
+  const request = useCallback(
+    () => createTransferNftTransaction(appKit, { nftAddress, recipientAddress }),
+    [appKit, nftAddress, recipientAddress],
+  );
+
+  return (
+    <Send
+      request={request}
+      onSuccess={() => console.log('done')}
+      onError={(e) => console.error(getErrorMessage(e))}
+    >
+      {({ isLoading, onSubmit, disabled, text }) => (
+        <button onClick={onSubmit} disabled={disabled}>
+          {isLoading ? 'Sending…' : text}
+        </button>
+      )}
+    </Send>
+  );
+}
+```
+
+The shorter route is the `useTransferNft` hook or the `transferNft` core action — both build the request internally and call the wallet directly.
+
+```ts
+import { transferNft } from '@ton/appkit';
+
+await transferNft(appKit, {
+  nftAddress: 'EQ...',
+  recipientAddress: 'EQ...',
+});
+```
+
+## Read a single NFT
+
+```ts
+import { getNft } from '@ton/appkit';
+
+const nft = await getNft(appKit, { address: 'EQ...' });
+```
+
+## Continuous ownership monitoring
+
+A discrete ownership check is fine for assembling an outgoing transfer, but UI state should not be derived from it — ownership can change between read and render. There is no `watchNfts` streaming action; to keep an NFT view in sync, mount a query hook with a refetch interval, or run a polling loop from vanilla code.
+
+```tsx
+import { useNfts } from '@ton/appkit-react';
+
+const { data, isLoading, error, refetch } = useNfts({
+  limit: 100,
+  query: { refetchInterval: 10_000 },
+});
+```
+
+From vanilla JS:
+
+```ts
+import { type AppKit, type NFT, getNfts } from '@ton/appkit';
+
+/** Start polling. Returns a stop function. */
+export function startNftOwnershipMonitoring(
+  appKit: AppKit,
+  onNftsUpdate: (nfts: NFT[]) => void,
+  intervalMs: number = 10_000,
+): () => void {
+  let isRunning = true;
+
+  const poll = async () => {
+    while (isRunning) {
+      const result = await getNfts(appKit, { limit: 100 });
+      onNftsUpdate(result?.nfts ?? []);
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  };
+
+  poll();
+  return () => { isRunning = false; };
+}
+```
+
+Pick an interval based on UX needs — shorter intervals provide fresher data but increase API usage. For large wallets, call `getNfts` with increasing `offset` to paginate.
+
+## `NFT` type
+
+NFT-related queries produce objects that conform to the following interface:
+
+```ts title="TypeScript"
+/**
+ * Non-fungible token (NFT) on the TON blockchain.
+ */
+export interface NFT {
+  /** Contract address of the NFT item */
+  address: string;
+  /** Index of the item within its collection */
+  index?: string;
+  /** Display information about the NFT (name, description, images, etc.) */
+  info?: TokenInfo;
+  /** Custom attributes/traits of the NFT (e.g., rarity, properties) */
+  attributes?: NFTAttribute[];
+  /** Information about the collection this item belongs to */
+  collection?: NFTCollection;
+  /** Address of the auction contract, if the NFT is being auctioned */
+  auctionContractAddress?: string;
+  /** Hash of the NFT smart contract code */
+  codeHash?: string;
+  /** Hash of the NFT's on-chain data */
+  dataHash?: string;
+  /** Whether the NFT contract has been initialized */
+  isInited?: boolean;
+  /** Whether the NFT is soulbound (non-transferable) */
+  isSoulbound?: boolean;
+  /** Whether the NFT is currently listed for sale */
+  isOnSale?: boolean;
+  /** Current owner address of the NFT */
+  ownerAddress?: string;
+  /** Real owner address when NFT is on sale (sale contract becomes temporary owner) */
+  realOwnerAddress?: string;
+  /** Address of the sale contract, if the NFT is listed for sale */
+  saleContractAddress?: string;
+  /** Off-chain metadata of the NFT (key-value pairs) */
+  extra?: { [key: string]: unknown };
+}
+```
+
+NFT display data (`info`, `attributes`, `extra`) is off-chain and untrusted. The contract address is the authoritative routing key. When `isOnSale` is `true`, `ownerAddress` points to the sale contract and `realOwnerAddress` points to the seller. Render the seller, but route on-chain interactions through `ownerAddress`.
+
+## Confirm settlement
+
+The wallet accepting the request does not prove the NFT moved. Track the transaction with [Streaming](/ecosystem/appkit/howto/streaming) and verify ownership before crediting value.
+
+## Common failures
+
+| Failure         | Meaning                                                                                                                  |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| User rejected   | The user closed or rejected the wallet request.                                                                          |
+| Stale ownership | The NFT changed owners between the read and the transfer. Reread `ownerAddress` before sending.                          |
+| NFT on sale     | `isOnSale === true` — the NFT is held by a sale contract. Cancel the listing or transfer through the sale contract flow. |
+| Soulbound NFT   | `isSoulbound === true` — the item cannot be transferred.                                                                 |
+| Invalid address | The recipient or NFT contract address is malformed or for the wrong network.                                             |
+
+## Tips
+
+- Verify the current `ownerAddress` before allowing a user-initiated transfer. NFTs can change owners between reads and transfers.
+- Display **verified** fields first: contract address, owner address, real owner address, and collection address. Treat off-chain display data (`info`, `attributes`, `extra`) as **display data only**. Sanitize names and images, and never route on display metadata.
+- Use `getTransactionStatus` to confirm settlement before updating NFT state in your app. The wallet response only proves the user signed.
+- Refetch the NFT list after settlement so the owner fields are current.
+- Do not concatenate NFT addresses for analytics keys. Use the contract address verbatim and `index` as a string when present.
+
+## Code example
+
+See a [working example](https://github.com/ton-connect/kit/tree/main/apps/appkit-minter) of an NFT list rendered with `useNfts` — [try it live](https://appkit-minter.vercel.app/).
+
+## Related pages
+
+- [Use UI widgets](/ecosystem/appkit/howto/use-ui-widgets)
+- [AppKit reference](/ecosystem/appkit/reference)
+- [Send Toncoin](/ecosystem/appkit/howto/send-toncoin)

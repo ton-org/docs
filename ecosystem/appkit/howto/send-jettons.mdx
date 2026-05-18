@@ -1,0 +1,137 @@
+---
+title: "Send jettons"
+sidebarTitle: "Send jettons"
+---
+
+Transfer a jetton (a TON fungible token) from the connected wallet to another address.
+
+## How it works
+
+Jettons are TON fungible tokens. Each holder has a jetton wallet contract derived from `(jettonMaster, ownerAddress)` — the owner is the user's TON wallet, and the jetton wallet is a separate contract owned by it. Transfer UI asks for the recipient's owner address, not their jetton wallet address. AppKit derives the sender's jetton wallet internally (that's the destination of the outer TON message), builds the inner jetton transfer payload that names the recipient's owner address, and wraps it in the outer message. The sender's jetton wallet then forwards the transfer to the recipient's jetton wallet on-chain. For example, USDT on TON is implemented as a jetton with the master address `EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs`.
+
+Each jetton stores `name`, `symbol`, and `decimals` in its metadata. Amounts are decimal strings in the jetton's own units, so read the `decimals` field from chain metadata before building a transfer — different jettons can use different precision. USDT uses 6 decimals, so `'0.1'` represents 100,000 micro-USDT.
+
+<Note>
+  To deploy and mint a new jetton on the mainnet without writing code, use the dedicated official tool: [TON MINTER](https://minter.ton.org).
+</Note>
+
+## Before you begin
+
+A connected wallet, the React provider mounted, and the jetton's master address. See [Connect to a wallet](/ecosystem/appkit/howto/connect-to-a-wallet) and [Read balances](/ecosystem/appkit/howto/read-balances) to discover what the wallet holds.
+
+<Warning>
+  **Funds at risk.** Transferring without accounting for `decimals` can send drastically more or fewer tokens than intended. Verify the `decimals` value from chain metadata before calculating transfer amounts.
+</Warning>
+
+Before opening the wallet, make sure the sender's wallet has enough Toncoin to cover the [fees](/foundations/fees).
+
+## Component (recommended)
+
+`<SendJettonButton />` accepts a `jetton` descriptor with `address`, `symbol`, and `decimals`.
+
+```tsx
+import { SendJettonButton } from '@ton/appkit-react';
+import { getErrorMessage } from '@ton/appkit';
+
+<SendJettonButton
+  jetton={{ address: 'EQ...', symbol: 'USDT', decimals: 6 }}
+  recipientAddress="EQ..."
+  amount="1.0"
+  comment="Invoice 42"
+  onError={(e) => console.error(getErrorMessage(e))}
+  onSuccess={({ boc }) => console.log('sent', boc)}
+>
+  {({ isLoading, onSubmit, disabled, text }) => (
+    <button onClick={onSubmit} disabled={disabled}>
+      {text}
+    </button>
+  )}
+</SendJettonButton>
+```
+
+`amount` is a decimal string in jetton units (so `'1.0'` for one full token, regardless of `decimals`).
+
+## Hook
+
+```tsx
+import { useTransferJetton } from '@ton/appkit-react';
+
+const transferJetton = useTransferJetton();
+
+transferJetton.mutate({
+  recipientAddress: 'EQ...',
+  jettonAddress: 'EQ...',
+  amount: '1.0',
+  jettonDecimals: 6,
+});
+```
+
+## Core action
+
+```ts
+import { transferJetton } from '@ton/appkit';
+
+await transferJetton(appKit, {
+  recipientAddress: 'EQ...',
+  jettonAddress: 'EQ...',
+  amount: '1.0',
+  jettonDecimals: 6,
+});
+```
+
+## Look up jetton metadata
+
+When you need the symbol, decimals, or icon for a UI, call `getJettonInfo` and pass the result through `getFormattedJettonInfo`.
+
+```ts
+import { getJettonInfo, getFormattedJettonInfo } from '@ton/appkit';
+
+const jetton = await getJettonInfo(appKit, { address: 'EQ...' });
+const formatted = getFormattedJettonInfo(jetton);
+// formatted: { name, symbol, decimals, balance, image, address }
+```
+
+## Parameters
+
+| Field              | Type     | Required | Notes                                   |
+| ------------------ | -------- | -------- | --------------------------------------- |
+| `recipientAddress` | `string` | Yes      | TON address of the recipient.           |
+| `jettonAddress`    | `string` | Yes      | Address of the jetton master contract.  |
+| `amount`           | `string` | Yes      | Decimal jetton units, e.g. `'1.0'`.     |
+| `jettonDecimals`   | `number` | Yes      | Decimal precision of the jetton.        |
+| `comment`          | `string` | No       | Plain text memo on the jetton transfer. |
+
+## Confirm settlement
+
+Jetton transfers settle through the same trace API as Toncoin transfers, but typically produce multiple internal messages. Use `getTransactionStatus(appKit, { boc })` and inspect `onchainMessages`, `pendingMessages`, and `totalMessages` to track progress; treat only `status === 'completed'` as final.
+
+Track the transaction with [Streaming](/ecosystem/appkit/howto/streaming) and verify the recipient's jetton balance in your backend before delivering value.
+
+If the recipient has never held this jetton, the transfer deploys the recipient's jetton wallet contract on first receive, which costs additional gas. The default outer-TON allowance on a built `transferJetton` request is designed to cover this case.
+
+## Common failures
+
+| Failure              | Meaning                                                                                                                      |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| User rejected        | The user closed or rejected the wallet request.                                                                              |
+| Wrong decimals       | The amount was scaled with the wrong `decimals` value. The transfer may move drastically more or fewer tokens than intended. |
+| Insufficient balance | The wallet cannot cover the jetton amount or the outer TON fee allowance.                                                    |
+| Invalid address      | The recipient or jetton master address is malformed or for the wrong network.                                                |
+
+## Tips
+
+- Always pass the destination **owner address** as `recipientAddress`. AppKit derives the sender's jetton wallet contract and writes the destination owner address into the jetton transfer payload.
+- Read decimals from chain metadata (`getJettonInfo`) before building a transfer. Different jettons can use different precision.
+- Treat the `boc` from `sendTransaction` as "user signed". Verify settlement with `getTransactionStatus` before crediting an order.
+- Refetch the user's jetton list and balances after settlement.
+- Do not display jetton metadata without sanitizing — names and images are user-supplied.
+
+## Code example
+
+See a [working example](https://github.com/ton-connect/kit/tree/main/apps/appkit-minter) of jetton transfers built with these mutations — [try it live](https://appkit-minter.vercel.app/).
+
+## Related pages
+
+- [Read balances](/ecosystem/appkit/howto/read-balances)
+- [Send Toncoin](/ecosystem/appkit/howto/send-toncoin)
+- [Use UI widgets](/ecosystem/appkit/howto/use-ui-widgets)

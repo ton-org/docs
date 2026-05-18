@@ -1,0 +1,49 @@
+---
+id: ecosystem/appkit/get-started/streaming
+title: "Stream live updates"
+sidebarTitle: "Stream live updates"
+description: ""
+---
+
+Subscribe to balance, jetton, and transaction updates pushed by a streaming provider so the UI reflects chain changes without polling. Use it whenever you would otherwise refetch on a timer.
+
+Treat the stream as a fast cache, not as proof of settlement. The underlying transport is a long-lived connection; it can disconnect and reconnect while the chain advances, and after reconnect updates resume from the provider's current view, which may skip in-flight transitions.
+
+## Before you begin
+
+A streaming provider has to be registered on the AppKit instance before any watcher will fire. The default `ApiClient` does not stream — you register a streaming provider separately on `appKit.streamingManager`. See [Providers → How they are registered](/applications/appkit/howto/providers#how-they-are-registered) for the registration pattern, and use `hasStreamingProvider(appKit, network)` from `@ton/appkit` as the runtime check before subscribing.
+
+## Mount global watchers
+
+Mount the `useWatch*` hooks once at a high level — the router, the app shell, or a layout component — so the underlying cache stays current for every consumer below. Calling a hook with no arguments simply keeps the cache warm. Pass an `onChange` callback for one-shot side effects (toast, log, navigate). A [working example](https://github.com/ton-connect/kit/tree/main/apps/appkit-minter) calls `useWatchBalance()`, `useWatchJettons()`, and `useWatchTransactions({ onChange })` from its router for exactly this reason. [Try it live](https://appkit-minter.vercel.app/).
+
+Call the `useWatch*` hooks once high in the tree. They keep the cache fresh; pass `onChange` when you want to react to each update.
+
+```tsx
+import { useWatchBalance, useWatchTransactions } from '@ton/appkit-react';
+
+export function GlobalWatchers() {
+  useWatchBalance();
+  useWatchTransactions({
+    onChange: (update) => {
+      if (update.status === 'finalized') {
+        console.log('settled', update.traceHash);
+      }
+    },
+  });
+  return null;
+}
+```
+
+`update.status` is `'pending' | 'confirmed' | 'finalized' | 'invalidated'`. Treat anything before `'finalized'` as not yet settled.
+
+Each status names a different stage and carries a different meaning. `pending` means the streaming provider has seen the request but not its inclusion in a block. `confirmed` means a block contains the transaction but it is not irreversible. `finalized` means the chain considers the transaction permanent. `invalidated` means the provider has rolled the transaction back or rejected it; treat it the same as a failed send. UI hints are appropriate at every stage; product-state changes (delivering value, settling an order) are appropriate only at `finalized`.
+
+## Tips
+
+A stream is a hint, not proof. Verify the final state on a backend before delivering value or settling an order, and re-check after every reconnect — the stream may have missed transitions while disconnected.
+
+## What to do next
+
+- Continue to [Add DeFi providers](/applications/appkit/get-started/providers) when the app needs swap or staking flows.
+- For task-level patterns that combine sends with settlement tracking, see [Streaming](/applications/appkit/howto/streaming) in How to.
