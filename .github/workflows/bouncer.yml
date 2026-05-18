@@ -1,12 +1,6 @@
 name: 🏀 Bouncer
 # aka 🚪 Supervisor
 
-env:
-  # additions only
-  MAX_ADDITIONS: 600
-  # many target issues usually mean bigger pull requests
-  MAX_ISSUES_PER_PR: 3
-
 on:
   pull_request_target: # do NOT use actions/checkout!
     # any branches
@@ -23,88 +17,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  enforce-smaller-requests:
-    name: "PR is manageable"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check if a number of additions modulo filtered files is within the threshold
-        id: stats
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
-        with:
-          # language=JavaScript
-          script: |
-            const maxAdditions = Number(process.env.MAX_ADDITIONS ?? '600');
-            await exec.exec('sleep 0.5s');
-            const { data: files } = await github.rest.pulls.listFiles({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
-              per_page: 100,
-            });
-            const filtered = files.filter((f) =>
-              f.filename.match(/\.mdx?$/) !== null &&
-              !f.filename.startsWith('tvm/instructions.mdx') &&
-              !f.filename.startsWith('snippets'),
-            );
-            const additions = filtered.reduce((acc, it) => acc + it.additions, 0);
-            if (additions > maxAdditions) {
-              core.setOutput('trigger', 'true');
-            } else {
-              core.setOutput('trigger', 'false');
-            }
-
-      - name: ${{ steps.stats.outputs.trigger == 'true' && 'An opened PR is too big to be reviewed at once!' || '...' }}
-        if: github.event.action == 'opened' && steps.stats.outputs.trigger == 'true'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
-        with:
-          # language=JavaScript
-          script: |
-            await exec.exec('sleep 0.5s');
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: [
-                'Thank you for the contribution!',
-                [
-                  'Unfortunately, it is too large, with over ${{ env.MAX_ADDITIONS }} added lines,',
-                  'excluding some generated or otherwise special files.',
-                  'Thus, this pull request is challenging to review and iterate on.',
-                ].join(' '),
-                [
-                  'Please split the PR into several smaller ones and consider',
-                  'reverting any unrelated changes, writing less, or approaching',
-                  'the problem in the issue from a different angle.',
-                ].join(' '),
-                [
-                  'I look forward to your next submissions.',
-                  'If you still intend to proceed as is, then you are at the mercy of the reviewers.',
-                ].join(' '),
-              ].join('\n\n'),
-            });
-            process.exit(1);
-
-      - name: ${{ steps.stats.outputs.trigger == 'true' && 'Some change in the PR made it too big!' || '...' }}
-        if: github.event.action != 'opened' && steps.stats.outputs.trigger == 'true'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
-        with:
-          # language=JavaScript
-          script: |
-            core.setFailed([
-              [
-                'This pull request has gotten over ${{ env.MAX_ADDITIONS }} added lines,',
-                'which can be challenging to review and iterate on.',
-                'Please, decrease the size of this PR or consider splitting it into several smaller requests.'
-              ].join(' '),
-              [
-                'Until then, the CI will be soft-marked as failed.',
-                'If you still intend to proceed as is, then you are at the mercy of the reviewers.',
-              ].join(' '),
-            ].join('\n\n'));
-            process.exit(1);
-
-  enforce-better-descriptions:
-    name: "Title and description"
+  enforce-better-titles:
+    name: "Conventional Commits titles"
     runs-on: ubuntu-latest
     steps:
       # pr title check
@@ -124,33 +38,5 @@ jobs:
                 `Received: ${title}`,
                 'Expected to find a type of: feat, fix, chore, refactor, or test, followed by the parts outlined here: https://www.conventionalcommits.org/en/v1.0.0/',
               ].join('\n'));
-              process.exit(1);
-            }
-
-      # pr close issue limits
-      - name: "Check that there is no more than ${{ env.MAX_ISSUES_PER_PR }} linked issues"
-        if: ${{ !cancelled() && github.event.pull_request.user.login != 'dependabot[bot]' }}
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
-        with:
-          # language=JavaScript
-          script: |
-            const maxIssuesAllowed = Number(process.env.MAX_ISSUES_PER_PR ?? '3');
-            const body = context.payload.pull_request.body || '';
-            const closePatterns = /\b(?:close[sd]?|fixes|fixed|fix|resolve[sd]?|towards):?\s+(?:https?:\/\/github\.com\/|[a-z0-9\-\_\/]*#\d+)/gi;
-            const issueCount = [...body.matchAll(closePatterns)].length;
-            if (issueCount > maxIssuesAllowed) {
-              core.setFailed(`This pull request attempts to close ${issueCount} issues, while the maximum number allowed is ${maxIssuesAllowed}.`);
-              process.exit(1);
-            }
-            const changelogPattern = /\bchange\s*log:?\s+https?:\/\/.*?\.mdx?/gi;
-            const hasChangelog = body.match(changelogPattern) !== null;
-            if (issueCount === 0 && !hasChangelog) {
-              core.setFailed([
-                'This pull request does not resolve any issues — no close patterns found in the description.',
-                'Please, specify an issue by writing `Closes #that-issue-number` in the description of this PR.',
-                'If there is no such issue, create a new one: https://github.com/ton-org/docs/issues/1366#issuecomment-3560650817',
-                '\nIf this PR updates descriptions in accordance with a new release of a tool,',
-                'provide a changelog by writing `Changelog https://....md` in the description of this PR.',
-              ].join(' '));
               process.exit(1);
             }
