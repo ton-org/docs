@@ -1,0 +1,122 @@
+---
+title: "How to run the validator rewards API locally"
+sidebarTitle: "Run locally"
+---
+
+import { Aside } from "/snippets/aside.jsx";
+
+## Objective
+
+Run a local instance of the validator rewards API, expose it on an HTTP port,
+and verify the main service endpoints.
+
+## Prerequisites
+
+- A local checkout of the [ton-validators-rewards-api source code](https://github.com/the-ton-tech/ton-validators-rewards-api).
+- [Go](https://go.dev/dl/) 1.25.0 or later.
+- Optional: [Docker Engine](https://docs.docker.com/engine/install/).
+
+Audience: Intermediate. Assumes familiarity with Go builds, environment
+variables, and HTTP requests.
+
+## Build and start the binary
+
+Run the following commands from the project root:
+
+```bash
+go build -o ton-validators-rewards-api .
+./ton-validators-rewards-api
+```
+
+The service listens on port `8080` by default.
+
+When `-config` is not set, startup downloads
+`https://ton.org/global-config.json` and uses the liteservers from that file.
+
+## Configure the process
+
+The process loads environment variables from a `.env` file in the working
+directory, when present.
+
+Supported environment variables:
+
+| Variable      | Description                                                  |
+| ------------- | ------------------------------------------------------------ |
+| `PORT`        | HTTP port. Default: `8080`.                                  |
+| `UPTRACE_DSN` | Uptrace DSN for tracing. If unset, telemetry stays disabled. |
+
+Use a different port:
+
+```bash
+PORT=3000 ./ton-validators-rewards-api
+```
+
+Define placeholders:
+`<CONFIG_PATH>`: path to a TON global config JSON file.
+
+Use a custom TON global config file:
+
+```bash
+./ton-validators-rewards-api -config <CONFIG_PATH>
+```
+
+<Aside type="note">
+  A custom config file can point to a different liteserver set, including a
+  testnet config or private archival nodes.
+</Aside>
+
+## Run with Docker
+
+Build and start the container image:
+
+```bash
+docker build -t ton-validators-rewards-api .
+docker run -p 8080:8080 ton-validators-rewards-api
+```
+
+Use a custom config file in Docker:
+
+```bash
+docker run -p 8080:8080 \
+  -v $(pwd)/config.json:/config.json:ro \
+  ton-validators-rewards-api -config /config.json
+```
+
+## Verify
+
+Check the health endpoint:
+
+```bash
+curl http://localhost:8080/health
+```
+
+Expected output:
+
+```json
+{"status":"ok"}
+```
+
+Open the Swagger UI:
+
+```text
+http://localhost:8080/swagger
+```
+
+Fetch the current validator snapshot:
+
+```bash
+curl http://localhost:8080/api/validators
+```
+
+The response is JSON and includes `block`, `election_id`, `total_stake`, and
+`validators`.
+
+## Troubleshoot
+
+- If startup fails while downloading the default config, start the service with
+  `-config <CONFIG_PATH>` and use a local copy of the [TON Mainnet global
+  config](https://ton-blockchain.github.io/global.config.json).
+- If port `8080` is already in use, set `PORT` to a different value.
+- If `GET /api/round-rewards` returns an error that the round is not finished,
+  query an older finished round by `election_id` or by a `block` inside that
+  round.
