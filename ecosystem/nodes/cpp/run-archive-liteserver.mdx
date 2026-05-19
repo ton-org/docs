@@ -1,0 +1,581 @@
+---
+title: "Run an archive liteserver"
+description: "Run an archive liteserver node with MyTonCtrl"
+---
+
+import { Aside } from '/snippets/aside.jsx';
+
+## Objective
+
+This guide describes how to set up an archive liteserver using MyTonCtrl and ZFS for efficient storage management.
+
+An archive liteserver node stores the entire block history of the TON blockchain. For applications requiring access to historical data, such as blockchain explorers or indexers, running an archive liteserver node is the recommended approach.
+
+## Prerequisites
+
+- A server meeting the [minimal hardware requirements](#11-minimal-hardware-requirements)
+- An OS meeting the [requirements](#12-os-and-system-requirements)
+
+## Step 1: Prepare environment
+
+### 1.1 Minimal hardware requirements
+
+Running an archive liteserver requires significant storage and network resources.
+
+- 16-core CPU
+- 128 GB RAM
+- At least 16 TB of NVMe Gen4+ SSD storage (Enterprise grade preferred), 20 TB if ZFS compression is disabled, or Provisioned 64k+ IOPS storage. If non-Enterprise SSDs are used, Autonomous Power State Transition (APST) must be disabled on the SSD and the `performance` PCIe ASPM policy enabled at the system level (e.g., `echo performance | sudo tee /sys/module/pcie_aspm/parameters/policy`).
+- 1 Gbit/s symmetric connectivity (both inbound and outbound), \~16 TB/month at peak load
+- Fixed (static) public IP address
+
+<Aside type="tip">
+  Currently, uncompressed archive data requires approximately 20 TB. Using ZFS with compression reduces this to \~16 TB.
+</Aside>
+
+### 1.2 OS and system requirements
+
+- [Ubuntu](https://ubuntu.com/download/server) 22.04/24.04 LTS or [Debian](https://www.debian.org/distrib/) 11/12
+- Python 3.10 or higher
+- Open Files Limit must be set above 4,000,000
+
+### 1.3 Subscribe to official channels
+
+Subscribe and follow the announcements provided for liteservers in the following Telegram channels:
+
+| Channel                                      | Network     |
+| -------------------------------------------- | ----------- |
+| [@tonstatus](https://t.me/tonstatus)         | TON Mainnet |
+| [@testnetstatus](https://t.me/testnetstatus) | TON Testnet |
+
+### 1.4 Install ZFS and prepare volume
+
+Archive nodes benefit significantly from ZFS due to its native compression and snapshot capabilities.
+
+#### 1.4.1 Install ZFS
+
+```bash
+sudo apt update
+sudo apt install -y zfsutils-linux
+```
+
+#### 1.4.2 Verify physical block size
+
+For NVMe drives, ZFS pool sector size must align with the drive's physical block size to avoid performance degradation. Most modern NVMe drives use 4K blocks. Verify the physical block size:
+
+```bash
+# Replace nvme0n1 with the target device name
+cat /sys/block/nvme0n1/queue/physical_block_size
+```
+
+If the result is `4096`, the `-o ashift=12` parameter must be used during pool creation.
+
+Define placeholders:
+
+- `<DISK>` - the target disk device identifier (e.g., `/dev/nvme1n1`).
+- `<DISK1>`, `<DISK2>`, `<DISK3>` - additional disk device identifiers.
+
+#### 1.4.3 Create a storage pool
+
+Create a ZFS pool named `data`. Use `-o ashift=12` for 4K blocks (standard for most NVMe drives):
+
+<CodeGroup>
+  ```bash Single drive
+  # Replace <DISK> with the device identifier (e.g., /dev/nvme1n1)
+  sudo zpool create -o ashift=12 data <DISK>
+  ```
+
+  ```bash Multiple drives (Stripe)
+  # Combine multiple disks to increase capacity and performance
+  sudo zpool create -o ashift=12 data <DISK1> <DISK2> <DISK3>
+  ```
+</CodeGroup>
+
+<Aside
+  type="caution"
+>
+  Combining disks in a stripe (JBOD) increases the total capacity but also the risk of data loss: if a single drive fails, the entire pool is lost. If sufficient disks are available, consider using `mirror` or `raidz` for redundancy.
+</Aside>
+
+### 1.4.4 Enable compression
+
+Enable `lz4` compression to save disk space with minimal CPU overhead:
+
+```bash
+sudo zfs set compression=lz4 data
+```
+
+#### 1.4.5 Create dataset and mountpoint
+
+Create the dataset for TON data and set the mount point to `/var/ton-work`:
+
+```bash
+sudo zfs create data/ton-work
+sudo zfs set mountpoint=/var/ton-work data/ton-work
+```
+
+### 1.5 Prepare the operator account
+
+To create a dedicated operator user and switch to it before installing MyTonCtrl:
+
+- Create a non-root user:
+
+```bash
+# Create a non-root operator user
+sudo adduser <USERNAME>
+sudo usermod -aG sudo <USERNAME>
+```
+
+Define placeholders:
+
+- `<USERNAME>` - name of the non-root operator user.
+
+- `<SERVER_IP>` - public IP address of the server.
+
+- `<SSH_PORT>` - custom SSH port number configured in Step 1.7.
+
+- Switch to the new operator account by reconnecting via SSH:
+
+```bash
+# Option 1: Reconnect using the standard port
+exit
+ssh <USERNAME>@<SERVER_IP>
+```
+
+```bash
+# Option 2: Reconnect using the custom SSH port
+exit
+ssh <USERNAME>@<SERVER_IP> -p <SSH_PORT>
+```
+
+### 1.6 Benchmark server performance
+
+Before installing, verify that the server meets performance requirements. Inadequate disk or network performance is the most common cause of validator instability.
+
+#### 1.6.1 Network latency
+
+Check latency to TON beacon nodes. Expect approximately 50 milliseconds to the nearest beacon and up to 300 milliseconds to the farthest:
+
+```bash
+ping beacon-eu-01.toncenter.com -c 6
+ping beacon-apac-01.toncenter.com -c 6
+```
+
+#### 1.6.2 Disk IOPS
+
+Install `fio` and run a random read/write benchmark:
+
+```bash
+sudo apt install -y fio
+fio --randrepeat=1 --ioengine=psync --direct=1 --gtod_reduce=1 --name=tlstest --bs=4k --iodepth=1 --size=40G  --readwrite=randrw --numjobs=1 --group_reporting --filename=/var/ton-work/testfile --time_based=1 --runtime=60
+rm /var/ton-work/testfile
+```
+
+Minimum acceptable results:
+
+| Metric | Minimum  |
+| ------ | -------- |
+| Read   | 10k IOPS |
+| Write  | 10k IOPS |
+
+<Aside
+  type="caution"
+>
+  If disk performance is below these thresholds, the liteserver may fail to keep up with the network. Upgrade storage before proceeding.
+</Aside>
+
+#### 1.6.3 Network bandwidth
+
+Verify network throughput with `speedtest-cli`:
+
+```bash
+sudo apt install -y speedtest-cli
+speedtest-cli
+```
+
+Ensure download and upload speeds meet the [1 Gbit/s requirement](/ecosystem/nodes/cpp/run-archive-liteserver#11-minimal-hardware-requirements).
+
+### 1.7 Harden server security
+
+<Aside
+  type="caution"
+  title="Security baseline"
+>
+  Apply these hardening steps before exposing the server to the network.
+</Aside>
+
+#### SSH hardening
+
+Apply the following SSH configuration changes in `/etc/ssh/sshd_config`:
+
+- Enable key-based authentication and disable password login:
+
+```text
+PasswordAuthentication no
+PubkeyAuthentication yes
+```
+
+- Disable root login:
+
+```text
+PermitRootLogin no
+```
+
+- Change the default SSH port:
+
+```text
+Port <SSH_PORT>
+```
+
+- Restrict SSH access to specific IP addresses using the `Match Address` directive:
+
+```text
+Match Address <ALLOWED_IP>
+  AllowUsers <USERNAME>
+```
+
+Define placeholders:
+
+- `<SSH_PORT>` - a custom non-default port number (for example, `2222`).
+- `<ALLOWED_IP>` - IP address or subnet permitted to connect via SSH.
+- `<USERNAME>` - name of the operator user.
+
+Restart the SSH service after changes:
+
+```bash
+sudo systemctl restart sshd
+```
+
+#### Firewall configuration
+
+Enable the firewall and allow only the SSH port. The node UDP port and liteserver port are added after installation in [open the node UDP port and the liteserver port](/ecosystem/nodes/cpp/run-archive-liteserver#221-open-the-node-udp-port-and-the-liteserver-port).
+
+```bash
+sudo apt install -y ufw
+sudo ufw allow <SSH_PORT>
+sudo ufw enable
+sudo ufw status
+```
+
+#### Additional security measures
+
+- Use a unique, strong password for the root user.
+
+- Set a GRUB bootloader password to prevent unauthorized boot modifications.
+
+- Enable Fail2ban for SSH brute-force protection:
+
+  ```bash
+  sudo apt install -y fail2ban
+  sudo systemctl enable fail2ban
+  sudo systemctl start fail2ban
+  ```
+
+- Configure two-factor authentication for SSH using `libpam-google-authenticator` or a similar PAM module.
+
+## Step 2: Archive liteserver installation
+
+The installation process consists of three stages (in total, this can take up to a week):
+
+- Download historical blocks from TON Storage and install the archive liteserver
+- Import downloaded data into the archive liteserver database
+- Final synchronization of the archive liteserver
+
+### 2.1 Download historical blocks from TON Storage and install the archive liteserver
+
+This process can take from one to several days depending on the internet connection speed.
+
+### 2.1.1 Install prerequisites and download installer (MyTonCtrl)
+
+```bash
+  sudo apt update
+  sudo apt install -y curl wget git ca-certificates python3-pip
+  wget https://raw.githubusercontent.com/ton-blockchain/mytonctrl/master/scripts/install.sh
+```
+
+### 2.1.2 Run archive liteserver installation
+
+Run the installer from the operator account with `sudo` so it can create system users and services:
+
+<CodeGroup>
+  ```bash Mainnet
+  sudo -v && nohup sudo bash install.sh -m liteserver -n mainnet --archive > mytonctrl_installation.log 2>&1 &
+  ```
+
+  ```bash Testnet
+  sudo -v && nohup sudo bash install.sh -m liteserver -n testnet --archive > mytonctrl_installation.log 2>&1 &
+  ```
+</CodeGroup>
+
+Installation runs in the background.
+
+Monitor the progress using the following command:
+
+```bash
+tail -f mytonctrl_installation.log
+```
+
+During the download process, the log contains entries like the following:
+
+```text
+[info]    24.04.2026, 14:26:47.609 (UTC)  <ThreadPoolExecutor-0_3>STARTING DOWNLOADING e88e7e805dfa16dc6e7d3864fcc00159a1ee70edde7b421428783c2164453875
+[info]    24.04.2026, 14:27:07.611 (UTC)  <ThreadPoolExecutor-0_3>DOWNLOADING e88e7e805dfa16dc6e7d3864fcc00159a1ee70edde7b421428783c2164453875 0% (0.0 / 4296.493726 MB), speed: 0.0 MB/s
+[info]    24.04.2026, 14:27:07.623 (UTC)  <ThreadPoolExecutor-0_2>DOWNLOADING 7683b6bc2c19e007fc6d363dc233ff9a405c0fee7533c2904c06943f759c155f 3% (130.766577 / 4295.81461 MB), speed: 15.078028 MB/s
+[info]    28.04.2026, 11:43:00.687 (UTC)  <ThreadPoolExecutor-0_1>DOWNLOADING fd41a820efc4f459bb1518c45fcc23023b0a95d9446c683705802bfb9d50a0c9 95% (4072.892954 / 4296.3534 MB), speed: 28.962779 MB/s
+[info]    28.04.2026, 11:43:20.700 (UTC)  <ThreadPoolExecutor-0_1>DOWNLOADED fd41a820efc4f459bb1518c45fcc23023b0a95d9446c683705802bfb9d50a0c9
+```
+
+Upon successful completion of the installation, the following line appears in the log:
+
+```text
+[5/5] Mytonctrl installation completed
+```
+
+### 2.2 Import downloaded data into the archive liteserver database
+
+This process starts automatically after installation and can take from one to several days depending on server performance.
+
+Monitor the progress using MyTonCtrl:
+
+```bash
+mytonctrl --cmd status
+```
+
+Check the `Local validator initial sync status` field. The value indicates how old the last imported block was and should decrease over time.
+
+### 2.2.1 Open the node UDP port and the liteserver port
+
+At this stage, the node UDP port and liteserver port should be opened to make the archive liteserver available for syncing blocks from other nodes.
+
+Identify the node UDP port and liteserver port from the `config.json` file:
+
+```bash
+sudo grep -A5 '"addrs"' -n /var/ton-work/db/config.json | grep '"port"' | head -1
+sudo grep -A5 '"liteservers"' -n /var/ton-work/db/config.json | grep '"port"' | head -1
+```
+
+Update security groups or configure `ufw` on bare-metal hosts:
+
+```bash
+sudo ufw allow <NODE_UDP_PORT>
+sudo ufw allow <LITESERVER_PORT>
+sudo ufw status
+```
+
+Define placeholders:
+
+- `<NODE_UDP_PORT>` - UDP port of the validator engine.
+- `<LITESERVER_PORT>` - TCP port of the liteserver.
+
+### 2.3 Final synchronization of archive liteserver
+
+This process starts automatically after the importing process finishes and can take from one to several days depending on server performance.
+
+Monitor the progress using MyTonCtrl:
+
+```bash
+mytonctrl --cmd status
+```
+
+Check the `Local validator initial sync status` field. The value indicates how old the last imported block was. On a fully synchronized node, this value should be less than 20 seconds.
+
+## Step 3: Maintenance
+
+### 3.1 Set up alerting
+
+Set up alerting in MyTonCtrl to get a notification of critical issues with the archive liteserver. For more information, see [MyTonCtrl private alerting bot](/ecosystem/nodes/cpp/mytonctrl/alerting).
+
+### 3.2 Set up monitoring
+
+Set up monitoring dashboards for RAM, disk, network, CPU usage, and other metrics.
+
+For system-level metrics, [integrate Prometheus with node\_exporter with MyTonCtrl](/ecosystem/nodes/cpp/integrating-with-prometheus).
+
+It is critical to use the monitoring system to:
+
+- monitor server stability
+- monitor synchronization parameters
+- check for memory leaks
+
+For technical assistance, contact [@mytonctrl\_help\_bot](https://t.me/mytonctrl_help_bot).
+
+### 3.3 Perform software updates
+
+Follow the @tonstatus channel, turn on notifications, and be prepared for urgent updates if needed.
+
+Before performing updates, create a ZFS snapshot of the data. This allows a quick rollback if the update process fails or corrupts the database.
+
+```bash
+sudo zfs snapshot data/ton-work@before-update-$(date +%Y-%m-%d)
+```
+
+Update the node software and MyTonCtrl:
+
+```bash
+mytonctrl --cmd "update master"
+mytonctrl --cmd "upgrade master"
+```
+
+These commands will check for new versions of the TON node binaries and MyTonCtrl, download them, and apply the updates.
+
+<Aside type="note">
+  The update process may cause temporary node downtime as the binaries are replaced and services are restarted.
+</Aside>
+
+Once the update is verified as successful and the node is running correctly, delete the snapshot to reclaim disk space.
+
+### 3.4 ZFS snapshots
+
+ZFS creates snapshots for easy rollbacks if data corruption occurs.
+
+Define placeholders:
+
+- `<SNAPSHOT_NAME>` - unique identifier for the snapshot.
+
+#### Create a snapshot
+
+Snapshots can be created without stopping the node:
+
+```bash
+sudo zfs snapshot data/ton-work@<SNAPSHOT_NAME>
+```
+
+#### List snapshots
+
+To see all existing snapshots for the `data/ton-work` dataset:
+
+```bash
+sudo zfs list -t snapshot data/ton-work
+```
+
+#### Roll back to a snapshot
+
+<Aside
+  type="caution"
+  title="Data loss risk"
+>
+  Rolling back to a snapshot overwrites all database changes made since the snapshot was created. Stop the validator service before performing the rollback:
+
+  ```bash
+  # Stop the service
+  sudo systemctl stop validator.service
+
+  # Roll back to the snapshot
+  sudo zfs rollback data/ton-work@<SNAPSHOT_NAME>
+
+  # Start the service
+  sudo systemctl start validator.service
+  ```
+</Aside>
+
+#### Delete a snapshot
+
+Delete the snapshot when it is no longer needed:
+
+```bash
+sudo zfs destroy data/ton-work@<SNAPSHOT_NAME>
+```
+
+### 3.5 Archive ZFS snapshots
+
+Creating a snapshot is instantaneous and occurs on the same physical disks where the data is stored. To protect against hardware failure, export the snapshots to external storage or a remote server using `zfs send`.
+
+#### Export a snapshot to a file
+
+Before exporting, estimate the size of the snapshot:
+
+```bash
+sudo zfs send -pc -nv data/ton-work@<SNAPSHOT_NAME>
+```
+
+Expected output:
+
+```text
+full send of data/ton-work@<SNAPSHOT_NAME> estimated size is 4.07T
+total estimated size is 4.07T
+```
+
+To save the snapshot to a file, use the `-c` flag to preserve `lz4` compression (without it, the file will be significantly larger):
+
+Define placeholders:
+
+- `<BACKUP_PATH>` - destination path on the external storage (e.g., `/mnt/backup/backup_ton_work.zfs`).
+
+```bash
+# Ensure the destination directory exists and has enough free space
+sudo zfs send -c data/ton-work@<SNAPSHOT_NAME> > <BACKUP_PATH>
+```
+
+<Aside type="tip">
+  Exporting large datasets is a time-consuming process. For example, a 4.07 TB snapshot may take approximately 2 hours to export depending on the disk speed.
+</Aside>
+
+#### Transfer a snapshot via SSH
+
+Stream a snapshot directly to a remote ZFS-enabled server:
+
+Define placeholders:
+
+- `<REMOTE_USER>` - username on the remote host.
+- `<REMOTE_HOST>` - IP address or hostname of the remote host.
+- `<REMOTE_POOL>` - name of the remote ZFS pool.
+
+```bash
+sudo zfs send -c data/ton-work@<SNAPSHOT_NAME> | ssh <REMOTE_USER>@<REMOTE_HOST> "sudo zfs recv <REMOTE_POOL>/ton-work"
+```
+
+## Troubleshooting
+
+### Monitor import logs
+
+To see detailed logs of the block import process, increase the log verbosity from the MyTonCtrl console:
+
+```bash
+mytonctrl --cmd "installer set_node_argument --verbosity 3"
+```
+
+Then follow the log file from a separate terminal:
+
+```bash
+tail -f /var/ton-work/log*
+```
+
+Expected log entries:
+
+```text
+[ 2][t49][2025-01-01 00:00:00.632][import-db-slice-local.cpp:629][!archiveimport] Imported archive in 2.75s : mc_seqno=761229 shard_seqno=761229
+```
+
+Set verbosity back to `1` after checking logs to avoid excessive disk I/O overhead:
+
+```bash
+mytonctrl --cmd "installer set_node_argument --verbosity 1"
+```
+
+### Performance issues
+
+Logs containing "Importing archive for masterchain seqno #... from net" accompanied by timeout errors indicate insufficient storage performance. Ensure the disk meets the IOPS requirements listed in [Minimal hardware requirements](/ecosystem/nodes/cpp/run-archive-liteserver#11-minimal-hardware-requirements).
+
+To verify disk and system performance, run the built-in `mytonctrl` benchmark:
+
+1. Stop the validator service:
+
+```bash
+sudo systemctl stop validator.service
+```
+
+2. Run the benchmark:
+
+```bash
+mytonctrl --cmd benchmark
+```
+
+For stable liteserver operation, the benchmark score should be **greater than 70%**.
+
+## Support
+
+For technical assistance, join the official support channel: [@ton\_node\_help](https://t.me/ton_node_help).
+
+## See also
+
+- [TON node types](/ecosystem/nodes/overview)
+- [Run a node with MyTonCtrl](/ecosystem/nodes/cpp/setup-mytonctrl)
