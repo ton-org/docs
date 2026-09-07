@@ -92,6 +92,9 @@ const config: NextConfig = {
       preloadEntriesOnStart: false,
       memoryBasedWorkersCount: true,
     }),
+    ...(isCloudflarePagesBuild && {
+      serverSourceMaps: false,
+    }),
   },
   ...(isLocalBuild && {
     // These source maps do not affect local builds much:
